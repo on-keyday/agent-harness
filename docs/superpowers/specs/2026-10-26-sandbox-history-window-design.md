@@ -513,3 +513,14 @@ codeword step is one model turn.
    never-overwrite rule) on fixtures, offline.
 6. `probe.sh` reports `config_history=window` and the measured visible
    conversation directories.
+
+## Amendment 1 (2026-10-29): credential injection inside the window
+
+Decision 6 ("credential files stay visible in the container") no longer holds
+for pi and claude. Both now inject their credential by default
+(`2026-10-29-sandbox-credential-injection-design.md`), and with
+`--history-window` the window is built exactly as above except that the
+credential file is not mounted: pi gets the generated `models.json`, claude
+the relay's environment. The window still carries no host settings: claude's
+copied and read-only config is left out under `--history-window`. The old
+behaviour, credential file mounted singly, is `--history-window --mount-auth`.

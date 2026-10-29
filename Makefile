@@ -1,4 +1,7 @@
-CMDS := agent-runner harness-cli harness-server harness-tui harness-stream-adapter
+# sandbox-connect-proxy is also built into the sandbox image (scripts/sandbox/
+# build.sh); the host copy here is its `relay` mode, which the sandbox wrapper
+# starts per claude container.
+CMDS := agent-runner harness-cli harness-server harness-tui harness-stream-adapter sandbox-connect-proxy
 GOEXE := $(shell go env GOEXE)
 BIN_TARGETS := $(addsuffix $(GOEXE),$(addprefix bin/,$(CMDS)))
 

@@ -33,6 +33,19 @@ if [ "${SANDBOX_FIREWALL_PROXY:-0}" = "1" ]; then
   # --no-proxy-log.
   # The redirect is opened here, as container root, so the file need not be
   # writable by the proxy uid.
+  # A relay upstream (unix:<path>, claude) is a socket bind-mounted from the
+  # host, where the credential is added. Under keep-id the socket's own mode
+  # cannot tell the agent from the proxy, so the directory around it does:
+  # only the proxy uid may enter it. Done before anything runs as the agent.
+  case "${SANDBOX_INJECT_UPSTREAM:-}" in
+    unix:*)
+      relay_dir=$(dirname "${SANDBOX_INJECT_UPSTREAM#unix:}")
+      chown "$PROXY_UID" "$relay_dir" && chmod 0700 "$relay_dir" || {
+        echo "FATAL: cannot restrict $relay_dir to the proxy uid; refusing to expose the credential relay to the agent" >&2
+        exit 1
+      }
+      ;;
+  esac
   ( if [ -n "${SANDBOX_PROXY_LOG:-}" ]; then exec 2>>"$SANDBOX_PROXY_LOG"; fi
     gosu "$PROXY_UID" env SANDBOX_PROXY_PORT="$PROXY_PORT" \
       /usr/local/bin/sandbox-connect-proxy & )
@@ -42,10 +55,11 @@ if [ "${SANDBOX_FIREWALL_PROXY:-0}" = "1" ]; then
   done
   # Credential injection (--inject-auth): the same proxy process also serves a
   # loopback listener that adds the agent's credential to each request
-  # (cmd/sandbox-connect-proxy/inject.go). The credential reached the proxy
-  # through the environment it inherited above, and is dropped from ours before
-  # anything runs as the agent. Without the listener the agent could only fail
-  # on every request, so its absence is fatal.
+  # (cmd/sandbox-connect-proxy/inject.go), or forwards to the host relay that
+  # does. A credential handed in here reached the proxy through the
+  # environment it inherited above, and is dropped from ours before anything
+  # runs as the agent. Without the listener the agent could only fail on every
+  # request, so its absence is fatal.
   if [ -n "${SANDBOX_INJECT_UPSTREAM:-}" ]; then
     INJECT_PORT="${SANDBOX_INJECT_PORT:-18081}"
     up=0

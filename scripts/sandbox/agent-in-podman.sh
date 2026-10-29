@@ -69,10 +69,11 @@ HOME_DIR="${HOME:-/home/$(id -un)}"
 #                       state, so --continue / resume work — at the cost of
 #                       exposing the refresh token. For an agent WITH injection it
 #                       is how to get the whole config dir back.
-#   --inject-auth       pi only, and its default: the credential stays out of the
-#                       container. The proxy adds it to each request, the agent
-#                       sees a placeholder, and its config dir is a per-run one
-#                       holding the host's sessions store (so resume works).
+#   --inject-auth       pi and claude, and their default: the credential stays out
+#                       of the container. The proxy (pi) or a host relay (claude)
+#                       adds it to each request, the agent sees a placeholder,
+#                       and its config dir is a per-run one holding the host's
+#                       conversation store (so resume works).
 #                       Needs the proxy firewall mode; exits 2 under --firewall
 #                       or --no-firewall (pass --mount-auth there), and together
 #                       with --mount-auth or --token-auth. See "Credential
@@ -216,16 +217,38 @@ fi
 #   A_HISTORY_SEED   1 = the ephemeral config needs the launcher's first-run
 #                    seeding, as under token auth
 # --inject-auth fields (an agent with them injects by default):
-#   A_INJECT         inject_auth.py's name for this agent; "" = no injection
-#   A_INJECT_CONFIG  the config file, relative to the agent's home, that
+#   A_INJECT         the injection's name for this agent; "" = no injection
+#   A_INJECT_VIA     key = inject_auth.py reads a static credential and the
+#                    proxy holds it; relay = the credential stays on the host,
+#                    in a file the agent itself keeps refreshing, and a host
+#                    relay (`sandbox-connect-proxy relay --kind $A_INJECT`)
+#                    reads it per request
+#   A_INJECT_CONFIG  key: the config file, relative to the agent's home, that
 #                    inject_auth.py generates and the container gets read-only
 #                    in place of the credential file
+#   A_INJECT_UPSTREAM, A_INJECT_CREDS  relay: the https origin it forwards to,
+#                    and the credential file relative to the agent's home
+#   A_INJECT_ENV     NAME=VALUE pointing the agent at the injector
+#   A_INJECT_COPY    host config files the per-run root gets a COPY of (rw,
+#                    discarded), without --history-window
+#   A_INJECT_RO      host config files and dirs mounted read-only into the
+#                    per-run root, without --history-window
+#   A_INJECT_SYNC    "<copied file>:<key>,<key>": keys of an A_INJECT_COPY file
+#                    the reaper carries back to the host file while the
+#                    container runs (config_sync.py)
 declare -a A_CONFIG_MOUNTS=() A_ALWAYS_ENV=() A_FW_ENV=() A_RO_MOUNTS=()
 declare -a A_HISTORY_ROOTS=() A_HISTORY_ROOT_FILES=() A_CRED_FILES=() A_RO_CONFIG=() A_RO_DIRS=() A_SHARED_DIRS=()
+declare -a A_INJECT_ENV=() A_INJECT_COPY=() A_INJECT_RO=() A_INJECT_SYNC=()
 A_EPHEMERAL_HOME=""
 A_BIN_BUNDLE=0
 A_INJECT=""
+A_INJECT_VIA=""
 A_INJECT_CONFIG=""
+A_INJECT_UPSTREAM=""
+A_INJECT_CREDS=""
+# The injector's loopback port in the container; the proxy and entrypoint.sh
+# default to it too, and the wrapper passes it to both.
+inject_port=18081
 A_HISTORY=""
 A_HISTORY_STORE=""
 A_HISTORY_NAME_MAX=0
@@ -256,6 +279,24 @@ case "$AGENT" in
     A_HISTORY_ROOT_FILES=( .claude.json )
     A_CRED_FILES=( .claude/.credentials.json )
     A_HISTORY_SEED=1
+    # Injection through the host relay: claude's credential is an 8-hour access
+    # token the host's claude refreshes in .credentials.json, so no copy taken
+    # at start would last. The agent gets a placeholder OAuth token and this
+    # base URL (measured 2026-10-29, claude 2.1.312: one-shot and interactive
+    # sent everything there, no other host contacted). The per-run root gets a
+    # copy of the host's config files and its instructions, skills, hooks and
+    # plugins read-only, so a sandboxed claude behaves as under mount auth and
+    # cannot change what the host's claude loads.
+    A_INJECT=claude
+    A_INJECT_VIA=relay
+    A_INJECT_UPSTREAM=https://api.anthropic.com
+    A_INJECT_CREDS=.claude/.credentials.json
+    A_INJECT_ENV=( "ANTHROPIC_BASE_URL=http://127.0.0.1:$inject_port" CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-sandbox-placeholder )
+    A_INJECT_COPY=( .claude.json .claude/settings.json )
+    A_INJECT_RO=( .claude/CLAUDE.md .claude/skills .claude/agents .claude/commands .claude/hooks .claude/plugins )
+    # What /model and /effort save as the default (measured: nothing else
+    # changed); on the host that takes effect at once, so it is carried back.
+    A_INJECT_SYNC=( .claude/settings.json:model,modelSettings )
     ;;
   codex)
     # Codex resolves codex-code-mode-host relative to its executable. Mounting
@@ -430,6 +471,7 @@ case "$AGENT" in
     # would run whatever the container left there.
     A_CONFIG_MOUNTS=( "$HOME_DIR/.pi" )
     A_INJECT=pi
+    A_INJECT_VIA=key
     A_INJECT_CONFIG=.pi/agent/models.json
     A_TOKEN_FILE=""
     A_TOKEN_ENV=""
@@ -669,11 +711,23 @@ fi
 # the environ of PID 1 and of the proxy (both hold the key) could not be read,
 # and neither the agent's own environ nor any readable file held it; a second
 # container's --continue, and the host's own pi, resumed the conversation.
+#
+# With A_INJECT_VIA=relay (claude) nothing secret enters the container at all:
+# a relay process on the HOST (`sandbox-connect-proxy relay`, started here,
+# exiting when this pid does) reads the credential file on each request and
+# adds the token, and the proxy in the container forwards to it over a socket
+# bind-mounted into a directory only the proxy uid may enter (entrypoint.sh).
+# Without --history-window the per-run root also gets copies of A_INJECT_COPY
+# and A_INJECT_RO read-only, so the agent keeps its host configuration but
+# cannot change what the host's own agent loads. Measured 2026-10-29 (claude
+# 2.1.312): with that root, the user-level CLAUDE.md was loaded and the
+# one-shot answered through the injector.
 # See docs/superpowers/specs/2026-10-29-sandbox-credential-injection-design.md.
 history_mode=shared
 history_root=""
 history_helper="" hist_sync="" hist_host="" hist_codex=""
-inject_port=18081
+relay_dir=""
+sync_spec=""
 if [ "$history_window" = 1 ] || [ "$inject" = 1 ]; then
   hw_refuse() { echo "[agent-in-podman] --history-window: $1" >&2; exit 2; }
   if [ "$history_window" = 1 ]; then
@@ -698,8 +752,37 @@ if [ "$history_window" = 1 ] || [ "$inject" = 1 ]; then
   for f in "${A_RO_CONFIG[@]}"; do [ -f "$HOME_DIR/$f" ] && hist_ro+=( "$f" ); done
   declare -a hist_ro_dirs=()
   for d in "${A_RO_DIRS[@]}"; do [ -d "$HOME_DIR/$d" ] && hist_ro_dirs+=( "$d" ); done
-  inject_cfg="" inject_upstream=""
-  if [ "$inject" = 1 ]; then
+  inject_cfg="" inject_upstream="" relay_pid=""
+  if [ "$inject" = 1 ] && [ "$A_INJECT_VIA" = relay ]; then
+    inj_refuse() {
+      if [ -n "$relay_pid" ]; then kill "$relay_pid" 2>/dev/null || true; fi
+      if [ -n "$relay_dir" ]; then rm -rf -- "$relay_dir"; fi
+      echo "[agent-in-podman] --inject-auth: $1; pass --mount-auth to mount the credential instead" >&2
+      exit 2
+    }
+    relay_bin="${HARNESS_SANDBOX_RELAY_BIN:-$(dirname "$(readlink -f "$0")")/../../bin/sandbox-connect-proxy}"
+    [ -x "$relay_bin" ] || inj_refuse "no relay binary at $relay_bin (make build)"
+    relay_agent=$(readlink -f "$A_HOST_BIN" 2>/dev/null || true)
+    [ -n "$relay_agent" ] && [ -x "$relay_agent" ] || inj_refuse "no host $AGENT at $A_HOST_BIN to refresh the credential with"
+    # What the agent needs to know of its login besides the placeholder
+    # (inject_auth.py says why); nothing secret.
+    relay_env_out=$(python3 "$(dirname "$(readlink -f "$0")")/inject_auth.py" "$A_INJECT" --credentials "$HOME_DIR/$A_INJECT_CREDS") ||
+      inj_refuse "cannot read $AGENT's login (above)"
+    declare -a relay_env=()
+    while IFS= read -r e; do [ -n "$e" ] && relay_env+=( "$e" ); done <<<"$relay_env_out"
+    relay_dir=$(mktemp -d "${TMPDIR:-/tmp}/harness-sandbox-relay.XXXXXX")
+    relay_log="${TMPDIR:-/tmp}/sandbox-relay-${HARNESS_TASK_ID:-$$}.log"
+    "$relay_bin" relay --kind "$A_INJECT" --socket "$relay_dir/sock" --upstream "$A_INJECT_UPSTREAM" \
+      --credentials "$HOME_DIR/$A_INJECT_CREDS" --agent-bin "$relay_agent" --parent-pid "$$" \
+      --lock "${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/harness-sandbox-relay-$(id -u).lock" </dev/null >"$relay_log" 2>&1 &
+    relay_pid=$!
+    for _ in $(seq 1 50); do
+      [ -S "$relay_dir/sock" ] && break
+      kill -0 "$relay_pid" 2>/dev/null || break
+      sleep 0.1
+    done
+    [ -S "$relay_dir/sock" ] || inj_refuse "the credential relay did not start ($(tail -n 1 "$relay_log" 2>/dev/null))"
+  elif [ "$inject" = 1 ]; then
     inject_cfg=$(mktemp "${TMPDIR:-/tmp}/harness-sandbox-inject.XXXXXX")
     if ! inject_out=$(python3 "$(dirname "$(readlink -f "$0")")/inject_auth.py" "$A_INJECT" \
           --agent-dir "$HOME_DIR/$(dirname "$A_INJECT_CONFIG")" --config-out "$inject_cfg" --port "$inject_port"); then
@@ -738,7 +821,32 @@ if [ "$history_window" = 1 ] || [ "$inject" = 1 ]; then
   for d in "${A_HISTORY_ROOTS[@]}" "$hist_store" "${hist_ro_dirs[@]}" "${A_SHARED_DIRS[@]}"; do mkdir -p "$history_root/$d"; done
   for f in "${A_HISTORY_ROOT_FILES[@]}"; do echo '{}' >"$history_root/$f"; done
   declare -a hist_files=( "${hist_creds[@]}" "${hist_ro[@]}" )
-  [ "$inject" = 1 ] && hist_files+=( "$A_INJECT_CONFIG" )
+  [ "$inject" = 1 ] && [ -n "$A_INJECT_CONFIG" ] && hist_files+=( "$A_INJECT_CONFIG" )
+  declare -a inj_ro=()
+  if [ "$inject" = 1 ] && [ "$history_window" != 1 ]; then
+    for f in "${A_INJECT_COPY[@]}"; do
+      [ -f "$HOME_DIR/$f" ] || continue
+      mkdir -p "$(dirname "$history_root/$f")"
+      cp "$HOME_DIR/$f" "$history_root/$f" && chmod 600 "$history_root/$f"
+    done
+    for x in "${A_INJECT_RO[@]}"; do
+      if [ -d "$HOME_DIR/$x" ]; then mkdir -p "$history_root/$x"
+      elif [ -f "$HOME_DIR/$x" ]; then mkdir -p "$(dirname "$history_root/$x")"; : >"$history_root/$x"
+      else continue; fi
+      inj_ro+=( "$x" )
+    done
+    # One line per synced file for the reaper: helper, copy, host, state, keys.
+    # The state sits at the root's top level, which the container never sees.
+    sync_helper="$(dirname "$(readlink -f "$0")")/config_sync.py"
+    n=0
+    for e in "${A_INJECT_SYNC[@]}"; do
+      rel="${e%%:*}" keys="${e#*:}" st="$history_root/sync-$n.json"
+      [ -f "$history_root/$rel" ] || continue
+      python3 "$sync_helper" --init --copy "$history_root/$rel" --host "$HOME_DIR/$rel" --state "$st" --keys "$keys"
+      sync_spec+="$sync_helper"$'\t'"$history_root/$rel"$'\t'"$HOME_DIR/$rel"$'\t'"$st"$'\t'"$keys"$'\n'
+      n=$((n + 1))
+    done
+  fi
   for f in "${hist_files[@]}"; do mkdir -p "$(dirname "$history_root/$f")"; : >"$history_root/$f"; done
   mkdir -p "$HOME_DIR/$hist_store"
   # Parents before what sits inside them: the config root, then the window in it.
@@ -747,14 +855,22 @@ if [ "$history_window" = 1 ] || [ "$inject" = 1 ]; then
   for f in "${hist_creds[@]}"; do AUTH+=( -v "$HOME_DIR/$f:$AGENT_HOME/$f" ); done
   for f in "${hist_ro[@]}" "${hist_ro_dirs[@]}"; do AUTH+=( -v "$HOME_DIR/$f:$AGENT_HOME/$f:ro" ); done
   for d in "${A_SHARED_DIRS[@]}"; do mkdir -p "$HOME_DIR/$d"; AUTH+=( -v "$HOME_DIR/$d:$AGENT_HOME/$d" ); done
+  for x in "${inj_ro[@]}"; do AUTH+=( -v "$HOME_DIR/$x:$AGENT_HOME/$x:ro" ); done
   if [ "$inject" = 1 ]; then
-    # Outside every directory the container sees, so the agent cannot rewrite
-    # it; the reaper removes it with the root.
-    mv "$inject_cfg" "$history_root/inject-config"
-    AUTH+=( -v "$history_root/inject-config:$AGENT_HOME/$A_INJECT_CONFIG:ro"
-            --env SANDBOX_INJECT_UPSTREAM="$inject_upstream"
-            --env SANDBOX_INJECT_PORT="$inject_port"
-            --env SANDBOX_INJECT_KEY )
+    for e in "${A_INJECT_ENV[@]}"; do AUTH+=( --env "$e" ); done
+    AUTH+=( --env SANDBOX_INJECT_PORT="$inject_port" )
+    if [ "$A_INJECT_VIA" = relay ]; then
+      for e in "${relay_env[@]}"; do AUTH+=( --env "$e" ); done
+      AUTH+=( -v "$relay_dir/sock:/run/harness-relay/sock"
+              --env SANDBOX_INJECT_UPSTREAM=unix:/run/harness-relay/sock )
+    else
+      # Outside every directory the container sees, so the agent cannot
+      # rewrite it; the reaper removes it with the root.
+      mv "$inject_cfg" "$history_root/inject-config"
+      AUTH+=( -v "$history_root/inject-config:$AGENT_HOME/$A_INJECT_CONFIG:ro"
+              --env SANDBOX_INJECT_UPSTREAM="$inject_upstream"
+              --env SANDBOX_INJECT_KEY )
+    fi
   fi
   if [ "$A_HISTORY_SEED" = 1 ] && [ "$token_auth" != 1 ]; then
     AUTH+=( --env SANDBOX_SEED_CONFIG=1 --env SANDBOX_SEED_PROJECTS="$(printf '%s\n' "${SEED_PATHS[@]}")" )
@@ -965,13 +1081,21 @@ echo "[agent-in-podman] agent=$AGENT auth=$auth_mode firewall=$fw_mode harness-c
 cidfile="$(mktemp -u "${TMPDIR:-/tmp}/sandbox-cid.XXXXXX")"
 setsid bash -c '
   wrapper_pid="$1"; cidfile="$2"; history_root="$3"
-  helper="$4"; sync_dir="$5"; host_sessions="$6"; wt="$7"; host_codex="$8"; seccomp_file="$9"
+  helper="$4"; sync_dir="$5"; host_sessions="$6"; wt="$7"; host_codex="$8"; seccomp_file="$9"; relay_dir="${10}"; sync_spec="${11}"
   log="${TMPDIR:-/tmp}/sandbox-reaper.log"
   # codex history window: link the rollouts the container created into the
   # host store, every 5s while it runs (so the host can list and resume the
   # conversation during the run) and once more after the container is gone.
   export_rollouts() {
     [ -n "$sync_dir" ] && python3 "$helper" codex-export --task-dir "$sync_dir" --host-sessions "$host_sessions" --cwd "$wt" >>"$log" 2>&1
+  }
+  # Credential injection: carry what the agent saved as its default back to
+  # the host config, on the same 5s beat and once more at the end.
+  sync_config() {
+    [ -n "$sync_spec" ] || return 0
+    printf "%s" "$sync_spec" | while IFS="$(printf "\t")" read -r h c host st keys; do
+      python3 "$h" --copy "$c" --host "$host" --state "$st" --keys "$keys" >>"$log" 2>&1
+    done
   }
   # cd out of the inherited cwd (= the task worktree): the runner deletes the
   # worktree on session kill, and podman aborts on a vanished cwd ("error
@@ -981,7 +1105,7 @@ setsid bash -c '
   while kill -0 "$wrapper_pid" 2>/dev/null; do
     sleep 0.5
     polls=$((polls + 1))
-    [ $((polls % 10)) -eq 0 ] && export_rollouts
+    [ $((polls % 10)) -eq 0 ] && { export_rollouts; sync_config; }
   done
   echo "$(date "+%F %T") reaper: wrapper $wrapper_pid gone cid=$(head -c12 "$cidfile" 2>/dev/null || echo no-cidfile)" >>"$log"
   deadline=$((SECONDS + 60))
@@ -993,7 +1117,11 @@ setsid bash -c '
     sleep 1
   done
   rm -f "$cidfile"
+  sync_config
   [ -n "$seccomp_file" ] && rm -f "$seccomp_file"
+  # The relay leaves on its own once the wrapper pid is gone; its directory
+  # is removed here.
+  case "$relay_dir" in "${TMPDIR:-/tmp}"/harness-sandbox-relay.*) rm -rf -- "$relay_dir" ;; esac
   export_rollouts
   # ...and have the codex of the host index them: resume --last asks its state
   # DB first, and that DB never saw a thread the container created.
@@ -1012,7 +1140,7 @@ setsid bash -c '
       echo "$(date "+%F %T") reaper: kept $history_root" >>"$log"
     fi
   fi
-' _ "$$" "$cidfile" "$history_root" "$history_helper" "$hist_sync" "$hist_host" "$WT" "$hist_codex" "$seccomp_file" </dev/null >/dev/null 2>&1 &
+' _ "$$" "$cidfile" "$history_root" "$history_helper" "$hist_sync" "$hist_host" "$WT" "$hist_codex" "$seccomp_file" "$relay_dir" "$sync_spec" </dev/null >/dev/null 2>&1 &
 
 # --init is load-bearing, not hygiene. Every layer of our command chain execs
 # (entrypoint.sh -> gosu -> agent-launch.sh -> the agent), so the AGENT itself ends

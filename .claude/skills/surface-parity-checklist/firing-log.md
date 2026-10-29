@@ -3509,3 +3509,32 @@ n/a:     1–30, 32, 34–36, 38, 39 (no verb, field or UI; the flag rides
          symlink), S5 (no HARNESS_* or CID change; SANDBOX_INJECT_* are set
          by the wrapper itself)
 missed:  —
+
+### 2026-10-29 (pre-landing) — sandbox: claude's credential injected through a host relay
+
+Continuation of the pi injection walk (same day): a second agent's credential
+mode, so S1–S6 again, plus 1–39 for the new wrapper behaviour.
+
+done:    31 (`auth=inject` always printed; `probe.sh` adds
+         `relay_socket=reachable|unreachable` only when a relay is declared —
+         gated on existence, not value), 33 (relay binary or host claude
+         missing, an unreadable login, a relay that does not start, and
+         injection outside the proxy mode all exit 2 naming `--mount-auth`;
+         a new wrapper on the old image fails closed in the entrypoint), 35
+         (sandbox README agent table, prerequisites, security model,
+         authentication, history-window table, injection section rewritten
+         for both agents; top-level README sandbox paragraph), 37 (injection
+         spec Amendment 1, generic-agent-sandbox Amendment 4, history-window
+         Amendment 1), S3 (claude table entry: A_INJECT_VIA=relay and its
+         fields), S4 (injection needs the proxy mode; A_DOMAINS unchanged),
+         S6 (README, runner-up.md, probe.sh relay_socket)
+omitted: 24 for `/model`'s "saved as your default": on the host it persists;
+         in the container it lands in a per-run copy — carried back for
+         `model`/`modelSettings` only (config_sync.py), other keys discarded,
+         stated in the README
+n/a:     1–23, 25–30, 32, 34–36, 38, 39 (no verb, field or UI), S1 (preset
+         unchanged; the default lives in the wrapper table), S2 (no new agent),
+         S5 (no HARNESS_* or CID change)
+missed:  — (the previous walk's S6 missed the upstream smoke: pi's new default
+         made `check_codex_release.py --smoke` exit 2 under its `--no-firewall`;
+         found in this change, fixed by passing `--mount-auth` there)

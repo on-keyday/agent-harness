@@ -6,9 +6,16 @@ in-container injector (cmd/sandbox-connect-proxy/inject.go) instead.
 
 On success FILE holds the agent's config and stdout carries two lines: the
 upstream origin the injector forwards to, then the credential. stdout is read
-by the wrapper into a shell variable, never onto an argv. Anything the
-injector cannot serve is a refusal (exit 2) naming the reason, never a
-partial config.
+by the wrapper into a shell variable, never onto an argv.
+
+    inject_auth.py claude --credentials ~/.claude/.credentials.json
+
+For an agent injected through the host relay, which reads the credential
+itself: stdout carries NAME=VALUE lines of the agent environment the relay
+cannot supply, and nothing secret.
+
+Anything the injector cannot serve is a refusal (exit 2) naming the reason,
+never a partial config.
 """
 
 import argparse
@@ -81,18 +88,51 @@ def pi(agent_dir, port):
     return config, f"https://{u.netloc}", key
 
 
-AGENTS = {"pi": pi}
+def claude(credentials):
+    """Return the environment lines for a claude behind the relay.
+
+    The container's claude authenticates with a placeholder
+    CLAUDE_CODE_OAUTH_TOKEN, and with that alone it knows nothing of the
+    subscription: it labels itself "Claude API" and picks that tier's default
+    model (claude-sonnet-5-5 where the host's claude picks claude-opus-5-5).
+    It does not fetch the profile to find out — a placeholder credential FILE
+    makes it try, directly at api.anthropic.com and past the base URL, and
+    fail. These two variables are what the binary reads instead (claude
+    2.1.312; neither is documented): with them the one-shot ran on the host's
+    default model (measured 2026-10-29). Copied from the host's credential
+    file, which holds them beside the token; they are not secret.
+    """
+    try:
+        oauth = json.loads(credentials.read_text()).get("claudeAiOauth") or {}
+    except FileNotFoundError:
+        raise Refusal(f"no claude credential file at {credentials} (is claude logged in with /login?)")
+    except (OSError, ValueError) as e:
+        raise Refusal(f"cannot read {credentials}: {e}")
+    if not oauth.get("accessToken"):
+        raise Refusal(f"{credentials} holds no claudeAiOauth login")
+    env = []
+    for field, name in (("subscriptionType", "CLAUDE_CODE_SUBSCRIPTION_TYPE"), ("rateLimitTier", "CLAUDE_CODE_RATE_LIMIT_TIER")):
+        v = oauth.get(field)
+        if isinstance(v, str) and v and "\n" not in v:
+            env.append(f"{name}={v}")
+    return env
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="inject_auth.py")
-    ap.add_argument("agent", choices=sorted(AGENTS))
-    ap.add_argument("--agent-dir", required=True, type=Path)
-    ap.add_argument("--config-out", required=True, type=Path)
-    ap.add_argument("--port", required=True, type=int)
+    sub = ap.add_subparsers(dest="agent", required=True)
+    p = sub.add_parser("pi")
+    p.add_argument("--agent-dir", required=True, type=Path)
+    p.add_argument("--config-out", required=True, type=Path)
+    p.add_argument("--port", required=True, type=int)
+    c = sub.add_parser("claude")
+    c.add_argument("--credentials", required=True, type=Path)
     args = ap.parse_args(argv)
     try:
-        config, upstream, key = AGENTS[args.agent](args.agent_dir, args.port)
+        if args.agent == "claude":
+            sys.stdout.write("".join(f"{e}\n" for e in claude(args.credentials)))
+            return 0
+        config, upstream, key = pi(args.agent_dir, args.port)
     except Refusal as e:
         print(f"[inject_auth] {e}", file=sys.stderr)
         return 2

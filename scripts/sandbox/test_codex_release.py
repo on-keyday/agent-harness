@@ -108,9 +108,10 @@ class CodexReleaseTests(unittest.TestCase):
                 fake_podman(tools, capture)
                 env = {"HOME": str(home), "PATH": str(tools) + os.pathsep + os.environ["PATH"], "TMPDIR": str(root),
                        "HARNESS_SANDBOX_PI_PKG": str(pi_package), "HARNESS_SANDBOX_OPENCODE_BIN": str(binary)}
-                # pi's default auth (injection) needs a credential; this test
-                # is about the binary, so it takes the mount path.
-                auth = ["--mount-auth"] if agent == "pi" else []
+                # pi's and claude's default auth (injection) needs a
+                # credential; this test is about the binary, so it takes the
+                # mount path.
+                auth = ["--mount-auth"] if agent in ("pi", "claude") else []
                 subprocess.run(["bash", str(check.WRAPPER), "--sandbox-agent", agent, "--omit-harness-cli", *auth, "--version"],
                                cwd=root, env=env, check=True, capture_output=True, timeout=10)
                 args = json.loads(capture.read_text())
@@ -137,17 +138,20 @@ class CodexReleaseTests(unittest.TestCase):
         env = {"HOME": str(home), "PATH": str(tools) + os.pathsep + os.environ["PATH"],
                "TMPDIR": str(self.root), "HARNESS_TASK_ID": "t1"}
 
-        def run(*flags, agent="claude"):
+        # claude injects its credential by default, through a host relay this
+        # test does not run (test_history_window covers that default); every
+        # axis below is checked under mount auth unless it IS the auth axis.
+        def run(*flags, agent="claude", auth=("--mount-auth",)):
             capture.unlink(missing_ok=True)
-            result = subprocess.run(["bash", str(check.WRAPPER), "--sandbox-agent", agent, "--omit-harness-cli", *flags, "--version"],
+            result = subprocess.run(["bash", str(check.WRAPPER), "--sandbox-agent", agent, "--omit-harness-cli", *auth, *flags, "--version"],
                                     cwd=self.root, env=env, capture_output=True, text=True, timeout=10)
             return result, (json.loads(capture.read_text()) if capture.exists() else None)
 
         claude_mount = f"{home}/.claude:{home}/.claude"
         proxy_log_mount = os.path.realpath(self.root / "sandbox-proxy-t1.log") + ":/run/sandbox-proxy.log"
 
-        # No flags: proxy firewall, proxy log in a host file, mount auth even
-        # though a token file exists.
+        # No flags but the auth one: proxy firewall, proxy log in a host file,
+        # and no token used just because a token file exists.
         _, args = run()
         self.assertIn("SANDBOX_FIREWALL_PROXY=1", args)
         self.assertIn(proxy_log_mount, args)
@@ -178,7 +182,7 @@ class CodexReleaseTests(unittest.TestCase):
         self.assertNotIn("--user", args)
         self.assertFalse(any(a.startswith("SANDBOX_FIREWALL") for a in args))
 
-        _, args = run("--token-auth")
+        _, args = run("--token-auth", auth=())
         self.assertIn("CLAUDE_CODE_OAUTH_TOKEN=dedicated-token", args)
         self.assertNotIn(claude_mount, args)
 
@@ -188,12 +192,12 @@ class CodexReleaseTests(unittest.TestCase):
                              (("--token-auth", "--mount-auth"), "claude"),
                              (("--token-auth",), "codex")]:
             with self.subTest(flags=flags, agent=agent):
-                result, args = run(*flags, agent=agent)
+                result, args = run(*flags, agent=agent, auth=())
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertIsNone(args)
 
         token_file.write_text("")
-        result, args = run("--token-auth")
+        result, args = run("--token-auth", auth=())
         self.assertEqual(result.returncode, 2, result.stderr)
         self.assertIsNone(args)
 

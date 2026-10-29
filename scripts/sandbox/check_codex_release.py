@@ -156,7 +156,10 @@ os.execve(os.environ["SANDBOX_PROBE_PODMAN"], [os.environ["SANDBOX_PROBE_PODMAN"
         env["HARNESS_SANDBOX_PI_PKG"] = str(binary.resolve().parents[2])
     # --no-firewall: the shim already gives the container --network=none, and
     # the default proxy mode would start a firewall and a proxy inside it.
-    result = subprocess.run(["bash", str(WRAPPER), "--sandbox-agent", agent, "--omit-harness-cli", "--no-firewall"],
+    # --mount-auth: an agent that injects its credential by default (pi,
+    # claude) needs the proxy for it and exits 2 without; this HOME holds no
+    # credentials, so mount auth mounts nothing.
+    result = subprocess.run(["bash", str(WRAPPER), "--sandbox-agent", agent, "--omit-harness-cli", "--no-firewall", "--mount-auth"],
                             cwd=work, env=env, capture_output=True, text=True, timeout=60)
     if result.returncode != 0:
         raise ValueError("sandbox runtime probe failed: " + (result.stderr + result.stdout)[-4000:])

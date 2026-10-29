@@ -121,7 +121,15 @@ for e in /proc/[0-9]*/environ; do
 		printf '%s\n' "$v" | grep -q '^SANDBOX_INJECT_KEY=.' && env_hits=$((env_hits + 1))
 	else env_denied=$((env_denied + 1)); fi
 done
-add "config_credential" "inject=${SANDBOX_INJECT_UPSTREAM:-off} key_in_my_env=$([ -n "${SANDBOX_INJECT_KEY:-}" ] && echo YES-LEAKED || echo no) key_in_readable_environs=$env_hits (unreadable: $env_denied) files:${creds:-none}"
+# A host relay (claude): its socket must be out of this uid's reach, or the
+# agent could talk to the relay without going through the proxy.
+relay=""
+case "${SANDBOX_INJECT_UPSTREAM:-}" in
+	unix:*) p="${SANDBOX_INJECT_UPSTREAM#unix:}"
+		if [ -e "$p" ] || ls "$(dirname "$p")" >/dev/null 2>&1; then relay=" relay_socket=REACHABLE"
+		else relay=" relay_socket=unreachable"; fi ;;
+esac
+add "config_credential" "inject=${SANDBOX_INJECT_UPSTREAM:-off} key_in_my_env=$([ -n "${SANDBOX_INJECT_KEY:-}" ] && echo YES-LEAKED || echo no) key_in_readable_environs=$env_hits (unreadable: $env_denied)$relay files:${creds:-none}"
 
 # --- identity / am I even in a container -------------------------------------
 add "id" "$(id 2>&1)"

@@ -2,8 +2,11 @@ package main
 
 import (
 	"bufio"
+	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -12,11 +15,11 @@ import (
 // startInjector fronts upstream with the injector and returns its base URL.
 func startInjector(t *testing.T, upstream *httptest.Server, key string) string {
 	t.Helper()
-	u, err := parseUpstream(upstream.URL)
+	u, _, err := parseUpstream(upstream.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
-	front := httptest.NewServer(newInjector(u, key, upstream.Client().Transport))
+	front := httptest.NewServer(newInjector(u, staticKey(key), upstream.Client().Transport))
 	t.Cleanup(front.Close)
 	return front.URL
 }
@@ -103,7 +106,7 @@ func TestInjectUpstreamFailureIs502(t *testing.T) {
 
 func TestParseUpstream(t *testing.T) {
 	for _, s := range []string{"https://openrouter.ai", "https://openrouter.ai/", "https://127.0.0.1:8443"} {
-		u, err := parseUpstream(s)
+		u, _, err := parseUpstream(s)
 		if err != nil {
 			t.Errorf("%q: %v", s, err)
 			continue
@@ -119,9 +122,70 @@ func TestParseUpstream(t *testing.T) {
 		"https://u:p@openrouter.ai",
 		"https://",
 		"openrouter.ai",
+		"unix:relative/sock", // resolved against whatever the cwd is
 	} {
-		if _, err := parseUpstream(s); err == nil {
+		if _, _, err := parseUpstream(s); err == nil {
 			t.Errorf("%q accepted", s)
 		}
+	}
+}
+
+func TestParseUpstreamUnix(t *testing.T) {
+	u, p, err := parseUpstream("unix:/run/harness-relay/sock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p != "/run/harness-relay/sock" || u.String() != "http://"+relayHost {
+		t.Errorf("got %q %q", u, p)
+	}
+}
+
+// The container half of the relay path: no credential is added, and the
+// agent's placeholder does not travel on either.
+func TestInjectToRelaySocketCarriesNoCredential(t *testing.T) {
+	sock := filepath.Join(t.TempDir(), "sock")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make(chan http.Header, 1)
+	relay := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got <- r.Header.Clone()
+	})}
+	go relay.Serve(ln)
+	defer relay.Close()
+	u, p, _ := parseUpstream("unix:" + sock)
+	front := httptest.NewServer(newInjector(u, nil, injectTransport(p)))
+	defer front.Close()
+
+	req, _ := http.NewRequest("POST", front.URL+"/v1/messages", strings.NewReader("{}"))
+	req.Header.Set("Authorization", "Bearer sk-ant-oat01-sandbox-placeholder")
+	req.Header.Set("X-Api-Key", "placeholder")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	h := <-got
+	if h.Get("Authorization") != "" || h.Get("X-Api-Key") != "" {
+		t.Errorf("the relay received credentials: %v", h)
+	}
+}
+
+func TestInjectKeyFailureIs502AndSendsNothing(t *testing.T) {
+	hit := false
+	up := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hit = true }))
+	defer up.Close()
+	u, _, _ := parseUpstream(up.URL)
+	failing := func() (string, error) { return "", errors.New("credential file unreadable") }
+	front := httptest.NewServer(newInjector(u, failing, up.Client().Transport))
+	defer front.Close()
+	resp, err := http.Get(front.URL + "/v1/messages")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadGateway || hit {
+		t.Errorf("status %d, upstream reached=%v; want 502 and no request", resp.StatusCode, hit)
 	}
 }

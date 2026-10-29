@@ -259,3 +259,14 @@ Only the proxy mode can inject, so pi with `--firewall` or `--no-firewall`
 exits 2 unless `--mount-auth` is given. This replaces "mount-auth only" for pi
 in **Wrapper interface**; codex, agy and opencode are unchanged. Design and
 measurements: `2026-10-29-sandbox-credential-injection-design.md`.
+
+## Amendment 4 (2026-10-29): claude's credential is injected by default too
+
+DECIDED (operator, 2026-10-29). claude no longer runs in mount auth unless
+asked: `--inject-auth`, now its default, keeps `~/.claude/.credentials.json`
+out of the container, and a relay on the host (`bin/sandbox-connect-proxy
+relay`, so `make build` is now a prerequisite) adds the host login's current
+access token to each request. `--mount-auth` restores the `~/.claude` mount;
+`--token-auth` is unchanged. This replaces Amendment 1's "mount auth" as
+claude's default. Design: `2026-10-29-sandbox-credential-injection-design.md`
+Amendment 1.

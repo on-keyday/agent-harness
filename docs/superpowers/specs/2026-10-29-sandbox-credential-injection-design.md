@@ -29,7 +29,8 @@ permissions.
   send any request the provider accepts.
 - codex, agy, opencode. codex and agy hold OAuth credentials whose refresh the
   proxy would have to take over; opencode has no credential on this host.
-- claude. Measured to work (§8), not wired.
+- claude. Measured to work (§8), not wired. **Replaced by Amendment 1**, which
+  wires it.
 
 ## 3. The mechanism
 
@@ -74,7 +75,7 @@ agent (uid 1000)                          proxy process (uid 1001)
 |---|---|---|
 | 1 | Keep the credential out of the container by having a proxy add it, rather than only narrowing the mount | red-team review (relayed), accepted by the operator |
 | 2 | On by default for pi; `--mount-auth` is the way back | operator, 2026-10-29 |
-| 3 | Implement pi now; measure claude in the same change, do not wire it | operator, 2026-10-29 |
+| 3 | Implement pi now; measure claude in the same change, do not wire it. **Replaced by Amendment 1** (claude wired, operator, same day) | operator, 2026-10-29 |
 | 4 | Plain HTTP on loopback + the agent's base URL, not a TLS MITM of the CONNECT tunnel | author |
 | 5 | The injector lives in the CONNECT proxy binary, under its uid: no new process, no new image file | author |
 | 6 | The key reaches the proxy through the environment, dropped by the entrypoint before the agent; not `podman secret` (§7) | author |
@@ -85,8 +86,8 @@ agent (uid 1000)                          proxy process (uid 1001)
 
 ## 5. Interface
 
-- `--inject-auth`: pi only (`A_INJECT` in the agent table). Exits 2 for any
-  other agent, together with `--mount-auth` or `--token-auth`, and outside the
+- `--inject-auth`: pi (and claude since Amendment 1; `A_INJECT` in the agent
+  table). Exits 2 for any other agent, together with `--mount-auth` or `--token-auth`, and outside the
   proxy mode.
 - Default: an agent whose table entry has `A_INJECT` injects unless
   `--mount-auth` or `--token-auth` is given.
@@ -144,7 +145,10 @@ claude (one-shot, `-p`): `ANTHROPIC_BASE_URL=http://127.0.0.1:18081` and
 valid OAuth access token injected: `PONG`, one `POST /v1/messages -> 200`, no
 CONNECT to any host. An interactive session was not measured; it may contact
 endpoints the one-shot does not. Wiring it would inject the `setup-token`,
-since an access token expires within hours.
+since an access token expires within hours. **Replaced by Amendment 1**: the
+setup-token on this host had stopped working (401 with no injection at all),
+and the operator chose the host's own refreshing login over issuing a
+year-long token; the expiry is handled by the CLI's own refresh.
 
 ## 9. Testing
 
@@ -157,3 +161,115 @@ since an access token expires within hours.
   injection (no `auth.json`, no key on the argv, the key in podman's
   environment), with `--history-window`, the refusals in §5, and that a
   refusal leaves no temp root.
+
+## Amendment 1 (2026-10-29): claude, through a host relay
+
+DECIDED (operator, 2026-10-29): claude injects by default too, with the
+credential the host's claude already holds, not a `setup-token`.
+
+### Problem
+
+claude's credential under mount auth is `~/.claude/.credentials.json`: an
+OAuth access token, the refresh token and a device token, all readable and
+rewritable from the container. Two things rule out pi's mechanism:
+
+- **The access token lives 8 hours** (`expiresAt` − the file's mtime = 8.00 h)
+  and the host's claude refreshes it about 5 minutes before expiry. A copy
+  handed to the proxy at start would die mid-session; the proxy (uid 1001)
+  cannot read the host file (uid 1000, 0600) to follow it.
+- **The refresh token rotates on every use** (third-party reports; consistent
+  with the measurement below, where both tokens changed). A second refresher
+  that does not write back logs the CLI out, so nothing but the CLI may refresh.
+
+Hiding only the credential file under mount auth does not work either: a file
+bind-mounted over `~/.claude/.credentials.json` inside the `~/.claude` mount is
+detached the moment the host's claude renames a refreshed file over it, and
+the container then sees the new real file (measured: a placeholder over-mount
+read `REAL-2` after a host `mv`; the kernel lazily unmounts a mount whose
+mountpoint is unlinked or renamed over in another namespace).
+
+### The mechanism
+
+```
+agent (uid 1000)                 proxy (uid 1001)                      host: relay (wrapper's pid)
+ ANTHROPIC_BASE_URL ── HTTP ──▶  inject listener ── unix socket ──▶   reads .credentials.json per request
+ placeholder OAuth token          adds nothing                         Authorization: Bearer <access token>
+                                                                       ── TLS ──▶ https://api.anthropic.com
+```
+
+- **The relay** is `sandbox-connect-proxy relay --kind claude` (same binary as
+  the proxy, `relay_unix.go`, built into `bin/` by `make build`). The wrapper
+  starts it before podman with `--parent-pid $$` and it exits when that pid
+  does; the reaper removes its directory. It ignores SIGHUP/SIGINT/SIGQUIT,
+  since it shares the agent's PTY session.
+- **Refresh**: within 5 minutes of `expiresAt` the relay runs the host's
+  `claude auth status --json` once, under a flock shared by every relay of the
+  user, then re-reads the file. Measured on claude 2.1.312 with `expiresAt`
+  set one minute past, and again with three minutes left: both tokens changed
+  and `expiresAt` moved 480 minutes out. A failed refresh still sends the token
+  read (the upstream's 401 is more useful to the agent than a 502).
+- **The socket** is bind-mounted at `/run/harness-relay/sock`. Under keep-id
+  its mode cannot tell the agent from the proxy, so `entrypoint.sh` gives the
+  directory around it to the proxy uid, 0700, before the agent starts
+  (`probe.sh`: `relay_socket=unreachable`). The host side is in a mktemp 0700
+  directory.
+- **The agent's environment**: `ANTHROPIC_BASE_URL=http://127.0.0.1:18081`,
+  `CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-sandbox-placeholder`, and
+  `CLAUDE_CODE_SUBSCRIPTION_TYPE` / `CLAUDE_CODE_RATE_LIMIT_TIER` copied from
+  the host's login by `inject_auth.py claude`. Without the last two claude
+  labels itself "Claude API" and defaults to claude-sonnet-5-5 where the host
+  defaults to claude-opus-5-5; both are read by the claude 2.1.312 binary and
+  undocumented. A placeholder credential FILE instead does not work: claude
+  then checks the login at api.anthropic.com directly, past the base URL, and
+  fails with "OAuth session expired".
+- **The per-run root** (`~/.claude`): the host's whole `projects/` (rw);
+  copies of `~/.claude.json` and `settings.json` (rw, discarded); `CLAUDE.md`,
+  `skills/`, `agents/`, `commands/`, `hooks/`, `plugins/` read-only where the
+  host has them; no `.credentials.json`. With `--history-window` the window
+  rules apply (only this cwd's projects directory, no host settings).
+- **Settings the agent saves as its default are carried back.** `/model`
+  writes `model` and `/effort` writes `modelSettings` (measured: nothing else
+  changed). On the host those take effect at once, so the reaper runs
+  `config_sync.py` every 5 seconds and once at the end, writing to the host's
+  `settings.json` only those keys, only when the container changed them. Hooks,
+  permissions and env never leave the container.
+
+### Decisions taken
+
+| # | Decision | Decided-by |
+|---|---|---|
+| A1 | claude injects by default | operator, 2026-10-29 |
+| A2 | The credential is the host's refreshing `/login`, not a `setup-token` | operator ("long-lived token" declined) |
+| A3 | Only the CLI refreshes; the relay triggers it with `claude auth status --json` | author, on the measurement |
+| A4 | The relay runs on the host, so neither token enters the container | author |
+| A5 | The relay is a mode of `sandbox-connect-proxy`, chosen by `--kind`, with agent-neutral flags (`--credentials`, `--agent-bin`) | author; flag naming at the operator's prompting |
+| A6 | Host config carried as copies + read-only mounts, not a rw mount, so the container cannot change what the host's claude runs | author |
+| A7 | `model` and `modelSettings` are synced back every 5 s, matching the host's immediate effect | operator raised the difference; author on the measured keys |
+
+### Verification (2026-10-29, claude 2.1.312)
+
+| # | Check | Result |
+|---|---|---|
+| C1 | wrapper one-shot | `PONG`, user `CLAUDE.md` loaded; proxy `INJECT POST sandbox-relay /v1/messages -> 200`, relay `INJECT POST api.anthropic.com /v1/messages -> 200`; afterwards no relay process and no temp directory left |
+| C2 | `--continue` in a second container | recalled the previous answer |
+| C3 | `probe.sh` run by claude | `config_credential: inject=unix:/run/harness-relay/sock key_in_my_env=no key_in_readable_environs=0 (unreadable: 2) relay_socket=unreachable files:none` |
+| C4 | the host's own `claude --continue` in the same cwd | resumed the container's conversation |
+| C5 | interactive, through a dummy harness's runner | banner "Opus 5.5 with high effort · Claude Team"; a typed prompt answered; only `POST /v1/messages` reached the relay |
+| C6 | `--model sonnet`, `--model haiku`, interactive `/model sonnet` | each answered on that model |
+| C7 | new wrapper on the previous image | entrypoint `FATAL: credential injector not listening`, agent not started |
+| C8 | relay that fails to start | wrapper exits 2 with the relay's own reason and "pass --mount-auth"; nothing left behind (offline test) |
+
+### Testing
+
+- `relay_unix_test.go`: a fresh token used as is; the CLI run within 5 minutes
+  of expiry and after it; one run under 20 concurrent requests; the file
+  re-read per request; a failed refresh still sends the token; a file without
+  an OAuth login refused.
+- `inject_test.go`: the container side forwards to the relay socket without
+  the agent's `Authorization` / `X-Api-Key`; a failing key source is a 502 and
+  sends nothing.
+- `test_history_window.py`: claude's default argv (no credential anywhere, the
+  copies, the read-only mounts, the environment, the relay's flags), with
+  `--history-window`, relay failure, and the reaper carrying `model` back but
+  not `hooks` (negative control: without the final sync the test fails).
+- `test_config_sync.py`, `test_inject_auth.py` (`claude` mode).

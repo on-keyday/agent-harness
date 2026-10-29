@@ -138,6 +138,11 @@ func envInt(name string, def int) int {
 }
 
 func main() {
+	// The host-side half of credential injection (relay_unix.go). Same binary
+	// so the request handling is one implementation on both sides.
+	if len(os.Args) > 1 && os.Args[1] == "relay" {
+		os.Exit(runRelay(os.Args[2:]))
+	}
 	bind := os.Getenv("SANDBOX_PROXY_BIND")
 	if bind == "" {
 		bind = "127.0.0.1"
@@ -166,15 +171,24 @@ func main() {
 	// Any fault in its setup is fatal: the entrypoint refuses to start the
 	// agent without it, rather than leave it to fail on every request.
 	if up := os.Getenv("SANDBOX_INJECT_UPSTREAM"); up != "" {
-		upstream, err := parseUpstream(up)
+		upstream, unixPath, err := parseUpstream(up)
 		if err != nil {
 			logf("FATAL SANDBOX_INJECT_UPSTREAM=%q: %v", up, err)
 			os.Exit(1)
 		}
-		key := os.Getenv("SANDBOX_INJECT_KEY")
-		if key == "" {
+		// A relay upstream holds the credential itself; one handed in here
+		// as well would only sit in this container for nothing.
+		var key keyFunc
+		k := os.Getenv("SANDBOX_INJECT_KEY")
+		switch {
+		case unixPath != "" && k != "":
+			logf("FATAL SANDBOX_INJECT_KEY is set for a relay upstream, which holds the credential itself")
+			os.Exit(1)
+		case unixPath == "" && k == "":
 			logf("FATAL SANDBOX_INJECT_UPSTREAM is set but SANDBOX_INJECT_KEY is empty")
 			os.Exit(1)
+		case k != "":
+			key = staticKey(k)
 		}
 		iport := os.Getenv("SANDBOX_INJECT_PORT")
 		if iport == "" {
@@ -186,7 +200,7 @@ func main() {
 			os.Exit(1)
 		}
 		logf("inject: listening on %s:%s -> %s", bind, iport, upstream)
-		go serveInject(iln, upstream, key)
+		go serveInject(iln, upstream, unixPath, key)
 	}
 	serve(ln, cfg)
 }

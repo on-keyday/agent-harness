@@ -63,15 +63,18 @@ Arguments: $ARGUMENTS
    One wrapper serves all six: which agent runs is `--sandbox-agent <name>`,
    which the preset supplies. codex, agy and opencode are **mount-auth only**
    (their provider credentials go into the container; no revocable-token mode
-   exists for them) — see `scripts/sandbox/README.md`. pi instead injects by
-   default: its key stays with the proxy and the container gets a placeholder
-   (`--inject-auth`; `--mount-auth` mounts `~/.pi` whole again). With no wrapper
+   exists for them) — see `scripts/sandbox/README.md`. pi and claude instead
+   inject by default: the container gets a placeholder, and the real credential
+   is added per request by the proxy (pi) or by a relay on the host (claude —
+   `bin/sandbox-connect-proxy relay`, so the checkout the wrapper runs from must
+   have had `make build`) (`--inject-auth`; `--mount-auth` mounts the config dir
+   whole again). With no wrapper
    flags a task runs behind the `--firewall-proxy` egress mode (in-container
    allowlisting CONNECT proxy, no raw agent egress, WebFetch works), with the
    proxy's DENY/ALLOW lines in a host file
    (`${TMPDIR:-/tmp}/sandbox-proxy-<task-id>.log`) rather than on the session's
    terminal, in mount auth (host agent config mounted, resume/`--continue`
-   works; pi: injection, resume works too), and with user namespaces refused (a
+   works; pi and claude: injection, resume works too), and with user namespaces refused (a
    seccomp profile derived from podman's). Wrapper controls that change this, passed per task with
    `--agent-arg` (any profile) or per slot with runner `--agent-args` (the
    DEFAULT profile only): `--firewall` (default-deny IP allowlist instead of
@@ -84,8 +87,8 @@ Arguments: $ARGUMENTS
    full isolation). A contradictory pair
    (`--no-firewall` with either firewall flag, `--no-proxy-log` with
    `--proxy-log`, any two of `--token-auth` / `--mount-auth` / `--inject-auth`)
-   exits 2, and so does pi under `--firewall` or `--no-firewall` without
-   `--mount-auth`, since only the proxy can inject — see
+   exits 2, and so do pi and claude under `--firewall` or `--no-firewall`
+   without `--mount-auth`, since only the proxy can inject — see
    `scripts/sandbox/README.md`.
    Because the roots
    usually overlap a broad existing slot (e.g. the `bash` runner serving

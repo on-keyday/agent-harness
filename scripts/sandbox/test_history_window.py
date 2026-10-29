@@ -235,7 +235,28 @@ class WrapperTests(unittest.TestCase):
         executable(tools / "podman", f"#!{sys.executable}\nimport json,sys\n" + self.podman_info
                    + f"open({str(self.capture)!r}, 'w').write(json.dumps(sys.argv[1:]))\n")
         (self.home / ".claude").mkdir()
-        (self.home / ".claude/.credentials.json").write_text("x")
+        (self.home / ".claude/.credentials.json").write_text(json.dumps({"claudeAiOauth": {
+            "accessToken": "real-access", "refreshToken": "real-refresh", "subscriptionType": "max",
+            "rateLimitTier": "tier-x"}}))
+        (self.home / ".claude/CLAUDE.md").write_text("# host instructions\n")
+        (self.home / ".claude/settings.json").write_text('{"host": "settings"}')
+        (self.home / ".claude/skills").mkdir()
+        (self.home / ".claude.json").write_text('{"host": "state"}')
+        executable(self.home / ".local/bin/claude", "#!/bin/sh\n")
+        # The host relay (sandbox-connect-proxy relay): records its argv, serves
+        # the socket the wrapper waits for, and leaves with the wrapper's pid.
+        self.relay_argv = self.tmp / "relay-argv.json"
+        relay = executable(self.tmp / "fake-relay", f"#!{sys.executable}\n" + (
+            "import json,os,socket,sys,time\n"
+            "a = sys.argv[1:]\n"
+            f"open({str(self.relay_argv)!r}, 'w').write(json.dumps(a))\n"
+            "if os.environ.get('FAKE_RELAY_FAIL'): print('FATAL relay: no token', file=sys.stderr); sys.exit(1)\n"
+            "s = socket.socket(socket.AF_UNIX); s.bind(a[a.index('--socket') + 1])\n"
+            "ppid = int(a[a.index('--parent-pid') + 1])\n"
+            "while True:\n"
+            "    try: os.kill(ppid, 0)\n"
+            "    except OSError: break\n"
+            "    time.sleep(0.05)\n"))
         token = self.tmp / "token"
         token.write_text("x")
         pi_pkg = self.tmp / "pi-pkg"
@@ -245,7 +266,8 @@ class WrapperTests(unittest.TestCase):
         (self.home / ".pi/agent/settings.json").write_text(json.dumps({"defaultProvider": "openrouter"}))
         executable(self.home / ".pi/agent/bin/fd", "#!/bin/sh\n")
         self.env = {"HOME": str(self.home), "PATH": str(tools) + os.pathsep + os.environ["PATH"], "TMPDIR": str(self.tmp),
-                    "HARNESS_SANDBOX_CLAUDE_TOKEN_FILE": str(token), "HARNESS_SANDBOX_PI_PKG": str(pi_pkg)}
+                    "HARNESS_SANDBOX_CLAUDE_TOKEN_FILE": str(token), "HARNESS_SANDBOX_PI_PKG": str(pi_pkg),
+                    "HARNESS_SANDBOX_RELAY_BIN": str(relay)}
 
     def wrap(self, agent, *args, cwd=None):
         self.capture.unlink(missing_ok=True)
@@ -260,7 +282,7 @@ class WrapperTests(unittest.TestCase):
         return err, argv
 
     def test_claude_window_mounts(self):
-        _, argv = self.ok("claude", "--history-window")
+        _, argv = self.ok("claude", "--history-window", "--mount-auth")
         home, enc = self.home, re.sub(r"[^A-Za-z0-9]", "-", str(self.wt))
         root_pair = next(a for a in argv if a.endswith(f":{home}/.claude"))
         self.assertRegex(root_pair, re.escape(str(self.tmp)) + r"/harness-sandbox-root\.[^/]+/\.claude:")
@@ -328,7 +350,7 @@ class WrapperTests(unittest.TestCase):
             ("claude", self.repo, "linked worktree", None),
             ("claude", self.plain_dir, "linked worktree", None),
             ("claude", long_wt, "200", None),
-            ("claude", self.wt, ".credentials.json", self.home / ".claude/.credentials.json"),
+            ("claude", self.wt, ".credentials.json", self.home / ".claude/.credentials.json", "--mount-auth"),
             # --mount-auth: pi injects by default, and then mounts no auth.json.
             ("pi", self.wt, "auth.json", self.home / ".pi/agent/auth.json", "--mount-auth"),
         ]
@@ -403,7 +425,9 @@ class WrapperTests(unittest.TestCase):
             ("pi", ("--no-firewall",), "--mount-auth"),
             ("pi", ("--inject-auth", "--mount-auth"), "contradict"),
             ("pi", ("--inject-auth", "--token-auth"), "contradict"),
-            ("claude", ("--inject-auth",), "no credential injection"),
+            ("claude", ("--firewall",), "--mount-auth"),
+            ("claude", ("--inject-auth", "--token-auth"), "contradict"),
+            ("codex", ("--inject-auth",), "no credential injection"),
         ]
         for agent, args, why in cases:
             with self.subTest(agent=agent, args=args):
@@ -422,6 +446,89 @@ class WrapperTests(unittest.TestCase):
         self.assertEqual(list(self.tmp.glob("harness-sandbox-root.*")), [])
         self.assertEqual(list(self.tmp.glob("harness-sandbox-inject.*")), [])
 
+    def claude_root(self, argv):
+        pair = next(a for a in argv if a.endswith(f":{self.home}/.claude"))
+        self.assertRegex(pair, r"/harness-sandbox-root\.[^/]+/\.claude:")
+        return Path(pair.split(":")[0]).parent
+
+    def test_claude_injects_by_default_through_the_relay(self):
+        err, argv = self.ok("claude")
+        home = self.home
+        root = self.claude_root(argv)
+        # Every conversation, as under mount auth; the credential nowhere.
+        self.assertIn(f"{home}/.claude/projects:{home}/.claude/projects", argv)
+        self.assertFalse(any(".credentials.json" in a for a in argv), argv)
+        self.assertNotIn(f"{home}/.claude:{home}/.claude", argv)
+        # Host config: copies the container may write, the rest read-only.
+        self.assertEqual((root / ".claude.json").read_text(), '{"host": "state"}')
+        self.assertEqual((root / ".claude/settings.json").read_text(), '{"host": "settings"}')
+        self.assertIn(f"{home}/.claude/CLAUDE.md:{home}/.claude/CLAUDE.md:ro", argv)
+        self.assertIn(f"{home}/.claude/skills:{home}/.claude/skills:ro", argv)
+        self.assertFalse(any("/.claude/hooks:" in a for a in argv))  # absent on this host
+        self.assertIn("ANTHROPIC_BASE_URL=http://127.0.0.1:18081", argv)
+        self.assertIn("CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-sandbox-placeholder", argv)
+        # The login's tier, so the agent picks the host's default model.
+        self.assertIn("CLAUDE_CODE_SUBSCRIPTION_TYPE=max", argv)
+        self.assertIn("CLAUDE_CODE_RATE_LIMIT_TIER=tier-x", argv)
+        self.assertFalse(any("real-access" in a or "real-refresh" in a for a in argv))
+        self.assertIn("SANDBOX_INJECT_UPSTREAM=unix:/run/harness-relay/sock", argv)
+        self.assertTrue(any(re.fullmatch(r".*/harness-sandbox-relay\.[^/]+/sock:/run/harness-relay/sock", a) for a in argv), argv)
+        self.assertNotIn("SANDBOX_INJECT_KEY", argv)
+        self.assertIn("SANDBOX_SEED_CONFIG=1", argv)
+        self.assertIn("auth=inject", err)
+        relay = json.loads(self.relay_argv.read_text())
+        flag = lambda name: relay[relay.index(name) + 1]
+        self.assertEqual(relay[0], "relay")
+        self.assertEqual(flag("--kind"), "claude")
+        self.assertEqual(flag("--upstream"), "https://api.anthropic.com")
+        self.assertEqual(flag("--credentials"), f"{home}/.claude/.credentials.json")
+        self.assertEqual(flag("--agent-bin"), str(home / ".local/bin/claude"))
+
+    def test_claude_reaper_carries_the_saved_model_back_to_the_host(self):
+        (self.tools / "setsid").unlink()  # the real one: this test needs the reaper
+        # podman stands in for the container's claude running `/model sonnet`:
+        # it edits the per-run copy of settings.json, and a hook besides.
+        executable(self.tools / "podman", f"#!{sys.executable}\n" + (
+            "import json,sys,pathlib\n" + self.podman_info +
+            "if sys.argv[1] == 'run':\n"
+            "    a = sys.argv\n"
+            f"    root = next(x.split(':')[0] for x in a if x.endswith(':{self.home}/.claude'))\n"
+            "    p = pathlib.Path(root) / 'settings.json'\n"
+            "    d = json.loads(p.read_text()); d['model'] = 'sonnet'; d['hooks'] = {'Stop': ['evil']}\n"
+            "    p.write_text(json.dumps(d))\n"))
+        self.ok("claude")
+        host = self.home / ".claude/settings.json"
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline and "sonnet" not in host.read_text():
+            time.sleep(0.2)
+        log = self.tmp / "sandbox-reaper.log"
+        d = json.loads(host.read_text())
+        self.assertEqual(d.get("model"), "sonnet", log.read_text() if log.exists() else "")
+        self.assertNotIn("hooks", d)
+        self.assertEqual(d["host"], "settings")
+
+    def test_claude_inject_with_window_carries_no_host_config(self):
+        _, argv = self.ok("claude", "--history-window")
+        home, enc = self.home, re.sub(r"[^A-Za-z0-9]", "-", str(self.wt))
+        root = self.claude_root(argv)
+        self.assertIn(f"{home}/.claude/projects/{enc}:{home}/.claude/projects/{enc}", argv)
+        self.assertEqual((root / ".claude.json").read_text().strip(), "{}")
+        self.assertFalse((root / ".claude/settings.json").exists())
+        self.assertFalse(any(a.endswith(":ro") and "/.claude/" in a for a in argv), argv)
+        self.assertFalse(any(".credentials.json" in a for a in argv))
+        self.assertIn("SANDBOX_INJECT_UPSTREAM=unix:/run/harness-relay/sock", argv)
+
+    def test_claude_relay_failure_refuses_and_cleans_up(self):
+        self.env["FAKE_RELAY_FAIL"] = "1"
+        rc, err, argv = self.wrap("claude")
+        self.assertEqual(rc, 2, err)
+        self.assertIn("relay did not start", err)
+        self.assertIn("no token", err)
+        self.assertIn("--mount-auth", err)
+        self.assertIsNone(argv)
+        self.assertEqual(list(self.tmp.glob("harness-sandbox-relay.*")), [])
+        self.assertEqual(list(self.tmp.glob("harness-sandbox-root.*")), [])
+
     def test_mount_auth_still_mounts_whole_pi(self):
         _, argv = self.ok("pi", "--mount-auth", "--firewall")
         self.assertIn(f"{self.home}/.pi:{self.home}/.pi", argv)
@@ -432,7 +539,7 @@ class WrapperTests(unittest.TestCase):
         self.codex_calls = self.tmp / "codex-calls"
         executable(bundle / "codex", f'#!/bin/sh\necho "$*" >>{self.codex_calls}\n')
         executable(bundle / "codex-code-mode-host", "#!/bin/sh\n")
-        (self.home / ".local/bin").mkdir(parents=True)
+        (self.home / ".local/bin").mkdir(parents=True, exist_ok=True)
         (self.home / ".local/bin/codex").symlink_to(bundle / "codex")
         (self.home / ".codex").mkdir()
         (self.home / ".codex/auth.json").write_text("x")

@@ -88,5 +88,45 @@ class PiTests(unittest.TestCase):
         self.assertRefused("no pi credential file")
 
 
+class ClaudeTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.creds = Path(temp.name) / ".credentials.json"
+
+    def run_main(self):
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            rc = ia.main(["claude", "--credentials", str(self.creds)])
+        return rc, stdout.getvalue(), stderr.getvalue()
+
+    def test_env_carries_the_tier_and_no_token(self):
+        self.creds.write_text(json.dumps({"claudeAiOauth": {
+            "accessToken": "a-secret", "refreshToken": "r-secret", "subscriptionType": "max",
+            "rateLimitTier": "default_claude_max_5x"}}))
+        rc, out, err = self.run_main()
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(out, "CLAUDE_CODE_SUBSCRIPTION_TYPE=max\nCLAUDE_CODE_RATE_LIMIT_TIER=default_claude_max_5x\n")
+        self.assertNotIn("secret", out)
+
+    def test_missing_tier_fields_are_left_out(self):
+        self.creds.write_text(json.dumps({"claudeAiOauth": {"accessToken": "a"}}))
+        rc, out, _ = self.run_main()
+        self.assertEqual((rc, out), (0, ""))
+
+    def test_refusals(self):
+        for body, why in ((None, "no claude credential file"), ("not json", "cannot read"),
+                          (json.dumps({"other": {}}), "no claudeAiOauth login")):
+            with self.subTest(why=why):
+                if body is None:
+                    self.creds.unlink(missing_ok=True)
+                else:
+                    self.creds.write_text(body)
+                rc, out, err = self.run_main()
+                self.assertEqual(rc, 2)
+                self.assertEqual(out, "")
+                self.assertIn(why, err)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -15,7 +15,7 @@ running the wrong agent looks identical to the right one in every listing.
 
 | agent | host binary bridged in | config mounted (mount auth) | token auth | image fallback |
 |---|---|---|---|---|
-| claude | `~/.local/bin/claude` | `~/.claude` + `~/.claude.json` | yes (`setup-token`) | yes (npm copy) |
+| claude | `~/.local/bin/claude` | `~/.claude` + `~/.claude.json`, only under `--mount-auth`: by default the credential is injected (see "Credential injection") | yes (`setup-token`) | yes (npm copy) |
 | codex | resolved release `bin/` directory, including helpers | `~/.codex` | **no** | no |
 | agy | `~/.local/bin/agy` | `~/.gemini` | **no** | no |
 | opencode | `/usr/bin/opencode` | `~/.config/opencode` + `~/.local/share/opencode` + `~/.cache/opencode` + `~/.local/state/opencode` | **no** | no |
@@ -74,11 +74,11 @@ gemini-cli, so it carries that product's credentials too (tier-ineligible on
 this host, but present) — and `~/.local/share/opencode/auth.json` for opencode.
 The default `--firewall-proxy` mode is the mitigation that matters for them,
 since it removes raw-socket egress entirely; `--no-firewall` gives that up.
-**pi is the exception**: by default its credential never enters the container
-(see "Credential injection" below). Under `--mount-auth` it is in
-`~/.pi/agent/auth.json`, and the `~/.pi` mount is also read-write for
-`settings.json` and `extensions/`, which the host's own pi loads and runs — the
-same host-execution surface `~/.claude`'s hooks are under mount auth.
+**pi and claude are the exceptions**: by default their credential never enters
+the container (see "Credential injection" below). Under `--mount-auth` it is in
+`~/.pi/agent/auth.json` / `~/.claude/.credentials.json`, and the mount is also
+read-write for what the host's own agent loads and runs — pi's `settings.json`
+and `extensions/`, claude's `settings.json` hooks and plugins.
 
 **opencode needs four mounts, and each is load-bearing.** It spreads across all
 four XDG directories: config + plugins, `auth.json` + `opencode.db`, the
@@ -175,6 +175,9 @@ created in a bind mount are owned by `1000:1000` on the host.
 - `/etc/subuid` + `/etc/subgid` entries for your user (present by default).
 - `python3` on the host: the wrapper derives the container's seccomp profile
   with it on every start (`--allow-userns` skips that).
+- `make build` in the checkout the wrapper runs from: claude's default
+  (credential injection) starts `bin/sandbox-connect-proxy relay` on the host,
+  and exits 2 naming `make build` when it is missing.
 
 ## Regression and upstream release checks
 
@@ -289,9 +292,11 @@ The wrapper (`agent-in-podman.sh`) bind-mounts, at identical host paths:
   `.git` file and its gitdir's `commondir`/`gitdir` are read-only too. The repo
   root itself is not mounted: the main checkout and the other tasks' worktrees
   are not in the container. See "git directories" under the security model;
-- **`~/.claude`** (dir) and **`~/.claude.json`** (file) — reuses your host login,
-  session store, and config. Without the latter claude warns "config not found"
-  and rewrites it every run.
+- under `--mount-auth`, **`~/.claude`** (dir) and **`~/.claude.json`** (file) —
+  reuses your host login, session store, and config. Without the latter claude
+  warns "config not found" and rewrites it every run. By default claude's
+  credential is injected instead, and `~/.claude` is a per-run directory (see
+  "Credential injection").
 
 ## Security model (what's confined, what isn't)
 
@@ -332,28 +337,30 @@ The wrapper (`agent-in-podman.sh`) bind-mounts, at identical host paths:
   gives one task podman's default profile back. The runner log line carries
   `userns=deny|allow`, and `probe.sh`'s `userns_create` measures it.
 - **Exposed (intentional):** the mounted repo worktree (that's where edits go),
-  plus — in the default **mount auth** mode — `~/.claude` + `~/.claude.json`,
-  bind-mounted **read-write** (login/session/config; the container can read your
-  full claude config, **including the permanent refresh token**, and can rewrite
-  it). Together with the worktree that is the complete set of writes that outlive
-  the container. They cannot be made read-only in this mode — claude writes its
-  session store there, which is the whole point of mount auth. Use **token auth**
-  (below) to remove the exposure instead; it keeps `~/.claude` inside the image's
-  own ephemeral home. Do **not** treat the container as a boundary against a
-  hostile agent; it reduces *accidental* blast radius for dogfood use.
+  plus — under **mount auth** (`--mount-auth` for claude) — `~/.claude` +
+  `~/.claude.json`, bind-mounted **read-write** (login/session/config; the
+  container can read your full claude config, **including the permanent refresh
+  token**, and can rewrite it). Together with the worktree that is the complete
+  set of writes that outlive the container. They cannot be made read-only in
+  this mode — claude writes its session store there, which is the whole point of
+  mount auth. claude's default, **credential injection** (below), removes the
+  exposure and keeps resume; token auth removes it too, without resume. Do
+  **not** treat the container as a boundary against a hostile agent; it reduces
+  *accidental* blast radius for dogfood use.
 
 ### Authentication
 
-- **Mount auth (default except for pi, and the ONLY mode for codex, agy and opencode):** bind-mounts the
+- **Mount auth (default except for pi and claude, and the ONLY mode for codex, agy and opencode):** bind-mounts the
   agent's config paths (see the table above) so the sandbox reuses your host
   login + session resume. Simplest, but the personal **refresh token** is in
   the container — combined with egress + untrusted input that's a real
   exfil-to-permanent-compromise risk. The default `--firewall-proxy` mode
   limits egress to allowlisted hosts; `--no-firewall` removes that limit.
-  `--mount-auth` names this mode explicitly; for pi it is the way back from
-  injection, otherwise it changes nothing.
-- **Credential injection (`--inject-auth`, pi only, its default):** the
-  credential stays with the proxy; see the section below.
+  `--mount-auth` names this mode explicitly; for pi and claude it is the way
+  back from injection, otherwise it changes nothing.
+- **Credential injection (`--inject-auth`, pi and claude, their default):** the
+  credential stays with the proxy (pi) or on the host (claude); see the section
+  below.
 - **Token auth (`--token-auth`, claude only, opt-in):** put a dedicated,
   revocable token in a file and the wrapper authenticates via
   `CLAUDE_CODE_OAUTH_TOKEN` **without mounting `~/.claude`** — so a leak means
@@ -489,7 +496,7 @@ been there.
 
 | agent | config dir in the container | the window (host, rw) | from the host, singly |
 |---|---|---|---|
-| claude | empty per run (`~/.claude`, `~/.claude.json` = `{}`, seeded like token auth) | `~/.claude/projects/<cwd with every non-alphanumeric byte as ->` | `.credentials.json` (rw; not under `--token-auth`) |
+| claude | empty per run (`~/.claude`, `~/.claude.json` = `{}`, seeded like token auth) | `~/.claude/projects/<cwd with every non-alphanumeric byte as ->` | `.credentials.json` (rw) only under `--mount-auth`; nothing under the default injection or `--token-auth` |
 | pi | empty per run (`~/.pi`) | `~/.pi/agent/sessions/--<cwd, / \ : as ->--` | `settings.json` and `agent/bin` (ro); `auth.json` (rw) only under `--mount-auth`, otherwise the injected `models.json` (ro) |
 | codex | empty per run (`~/.codex`) | a per-task directory at `~/.codex/sessions` (below) | `auth.json` (rw), `config.toml` (ro), `thread-writer-locks/` (rw) |
 
@@ -543,45 +550,74 @@ plugins, MCP config — starts empty every run and is discarded.
 
 Design and measurements: `docs/superpowers/specs/2026-10-26-sandbox-history-window-design.md`.
 
-### Credential injection (`--inject-auth`, pi, on by default)
+### Credential injection (`--inject-auth`, pi and claude, on by default)
 
-The agent gets a placeholder key and an API base URL on loopback; the proxy
-process, under its own uid, adds the real credential to each request and
-forwards it over TLS to the provider. The credential is in no file the
-container sees, in no environment the agent's uid can read, and on no argv.
+The agent gets a placeholder key and an API base URL on loopback, where the
+proxy's injector listens; the real credential is added to each request
+outside anything the agent's uid can read, and the request goes on over TLS.
+The credential is in no file the container sees, in no environment the agent
+can read, and on no argv. Two ways, chosen per agent:
 
-- **What the container gets:** a per-run `~/.pi` (as under `--history-window`)
-  holding the host's **whole** sessions store (rw, so every conversation stays
-  resumable both ways), `settings.json` and `agent/bin` (ro), and a generated
-  `models.json` (ro) that sets the default provider's `baseUrl` to
-  `http://127.0.0.1:18081/…` and its `apiKey` to a placeholder. No `auth.json`,
-  no `extensions/`. With `--history-window` too, the store narrows to this
-  cwd's directory.
+| | pi | claude |
+|---|---|---|
+| credential | a static provider key (`auth.json`, `api_key`) | the OAuth access token in `~/.claude/.credentials.json`, 8 hours long, which the host's claude refreshes |
+| who adds it | the proxy, under its own uid (`SANDBOX_INJECT_KEY`, dropped from the entrypoint's environment before the agent starts) | a relay on the HOST (`bin/sandbox-connect-proxy relay`), which re-reads the file per request; the container never holds it |
+| agent config | a generated `models.json` (ro): the provider's `baseUrl` on loopback, a placeholder `apiKey` | `ANTHROPIC_BASE_URL` on loopback and a placeholder `CLAUDE_CODE_OAUTH_TOKEN`, plus `CLAUDE_CODE_SUBSCRIPTION_TYPE` / `CLAUDE_CODE_RATE_LIMIT_TIER` copied from the host's login |
+| per-run config root | the host's **whole** sessions store (rw), `settings.json` and `agent/bin` (ro); no `auth.json`, no `extensions/` | the host's **whole** `projects/` (rw); copies of `~/.claude.json` and `settings.json` (rw, discarded); `CLAUDE.md`, `skills/`, `agents/`, `commands/`, `hooks/`, `plugins/` read-only; no `.credentials.json` |
+
+With `--history-window` too, the store narrows to this cwd's directory and
+claude's copies and read-only config are left out (the window carries no host
+settings).
+
 - **What it protects, and what not:** the credential cannot leave the
-  container to be used later or elsewhere. The agent can still **spend** it, on
-  any path of that one provider, while the container runs.
+  container to be used later or elsewhere. The agent can still **spend** it,
+  on any path of that one provider, while the container runs. claude's refresh
+  token is not in the container in any form.
+- **claude's token refresh stays with the CLI.** The refresh token rotates on
+  every use, so the relay never refreshes it itself: when the access token is
+  within 5 minutes of expiry it runs the host's `claude auth status --json`
+  once (serialised across relays by a lock file), which refreshes it and writes
+  the file back (measured 2026-10-29, claude 2.1.312, with the token one minute
+  past expiry and with three minutes left).
+- **claude's model and tier come from two undocumented variables.** With a
+  placeholder token alone claude does not know the subscription: it labels
+  itself "Claude API" and defaults to Sonnet where the host defaults to Opus.
+  `CLAUDE_CODE_SUBSCRIPTION_TYPE` and `CLAUDE_CODE_RATE_LIMIT_TIER` fix that
+  (read from the claude 2.1.312 binary; measured). A placeholder credential
+  FILE does not work: claude then checks the login directly at
+  api.anthropic.com, past the base URL, and fails. If a claude update drops
+  those variables, sandboxed claude falls back to the API defaults, with no
+  error. `/model` and `--model` work as usual; `/model`'s "saved as your
+  default" lands in the per-run copy of `settings.json` and is discarded.
 - **What it needs:** the default `--firewall-proxy` mode (`--firewall` and
-  `--no-firewall` exit 2: pass `--mount-auth` with them), a `defaultProvider`
-  in `~/.pi/agent/settings.json` whose `auth.json` entry is an `api_key`, and a
-  known base URL for it — from the host's `models.json`, else built in
-  (openrouter only, the provider measured). An OAuth credential, an unknown
-  provider, or a model with its own `baseUrl` exits 2 with the reason and
-  "pass --mount-auth". Never a silent fallback to mounting the credential.
+  `--no-firewall` exit 2: pass `--mount-auth` with them). pi: a
+  `defaultProvider` in `~/.pi/agent/settings.json` whose `auth.json` entry is
+  an `api_key`, and a known base URL for it — from the host's `models.json`,
+  else built in (openrouter only, the provider measured). claude: a `/login`
+  session in `~/.claude/.credentials.json`, the host claude at
+  `~/.local/bin/claude`, and `bin/sandbox-connect-proxy` (`make build`). Any
+  of these missing exits 2 with the reason and "pass --mount-auth". Never a
+  silent fallback to mounting the credential.
 - **Where to see it:** the runner log's line reads `auth=inject`; the proxy log
   has `inject: listening …` and one `INJECT <method> <host> <path> -> <status>`
-  per request; `probe.sh`'s `config_credential` line reports the declared
-  upstream, whether the key leaked into the agent's environment, and which
-  credential files are in the container (pi writes an `auth.json` of `{}`
-  itself: 2 bytes is expected).
+  per request; claude's relay logs the same lines, and each `auth status` it
+  ran, to `${TMPDIR:-/tmp}/sandbox-relay-<task-id>.log`. `probe.sh`'s
+  `config_credential` line reports the declared upstream, whether the key
+  leaked into the agent's environment, whether the relay socket is reachable
+  from the agent (it must not be), and which credential files are in the
+  container (pi writes an `auth.json` of `{}` itself: 2 bytes is expected).
 - **The image must be rebuilt** (`build.sh`): the injector lives in the proxy
-  binary and the key handling in `entrypoint.sh`.
+  binary and the key and relay-socket handling in `entrypoint.sh`. A new
+  wrapper on an old image fails closed: the entrypoint finds no injector and
+  refuses to start the agent.
 
-Measured 2026-10-29 through the wrapper (pi 1.4.0, openrouter): a one-shot,
+Measured 2026-10-29 through the wrapper. pi (1.4.0, openrouter): a one-shot,
 `--continue` in a second container, and the host's own pi resuming the
-container's conversation. claude was measured to work the same way
-(`ANTHROPIC_BASE_URL` + a placeholder `CLAUDE_CODE_OAUTH_TOKEN`, one
-`POST /v1/messages` and no other host contacted, one-shot only) but is not
-wired: its injectable credential would be the `setup-token`.
+container's conversation. claude (2.1.312): the same three, plus `probe.sh`
+run by claude itself (`relay_socket=unreachable`, no key in any readable
+environment, no credential file), an interactive session through a runner,
+`/model` and `--model`; each request was one `POST /v1/messages` and no other
+API host was contacted.
 Design: `docs/superpowers/specs/2026-10-29-sandbox-credential-injection-design.md`.
 
 ### Verifying the above, instead of trusting it
