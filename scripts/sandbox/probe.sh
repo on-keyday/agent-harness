@@ -56,12 +56,13 @@ else fw="none (open egress)"; fi
 # a bare `opencode` alternative — which would also match any mounted worktree
 # that happens to be named opencode.
 cfg_re=' /[^ ]*/(\.claude(\.json)?|\.codex|\.gemini|\.pi|(\.config|\.cache|\.local/(share|state))/opencode)( |$)'
-# Under --history-window the config root IS a bind mount, but of a per-run host
-# temp dir (agent-in-podman.sh names it harness-sandbox-root.*): mountinfo's
-# field 4, the mount's root inside its source filesystem, carries that name.
-# Reading it as "mount" would claim the whole host config is in here.
+# Under --history-window or --inject-auth the config root IS a bind mount, but
+# of a per-run host temp dir (agent-in-podman.sh names it
+# harness-sandbox-root.*): mountinfo's field 4, the mount's root inside its
+# source filesystem, carries that name. Reading it as "mount" would claim the
+# whole host config is in here.
 if grep -E "$cfg_re" /proc/self/mountinfo 2>/dev/null | awk '$4 ~ /\/harness-sandbox-root\./ {f=1} END {exit !f}'; then
-	auth="window-root (per-run host temp dir as config root; see config_history)"
+	auth="per-run-root (per-run host temp dir as config root; see config_history, config_credential)"
 elif grep -qE "$cfg_re" /proc/self/mountinfo 2>/dev/null; then
 	auth="mount (host agent config bind-mounted rw; persists past the container)"
 else
@@ -104,6 +105,23 @@ PY
 )"
 fi
 add "config_history" "${SANDBOX_HISTORY:-unset (pre-window wrapper)} | visible:${hist:- no agent store}"
+# Credential injection (--inject-auth): the declared upstream, whether the
+# credential meant for the proxy leaked into this process's environment, and
+# which credential files are in here. Under injection the agent's own one must
+# be absent or a stub the agent wrote itself (pi creates auth.json holding {}).
+creds=""
+for f in .claude/.credentials.json .codex/auth.json .pi/agent/auth.json .gemini/antigravity-cli/antigravity-oauth-token .local/share/opencode/auth.json; do
+	[ -e "$HOME/$f" ] && creds="$creds$f($(wc -c <"$HOME/$f" 2>/dev/null || echo unreadable)B),"
+done
+# And in every process environment this uid CAN read: the proxy and PID 1 hold
+# the key, and must be among the unreadable ones.
+env_hits=0 env_denied=0
+for e in /proc/[0-9]*/environ; do
+	if v=$(tr '\0' '\n' <"$e" 2>/dev/null); then
+		printf '%s\n' "$v" | grep -q '^SANDBOX_INJECT_KEY=.' && env_hits=$((env_hits + 1))
+	else env_denied=$((env_denied + 1)); fi
+done
+add "config_credential" "inject=${SANDBOX_INJECT_UPSTREAM:-off} key_in_my_env=$([ -n "${SANDBOX_INJECT_KEY:-}" ] && echo YES-LEAKED || echo no) key_in_readable_environs=$env_hits (unreadable: $env_denied) files:${creds:-none}"
 
 # --- identity / am I even in a container -------------------------------------
 add "id" "$(id 2>&1)"

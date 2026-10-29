@@ -19,7 +19,7 @@ running the wrong agent looks identical to the right one in every listing.
 | codex | resolved release `bin/` directory, including helpers | `~/.codex` | **no** | no |
 | agy | `~/.local/bin/agy` | `~/.gemini` | **no** | no |
 | opencode | `/usr/bin/opencode` | `~/.config/opencode` + `~/.local/share/opencode` + `~/.cache/opencode` + `~/.local/state/opencode` | **no** | no |
-| pi | the `pi-coding-agent` package directory (ro) | `~/.pi` | **no** | no |
+| pi | the `pi-coding-agent` package directory (ro) | `~/.pi`, only under `--mount-auth`: by default the credential is injected (see "Credential injection") | **no** | no |
 | bash | — (the image's own) | — | — | yes |
 
 No agent is installed into the image: the host binary is bind-mounted over the
@@ -66,17 +66,19 @@ the file). The wrapper turns off pi's version check on every run
 (`PI_SKIP_VERSION_CHECK`; the read-only package cannot be updated from inside)
 and its remaining automatic traffic under a firewall (`PI_OFFLINE`).
 
-**codex, agy, opencode and pi are mount-auth only.** None has a known
+**codex, agy and opencode are mount-auth only.** None has a known
 revocable-token mode of the kind claude's `setup-token` provides, so running them
 here puts that provider's credentials in the container with no narrower option:
 `~/.codex/auth.json` for codex, `~/.gemini` for agy — the latter shared with
 gemini-cli, so it carries that product's credentials too (tier-ineligible on
-this host, but present) — `~/.local/share/opencode/auth.json` for opencode, and
-`~/.pi/agent/auth.json` for pi. The `~/.pi` mount is also read-write for
-`settings.json` and `extensions/`, which the host's own pi loads and runs — the
-same host-execution surface `~/.claude`'s hooks are under mount auth.
+this host, but present) — and `~/.local/share/opencode/auth.json` for opencode.
 The default `--firewall-proxy` mode is the mitigation that matters for them,
 since it removes raw-socket egress entirely; `--no-firewall` gives that up.
+**pi is the exception**: by default its credential never enters the container
+(see "Credential injection" below). Under `--mount-auth` it is in
+`~/.pi/agent/auth.json`, and the `~/.pi` mount is also read-write for
+`settings.json` and `extensions/`, which the host's own pi loads and runs — the
+same host-execution surface `~/.claude`'s hooks are under mount auth.
 
 **opencode needs four mounts, and each is load-bearing.** It spreads across all
 four XDG directories: config + plugins, `auth.json` + `opencode.db`, the
@@ -342,13 +344,16 @@ The wrapper (`agent-in-podman.sh`) bind-mounts, at identical host paths:
 
 ### Authentication
 
-- **Mount auth (default, and the ONLY mode for codex, agy, opencode and pi):** bind-mounts the
+- **Mount auth (default except for pi, and the ONLY mode for codex, agy and opencode):** bind-mounts the
   agent's config paths (see the table above) so the sandbox reuses your host
   login + session resume. Simplest, but the personal **refresh token** is in
   the container — combined with egress + untrusted input that's a real
   exfil-to-permanent-compromise risk. The default `--firewall-proxy` mode
   limits egress to allowlisted hosts; `--no-firewall` removes that limit.
-  `--mount-auth` names this mode explicitly and changes nothing.
+  `--mount-auth` names this mode explicitly; for pi it is the way back from
+  injection, otherwise it changes nothing.
+- **Credential injection (`--inject-auth`, pi only, its default):** the
+  credential stays with the proxy; see the section below.
 - **Token auth (`--token-auth`, claude only, opt-in):** put a dedicated,
   revocable token in a file and the wrapper authenticates via
   `CLAUDE_CODE_OAUTH_TOKEN` **without mounting `~/.claude`** — so a leak means
@@ -485,7 +490,7 @@ been there.
 | agent | config dir in the container | the window (host, rw) | from the host, singly |
 |---|---|---|---|
 | claude | empty per run (`~/.claude`, `~/.claude.json` = `{}`, seeded like token auth) | `~/.claude/projects/<cwd with every non-alphanumeric byte as ->` | `.credentials.json` (rw; not under `--token-auth`) |
-| pi | empty per run (`~/.pi`) | `~/.pi/agent/sessions/--<cwd, / \ : as ->--` | `auth.json` (rw), `settings.json` and `agent/bin` (ro) |
+| pi | empty per run (`~/.pi`) | `~/.pi/agent/sessions/--<cwd, / \ : as ->--` | `settings.json` and `agent/bin` (ro); `auth.json` (rw) only under `--mount-auth`, otherwise the injected `models.json` (ro) |
 | codex | empty per run (`~/.codex`) | a per-task directory at `~/.codex/sessions` (below) | `auth.json` (rw), `config.toml` (ro), `thread-writer-locks/` (rw) |
 
 The empty config dir is a host temp dir (`${TMPDIR:-/tmp}/harness-sandbox-root.*`)
@@ -538,6 +543,47 @@ plugins, MCP config — starts empty every run and is discarded.
 
 Design and measurements: `docs/superpowers/specs/2026-10-26-sandbox-history-window-design.md`.
 
+### Credential injection (`--inject-auth`, pi, on by default)
+
+The agent gets a placeholder key and an API base URL on loopback; the proxy
+process, under its own uid, adds the real credential to each request and
+forwards it over TLS to the provider. The credential is in no file the
+container sees, in no environment the agent's uid can read, and on no argv.
+
+- **What the container gets:** a per-run `~/.pi` (as under `--history-window`)
+  holding the host's **whole** sessions store (rw, so every conversation stays
+  resumable both ways), `settings.json` and `agent/bin` (ro), and a generated
+  `models.json` (ro) that sets the default provider's `baseUrl` to
+  `http://127.0.0.1:18081/…` and its `apiKey` to a placeholder. No `auth.json`,
+  no `extensions/`. With `--history-window` too, the store narrows to this
+  cwd's directory.
+- **What it protects, and what not:** the credential cannot leave the
+  container to be used later or elsewhere. The agent can still **spend** it, on
+  any path of that one provider, while the container runs.
+- **What it needs:** the default `--firewall-proxy` mode (`--firewall` and
+  `--no-firewall` exit 2: pass `--mount-auth` with them), a `defaultProvider`
+  in `~/.pi/agent/settings.json` whose `auth.json` entry is an `api_key`, and a
+  known base URL for it — from the host's `models.json`, else built in
+  (openrouter only, the provider measured). An OAuth credential, an unknown
+  provider, or a model with its own `baseUrl` exits 2 with the reason and
+  "pass --mount-auth". Never a silent fallback to mounting the credential.
+- **Where to see it:** the runner log's line reads `auth=inject`; the proxy log
+  has `inject: listening …` and one `INJECT <method> <host> <path> -> <status>`
+  per request; `probe.sh`'s `config_credential` line reports the declared
+  upstream, whether the key leaked into the agent's environment, and which
+  credential files are in the container (pi writes an `auth.json` of `{}`
+  itself: 2 bytes is expected).
+- **The image must be rebuilt** (`build.sh`): the injector lives in the proxy
+  binary and the key handling in `entrypoint.sh`.
+
+Measured 2026-10-29 through the wrapper (pi 1.4.0, openrouter): a one-shot,
+`--continue` in a second container, and the host's own pi resuming the
+container's conversation. claude was measured to work the same way
+(`ANTHROPIC_BASE_URL` + a placeholder `CLAUDE_CODE_OAUTH_TOKEN`, one
+`POST /v1/messages` and no other host contacted, one-shot only) but is not
+wired: its injectable credential would be the `setup-token`.
+Design: `docs/superpowers/specs/2026-10-29-sandbox-credential-injection-design.md`.
+
 ### Verifying the above, instead of trusting it
 
 `probe.sh` runs **inside** the container and reports the measured state of every
@@ -548,9 +594,10 @@ open to any host and the proxy mode does not, upstream's blanket ssh rule existe
 only in ip mode, and `~/.claude` is a host-persistent write surface under mount
 auth but absent under token auth. A mode-less "blocked" reads later as "blocked
 in every mode", which is how partial coverage passes for full. `config_auth`
-reads `window-root` under `--history-window`, and `config_history` names the
-declared mode and lists the conversation directories actually visible, each
-host-mounted one marked `(host)` (codex: the rollout count and their cwds).
+reads `per-run-root` under `--history-window` and `--inject-auth`,
+`config_history` names the declared mode and lists the conversation
+directories actually visible, each host-mounted one marked `(host)` (codex: the
+rollout count and their cwds), and `config_credential` reports injection.
 The rest — what the mounts actually expose, whether host processes
 are visible, whether a user namespace can be created, which egress succeeds (it probes one allowlisted target *and* one
 that must be refused), whether the harness-server carve-out is still one port

@@ -40,6 +40,25 @@ if [ "${SANDBOX_FIREWALL_PROXY:-0}" = "1" ]; then
     if (exec 3<>"/dev/tcp/127.0.0.1/$PROXY_PORT") 2>/dev/null; then break; fi
     sleep 0.1
   done
+  # Credential injection (--inject-auth): the same proxy process also serves a
+  # loopback listener that adds the agent's credential to each request
+  # (cmd/sandbox-connect-proxy/inject.go). The credential reached the proxy
+  # through the environment it inherited above, and is dropped from ours before
+  # anything runs as the agent. Without the listener the agent could only fail
+  # on every request, so its absence is fatal.
+  if [ -n "${SANDBOX_INJECT_UPSTREAM:-}" ]; then
+    INJECT_PORT="${SANDBOX_INJECT_PORT:-18081}"
+    up=0
+    for _ in $(seq 1 50); do
+      if (exec 3<>"/dev/tcp/127.0.0.1/$INJECT_PORT") 2>/dev/null; then up=1; break; fi
+      sleep 0.1
+    done
+    [ "$up" = 1 ] || {
+      echo "FATAL: credential injector not listening on 127.0.0.1:$INJECT_PORT; refusing to start the agent without its credential" >&2
+      exit 1
+    }
+  fi
+  unset SANDBOX_INJECT_KEY
   /usr/local/bin/sandbox-init-firewall-proxy.sh || {
     echo "FATAL: proxy-broker firewall setup failed; refusing to run unconfined" >&2
     exit 1
@@ -47,6 +66,20 @@ if [ "${SANDBOX_FIREWALL_PROXY:-0}" = "1" ]; then
   P="http://127.0.0.1:$PROXY_PORT"
   export HTTPS_PROXY="$P" HTTP_PROXY="$P" https_proxy="$P" http_proxy="$P"
   export NO_PROXY="" no_proxy=""
+  # The injector is reached directly, not through the CONNECT proxy, which
+  # refuses loopback targets. Lower case too: undici (pi) reads no_proxy before
+  # NO_PROXY, so an empty no_proxy hides any NO_PROXY (measured 2026-10-29: pi
+  # tunnelled 127.0.0.1:18081 through the proxy and got 403).
+  if [ -n "${SANDBOX_INJECT_UPSTREAM:-}" ]; then
+    export NO_PROXY=127.0.0.1 no_proxy=127.0.0.1
+  fi
+fi
+
+# Injection runs only inside the proxy; outside proxy mode a credential handed
+# in here would simply reach the agent.
+if [ -n "${SANDBOX_INJECT_KEY:-}" ]; then
+  echo "FATAL: SANDBOX_INJECT_KEY outside the proxy mode; refusing to hand the agent a credential meant for the proxy" >&2
+  exit 1
 fi
 
 if [ "${SANDBOX_FIREWALL:-0}" = "1" ]; then

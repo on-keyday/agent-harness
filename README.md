@@ -1547,8 +1547,10 @@ the agent's config paths (host login / session resume — note this
 exposes that provider's credentials to the container). **Token auth**
 (`--agent-arg --token-auth`: a dedicated revocable
 `CLAUDE_CODE_OAUTH_TOKEN`, no `~/.claude` mount) removes that exposure but
-disables resume, and **only claude has it**: the other agents are mount-auth
-only. By default egress goes through an in-container allowlisting CONNECT
+disables resume, and **only claude has it**. pi instead keeps its key out
+of the container by default: the proxy adds it to each request and the agent
+sees a placeholder (`--inject-auth`; `--agent-arg --mount-auth` reverts).
+codex, agy and opencode are mount-auth only. By default egress goes through an in-container allowlisting CONNECT
 proxy (`--firewall-proxy`: raw sockets blocked, WebFetch works), whose
 connection log goes to a host file under `${TMPDIR:-/tmp}`;
 `--agent-arg --firewall` swaps in a default-deny iptables+ipset allowlist,

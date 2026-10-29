@@ -61,16 +61,18 @@ Arguments: $ARGUMENTS
    `--agent-bin` instead and you silently get the runner's raw defaults, i.e. no
    progress until the task ends. `sandbox` remains an alias of `sandbox-claude`.
    One wrapper serves all six: which agent runs is `--sandbox-agent <name>`,
-   which the preset supplies. codex, agy, opencode and pi are **mount-auth only**
+   which the preset supplies. codex, agy and opencode are **mount-auth only**
    (their provider credentials go into the container; no revocable-token mode
-   exists for them) — see `scripts/sandbox/README.md`. With no wrapper flags a
-   task runs behind the `--firewall-proxy` egress mode (in-container
+   exists for them) — see `scripts/sandbox/README.md`. pi instead injects by
+   default: its key stays with the proxy and the container gets a placeholder
+   (`--inject-auth`; `--mount-auth` mounts `~/.pi` whole again). With no wrapper
+   flags a task runs behind the `--firewall-proxy` egress mode (in-container
    allowlisting CONNECT proxy, no raw agent egress, WebFetch works), with the
    proxy's DENY/ALLOW lines in a host file
    (`${TMPDIR:-/tmp}/sandbox-proxy-<task-id>.log`) rather than on the session's
    terminal, in mount auth (host agent config mounted, resume/`--continue`
-   works), and with user namespaces refused (a seccomp profile derived from
-   podman's). Wrapper controls that change this, passed per task with
+   works; pi: injection, resume works too), and with user namespaces refused (a
+   seccomp profile derived from podman's). Wrapper controls that change this, passed per task with
    `--agent-arg` (any profile) or per slot with runner `--agent-args` (the
    DEFAULT profile only): `--firewall` (default-deny IP allowlist instead of
    the proxy), `--no-firewall` (open network), `--proxy-log=PATH` (another log
@@ -81,7 +83,9 @@ Arguments: $ARGUMENTS
    or `unshare`), and `--omit-harness-cli` (drop the control-plane bridge for
    full isolation). A contradictory pair
    (`--no-firewall` with either firewall flag, `--no-proxy-log` with
-   `--proxy-log`, `--token-auth` with `--mount-auth`) exits 2 — see
+   `--proxy-log`, any two of `--token-auth` / `--mount-auth` / `--inject-auth`)
+   exits 2, and so does pi under `--firewall` or `--no-firewall` without
+   `--mount-auth`, since only the proxy can inject — see
    `scripts/sandbox/README.md`.
    Because the roots
    usually overlap a broad existing slot (e.g. the `bash` runner serving
@@ -257,7 +261,10 @@ Arguments: $ARGUMENTS
    carries `--approve` as its `agentArgs`: inside the container the trust
    prompt protects nothing, and without it every task would open on that dialog
    or lose the injected skills. How the wrapper finds the package, and what pi
-   needs through `--firewall-proxy`, is in `scripts/sandbox/README.md`.
+   needs through `--firewall-proxy`, is in `scripts/sandbox/README.md`. Its
+   `/login` must be an API key (`auth.json` type `api_key`) for a provider the
+   wrapper knows the base URL of — otherwise every task exits 2 naming the
+   reason, and `--agent-arg --mount-auth` runs it the old way.
 
    **Bash preset details.** The bash slot is a shell runner, not an agent with
    conversation state. Its argv (defined in `scripts/agent_presets.py`) runs

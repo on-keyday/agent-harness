@@ -3484,3 +3484,28 @@ done:    31 (the runner log line always prints `userns=deny|allow`), 33 (no
 n/a:     1–30, 32, 34–36, 38, 39, S1–S5 (no agent-specific field; the profile
          applies to every agent alike)
 missed:  —
+
+### 2026-10-29 (pre-landing) — sandbox: pi's credential injected by default, `--inject-auth`
+
+A wrapper control flag and a per-agent credential-mode change (S1–S6 trigger:
+"credential mode"). 1–39 walked too, for the same reason as the userns entry.
+
+done:    31 (the runner log line always prints `auth=inject`; `probe.sh`
+         `config_credential` prints `key_in_readable_environs=0` rather than
+         eliding a zero), 33 (injection outside the proxy mode, any two auth
+         flags together, and every `inject_auth.py` refusal exit 2 naming
+         `--mount-auth`; never a silent mount of the credential), 35 (sandbox
+         README agent table, auth + new injection section, history-window
+         table, probe text; top-level README sandbox paragraph), 37 (new spec
+         2026-10-29-sandbox-credential-injection-design.md; generic-agent-sandbox
+         Amendment 3), S3 (agent table gains A_INJECT / A_INJECT_CONFIG; pi no
+         longer stated mount-auth only), S4 (injection needs the proxy mode;
+         A_DOMAINS unchanged — the proxy uid dials the upstream, not the
+         agent), S6 (README, runner-up.md wrapper controls + sandbox-pi
+         paragraph, probe.sh config_credential)
+n/a:     1–30, 32, 34–36, 38, 39 (no verb, field or UI; the flag rides
+         --agent-arg text), S1 (preset unchanged: the default lives in the
+         wrapper's table, so no agentArgs change), S2 (no new agent or
+         symlink), S5 (no HARNESS_* or CID change; SANDBOX_INJECT_* are set
+         by the wrapper itself)
+missed:  —

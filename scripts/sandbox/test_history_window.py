@@ -241,8 +241,8 @@ class WrapperTests(unittest.TestCase):
         pi_pkg = self.tmp / "pi-pkg"
         executable(pi_pkg / "dist/bundle/cli.js", "#!/bin/sh\n")
         (self.home / ".pi/agent").mkdir(parents=True)
-        (self.home / ".pi/agent/auth.json").write_text("x")
-        (self.home / ".pi/agent/settings.json").write_text("{}")
+        (self.home / ".pi/agent/auth.json").write_text(json.dumps({"openrouter": {"type": "api_key", "key": "test-key"}}))
+        (self.home / ".pi/agent/settings.json").write_text(json.dumps({"defaultProvider": "openrouter"}))
         executable(self.home / ".pi/agent/bin/fd", "#!/bin/sh\n")
         self.env = {"HOME": str(self.home), "PATH": str(tools) + os.pathsep + os.environ["PATH"], "TMPDIR": str(self.tmp),
                     "HARNESS_SANDBOX_CLAUDE_TOKEN_FILE": str(token), "HARNESS_SANDBOX_PI_PKG": str(pi_pkg)}
@@ -287,7 +287,7 @@ class WrapperTests(unittest.TestCase):
         self.assertFalse(any(".credentials.json" in a for a in argv))
 
     def test_pi_window_mounts(self):
-        _, argv = self.ok("pi", "--history-window")
+        _, argv = self.ok("pi", "--history-window", "--mount-auth")
         home = self.home
         name = "--" + str(self.wt).lstrip("/").replace("/", "-") + "--"
         root_pair = next(a for a in argv if a.endswith(f":{home}/.pi"))
@@ -304,7 +304,7 @@ class WrapperTests(unittest.TestCase):
         self.assertIn(f"{home}/.pi/agent/bin:{home}/.pi/agent/bin:ro", argv)
 
     def test_shared_mode_unchanged_but_labelled(self):
-        err, argv = self.ok("pi")
+        err, argv = self.ok("pi", "--mount-auth")
         self.assertIn(f"{self.home}/.pi:{self.home}/.pi", argv)
         self.assertIn("SANDBOX_HISTORY=shared", argv)
         self.assertIn("history=shared", err)
@@ -329,15 +329,16 @@ class WrapperTests(unittest.TestCase):
             ("claude", self.plain_dir, "linked worktree", None),
             ("claude", long_wt, "200", None),
             ("claude", self.wt, ".credentials.json", self.home / ".claude/.credentials.json"),
-            ("pi", self.wt, "auth.json", self.home / ".pi/agent/auth.json"),
+            # --mount-auth: pi injects by default, and then mounts no auth.json.
+            ("pi", self.wt, "auth.json", self.home / ".pi/agent/auth.json", "--mount-auth"),
         ]
 
     def test_refusals(self):
-        for agent, cwd, why, remove in self.refusal_cases():
+        for agent, cwd, why, remove, *extra in self.refusal_cases():
             with self.subTest(agent=agent, why=why):
                 if remove is not None:
                     remove.unlink()
-                rc, err, argv = self.wrap(agent, "--history-window", cwd=cwd)
+                rc, err, argv = self.wrap(agent, "--history-window", *extra, cwd=cwd)
                 if remove is not None:
                     remove.write_text("x")
                 self.assertEqual(rc, 2, err)
@@ -346,13 +347,85 @@ class WrapperTests(unittest.TestCase):
                 self.assertIsNone(argv)
 
     def test_refusal_leaves_no_temp_root(self):
-        for agent, cwd, _, remove in self.refusal_cases():
+        for agent, cwd, _, remove, *extra in self.refusal_cases():
             if remove is not None:
                 remove.unlink()
-            self.wrap(agent, "--history-window", cwd=cwd)
+            self.wrap(agent, "--history-window", *extra, cwd=cwd)
             if remove is not None:
                 remove.write_text("x")
         self.assertEqual(list(self.tmp.glob("harness-sandbox-root.*")), [])
+
+    def inject_root(self, argv):
+        return Path(next(a for a in argv if a.endswith(f":{self.home}/.pi")).split(":")[0])
+
+    def test_pi_injects_by_default(self):
+        err, argv = self.ok("pi")
+        home = self.home
+        root = self.inject_root(argv)
+        self.assertRegex(str(root), r"/harness-sandbox-root\.[^/]+/\.pi$")
+        # The whole sessions store, so every conversation stays resumable.
+        self.assertIn(f"{home}/.pi/agent/sessions:{home}/.pi/agent/sessions", argv)
+        self.assertIn(f"{home}/.pi/agent/settings.json:{home}/.pi/agent/settings.json:ro", argv)
+        self.assertIn(f"{home}/.pi/agent/bin:{home}/.pi/agent/bin:ro", argv)
+        cfg = next(a for a in argv if a.endswith(f":{home}/.pi/agent/models.json:ro"))
+        models = json.loads(Path(cfg.split(":")[0]).read_text())
+        self.assertEqual(models["providers"]["openrouter"],
+                         {"baseUrl": "http://127.0.0.1:18081/api/v1", "apiKey": "sandbox-placeholder"})
+        # The credential: no file, no value on the argv, only the NAME.
+        self.assertFalse(any("auth.json" in a for a in argv))
+        self.assertFalse(any("test-key" in a for a in argv), argv)
+        self.assertIn("SANDBOX_INJECT_KEY", argv)
+        self.assertIn("SANDBOX_INJECT_UPSTREAM=https://openrouter.ai", argv)
+        self.assertNotIn(f"{home}/.pi:{home}/.pi", argv)
+        self.assertIn("auth=inject", err)
+        self.assertIn("SANDBOX_HISTORY=shared", argv)
+
+    def test_pi_injected_key_reaches_podman_env(self):
+        env_dump = self.tmp / "podman-env"
+        executable(self.tools / "podman", f"#!{sys.executable}\nimport json,os,sys\n" + self.podman_info
+                   + f"open({str(self.capture)!r}, 'w').write(json.dumps(sys.argv[1:]))\n"
+                   + f"open({str(env_dump)!r}, 'w').write(os.environ.get('SANDBOX_INJECT_KEY', ''))\n")
+        self.ok("pi")
+        self.assertEqual(env_dump.read_text(), "test-key")
+
+    def test_pi_inject_with_window_binds_this_cwd_only(self):
+        _, argv = self.ok("pi", "--history-window")
+        home = self.home
+        name = "--" + str(self.wt).lstrip("/").replace("/", "-") + "--"
+        self.assertIn(f"{home}/.pi/agent/sessions/{name}:{home}/.pi/agent/sessions/{name}", argv)
+        self.assertNotIn(f"{home}/.pi/agent/sessions:{home}/.pi/agent/sessions", argv)
+        self.assertFalse(any("auth.json" in a for a in argv))
+        self.assertIn("SANDBOX_HISTORY=window", argv)
+
+    def test_inject_refusals(self):
+        cases = [
+            ("pi", ("--firewall",), "--mount-auth"),
+            ("pi", ("--no-firewall",), "--mount-auth"),
+            ("pi", ("--inject-auth", "--mount-auth"), "contradict"),
+            ("pi", ("--inject-auth", "--token-auth"), "contradict"),
+            ("claude", ("--inject-auth",), "no credential injection"),
+        ]
+        for agent, args, why in cases:
+            with self.subTest(agent=agent, args=args):
+                rc, err, argv = self.wrap(agent, *args)
+                self.assertEqual(rc, 2, err)
+                self.assertIn(why, err)
+                self.assertIsNone(argv)
+
+    def test_inject_refusal_creates_nothing(self):
+        (self.home / ".pi/agent/auth.json").write_text(json.dumps({"openrouter": {"type": "oauth"}}))
+        rc, err, argv = self.wrap("pi")
+        self.assertEqual(rc, 2, err)
+        self.assertIn("api_key", err)
+        self.assertIn("--mount-auth", err)
+        self.assertIsNone(argv)
+        self.assertEqual(list(self.tmp.glob("harness-sandbox-root.*")), [])
+        self.assertEqual(list(self.tmp.glob("harness-sandbox-inject.*")), [])
+
+    def test_mount_auth_still_mounts_whole_pi(self):
+        _, argv = self.ok("pi", "--mount-auth", "--firewall")
+        self.assertIn(f"{self.home}/.pi:{self.home}/.pi", argv)
+        self.assertFalse(any(a.startswith("SANDBOX_INJECT") for a in argv))
 
     def codex_fixture(self):
         bundle = self.tmp / "codex-release/bin"

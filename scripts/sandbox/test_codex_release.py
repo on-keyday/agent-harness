@@ -108,7 +108,10 @@ class CodexReleaseTests(unittest.TestCase):
                 fake_podman(tools, capture)
                 env = {"HOME": str(home), "PATH": str(tools) + os.pathsep + os.environ["PATH"], "TMPDIR": str(root),
                        "HARNESS_SANDBOX_PI_PKG": str(pi_package), "HARNESS_SANDBOX_OPENCODE_BIN": str(binary)}
-                subprocess.run(["bash", str(check.WRAPPER), "--sandbox-agent", agent, "--omit-harness-cli", "--version"],
+                # pi's default auth (injection) needs a credential; this test
+                # is about the binary, so it takes the mount path.
+                auth = ["--mount-auth"] if agent == "pi" else []
+                subprocess.run(["bash", str(check.WRAPPER), "--sandbox-agent", agent, "--omit-harness-cli", *auth, "--version"],
                                cwd=root, env=env, check=True, capture_output=True, timeout=10)
                 args = json.loads(capture.read_text())
                 self.assertIn("SANDBOX_AGENT=" + agent, args)

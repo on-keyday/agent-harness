@@ -12,6 +12,8 @@
 // inspected, so the allowlist sees the requested host and nothing more — it
 // closes raw-socket and non-allowlisted exfil, not exfil to an allowlisted
 // domain. Plain-HTTP proxying (GET through the proxy) is refused outright.
+// The one exception is a separate listener (inject.go), configured only when
+// the wrapper hands this process an agent credential to add to requests.
 //
 // This replaces a Python implementation that had no way to notice a dead peer:
 // it selected on both sockets with no timeout and cleared every socket
@@ -159,6 +161,33 @@ func main() {
 	}
 	logf("listening on %s:%s; idle=%s max=%d; allow=%s",
 		bind, port, cfg.idle, cfg.maxTunnels, strings.Join(cfg.allow, ","))
+
+	// The credential injector (inject.go), when the wrapper configured one.
+	// Any fault in its setup is fatal: the entrypoint refuses to start the
+	// agent without it, rather than leave it to fail on every request.
+	if up := os.Getenv("SANDBOX_INJECT_UPSTREAM"); up != "" {
+		upstream, err := parseUpstream(up)
+		if err != nil {
+			logf("FATAL SANDBOX_INJECT_UPSTREAM=%q: %v", up, err)
+			os.Exit(1)
+		}
+		key := os.Getenv("SANDBOX_INJECT_KEY")
+		if key == "" {
+			logf("FATAL SANDBOX_INJECT_UPSTREAM is set but SANDBOX_INJECT_KEY is empty")
+			os.Exit(1)
+		}
+		iport := os.Getenv("SANDBOX_INJECT_PORT")
+		if iport == "" {
+			iport = "18081"
+		}
+		iln, err := net.Listen("tcp", net.JoinHostPort(bind, iport))
+		if err != nil {
+			logf("FATAL listen %s:%s: %v", bind, iport, err)
+			os.Exit(1)
+		}
+		logf("inject: listening on %s:%s -> %s", bind, iport, upstream)
+		go serveInject(iln, upstream, key)
+	}
 	serve(ln, cfg)
 }
 

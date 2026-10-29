@@ -247,3 +247,15 @@ own sandbox is bubblewrap, which needs a user namespace. It also needs a `bwrap`
 that neither the image nor codex 0.165.0 ships (measured 2026-10-29), so it did
 not start in here even before this amendment. The `sandbox-codex` preset turns
 it off.
+
+## Amendment 3 (2026-10-29): pi's credential is injected by default
+
+DECIDED (operator, 2026-10-29). pi no longer runs in mount auth unless asked:
+`--inject-auth`, its default, keeps `~/.pi/agent/auth.json` out of the
+container, gives the agent a generated `models.json` pointing its provider at a
+loopback listener of the proxy with a placeholder key, and has the proxy add
+the real key to each request. `--mount-auth` restores the whole `~/.pi` mount.
+Only the proxy mode can inject, so pi with `--firewall` or `--no-firewall`
+exits 2 unless `--mount-auth` is given. This replaces "mount-auth only" for pi
+in **Wrapper interface**; codex, agy and opencode are unchanged. Design and
+measurements: `2026-10-29-sandbox-credential-injection-design.md`.

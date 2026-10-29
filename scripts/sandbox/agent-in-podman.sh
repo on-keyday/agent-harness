@@ -63,10 +63,20 @@ HOME_DIR="${HOME:-/home/$(id -un)}"
 #                       unusable. Ignored (with a warning) outside proxy mode.
 #   --no-proxy-log      leave the proxy's lines on the container's stderr. Exits 2
 #                       together with --proxy-log.
-#   --mount-auth        MOUNT auth (bind-mount the host agent config), which is
-#                       the default; passing it changes nothing. Mount auth
-#                       persists session state, so --continue / resume work — at
-#                       the cost of exposing the refresh token.
+#   --mount-auth        MOUNT auth (bind-mount the host agent config), the
+#                       default for every agent without injection (below), where
+#                       passing it changes nothing. Mount auth persists session
+#                       state, so --continue / resume work — at the cost of
+#                       exposing the refresh token. For an agent WITH injection it
+#                       is how to get the whole config dir back.
+#   --inject-auth       pi only, and its default: the credential stays out of the
+#                       container. The proxy adds it to each request, the agent
+#                       sees a placeholder, and its config dir is a per-run one
+#                       holding the host's sessions store (so resume works).
+#                       Needs the proxy firewall mode; exits 2 under --firewall
+#                       or --no-firewall (pass --mount-auth there), and together
+#                       with --mount-auth or --token-auth. See "Credential
+#                       injection" below.
 #   --token-auth        claude only: authenticate with the revocable token in
 #                       A_TOKEN_FILE from an ephemeral home instead (no refresh
 #                       token in the container, no resume). Exits 2 for an agent
@@ -114,6 +124,7 @@ firewall_proxy=0
 no_firewall=0
 mount_auth=0
 token_auth=0
+inject_auth=0
 history_window=0
 image_agent=0
 allow_userns=0
@@ -136,6 +147,7 @@ for a in "$@"; do
     --no-proxy-log)     no_proxy_log=1 ;;
     --mount-auth)       mount_auth=1 ;;
     --token-auth)       token_auth=1 ;;
+    --inject-auth)      inject_auth=1 ;;
     --history-window)   history_window=1 ;;
     --image-agent|--image-claude) image_agent=1 ;;
     --allow-userns)     allow_userns=1 ;;
@@ -153,6 +165,8 @@ conflict() { echo "[agent-in-podman] $1 and $2 contradict each other" >&2; exit 
 [ "$no_firewall" = 1 ] && [ "$firewall_proxy" = 1 ] && conflict --no-firewall --firewall-proxy
 [ "$no_proxy_log" = 1 ] && [ -n "$proxy_log" ] && conflict --no-proxy-log --proxy-log
 [ "$token_auth" = 1 ] && [ "$mount_auth" = 1 ] && conflict --token-auth --mount-auth
+[ "$inject_auth" = 1 ] && [ "$mount_auth" = 1 ] && conflict --inject-auth --mount-auth
+[ "$inject_auth" = 1 ] && [ "$token_auth" = 1 ] && conflict --inject-auth --token-auth
 fw_mode=proxy
 if [ "$firewall_proxy" = 1 ]; then fw_mode=proxy
 elif [ "$firewall" = 1 ]; then fw_mode=ip
@@ -201,10 +215,17 @@ fi
 #                    must see the same one (codex's writer locks)
 #   A_HISTORY_SEED   1 = the ephemeral config needs the launcher's first-run
 #                    seeding, as under token auth
+# --inject-auth fields (an agent with them injects by default):
+#   A_INJECT         inject_auth.py's name for this agent; "" = no injection
+#   A_INJECT_CONFIG  the config file, relative to the agent's home, that
+#                    inject_auth.py generates and the container gets read-only
+#                    in place of the credential file
 declare -a A_CONFIG_MOUNTS=() A_ALWAYS_ENV=() A_FW_ENV=() A_RO_MOUNTS=()
 declare -a A_HISTORY_ROOTS=() A_HISTORY_ROOT_FILES=() A_CRED_FILES=() A_RO_CONFIG=() A_RO_DIRS=() A_SHARED_DIRS=()
 A_EPHEMERAL_HOME=""
 A_BIN_BUNDLE=0
+A_INJECT=""
+A_INJECT_CONFIG=""
 A_HISTORY=""
 A_HISTORY_STORE=""
 A_HISTORY_NAME_MAX=0
@@ -401,8 +422,15 @@ case "$AGENT" in
     A_IMAGE_FALLBACK=0
     A_RO_MOUNTS=( "$pi_pkg" )
     # ~/.pi holds auth.json, settings.json, trust.json and sessions/<cwd>/,
-    # which --continue reads.
+    # which --continue reads. Mounted whole only under --mount-auth: by default
+    # the credential is injected and ~/.pi is a per-run dir (see "Credential
+    # injection" below), because a writable ~/.pi/agent is also a way to run
+    # code on the host — pi loads every extension under agent/extensions/
+    # (pi 1.4.0 dist/core/extensions/loader.js:684), so the next host `pi`
+    # would run whatever the container left there.
     A_CONFIG_MOUNTS=( "$HOME_DIR/.pi" )
+    A_INJECT=pi
+    A_INJECT_CONFIG=.pi/agent/models.json
     A_TOKEN_FILE=""
     A_TOKEN_ENV=""
     # The pi.dev version check, on every run: the ro package cannot be updated
@@ -520,9 +548,9 @@ else
   mount_rw "$WT"
 fi
 
-# Auth. Two modes, and which are AVAILABLE is a property of the agent (table):
+# Auth. Three modes, and which are AVAILABLE is a property of the agent (table):
 #
-#  (a) Mount (default): reuse the host login by bind-mounting the agent's
+#  (a) Mount (default without A_INJECT): reuse the host login by bind-mounting the agent's
 #      config paths. Session state persists, so --continue / resume work. This
 #      exposes that provider's credentials to the container — see the README
 #      security section.
@@ -556,6 +584,21 @@ if [ "$token_auth" = 1 ]; then
     exit 2
   fi
 fi
+# (c) Inject (--inject-auth, the default where the table has A_INJECT): see
+#     "Credential injection" below. Only the proxy can inject, so another
+#     firewall mode is a refusal rather than a quiet fall back to mounting the
+#     credential: --mount-auth says that explicitly.
+inject=0
+if [ "$inject_auth" = 1 ]; then
+  [ -n "$A_INJECT" ] || { echo "[agent-in-podman] --inject-auth: $AGENT has no credential injection" >&2; exit 2; }
+  inject=1
+elif [ -n "$A_INJECT" ] && [ "$mount_auth" != 1 ] && [ "$token_auth" != 1 ]; then
+  inject=1
+fi
+if [ "$inject" = 1 ] && [ "$fw_mode" != proxy ]; then
+  echo "[agent-in-podman] $AGENT injects its credential through the proxy (--inject-auth, its default), and firewall=$fw_mode has none; pass --mount-auth to mount the credential instead" >&2
+  exit 2
+fi
 if [ "$token_auth" = 1 ]; then
   auth_mode="token"
   AGENT_HOME="$A_EPHEMERAL_HOME"
@@ -572,6 +615,8 @@ if [ "$token_auth" = 1 ]; then
     --env SANDBOX_SEED_CONFIG=1
     --env SANDBOX_SEED_PROJECTS="$(printf '%s\n' "${SEED_PATHS[@]}")"
   )
+elif [ "$inject" = 1 ]; then
+  auth_mode="inject"   # the per-run config root below, without the credential
 elif [ "$history_window" = 1 ]; then
   : # the history window below mounts the agent's state piece by piece
 else
@@ -609,14 +654,33 @@ fi
 # the window would hold every task's conversations (and claude's auto memory).
 # A refusal never falls back to the shared mode, and creates nothing.
 # See docs/superpowers/specs/2026-10-26-sandbox-history-window-design.md.
+#
+# Credential injection (--inject-auth) builds the same per-run root, with two
+# differences: the WHOLE store is bound unless --history-window narrows it (so
+# every conversation stays resumable, as under mount auth), and in place of the
+# credential file the container gets a generated config (A_INJECT_CONFIG,
+# read-only) pointing the agent at the proxy's injector with a placeholder
+# key. The credential itself goes to the proxy process alone, as
+# SANDBOX_INJECT_KEY, which entrypoint.sh drops before the agent starts. Passed
+# by NAME (`--env SANDBOX_INJECT_KEY`), so the value is on no argv: --token-auth
+# puts its token on podman's, which `ps` shows every user of this host.
+# inject_auth.py says what it reads and why. Measured 2026-10-29 (pi 1.4.0,
+# openrouter): the one-shot answered through the injector; from the agent uid,
+# the environ of PID 1 and of the proxy (both hold the key) could not be read,
+# and neither the agent's own environ nor any readable file held it; a second
+# container's --continue, and the host's own pi, resumed the conversation.
+# See docs/superpowers/specs/2026-10-29-sandbox-credential-injection-design.md.
 history_mode=shared
 history_root=""
 history_helper="" hist_sync="" hist_host="" hist_codex=""
-if [ "$history_window" = 1 ]; then
+inject_port=18081
+if [ "$history_window" = 1 ] || [ "$inject" = 1 ]; then
   hw_refuse() { echo "[agent-in-podman] --history-window: $1" >&2; exit 2; }
-  [ -n "$A_HISTORY" ] || hw_refuse "$AGENT has no window (no way to show one task's conversations alone)"
-  [ "$linked_wt" = 1 ] || hw_refuse "$WT is not a linked worktree; the window would hold every task's conversations"
-  if [ "$A_HISTORY" = sync ]; then
+  if [ "$history_window" = 1 ]; then
+    [ -n "$A_HISTORY" ] || hw_refuse "$AGENT has no window (no way to show one task's conversations alone)"
+    [ "$linked_wt" = 1 ] || hw_refuse "$WT is not a linked worktree; the window would hold every task's conversations"
+  fi
+  if [ "$A_HISTORY" = sync ] || [ "$history_window" != 1 ]; then
     hist_store="$A_HISTORY_STORE"
   else
     hist_store="$A_HISTORY_STORE/$(history_name "$WT")"
@@ -626,7 +690,7 @@ if [ "$history_window" = 1 ]; then
     fi
   fi
   declare -a hist_creds=()
-  [ "$token_auth" = 1 ] || hist_creds=( "${A_CRED_FILES[@]}" )
+  [ "$token_auth" = 1 ] || [ "$inject" = 1 ] || hist_creds=( "${A_CRED_FILES[@]}" )
   for f in "${hist_creds[@]}"; do
     [ -f "$HOME_DIR/$f" ] || hw_refuse "no credential file $HOME_DIR/$f (is $AGENT logged in on this host?)"
   done
@@ -634,6 +698,20 @@ if [ "$history_window" = 1 ]; then
   for f in "${A_RO_CONFIG[@]}"; do [ -f "$HOME_DIR/$f" ] && hist_ro+=( "$f" ); done
   declare -a hist_ro_dirs=()
   for d in "${A_RO_DIRS[@]}"; do [ -d "$HOME_DIR/$d" ] && hist_ro_dirs+=( "$d" ); done
+  inject_cfg="" inject_upstream=""
+  if [ "$inject" = 1 ]; then
+    inject_cfg=$(mktemp "${TMPDIR:-/tmp}/harness-sandbox-inject.XXXXXX")
+    if ! inject_out=$(python3 "$(dirname "$(readlink -f "$0")")/inject_auth.py" "$A_INJECT" \
+          --agent-dir "$HOME_DIR/$(dirname "$A_INJECT_CONFIG")" --config-out "$inject_cfg" --port "$inject_port"); then
+      rm -f "$inject_cfg"
+      echo "[agent-in-podman] --inject-auth: cannot inject $AGENT's credential (above); pass --mount-auth to mount it instead" >&2
+      exit 2
+    fi
+    inject_upstream=${inject_out%%$'\n'*}
+    SANDBOX_INJECT_KEY=${inject_out#*$'\n'}
+    export SANDBOX_INJECT_KEY
+    unset inject_out
+  fi
   hist_src="$HOME_DIR/$hist_store"
   if [ "$A_HISTORY" = sync ]; then
     # codex: rollouts live at sessions/YYYY/MM/DD/ with the cwd only in their
@@ -655,11 +733,13 @@ if [ "$history_window" = 1 ]; then
     hist_codex=$(readlink -f "$A_HOST_BIN" 2>/dev/null || true)
   fi
 
-  history_mode=window
+  [ "$history_window" = 1 ] && history_mode=window
   history_root=$(mktemp -d "${TMPDIR:-/tmp}/harness-sandbox-root.XXXXXX")
   for d in "${A_HISTORY_ROOTS[@]}" "$hist_store" "${hist_ro_dirs[@]}" "${A_SHARED_DIRS[@]}"; do mkdir -p "$history_root/$d"; done
   for f in "${A_HISTORY_ROOT_FILES[@]}"; do echo '{}' >"$history_root/$f"; done
-  for f in "${hist_creds[@]}" "${hist_ro[@]}"; do mkdir -p "$(dirname "$history_root/$f")"; : >"$history_root/$f"; done
+  declare -a hist_files=( "${hist_creds[@]}" "${hist_ro[@]}" )
+  [ "$inject" = 1 ] && hist_files+=( "$A_INJECT_CONFIG" )
+  for f in "${hist_files[@]}"; do mkdir -p "$(dirname "$history_root/$f")"; : >"$history_root/$f"; done
   mkdir -p "$HOME_DIR/$hist_store"
   # Parents before what sits inside them: the config root, then the window in it.
   for x in "${A_HISTORY_ROOTS[@]}" "${A_HISTORY_ROOT_FILES[@]}"; do AUTH+=( -v "$history_root/$x:$AGENT_HOME/$x" ); done
@@ -667,6 +747,15 @@ if [ "$history_window" = 1 ]; then
   for f in "${hist_creds[@]}"; do AUTH+=( -v "$HOME_DIR/$f:$AGENT_HOME/$f" ); done
   for f in "${hist_ro[@]}" "${hist_ro_dirs[@]}"; do AUTH+=( -v "$HOME_DIR/$f:$AGENT_HOME/$f:ro" ); done
   for d in "${A_SHARED_DIRS[@]}"; do mkdir -p "$HOME_DIR/$d"; AUTH+=( -v "$HOME_DIR/$d:$AGENT_HOME/$d" ); done
+  if [ "$inject" = 1 ]; then
+    # Outside every directory the container sees, so the agent cannot rewrite
+    # it; the reaper removes it with the root.
+    mv "$inject_cfg" "$history_root/inject-config"
+    AUTH+=( -v "$history_root/inject-config:$AGENT_HOME/$A_INJECT_CONFIG:ro"
+            --env SANDBOX_INJECT_UPSTREAM="$inject_upstream"
+            --env SANDBOX_INJECT_PORT="$inject_port"
+            --env SANDBOX_INJECT_KEY )
+  fi
   if [ "$A_HISTORY_SEED" = 1 ] && [ "$token_auth" != 1 ]; then
     AUTH+=( --env SANDBOX_SEED_CONFIG=1 --env SANDBOX_SEED_PROJECTS="$(printf '%s\n' "${SEED_PATHS[@]}")" )
   fi
