@@ -68,15 +68,18 @@ Arguments: $ARGUMENTS
    allowlisting CONNECT proxy, no raw agent egress, WebFetch works), with the
    proxy's DENY/ALLOW lines in a host file
    (`${TMPDIR:-/tmp}/sandbox-proxy-<task-id>.log`) rather than on the session's
-   terminal, and in mount auth (host agent config mounted, resume/`--continue`
-   works). Wrapper controls that change this, passed per task with
+   terminal, in mount auth (host agent config mounted, resume/`--continue`
+   works), and with user namespaces refused (a seccomp profile derived from
+   podman's). Wrapper controls that change this, passed per task with
    `--agent-arg` (any profile) or per slot with runner `--agent-args` (the
    DEFAULT profile only): `--firewall` (default-deny IP allowlist instead of
    the proxy), `--no-firewall` (open network), `--proxy-log=PATH` (another log
    file), `--no-proxy-log` (lines on the terminal; an interactive agy TUI
    becomes unusable under them), `--token-auth` (claude only: revocable
-   setup-token, no `~/.claude` mount, no resume), and `--omit-harness-cli`
-   (drop the control-plane bridge for full isolation). A contradictory pair
+   setup-token, no `~/.claude` mount, no resume), `--allow-userns` (podman's
+   default seccomp profile, for a task that runs bubblewrap, rootless podman
+   or `unshare`), and `--omit-harness-cli` (drop the control-plane bridge for
+   full isolation). A contradictory pair
    (`--no-firewall` with either firewall flag, `--no-proxy-log` with
    `--proxy-log`, `--token-auth` with `--mount-auth`) exits 2 — see
    `scripts/sandbox/README.md`.

@@ -230,3 +230,20 @@ Consequence for **Measuring `egress_domains`**: a domain missing from an
 agent's table entry used to break only tasks that opted into a firewall. It now
 breaks every task that does not pass `--no-firewall`, and the proxy log names
 the refused host.
+
+## Amendment 2 (2026-10-29): user namespaces refused by default
+
+DECIDED (operator, 2026-10-29), with an opt-out the operator allowed for. podman's default seccomp
+profile allows `clone` / `clone3` / `unshare` whatever their flags, so a
+process in the container could create user namespaces, nested ones included
+(measured: two levels below the container, uid 0 in each). Every container now
+starts with podman's own profile minus that (`scripts/sandbox/seccomp_profile.py`,
+derived on each start from the file `podman info` names). `--allow-userns`
+restores podman's default for a task. If podman names no profile file, the
+wrapper exits 2 instead of starting without one.
+
+This supersedes the nested-confinement remark under **Measured basis**: codex's
+own sandbox is bubblewrap, which needs a user namespace. It also needs a `bwrap`
+that neither the image nor codex 0.165.0 ships (measured 2026-10-29), so it did
+not start in here even before this amendment. The `sandbox-codex` preset turns
+it off.

@@ -85,6 +85,11 @@ HOME_DIR="${HOME:-/home/$(id -un)}"
 #                       claude has an image copy. --image-claude is accepted as a
 #                       deprecated alias: it can still appear in a live runner
 #                       slot's recorded --agent-args.
+#   --allow-userns      let processes in the container create user namespaces,
+#                       as podman's default seccomp profile does. Without it
+#                       they cannot (see "User namespaces" below), which also
+#                       stops a sandbox an agent brings along (bubblewrap) from
+#                       starting.
 # Agent selection comes from ARGV[0], not from a flag, and that is load-bearing.
 # The runner builds a fresh interactive launch as bin + args with NO argv
 # template at all (runner/agent_command.go buildInteractiveArgs returns `extra`
@@ -111,6 +116,7 @@ mount_auth=0
 token_auth=0
 history_window=0
 image_agent=0
+allow_userns=0
 default_proxy_log="${TMPDIR:-/tmp}/sandbox-proxy-${HARNESS_TASK_ID:-$$}.log"
 proxy_log=""
 no_proxy_log=0
@@ -132,6 +138,7 @@ for a in "$@"; do
     --token-auth)       token_auth=1 ;;
     --history-window)   history_window=1 ;;
     --image-agent|--image-claude) image_agent=1 ;;
+    --allow-userns)     allow_userns=1 ;;
     *)                  ARGS+=( "$a" ) ;;
   esac
 done
@@ -813,8 +820,33 @@ for m in "${A_RO_MOUNTS[@]}"; do
   agent_src="host:$m"
 done
 
+# User namespaces (denied unless --allow-userns). podman's default seccomp
+# profile lets the agent create them, nested as deep as it likes, and each one
+# hands it CAP_SYS_ADMIN over kernel code an unprivileged process otherwise
+# cannot reach. The container gets podman's own profile with only that removed
+# (seccomp_profile.py), derived afresh per start so it follows podman upgrades.
+# No profile to derive from is a refusal, not a start without one.
+userns_mode=allow
+declare -a SECCOMP=()
+seccomp_file=""
+if [ "$allow_userns" != 1 ]; then
+  seccomp_base=$(podman info --format '{{.Host.Security.SECCOMPProfilePath}}' || true)
+  if [ ! -f "$seccomp_base" ]; then
+    echo "[agent-in-podman] podman names no seccomp profile file ('$seccomp_base') to deny user namespaces in; --allow-userns starts without that" >&2
+    exit 2
+  fi
+  seccomp_file=$(mktemp "${TMPDIR:-/tmp}/sandbox-seccomp.XXXXXX")
+  if ! python3 "$(dirname "$(readlink -f "$0")")/seccomp_profile.py" "$seccomp_base" >"$seccomp_file"; then
+    rm -f "$seccomp_file"
+    echo "[agent-in-podman] cannot derive a seccomp profile from $seccomp_base; --allow-userns starts without that" >&2
+    exit 2
+  fi
+  SECCOMP=( --security-opt "seccomp=$seccomp_file" )
+  userns_mode=deny
+fi
+
 # One-line summary of the chosen modes → the runner log (token VALUE never shown).
-echo "[agent-in-podman] agent=$AGENT auth=$auth_mode firewall=$fw_mode harness-cli=$([ "$bridge_cli" = 1 ] && echo on || echo off) bin=$agent_src image=$IMAGE history=$history_mode${proxy_log:+ proxy-log=$proxy_log}" >&2
+echo "[agent-in-podman] agent=$AGENT auth=$auth_mode firewall=$fw_mode harness-cli=$([ "$bridge_cli" = 1 ] && echo on || echo off) bin=$agent_src image=$IMAGE history=$history_mode userns=$userns_mode${proxy_log:+ proxy-log=$proxy_log}" >&2
 
 # Container lifecycle. We MUST `exec` podman so it stays the foreground owner of
 # the TTY — otherwise interactive keystrokes never reach claude. But with exec,
@@ -844,7 +876,7 @@ echo "[agent-in-podman] agent=$AGENT auth=$auth_mode firewall=$fw_mode harness-c
 cidfile="$(mktemp -u "${TMPDIR:-/tmp}/sandbox-cid.XXXXXX")"
 setsid bash -c '
   wrapper_pid="$1"; cidfile="$2"; history_root="$3"
-  helper="$4"; sync_dir="$5"; host_sessions="$6"; wt="$7"; host_codex="$8"
+  helper="$4"; sync_dir="$5"; host_sessions="$6"; wt="$7"; host_codex="$8"; seccomp_file="$9"
   log="${TMPDIR:-/tmp}/sandbox-reaper.log"
   # codex history window: link the rollouts the container created into the
   # host store, every 5s while it runs (so the host can list and resume the
@@ -872,6 +904,7 @@ setsid bash -c '
     sleep 1
   done
   rm -f "$cidfile"
+  [ -n "$seccomp_file" ] && rm -f "$seccomp_file"
   export_rollouts
   # ...and have the codex of the host index them: resume --last asks its state
   # DB first, and that DB never saw a thread the container created.
@@ -890,7 +923,7 @@ setsid bash -c '
       echo "$(date "+%F %T") reaper: kept $history_root" >>"$log"
     fi
   fi
-' _ "$$" "$cidfile" "$history_root" "$history_helper" "$hist_sync" "$hist_host" "$WT" "$hist_codex" </dev/null >/dev/null 2>&1 &
+' _ "$$" "$cidfile" "$history_root" "$history_helper" "$hist_sync" "$hist_host" "$WT" "$hist_codex" "$seccomp_file" </dev/null >/dev/null 2>&1 &
 
 # --init is load-bearing, not hygiene. Every layer of our command chain execs
 # (entrypoint.sh -> gosu -> agent-launch.sh -> the agent), so the AGENT itself ends
@@ -926,12 +959,14 @@ exec podman run --rm -i "${TTY[@]}" \
   --userns=keep-id \
   --security-opt label=disable \
   --security-opt no-new-privileges \
+  "${SECCOMP[@]}" \
   --cidfile "$cidfile" \
   -w "$WT" \
   --env HOME="$AGENT_HOME" \
   --env SANDBOX_AGENT="$AGENT" \
   --env SANDBOX_AGENT_BIN="$A_CONTAINER_BIN" \
   --env SANDBOX_HISTORY="$history_mode" \
+  --env SANDBOX_USERNS="$userns_mode" \
   "${AUTH[@]}" \
   "${CLI[@]}" \
   "${FW[@]}" \

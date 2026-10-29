@@ -1552,7 +1552,9 @@ only. By default egress goes through an in-container allowlisting CONNECT
 proxy (`--firewall-proxy`: raw sockets blocked, WebFetch works), whose
 connection log goes to a host file under `${TMPDIR:-/tmp}`;
 `--agent-arg --firewall` swaps in a default-deny iptables+ipset allowlist,
-and `--agent-arg --no-firewall` opens the network.
+and `--agent-arg --no-firewall` opens the network. Processes in the
+container cannot create user namespaces (a seccomp profile derived from
+podman's); `--agent-arg --allow-userns` lifts that for one task.
 
 This is the **OS-layer** half of a two-layer model; the **server-layer**
 half is the capability bitmask (**Capabilities and scope** above), which

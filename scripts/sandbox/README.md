@@ -129,10 +129,14 @@ worth knowing before you type the name you expected to work.
   Expected given the mount, but worth stating plainly: agy's default file
   destination is inside the credential directory you mounted.
 
-**codex brings its own sandbox.** It warns `could not find bubblewrap on PATH …
-will use the bundled bubblewrap` and then works — nested inside podman. The
-wrapper does not disable it; the `sandbox-codex` preset does, through the flag
-above.
+**codex brings its own sandbox, and it cannot start in here.** It runs
+bubblewrap, which needs a user namespace, and the container refuses those by
+default (see "User namespaces" under the security model). It also needs a
+`bwrap` binary: the image ships none, and codex 0.165.0 bundles none either
+(measured 2026-10-29: `codex sandbox -- …` panics with `bubblewrap is
+unavailable`). The bundled bubblewrap codex used on 2026-08-18 is gone. The
+`sandbox-codex` preset turns codex's sandbox off with the flag above, so neither
+gap reaches it.
 
 **Each agent's act-without-asking flag is on the PRESET, not the slot.** Every
 `sandbox-*` preset carries it as the profile's `agentArgs` (`_SANDBOX_AGENT_ARGS`
@@ -167,6 +171,8 @@ created in a bind mount are owned by `1000:1000` on the host.
   The wrapper's `--init` needs `catatonit`; Arch's podman hard-depends on it,
   other distros may package it separately.
 - `/etc/subuid` + `/etc/subgid` entries for your user (present by default).
+- `python3` on the host: the wrapper derives the container's seccomp profile
+  with it on every start (`--allow-userns` skips that).
 
 ## Regression and upstream release checks
 
@@ -306,6 +312,23 @@ The wrapper (`agent-in-podman.sh`) bind-mounts, at identical host paths:
   runner's NoWorktree mode the cwd *is* the checkout the host builds, so there
   is no boundary: only `hooks/` and `config` are made read-only there.
   `probe.sh`'s `git_exec_surfaces` line reports each of these.
+- **User namespaces: refused unless `--allow-userns`.** podman's default
+  seccomp profile lets a process create user namespaces, nested ones included
+  (measured two levels below the container, uid 0 in each). Inside one, an
+  unprivileged process holds `CAP_SYS_ADMIN` over kernel code that otherwise
+  only root reaches. So every container starts with podman's own profile minus
+  that: `clone`/`unshare` carrying `CLONE_NEWUSER` get `EPERM`, and `clone3`
+  gets `ENOSYS`, whose flags seccomp cannot read, so libc falls back to `clone`.
+  `seccomp_profile.py` derives it on each start from the file `podman info`
+  names, so it follows podman upgrades. If podman names no file, the wrapper
+  exits 2 instead of starting without one. Measured unaffected (2026-10-29):
+  threads, subprocesses, node workers, git, the proxy firewall, the startup of
+  all six agents, and a claude one-shot running a Bash tool. **Cost:** nothing
+  that needs a user namespace runs inside, including bubblewrap (codex's own
+  sandbox, above), rootless podman and `unshare`. The netem lab refuses to
+  start, and `integration/ip_link_test.go` skips. `--agent-arg --allow-userns`
+  gives one task podman's default profile back. The runner log line carries
+  `userns=deny|allow`, and `probe.sh`'s `userns_create` measures it.
 - **Exposed (intentional):** the mounted repo worktree (that's where edits go),
   plus — in the default **mount auth** mode — `~/.claude` + `~/.claude.json`,
   bind-mounted **read-write** (login/session/config; the container can read your
@@ -529,7 +552,7 @@ reads `window-root` under `--history-window`, and `config_history` names the
 declared mode and lists the conversation directories actually visible, each
 host-mounted one marked `(host)` (codex: the rollout count and their cwds).
 The rest — what the mounts actually expose, whether host processes
-are visible, which egress succeeds (it probes one allowlisted target *and* one
+are visible, whether a user namespace can be created, which egress succeeds (it probes one allowlisted target *and* one
 that must be refused), whether the harness-server carve-out is still one port
 (`server_other_port` must not read `open` — that is how the host-wide carve-out
 above was found, and curl can't see it because it is L4 on a non-HTTP port), and

@@ -228,7 +228,12 @@ class WrapperTests(unittest.TestCase):
         self.capture = self.tmp / "capture.json"
         self.tools = tools = self.tmp / "tools"
         executable(tools / "setsid", "#!/bin/sh\nexit 0\n")
-        executable(tools / "podman", f"#!{sys.executable}\nimport json,sys\nopen({str(self.capture)!r}, 'w').write(json.dumps(sys.argv[1:]))\n")
+        # `podman info` names the seccomp profile the wrapper derives its own from.
+        seccomp = self.tmp / "seccomp.json"
+        seccomp.write_text(json.dumps({"syscalls": [{"names": ["clone"], "action": "SCMP_ACT_ALLOW"}]}))
+        self.podman_info = f"if sys.argv[1] == 'info': print({str(seccomp)!r}); sys.exit(0)\n"
+        executable(tools / "podman", f"#!{sys.executable}\nimport json,sys\n" + self.podman_info
+                   + f"open({str(self.capture)!r}, 'w').write(json.dumps(sys.argv[1:]))\n")
         (self.home / ".claude").mkdir()
         (self.home / ".claude/.credentials.json").write_text("x")
         token = self.tmp / "token"
@@ -382,7 +387,7 @@ class WrapperTests(unittest.TestCase):
         (self.tools / "setsid").unlink()  # the real one: this test needs the reaper
         new = d / "2026/10/26/rollout-new.jsonl"
         executable(self.tools / "podman", f"#!{sys.executable}\n" + (
-            "import json,sys,pathlib\n"
+            "import json,sys,pathlib\n" + self.podman_info +
             "if sys.argv[1] == 'run':\n"
             f"    p = pathlib.Path({str(new)!r}); p.parent.mkdir(parents=True, exist_ok=True)\n"
             f"    p.write_text(json.dumps({{'type':'session_meta','payload':{{'cwd':{str(self.wt)!r}}}}}) + '\\n')\n"))
@@ -394,6 +399,8 @@ class WrapperTests(unittest.TestCase):
         self.assertTrue(target.exists(), (self.tmp / "sandbox-reaper.log").read_text() if (self.tmp / "sandbox-reaper.log").exists() else "")
         self.assertIn(str(self.wt), target.read_text())
         self.assertEqual(list(self.tmp.glob("harness-sandbox-root.*")), [])
+        # The derived seccomp profile goes with the container too.
+        self.assertEqual(list(self.tmp.glob("sandbox-seccomp.*")), [])
         # Then the host's codex re-indexes this cwd, or `resume --last` on the
         # host never sees a thread the container created.
         deadline = time.monotonic() + 15

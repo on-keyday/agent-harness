@@ -21,6 +21,22 @@ def executable(path, body):
     return path
 
 
+def fake_podman(tools, capture, output=None):
+    """A podman that records its `run` argv in capture and answers `info` with a
+    seccomp profile for the wrapper to derive from (written beside it)."""
+    profile = tools / "seccomp.json"
+    tools.mkdir(parents=True, exist_ok=True)
+    profile.write_text(json.dumps({"defaultAction": "SCMP_ACT_ERRNO", "syscalls": [
+        {"names": ["read", "clone", "clone3", "unshare"], "action": "SCMP_ACT_ALLOW", "args": []}]}))
+    podman = tools / "podman"
+    podman.write_text(f"#!{os.sys.executable}\nimport json,sys\n"
+                      f"if sys.argv[1:2] == ['info']: print({str(profile)!r}); sys.exit(0)\n"
+                      f"open({str(capture)!r},'w').write(json.dumps(sys.argv[1:]))\n"
+                      + (f"print({output!r})\n" if output is not None else ""))
+    podman.chmod(0o755)
+    return podman
+
+
 def metadata():
     name = "codex-package-x86_64-unknown-linux-musl.tar.gz"
     return {
@@ -63,9 +79,7 @@ class CodexReleaseTests(unittest.TestCase):
         (home / ".local/bin/codex").symlink_to(self.binary)
         capture = self.root / "podman.json"
         executable(tools / "setsid", "exit 0")
-        podman = tools / "podman"
-        podman.write_text(f"#!{os.sys.executable}\nimport json,sys\nopen({str(capture)!r}, 'w').write(json.dumps(sys.argv[1:]))\n")
-        podman.chmod(0o755)
+        fake_podman(tools, capture)
         env = {"HOME": str(home), "PATH": str(tools) + os.pathsep + os.environ["PATH"], "TMPDIR": str(self.root)}
         subprocess.run(["bash", str(check.WRAPPER), "--sandbox-agent", "codex", "--omit-harness-cli", "--version"],
                        env=env, cwd=self.root, capture_output=True, check=True, timeout=10)
@@ -91,9 +105,7 @@ class CodexReleaseTests(unittest.TestCase):
                 executable(pi_package / "dist/bundle/cli.js", "exit 0")
                 executable(tools / "setsid", "exit 0")
                 capture = root / "args.json"
-                podman = tools / "podman"
-                podman.write_text(f"#!{os.sys.executable}\nimport json,sys\nopen({str(capture)!r},'w').write(json.dumps(sys.argv[1:]))\n")
-                podman.chmod(0o755)
+                fake_podman(tools, capture)
                 env = {"HOME": str(home), "PATH": str(tools) + os.pathsep + os.environ["PATH"], "TMPDIR": str(root),
                        "HARNESS_SANDBOX_PI_PKG": str(pi_package), "HARNESS_SANDBOX_OPENCODE_BIN": str(binary)}
                 subprocess.run(["bash", str(check.WRAPPER), "--sandbox-agent", agent, "--omit-harness-cli", "--version"],
@@ -118,9 +130,7 @@ class CodexReleaseTests(unittest.TestCase):
         token_file.write_text("dedicated-token\n")
         executable(tools / "setsid", "exit 0")
         capture = self.root / "args.json"
-        podman = tools / "podman"
-        podman.write_text(f"#!{os.sys.executable}\nimport json,sys\nopen({str(capture)!r},'w').write(json.dumps(sys.argv[1:]))\n")
-        podman.chmod(0o755)
+        fake_podman(tools, capture)
         env = {"HOME": str(home), "PATH": str(tools) + os.pathsep + os.environ["PATH"],
                "TMPDIR": str(self.root), "HARNESS_TASK_ID": "t1"}
 
@@ -140,6 +150,17 @@ class CodexReleaseTests(unittest.TestCase):
         self.assertIn(proxy_log_mount, args)
         self.assertIn(claude_mount, args)
         self.assertFalse(any(a.startswith("CLAUDE_CODE_OAUTH_TOKEN=") for a in args))
+        # ...and user namespaces denied by a profile derived from podman's.
+        self.assertIn("SANDBOX_USERNS=deny", args)
+        seccomp = [a.removeprefix("seccomp=") for a in args if a.startswith("seccomp=")]
+        self.assertEqual(len(seccomp), 1)
+        derived = json.loads(Path(seccomp[0]).read_text())
+        self.assertIn({"names": ["read"], "action": "SCMP_ACT_ALLOW", "args": []}, derived["syscalls"])
+        self.assertTrue(any(r["names"] == ["clone3"] for r in derived["syscalls"]))
+
+        _, args = run("--allow-userns")
+        self.assertIn("SANDBOX_USERNS=allow", args)
+        self.assertFalse(any(a.startswith("seccomp=") for a in args))
 
         _, args = run("--no-proxy-log")
         self.assertIn("SANDBOX_FIREWALL_PROXY=1", args)
@@ -173,15 +194,21 @@ class CodexReleaseTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2, result.stderr)
         self.assertIsNone(args)
 
+        # No profile file to derive from: refused, not started with podman's.
+        (tools / "seccomp.json").unlink()
+        result, args = run()
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIsNone(args)
+        _, args = run("--allow-userns")
+        self.assertIn("SANDBOX_USERNS=allow", args)
+
     def test_smoke_uses_real_wrapper_without_auth_mounts_or_network(self):
         tools = self.root / "host-tools"
         capture = self.root / "probe.json"
-        podman = tools / "podman"
-        podman.parent.mkdir()
-        podman.write_text(f"#!{os.sys.executable}\nimport json,sys\nopen({str(capture)!r},'w').write(json.dumps(sys.argv[1:]))\nprint('codex-cli 0.164.0\\nUsage: codex-code-mode-host\\n{{\"storage\": \"ok\"}}')\n")
-        podman.chmod(0o755)
+        fake_podman(tools, capture, 'codex-cli 0.164.0\nUsage: codex-code-mode-host\n{"storage": "ok"}')
         executable(tools / "setsid", "exit 0")
-        with mock.patch.dict(os.environ, {"PATH": str(tools) + os.pathsep + os.environ["PATH"], "HARNESS_AUTH_TICKET": "must-not-forward"}):
+        with mock.patch.dict(os.environ, {"PATH": str(tools) + os.pathsep + os.environ["PATH"], "TMPDIR": str(self.root),
+                                          "HARNESS_AUTH_TICKET": "must-not-forward"}):
             report = check.smoke_bundle(self.binary, "test-image", self.root / "probe")
         args = json.loads(capture.read_text())
         self.assertIn("--network=none", args)
@@ -194,12 +221,9 @@ class CodexReleaseTests(unittest.TestCase):
     def fake_podman_smoke(self, output):
         tools = self.root / "host-tools"
         capture = self.root / "probe.json"
-        podman = tools / "podman"
-        podman.parent.mkdir()
-        podman.write_text(f"#!{os.sys.executable}\nimport json,sys\nopen({str(capture)!r},'w').write(json.dumps(sys.argv[1:]))\nprint({output!r})\n")
-        podman.chmod(0o755)
+        fake_podman(tools, capture, output)
         executable(tools / "setsid", "exit 0")
-        with mock.patch.dict(os.environ, {"PATH": str(tools) + os.pathsep + os.environ["PATH"]}):
+        with mock.patch.dict(os.environ, {"PATH": str(tools) + os.pathsep + os.environ["PATH"], "TMPDIR": str(self.root)}):
             report = check.smoke_bundle(self.binary, "test-image", self.root / "probe")
         return report, json.loads(capture.read_text())
 

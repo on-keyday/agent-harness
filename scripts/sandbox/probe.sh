@@ -140,6 +140,12 @@ add "agent_config_mount_lines" "$(grep -oE "$cfg_re" /proc/self/mountinfo 2>/dev
 # leak count read 0 — indistinguishable from a real pass.
 add "proc_total" "$(ls -d /proc/[0-9]* 2>/dev/null | wc -l) procs (via /proc)"
 add "host_proc_leak" "$(cat /proc/[0-9]*/comm 2>/dev/null | grep -Ec 'agent-runner|agent-in-pod') matches (expect 0)"
+# Can a process in here create a user namespace? The wrapper's seccomp profile
+# refuses it unless the container was started with --allow-userns, which
+# SANDBOX_USERNS declares; unset = a wrapper from before the profile (allowed).
+if userns_err=$(unshare --user --map-root-user true 2>&1); then userns=created
+else userns="refused [${userns_err//$'\n'/ }]"; fi
+add "userns_create" "$userns (declared: ${SANDBOX_USERNS:-unset}; expect refused unless allow)"
 
 # --- network: one allowlisted target, one that must be refused ---------------
 # The second one is a control: it is EXPECTED to succeed under --no-firewall.

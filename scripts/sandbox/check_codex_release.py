@@ -146,7 +146,7 @@ env = dict(os.environ, HOME=os.environ["SANDBOX_PROBE_PODMAN_HOME"])
 os.execve(os.environ["SANDBOX_PROBE_PODMAN"], [os.environ["SANDBOX_PROBE_PODMAN"], *args], env)
 ''')
     shim.chmod(0o755)
-    env = {key: os.environ[key] for key in ("PATH", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "USER", "LOGNAME") if key in os.environ}
+    env = {key: os.environ[key] for key in ("PATH", "TMPDIR", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "USER", "LOGNAME") if key in os.environ}
     env.update(HOME=str(home), PATH=str(tools) + os.pathsep + os.environ.get("PATH", ""),
                HARNESS_SANDBOX_IMAGE=image, SANDBOX_PROBE_PODMAN=podman,
                SANDBOX_PROBE_PODMAN_HOME=str(Path.home()), SANDBOX_PROBE_AGENT=agent)

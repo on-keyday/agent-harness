@@ -3467,3 +3467,20 @@ missed:  —
 
 Item 39 (the spec's own Surfaces table) is walked at the end of the plan, after
 the dummy-harness run.
+
+### 2026-10-29 (pre-landing) — sandbox: user namespaces refused by default, `--allow-userns`
+
+A wrapper control flag (reached through `--agent-arg`, no verb, no UI field) and
+a default change in `agent-in-podman.sh`. Neither trigger names this shape
+exactly: 1–39 is about verbs and fields, S1–S6 about agents. Both were walked,
+because S6 is where the sandbox docs and `probe.sh` live.
+
+done:    31 (the runner log line always prints `userns=deny|allow`), 33 (no
+         profile file to derive from exits 2; never a silent start on podman's
+         default), 35 (sandbox README security model + prerequisites, top-level
+         README sandbox paragraph), 37 (generic-agent-sandbox spec Amendment 2),
+         S6 (README, `.claude/commands/runner-up.md` wrapper-controls list,
+         `probe.sh` `userns_create` line)
+n/a:     1–30, 32, 34–36, 38, 39, S1–S5 (no agent-specific field; the profile
+         applies to every agent alike)
+missed:  —
