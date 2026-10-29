@@ -83,8 +83,9 @@ Arguments: $ARGUMENTS
    becomes unusable under them), `--token-auth` (claude only: revocable
    setup-token, no `~/.claude` mount, no resume), `--allow-userns` (podman's
    default seccomp profile, for a task that runs bubblewrap, rootless podman
-   or `unshare`), and `--omit-harness-cli` (drop the control-plane bridge for
-   full isolation). A contradictory pair
+   or `unshare`), `--allow-domain=D[,D…]` (let the task reach more hosts, in
+   either firewall mode), and `--omit-harness-cli` (drop the control-plane
+   bridge for full isolation). A contradictory pair
    (`--no-firewall` with either firewall flag, `--no-proxy-log` with
    `--proxy-log`, any two of `--token-auth` / `--mount-auth` / `--inject-auth`)
    exits 2, and so do pi and claude under `--firewall` or `--no-firewall`

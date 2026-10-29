@@ -134,9 +134,13 @@ ip6tables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null |
 
 echo "Firewall configured."
 
-# Warn-only verification (never block claude on a flaky probe)
-curl --connect-timeout 5 -s https://example.com >/dev/null 2>&1 \
-  && echo "WARN: firewall check — example.com reachable (expected blocked)" >&2 || true
+# Warn-only verification (never block claude on a flaky probe). example.com is
+# the host expected to be refused, unless the task allowed it (--allow-domain).
+case " $agent_domains " in
+  *" example.com "*) ;;
+  *) curl --connect-timeout 5 -s https://example.com >/dev/null 2>&1 \
+       && echo "WARN: firewall check — example.com reachable (expected blocked)" >&2 || true ;;
+esac
 curl --connect-timeout 5 -s https://api.github.com/zen >/dev/null 2>&1 \
   || echo "WARN: firewall check — api.github.com unreachable (expected allowed)" >&2
 exit 0

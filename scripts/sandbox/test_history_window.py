@@ -529,6 +529,43 @@ class WrapperTests(unittest.TestCase):
         self.assertEqual(list(self.tmp.glob("harness-sandbox-relay.*")), [])
         self.assertEqual(list(self.tmp.glob("harness-sandbox-root.*")), [])
 
+    def domains(self, argv):
+        v = next(a for a in argv if a.startswith("SANDBOX_AGENT_DOMAINS="))
+        return v.split("=", 1)[1]
+
+    def test_injected_agents_drop_their_api_domains(self):
+        # The injector reaches the provider; the agent has no reason to.
+        for agent in ("pi", "claude"):
+            with self.subTest(agent=agent):
+                self.assertEqual(self.domains(self.ok(agent)[1]), "")
+        self.assertEqual(self.domains(self.ok("pi", "--mount-auth")[1]), "openrouter.ai")
+        self.assertIn("api.anthropic.com", self.domains(self.ok("claude", "--mount-auth")[1]))
+
+    def test_allow_domain_extends_the_list_in_both_modes(self):
+        err, argv = self.ok("claude", "--mount-auth", "--allow-domain=docs.example.com,x.example.org",
+                            "--allow-domain=y.example.net")
+        self.assertTrue(self.domains(argv).endswith(",docs.example.com,x.example.org,y.example.net"), argv)
+        self.assertIn("allow+=docs.example.com,x.example.org,y.example.net", err)
+        _, argv = self.ok("pi", "--allow-domain=docs.example.com")
+        self.assertEqual(self.domains(argv), "docs.example.com")
+        _, argv = self.ok("bash", "--firewall", "--allow-domain=docs.example.com")
+        self.assertIn("SANDBOX_FIREWALL=1", argv)
+        self.assertEqual(self.domains(argv), "docs.example.com")
+
+    def test_allow_domain_refusals(self):
+        for value in ("--allow-domain=bad_name.example", "--allow-domain=", "--allow-domain",
+                      "--allow-domain=a.example.com;rm", "--allow-domain=localhost", "--allow-domain=a b.example"):
+            with self.subTest(value=value):
+                rc, err, argv = self.wrap("bash", value)
+                self.assertEqual(rc, 2, err)
+                self.assertIn("--allow-domain", err)
+                self.assertIsNone(argv)
+
+    def test_allow_domain_under_no_firewall_warns(self):
+        err, argv = self.ok("bash", "--no-firewall", "--allow-domain=docs.example.com")
+        self.assertIn("--allow-domain ignored", err)
+        self.assertFalse(any(a.startswith("SANDBOX_AGENT_DOMAINS=") for a in argv))
+
     def test_mount_auth_still_mounts_whole_pi(self):
         _, argv = self.ok("pi", "--mount-auth", "--firewall")
         self.assertIn(f"{self.home}/.pi:{self.home}/.pi", argv)

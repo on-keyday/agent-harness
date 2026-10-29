@@ -3538,3 +3538,23 @@ n/a:     1–23, 25–30, 32, 34–36, 38, 39 (no verb, field or UI), S1 (preset
 missed:  — (the previous walk's S6 missed the upstream smoke: pi's new default
          made `check_codex_release.py --smoke` exit 2 under its `--no-firewall`;
          found in this change, fixed by passing `--mount-auth` there)
+
+### 2026-10-29 (pre-landing) — sandbox: `--allow-domain`, and no API hosts on an injected agent's allowlist
+
+A new wrapper control flag (per task via --agent-arg) and an egress change for
+the two injected agents (S4 trigger: endpoint domains).
+
+done:    24 (the flag per path: proxy mode merges it, ip mode resolves it,
+         --no-firewall ignores it with a warning; a plain resume drops it,
+         --exact keeps it — stated in the README), 31 (`allow+=` in the
+         runner log line only when the task added hosts — existence-gated;
+         probe.sh prints the agent's whole list, `agent_domains=` empty when
+         empty), 33 (empty or non-host-name values exit 2), 35 (sandbox README
+         network section and pi paragraph; top-level README), 37 (injection
+         spec Amendment 2, generic-agent-sandbox Amendment 5), S4 (injected
+         agents' A_DOMAINS dropped; measured with no DENY, one-shot and
+         interactive, both agents), S6 (README, runner-up.md wrapper controls,
+         probe.sh config_firewall)
+n/a:     1–23, 25–30, 32, 34–36, 38, 39 (no verb or UI; the flag rides
+         --agent-arg text), S1, S2, S3 (no table entry changed), S5
+missed:  —

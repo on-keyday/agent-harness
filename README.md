@@ -1556,7 +1556,8 @@ and opencode are mount-auth only. By default egress goes through an in-container
 proxy (`--firewall-proxy`: raw sockets blocked, WebFetch works), whose
 connection log goes to a host file under `${TMPDIR:-/tmp}`;
 `--agent-arg --firewall` swaps in a default-deny iptables+ipset allowlist,
-and `--agent-arg --no-firewall` opens the network. Processes in the
+`--agent-arg --allow-domain=docs.example.com` adds hosts for one task in either
+mode, and `--agent-arg --no-firewall` opens the network. Processes in the
 container cannot create user namespaces (a seccomp profile derived from
 podman's); `--agent-arg --allow-userns` lifts that for one task.
 

@@ -273,3 +273,28 @@ agent (uid 1000)                 proxy (uid 1001)                      host: rel
   `--history-window`, relay failure, and the reaper carrying `model` back but
   not `hooks` (negative control: without the final sync the test fails).
 - `test_config_sync.py`, `test_inject_auth.py` (`claude` mode).
+
+## Amendment 2 (2026-10-29): the allowlist under injection, and `--allow-domain`
+
+DECIDED (operator, 2026-10-29), both parts.
+
+- **An injected agent's own API hosts leave the egress allowlist.** The
+  injector reaches the provider as the proxy uid, which L3 lets out anywhere
+  and the CONNECT allowlist does not govern, so `A_DOMAINS` gave the agent
+  nothing but a direct route to the provider (and to claude's login hosts,
+  which only the host's claude uses now). Under injection the wrapper drops it
+  whole. Measured: pi with `HARNESS_SANDBOX_PI_DOMAINS=example.invalid` answered
+  through the injector with no `DENY`; with the change, pi and claude, one-shot
+  (claude running a Bash tool) and interactive through a dummy harness's
+  runner, answered with an allowlist of the shared hosts only and no `DENY`.
+  `HARNESS_SANDBOX_PI_DOMAINS` now matters under `--mount-auth` only.
+- **`--allow-domain=D[,D…]`** (repeatable) appends to the agent's list for one
+  task, so both firewall modes honour it: the proxy merges it into its
+  allowlist, `init-firewall.sh` resolves each name into the ipset. A value
+  that is not a host name (letters, digits, hyphens, at least one dot) exits
+  2; so does an empty one. Under `--no-firewall` it is ignored with a warning.
+  The runner log line shows `allow+=…`. It grants nothing a spawner could not
+  already take with `--no-firewall`. Measured: `curl https://example.com` from
+  a bash task was refused without it and answered 200 with it, in both modes.
+  `init-firewall.sh`'s warn-only self-check, which expects example.com to be
+  refused, now skips that check when the task allowed example.com.

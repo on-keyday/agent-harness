@@ -57,9 +57,11 @@ is a wrapper script pinning an nvm interpreter rather than npm's symlink.
 `--print`, `--continue` and an interactive session were verified on pi 1.0.3
 (2026-10-17), as was `--firewall-proxy`, through which pi needs only its
 provider host. **The allowlisted `openrouter.ai` is the provider of the host
-this was measured on, not pi's**: on a host whose `~/.pi/agent` uses another
-provider, set `HARNESS_SANDBOX_PI_DOMAINS=<host>[,<host>…]` in the runner's
-environment. It replaces the list in both firewall modes (`SANDBOX_PROXY_ALLOW`
+this was measured on, not pi's**, and it matters only under `--mount-auth`:
+by default (credential injection) the provider is reached by the injector and
+taken from `settings.json`, and pi's domain list is not used. Under
+`--mount-auth`, on a host whose `~/.pi/agent` uses another provider, set
+`HARNESS_SANDBOX_PI_DOMAINS=<host>[,<host>…]` in the runner's environment. It replaces the list in both firewall modes (`SANDBOX_PROXY_ALLOW`
 would reach `--firewall-proxy` only). To find the name, run once and read the
 `DENY` lines in the proxy log (the runner log's `[agent-in-podman]` line names
 the file). The wrapper turns off pi's version check on every run
@@ -461,9 +463,16 @@ The wrapper (`agent-in-podman.sh`) bind-mounts, at identical host paths:
   client-side **WebFetch works** (routed through the proxy), domain-based allowlist
   (no CDN-IP rotation / ipset), and injected code cannot open a raw socket at all.
   Default proxy allowlist = github/npm/pypi (shared) + the agent's own
-  domains from the table; extend for
-  WebFetch research targets by setting `SANDBOX_PROXY_ALLOW=domain1,domain2` in the
-  runner env. harness-cli is unaffected (direct L3 carve-out to the harness
+  domains from the table (none for an agent whose credential is injected: its
+  API is reached by the injector, not the agent). Extend it for one task with
+  `--agent-arg --allow-domain=docs.example.com[,…]` (repeatable; a domain
+  covers its subdomains; also honoured by `--firewall`, which resolves each
+  name; ignored with a warning under `--no-firewall`; a value that is not a
+  host name exits 2; like every `--agent-arg`, a plain resume does not carry
+  it, only `--exact` does), or for every task of a runner with
+  `SANDBOX_PROXY_ALLOW=domain1,domain2` in the runner env (proxy mode only).
+  The runner log line shows a task's additions as `allow+=…`, and
+  `probe.sh`'s `config_firewall` line the agent's whole list. harness-cli is unaffected (direct L3 carve-out to the harness
   server's own `ip:proto:port`; it doesn't use `HTTPS_PROXY`). Residual: a CONNECT proxy sees SNI/host
   only (no TLS-body inspection without MITM) — it closes raw-socket and
   non-allowlisted exfil, but cannot stop exfil *to an allowlisted domain* (e.g. a
@@ -573,6 +582,11 @@ settings).
   container to be used later or elsewhere. The agent can still **spend** it,
   on any path of that one provider, while the container runs. claude's refresh
   token is not in the container in any form.
+- **The agent's own API hosts leave the allowlist.** The injector reaches the
+  provider as the proxy uid, which the allowlist does not govern, so the agent
+  needs no route there and gets none (measured: pi and claude, one-shot with a
+  tool call and interactive, answered with their API hosts absent and no
+  `DENY` logged).
 - **claude's token refresh stays with the CLI.** The refresh token rotates on
   every use, so the relay never refreshes it itself: when the access token is
   within 5 minutes of expiry it runs the host's `claude auth status --json`

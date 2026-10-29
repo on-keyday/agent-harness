@@ -96,6 +96,13 @@ HOME_DIR="${HOME:-/home/$(id -un)}"
 #                       claude has an image copy. --image-claude is accepted as a
 #                       deprecated alias: it can still appear in a live runner
 #                       slot's recorded --agent-args.
+#   --allow-domain=D[,D...]  let this task reach more hosts, in both firewall
+#                       modes, on top of the agent's own (repeatable; a domain
+#                       also covers its subdomains in proxy mode). Pass it per
+#                       task with --agent-arg; a slot-wide list is
+#                       SANDBOX_PROXY_ALLOW in the runner's env. Grants nothing
+#                       --no-firewall would not, and is ignored (with a warning)
+#                       there. A value that is not a host name exits 2.
 #   --allow-userns      let processes in the container create user namespaces,
 #                       as podman's default seccomp profile does. Without it
 #                       they cannot (see "User namespaces" below), which also
@@ -132,7 +139,7 @@ allow_userns=0
 default_proxy_log="${TMPDIR:-/tmp}/sandbox-proxy-${HARNESS_TASK_ID:-$$}.log"
 proxy_log=""
 no_proxy_log=0
-declare -a ARGS=()
+declare -a ARGS=() allow_domains=()
 want_agent=0
 for a in "$@"; do
   if [ "$want_agent" = 1 ]; then AGENT="$a"; want_agent=0; continue; fi
@@ -152,6 +159,8 @@ for a in "$@"; do
     --history-window)   history_window=1 ;;
     --image-agent|--image-claude) image_agent=1 ;;
     --allow-userns)     allow_userns=1 ;;
+    --allow-domain=?*)  IFS=, read -r -a _d <<<"${a#*=}"; allow_domains+=( "${_d[@]}" ) ;;
+    --allow-domain|--allow-domain=) echo "[agent-in-podman] --allow-domain needs a value: --allow-domain=example.com" >&2; exit 2 ;;
     *)                  ARGS+=( "$a" ) ;;
   esac
 done
@@ -179,6 +188,16 @@ if [ -n "$proxy_log" ] && [ "$fw_mode" != proxy ]; then
 fi
 if [ "$fw_mode" = proxy ] && [ "$no_proxy_log" != 1 ] && [ -z "$proxy_log" ]; then
   proxy_log="$default_proxy_log"
+fi
+# Host names only: the list lands in an env var both firewall scripts split on
+# commas and whitespace, and in dig's argv.
+for d in "${allow_domains[@]}"; do
+  [[ "$d" =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$ ]] ||
+    { echo "[agent-in-podman] --allow-domain: '$d' is not a host name" >&2; exit 2; }
+done
+if [ "${#allow_domains[@]}" -gt 0 ] && [ "$fw_mode" = none ]; then
+  echo "[agent-in-podman] --allow-domain ignored: --no-firewall allows every host" >&2
+  allow_domains=()
 fi
 
 # --- agent table -------------------------------------------------------------
@@ -490,7 +509,9 @@ case "$AGENT" in
     # whichever provider ~/.pi/agent is configured for, so the list is a
     # per-host setting. HARNESS_SANDBOX_PI_DOMAINS (comma-separated, in the
     # runner's env) REPLACES it, for both firewall modes; SANDBOX_PROXY_ALLOW
-    # would cover --firewall-proxy only. Find the host to name by running once
+    # would cover --firewall-proxy only. Under injection (the default) the
+    # list is not used at all: the injector reaches the provider, and the
+    # provider comes from settings.json. Find the host to name by running once
     # under --firewall-proxy --proxy-log and reading the DENY lines.
     A_DOMAINS="${HARNESS_SANDBOX_PI_DOMAINS:-openrouter.ai}"
     A_HOME="$HOME_DIR"
@@ -923,6 +944,20 @@ if [ "$bridge_cli" = 1 ]; then
   done < <(env)
 fi
 
+# The hosts the agent may reach. Under injection its own API host is reached by
+# the injector (the proxy uid, which L3 lets out anywhere), not by the agent:
+# measured 2026-10-29, pi answered through the injector with openrouter.ai
+# absent from the list and no DENY logged. Every entry of the two injected
+# agents' A_DOMAINS is that API path (and claude's login endpoints, which only
+# the host's claude uses now), so the list drops whole; leaving it would let the
+# agent reach the provider directly for nothing but a way out.
+[ "$inject" = 1 ] && A_DOMAINS=""
+allow_extra=""
+if [ "${#allow_domains[@]}" -gt 0 ]; then
+  allow_extra=$(IFS=,; printf %s "${allow_domains[*]}")
+  A_DOMAINS="${A_DOMAINS:+$A_DOMAINS,}$allow_extra"
+fi
+
 # Egress firewall (on unless --no-firewall). Start as container-root with the
 # caps the iptables setup needs; the entrypoint applies the allowlist then drops
 # to the keep-id host user to run claude. The harness server (parsed from
@@ -1051,7 +1086,7 @@ if [ "$allow_userns" != 1 ]; then
 fi
 
 # One-line summary of the chosen modes → the runner log (token VALUE never shown).
-echo "[agent-in-podman] agent=$AGENT auth=$auth_mode firewall=$fw_mode harness-cli=$([ "$bridge_cli" = 1 ] && echo on || echo off) bin=$agent_src image=$IMAGE history=$history_mode userns=$userns_mode${proxy_log:+ proxy-log=$proxy_log}" >&2
+echo "[agent-in-podman] agent=$AGENT auth=$auth_mode firewall=$fw_mode harness-cli=$([ "$bridge_cli" = 1 ] && echo on || echo off) bin=$agent_src image=$IMAGE history=$history_mode userns=$userns_mode${allow_extra:+ allow+=$allow_extra}${proxy_log:+ proxy-log=$proxy_log}" >&2
 
 # Container lifecycle. We MUST `exec` podman so it stays the foreground owner of
 # the TTY — otherwise interactive keystrokes never reach claude. But with exec,

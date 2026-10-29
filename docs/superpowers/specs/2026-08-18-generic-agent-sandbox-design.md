@@ -270,3 +270,10 @@ access token to each request. `--mount-auth` restores the `~/.claude` mount;
 `--token-auth` is unchanged. This replaces Amendment 1's "mount auth" as
 claude's default. Design: `2026-10-29-sandbox-credential-injection-design.md`
 Amendment 1.
+
+## Amendment 5 (2026-10-29): `--allow-domain`
+
+A wrapper control for one task's extra egress hosts, in both firewall modes;
+and an agent whose credential is injected no longer has its own API hosts on
+the allowlist. See `2026-10-29-sandbox-credential-injection-design.md`
+Amendment 2.

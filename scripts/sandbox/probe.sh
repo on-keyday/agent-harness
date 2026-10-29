@@ -68,7 +68,7 @@ elif grep -qE "$cfg_re" /proc/self/mountinfo 2>/dev/null; then
 else
 	auth="token-or-ephemeral (no host agent config mount)"
 fi
-add "config_firewall" "$fw [HTTPS_PROXY=${HTTPS_PROXY:-unset}]"
+add "config_firewall" "$fw [HTTPS_PROXY=${HTTPS_PROXY:-unset}] [agent_domains=${SANDBOX_AGENT_DOMAINS-unset}]"
 add "config_auth" "$auth"
 # WHICH agent this container is running. Same reason as the two lines above: a
 # report that does not name its subject reads later as a claim about all of
