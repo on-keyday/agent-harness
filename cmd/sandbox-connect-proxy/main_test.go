@@ -348,3 +348,14 @@ func TestLoadAllowMergesAgentAndTaskDomains(t *testing.T) {
 		}
 	}
 }
+
+// --no-default-domains: only what the task named, not the shared dev hosts.
+func TestLoadAllowFromWithoutDefaults(t *testing.T) {
+	allow := loadAllowFrom(nil, ",docs.example.com,")
+	if len(allow) != 1 || allow[0] != "docs.example.com" {
+		t.Errorf("got %v, want only docs.example.com", allow)
+	}
+	if permitted(allow, "github.com") || permitted(allow, "registry.npmjs.org") {
+		t.Error("a shared default survived")
+	}
+}

@@ -103,6 +103,13 @@ HOME_DIR="${HOME:-/home/$(id -un)}"
 #                       SANDBOX_PROXY_ALLOW in the runner's env. Grants nothing
 #                       --no-firewall would not, and is ignored (with a warning)
 #                       there. A value that is not a host name exits 2.
+#   --no-default-domains  drop the hosts every task gets (GitHub, npm, PyPI)
+#                       from the allowlist in both firewall modes, leaving only
+#                       the agent's own and --allow-domain's. Under injection
+#                       the agent's own are none, so the agent reaches no host
+#                       but the harness server, with its model API reached by
+#                       the injector. Ignored (with a warning) under
+#                       --no-firewall.
 #   --allow-userns      let processes in the container create user namespaces,
 #                       as podman's default seccomp profile does. Without it
 #                       they cannot (see "User namespaces" below), which also
@@ -136,6 +143,7 @@ inject_auth=0
 history_window=0
 image_agent=0
 allow_userns=0
+no_default_domains=0
 default_proxy_log="${TMPDIR:-/tmp}/sandbox-proxy-${HARNESS_TASK_ID:-$$}.log"
 proxy_log=""
 no_proxy_log=0
@@ -159,6 +167,7 @@ for a in "$@"; do
     --history-window)   history_window=1 ;;
     --image-agent|--image-claude) image_agent=1 ;;
     --allow-userns)     allow_userns=1 ;;
+    --no-default-domains) no_default_domains=1 ;;
     --allow-domain=?*)  IFS=, read -r -a _d <<<"${a#*=}"; allow_domains+=( "${_d[@]}" ) ;;
     --allow-domain|--allow-domain=) echo "[agent-in-podman] --allow-domain needs a value: --allow-domain=example.com" >&2; exit 2 ;;
     *)                  ARGS+=( "$a" ) ;;
@@ -198,6 +207,10 @@ done
 if [ "${#allow_domains[@]}" -gt 0 ] && [ "$fw_mode" = none ]; then
   echo "[agent-in-podman] --allow-domain ignored: --no-firewall allows every host" >&2
   allow_domains=()
+fi
+if [ "$no_default_domains" = 1 ] && [ "$fw_mode" = none ]; then
+  echo "[agent-in-podman] --no-default-domains ignored: --no-firewall allows every host" >&2
+  no_default_domains=0
 fi
 
 # --- agent table -------------------------------------------------------------
@@ -997,6 +1010,7 @@ if [ "$fw_mode" != none ]; then
   # modes read instead of carrying a hard-coded provider list.
   for e in "${A_FW_ENV[@]}"; do FW+=( --env "$e" ); done
   FW+=( --env SANDBOX_AGENT_DOMAINS="$A_DOMAINS" )
+  [ "$no_default_domains" = 1 ] && FW+=( --env SANDBOX_NO_DEFAULT_DOMAINS=1 )
   if [ "$fw_mode" = proxy ]; then
     FW+=( --env SANDBOX_FIREWALL_PROXY=1 )
     # Extend the proxy's domain allowlist (comma-separated) for WebFetch research
@@ -1086,7 +1100,7 @@ if [ "$allow_userns" != 1 ]; then
 fi
 
 # One-line summary of the chosen modes → the runner log (token VALUE never shown).
-echo "[agent-in-podman] agent=$AGENT auth=$auth_mode firewall=$fw_mode harness-cli=$([ "$bridge_cli" = 1 ] && echo on || echo off) bin=$agent_src image=$IMAGE history=$history_mode userns=$userns_mode${allow_extra:+ allow+=$allow_extra}${proxy_log:+ proxy-log=$proxy_log}" >&2
+echo "[agent-in-podman] agent=$AGENT auth=$auth_mode firewall=$fw_mode harness-cli=$([ "$bridge_cli" = 1 ] && echo on || echo off) bin=$agent_src image=$IMAGE history=$history_mode userns=$userns_mode$([ "$no_default_domains" = 1 ] && echo " default-domains=off")${allow_extra:+ allow+=$allow_extra}${proxy_log:+ proxy-log=$proxy_log}" >&2
 
 # Container lifecycle. We MUST `exec` podman so it stays the foreground owner of
 # the TTY — otherwise interactive keystrokes never reach claude. But with exec,

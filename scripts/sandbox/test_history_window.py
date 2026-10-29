@@ -561,6 +561,19 @@ class WrapperTests(unittest.TestCase):
                 self.assertIn("--allow-domain", err)
                 self.assertIsNone(argv)
 
+    def test_no_default_domains(self):
+        err, argv = self.ok("pi", "--no-default-domains", "--allow-domain=docs.example.com")
+        self.assertIn("SANDBOX_NO_DEFAULT_DOMAINS=1", argv)
+        self.assertEqual(self.domains(argv), "docs.example.com")
+        self.assertIn("default-domains=off", err)
+        _, argv = self.ok("bash", "--firewall", "--no-default-domains")
+        self.assertIn("SANDBOX_NO_DEFAULT_DOMAINS=1", argv)
+        _, argv = self.ok("bash")
+        self.assertNotIn("SANDBOX_NO_DEFAULT_DOMAINS=1", argv)
+        err, argv = self.ok("bash", "--no-firewall", "--no-default-domains")
+        self.assertIn("--no-default-domains ignored", err)
+        self.assertNotIn("SANDBOX_NO_DEFAULT_DOMAINS=1", argv)
+
     def test_allow_domain_under_no_firewall_warns(self):
         err, argv = self.ok("bash", "--no-firewall", "--allow-domain=docs.example.com")
         self.assertIn("--allow-domain ignored", err)

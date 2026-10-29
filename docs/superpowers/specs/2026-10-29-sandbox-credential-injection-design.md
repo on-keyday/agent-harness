@@ -298,3 +298,23 @@ DECIDED (operator, 2026-10-29), both parts.
   a bash task was refused without it and answered 200 with it, in both modes.
   `init-firewall.sh`'s warn-only self-check, which expects example.com to be
   refused, now skips that check when the task allowed example.com.
+
+## Amendment 3 (2026-10-29): `--no-default-domains`
+
+DECIDED (operator, 2026-10-29: "a version with the default allowances off
+too"; opt-in, as the author proposed, since it stops git remotes and package
+installs inside). The shared hosts every task gets — `github.com`,
+`githubusercontent.com`, `npmjs.org`, `pypi.org`, `pythonhosted.org` in the
+proxy (`defaultAllow`), GitHub's published ranges plus npm and PyPI in
+`init-firewall.sh` — are left out when the wrapper passes
+`SANDBOX_NO_DEFAULT_DOMAINS=1`. What remains is the agent's own list (empty
+under injection) plus `--allow-domain`. `--firewall`'s default-route gateway
+/32 stays: it is an address rule, and nothing measured here depends on it
+either way. Ignored with a warning under `--no-firewall`.
+
+Measured: a bash task reached api.github.com (200) and was refused example.com
+without the flag; with `--no-default-domains --allow-domain=example.com` the
+opposite, in both modes, and the ip mode's self-check no longer warns about
+api.github.com. With injection, claude (running a Bash tool) and pi answered
+through an empty proxy allowlist; claude's plugin update check was refused
+(`DENY registry.npmjs.org` ×4) without affecting the answer.

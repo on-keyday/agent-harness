@@ -472,7 +472,18 @@ The wrapper (`agent-in-podman.sh`) bind-mounts, at identical host paths:
   it, only `--exact` does), or for every task of a runner with
   `SANDBOX_PROXY_ALLOW=domain1,domain2` in the runner env (proxy mode only).
   The runner log line shows a task's additions as `allow+=…`, and
-  `probe.sh`'s `config_firewall` line the agent's whole list. harness-cli is unaffected (direct L3 carve-out to the harness
+  `probe.sh`'s `config_firewall` line the agent's whole list.
+  `--agent-arg --no-default-domains` takes the shared hosts (GitHub — by name
+  in proxy mode, by its published ranges in `--firewall` — npm and PyPI) off
+  as well, in both modes, so the task reaches only what it named; under
+  credential injection that leaves the agent no host at all but the harness
+  server, its model API being reached by the injector (measured: claude and pi
+  answered with an empty proxy allowlist). Inside, `git fetch`/`push` to
+  GitHub and package installs fail, and claude's plugin update check is
+  refused (four `DENY registry.npmjs.org` per start, harmless). `--firewall`
+  keeps its default-route gateway rule, which is an address, not a domain.
+  Shown as `default-domains=off` in the runner log line and
+  `shared_defaults=off` in `probe.sh`. harness-cli is unaffected (direct L3 carve-out to the harness
   server's own `ip:proto:port`; it doesn't use `HTTPS_PROXY`). Residual: a CONNECT proxy sees SNI/host
   only (no TLS-body inspection without MITM) — it closes raw-socket and
   non-allowlisted exfil, but cannot stop exfil *to an allowlisted domain* (e.g. a

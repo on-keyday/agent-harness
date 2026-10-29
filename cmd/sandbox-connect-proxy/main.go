@@ -80,7 +80,12 @@ func normalizeDomain(d string) string {
 	return strings.Trim(strings.ToLower(strings.TrimSpace(d)), ".")
 }
 
-func loadAllow(env string) []string {
+func loadAllow(env string) []string { return loadAllowFrom(defaultAllow, env) }
+
+// loadAllowFrom is loadAllow with the shared defaults chosen by the caller:
+// none under SANDBOX_NO_DEFAULT_DOMAINS (the wrapper's --no-default-domains),
+// for a task that should reach nothing it did not name.
+func loadAllowFrom(defaults []string, env string) []string {
 	seen := map[string]bool{}
 	var out []string
 	add := func(d string) {
@@ -89,7 +94,7 @@ func loadAllow(env string) []string {
 			out = append(out, d)
 		}
 	}
-	for _, d := range defaultAllow {
+	for _, d := range defaults {
 		add(d)
 	}
 	for _, d := range strings.Split(env, ",") {
@@ -151,10 +156,14 @@ func main() {
 	if port == "" {
 		port = "18080"
 	}
+	defaults := defaultAllow
+	if os.Getenv("SANDBOX_NO_DEFAULT_DOMAINS") == "1" {
+		defaults = nil
+	}
 	cfg := config{
 		// Merged, not one-or-the-other: a per-task SANDBOX_PROXY_ALLOW must not
 		// be able to drop the agent's own API host by replacing the list.
-		allow:      loadAllow(os.Getenv("SANDBOX_AGENT_DOMAINS") + "," + os.Getenv("SANDBOX_PROXY_ALLOW")),
+		allow:      loadAllowFrom(defaults, os.Getenv("SANDBOX_AGENT_DOMAINS")+","+os.Getenv("SANDBOX_PROXY_ALLOW")),
 		idle:       envDuration("SANDBOX_PROXY_IDLE", 5*time.Minute),
 		maxTunnels: envInt("SANDBOX_PROXY_MAX_TUNNELS", 256),
 	}

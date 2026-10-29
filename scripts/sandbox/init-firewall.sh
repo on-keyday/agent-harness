@@ -45,10 +45,24 @@ iptables -A OUTPUT -o lo -j ACCEPT
 
 ipset create allowed-domains hash:net 2>/dev/null || true
 
+# The shared dev hosts below (GitHub's ranges, npm, PyPI) are on for every
+# task unless the wrapper's --no-default-domains turned them off, leaving only
+# what the task named (SANDBOX_AGENT_DOMAINS). The gateway and harness-server
+# rules further down are not domains and stay either way.
+no_defaults=0
+[ "${SANDBOX_NO_DEFAULT_DOMAINS:-0}" = 1 ] && no_defaults=1
+
 # GitHub IP ranges (web + api + git), aggregated — best-effort.
-echo "Fetching GitHub IP ranges..."
-gh_ranges=$(curl -s --connect-timeout 6 https://api.github.com/meta || true)
-if echo "$gh_ranges" | jq -e '.web and .api and .git' >/dev/null 2>&1; then
+if [ "$no_defaults" = 1 ]; then
+  echo "Shared default hosts (GitHub ranges, npm, PyPI) NOT allowlisted (--no-default-domains)"
+  gh_ranges=""
+else
+  echo "Fetching GitHub IP ranges..."
+  gh_ranges=$(curl -s --connect-timeout 6 https://api.github.com/meta || true)
+fi
+if [ "$no_defaults" = 1 ]; then
+  :
+elif echo "$gh_ranges" | jq -e '.web and .api and .git' >/dev/null 2>&1; then
   while read -r cidr; do
     [[ "$cidr" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}/[0-9]{1,2}$ ]] || continue
     ipset add allowed-domains "$cidr" 2>/dev/null || true
@@ -65,6 +79,7 @@ fi
 # image serve claude, codex and agy without this script knowing which is
 # running — and stops a codex container from allowlisting anthropic's API.
 base_domains="registry.npmjs.org pypi.org files.pythonhosted.org"
+[ "$no_defaults" = 1 ] && base_domains=""
 agent_domains="$(echo "${SANDBOX_AGENT_DOMAINS:-}" | tr ',' ' ')"
 for domain in $base_domains $agent_domains; do
   ips=$(dig +noall +answer +nocomments A "$domain" 2>/dev/null | awk '$4 == "A" {print $5}')
@@ -141,6 +156,8 @@ case " $agent_domains " in
   *) curl --connect-timeout 5 -s https://example.com >/dev/null 2>&1 \
        && echo "WARN: firewall check — example.com reachable (expected blocked)" >&2 || true ;;
 esac
-curl --connect-timeout 5 -s https://api.github.com/zen >/dev/null 2>&1 \
-  || echo "WARN: firewall check — api.github.com unreachable (expected allowed)" >&2
+if [ "$no_defaults" != 1 ]; then
+  curl --connect-timeout 5 -s https://api.github.com/zen >/dev/null 2>&1 \
+    || echo "WARN: firewall check — api.github.com unreachable (expected allowed)" >&2
+fi
 exit 0

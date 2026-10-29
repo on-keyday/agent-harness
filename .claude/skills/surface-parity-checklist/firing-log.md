@@ -3558,3 +3558,18 @@ done:    24 (the flag per path: proxy mode merges it, ip mode resolves it,
 n/a:     1–23, 25–30, 32, 34–36, 38, 39 (no verb or UI; the flag rides
          --agent-arg text), S1, S2, S3 (no table entry changed), S5
 missed:  —
+
+### 2026-10-29 (pre-landing) — sandbox: `--no-default-domains`
+
+A continuation of the `--allow-domain` walk, one commit later: re-asked the
+items that walk marked `done` of the new flag.
+
+done:    24 (per path: proxy mode skips defaultAllow, ip mode skips the GitHub
+         ranges and npm/PyPI, --no-firewall ignores it with a warning; resume
+         as for every --agent-arg), 31 (`default-domains=off` only when set;
+         probe.sh prints `shared_defaults=on|off` always), 33 (ignored only
+         with a warning, under --no-firewall), 35 (sandbox README network
+         section), 37 (injection spec Amendment 3), S4 (measured both modes),
+         S6 (README, runner-up.md, probe.sh)
+n/a:     1–23, 25–30, 32, 34–36, 38, 39, S1, S2, S3, S5
+missed:  —
