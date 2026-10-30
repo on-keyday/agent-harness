@@ -94,6 +94,8 @@ import (
 // them; termmode/tracker.go's preamble does, and the two are complementary.
 // The preamble must be emitted AFTER this sequence — it restores DECOM/DECAWM,
 // which this one deliberately clears in order to address cells absolutely.
+// Restoring DECOM homes the cursor, so whoever appends it positions the cursor
+// again afterwards (server SessionMux.heldCapture).
 func (t *Terminal) Repaint() []byte {
 	_, rows := t.Size()
 	x, y, vis := t.Cursor()

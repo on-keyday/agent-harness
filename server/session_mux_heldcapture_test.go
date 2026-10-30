@@ -236,3 +236,39 @@ func TestAttachAfterCaptureShowsTheRestoredScreen(t *testing.T) {
 		}
 	}
 }
+
+// The cursor survives held restarts in a row, not only the first. A capture is
+// the repaint followed by the tracked modes, and the tracker of a mux that
+// LOADED a capture has seen the repaint's own housekeeping — its ESC[?6l among
+// it. Restoring DECOM homes the cursor, so from the second restart on the
+// cursor sat at the top-left and claude, which draws relative to it, painted
+// its prompt at the top of the screen (operator, 2026-10-31).
+func TestHeldCaptureKeepsTheCursorAcrossRestarts(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	src := newFakeStream(t)
+	mux := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, src, NewRingBuffer(1<<20), SessionHooks{})
+	if err := mux.applyWinSizeFrame(makeWinSizeFrame(30, 100)); err != nil {
+		t.Fatalf("resize: %v", err)
+	}
+	src.QueueRead(makeWireFrame(1, []byte("\x1b[2J\x1b[1;1Htop\x1b[25;5Hprompt> ")))
+	waitFor(t, func() bool { return strings.Contains(string(mux.screenRepaint()), "prompt>") })
+	cursor := func(m *SessionMux) (int, int) {
+		m.screenMu.Lock()
+		defer m.screenMu.Unlock()
+		x, y, _ := m.screen.Cursor()
+		return x, y
+	}
+	wantX, wantY := cursor(mux)
+	for restart := 1; restart <= 3; restart++ {
+		next := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, newFakeStream(t), NewRingBuffer(1<<20), SessionHooks{})
+		if _, _, err := next.loadHeldCapture(mux.heldCapture()); err != nil {
+			t.Fatalf("restart %d: loadHeldCapture: %v", restart, err)
+		}
+		if x, y := cursor(next); x != wantX || y != wantY {
+			t.Fatalf("restart %d: cursor at (%d,%d), want (%d,%d)", restart, x, y, wantX, wantY)
+		}
+		mux = next
+	}
+}

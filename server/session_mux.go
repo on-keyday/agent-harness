@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"sync"
 	"sync/atomic"
@@ -487,13 +488,27 @@ func (m *SessionMux) loadHeldCapture(b []byte) (gotSize, gotScreen bool, err err
 // Preamble: the repaint already selects the screen and sets DECTCEM, and a
 // second ESC[?1049h fed to the grid would enter the alternate screen over what
 // it just painted.
+//
+// The cursor is positioned once more after the modes. Restoring DECOM homes
+// it, and the tracker of a mux that loaded a capture has seen the repaint's own
+// ESC[?6l — so from the second held restart on, the cursor came back at the
+// top-left and claude, which draws relative to it, painted its prompt there.
 func (m *SessionMux) heldCapture() []byte {
 	var out []byte
 	if wz := m.lastWinSizeBytes(); len(wz) > 0 {
 		out = append(out, wz...)
 	}
-	if rp := m.screenRepaint(); len(rp) > 0 {
-		out = append(out, encodeSynthFrame(append(rp, m.modes.Modes()...))...)
+	if !m.terminal {
+		return out
+	}
+	m.screenMu.Lock()
+	rp := m.screen.Repaint()
+	x, y, _ := m.screen.Cursor()
+	m.screenMu.Unlock()
+	if len(rp) > 0 {
+		screen := append(rp, m.modes.Modes()...)
+		screen = fmt.Appendf(screen, "\x1b[%d;%dH", y+1, x+1)
+		out = append(out, encodeSynthFrame(screen)...)
 	}
 	return out
 }
