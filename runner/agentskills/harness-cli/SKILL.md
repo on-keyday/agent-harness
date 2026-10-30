@@ -98,7 +98,8 @@ the first alone settles whether you are a later incarnation:
 is in memory: a restart drops every retained message and every subscription,
 then re-seeds only `chat.<short-id>` for live assignments. The exception is a
 topic someone kept with `board retain` (see "Keeping a topic"): its messages
-come back, its subscribers do not. Anything else you
+come back, and so do its members (see "Joined topics"), but not its plain
+subscribers. Anything else you
 subscribed to is gone, and `agent subscriptions` reports the reduced set without
 comment. It is detectable without any capability: a board `seq` carries the
 server's boot time in its high bits (`seq >> 20` is Unix ms), so a fresh `seq`
@@ -642,7 +643,9 @@ Without any capability a task publishes to its **base set**:
   hold now, newest first (JSON Lines, no capability), so check it rather than
   assume a route you answered earlier is still open;
 - `tree.<full-32-hex-id>.<suffix>` for every task id on its own ancestor chain,
-  itself included.
+  itself included;
+- a topic it is a **member** of — one the operator, or a task holding
+  `board_member`, joined it to (see "Joined topics").
 
 Anything else — a peer's `chat.<id>` you have no thread with, a free-form topic
 like `build.events` — needs the `board_peer` capability. A send outside your
@@ -1017,6 +1020,11 @@ then does not wake you, does not appear in your inbox or hook, and is not
 counted in `delivered_to`; everyone else subscribed gets it as usual, and
 `agent read <seq>` still shows it to you.
 
+A reply to a post on a group topic goes to your `chat.<short-id>` by default —
+a direct message, not a post the group reads. When the answers belong on the
+topic, send with `--reply-to <topic>` as well; on a topic you are a member of
+that is already the default.
+
 Typical per-agent setup:
 
 ```
@@ -1182,7 +1190,8 @@ harness-cli board retain tree.<your-full-task-id>.design --clear      # back to 
   whoever spawned you (or the operator) rather than working around it.
 - A retained topic is written to the server's disk and comes back after a
   restart, every message included. Your subscription to it does not: after a
-  restart, subscribe again.
+  restart, subscribe again — unless you are a member, whose subscription
+  comes back with it.
 - The ring you read through `inbox` / `read` / `retained` is still the last 64
   messages. The operator pages further back with `board read <topic> --limit
   N --before SEQ`.
@@ -1191,6 +1200,39 @@ harness-cli board retain tree.<your-full-task-id>.design --clear      # back to 
 - `board topics` (operator view) shows `retain=<period> by=<who set it>
   disk=<bytes>`, so a retained topic is always attributable. Do not retain
   `forever` unless asked to: the operator removes retentions nobody needs.
+
+### Joined topics — subscribed from outside
+
+You can find yourself subscribed to a topic you never subscribed to. The
+operator, or a task holding `board_member` with you in its scope, can do it
+from outside your task:
+
+- `board subscribe <task> <topic>` subscribes you. You read the topic, nothing
+  more — it is never a topic you could not have subscribed to yourself.
+- `board join <task> <topic>` makes you a **member**: subscribed, allowed to
+  publish there without `board_peer`, and a reply to anything you post there
+  comes back to the topic rather than to your `chat.<short-id>`. That is the
+  point of a shared timeline: the answers are for everyone on it.
+
+`agent subscriptions` does not tell the two apart; the operator's `board
+subscribers` does (`joined:<topic>`). On a topic you were put on:
+
+- Post with `--exclude-self`: you read the topic too (see "Only subscribe to
+  topics you receive on").
+- For a private answer to your post, send it with `--reply-to
+  chat.<your-short-id>`; an explicit `--reply-to` always wins over the
+  member's default.
+- `agent unsubscribe --topic <topic>` on a joined topic **leaves** it: you
+  stop reading it and lose the publish right, and on a retained topic you
+  stay out after a restart. It only narrows what you can do, so it is yours
+  to decide.
+- A membership is kept per task id, so it survives a resume on another runner
+  and, on a retained topic, a server restart: you are subscribed again when
+  the task is assigned. A plain subscription survives neither.
+
+Holding `board_member` yourself, you can put tasks in your scope on a topic
+(`harness-cli skill supervising-workers` covers when that is useful), never
+yourself: a task does not change its own standing.
 
 ### "My message never arrived"
 

@@ -223,3 +223,19 @@ task-scoped. Bits used: 27 of 32.
   task → subscribed and allowed again; non-retained topic → forgotten.
 - Live: CLI, TUI and WebUI each driven once (dummy harness, real PTY,
   Playwright), including a member that had never subscribed itself.
+
+## 6. Amendments (2026-10-31, during implementation)
+
+Found by the mid-implementation review and by live checks. None was ruled on
+by the operator; each is `author` provenance and is listed in the landing
+report.
+
+| # | Amendment | Replaces | Why |
+|---|---|---|---|
+| A1 | A task caller may not target itself (`not_found`) | §3.6 had no such row | With the default `subtree` scope a task is in its own scope, so a holder could join itself on the strength of a reach that is revocable — a contact, or a `board_peer` the operator later drops — and keep publishing after it was revoked. That is the "route to widen its own reach" §3.6 says does not exist |
+| A2 | `join` by a task caller needs the caller to publish to the topic on its own reach, contacts excluded (`Board.GrantableBy`) | §3.6 `join`: `Publishable` for the caller | A contact is the right to answer someone who spoke first: LRU-bounded, cleared by `board clear-contacts`, lost on restart. Granting from it turned it into a membership that outlived it |
+| A3 | `board unsubscribe` of a member ends the membership, as the member's own unsubscribe does (D12) | D13 for a member target | A membership with no subscription kept the publish right while `board subscribers` — which lists only subscribed tasks — no longer showed it, contradicting §4's "visible to the operator". D13 still holds for a non-member |
+| A4 | The reply-route default (D9) applies to a member's own agent-kind publish only, not to a server notification (`session_idle`, `task_progress`) or an operator-face `board send` made in its name | D9 wording ("a message a member publishes") | A watcher armed on a joined topic would otherwise route answers to a server notice onto the shared topic, where they used to be refused (`no_reply_route`) |
+| A5 | Only `publishableFor` consults membership; `readableFor` does not | D4 ("consulted by both") | Every topic `join` accepts is already readable by the target (free-form: anyone; own-lineage tree: the lineage rule), so a read check could only fire on a tree topic after `set_parent` moved the task out — where it would contradict D16 |
+| A6 | `BoardMembershipStatus` gains `bad_request` for an op value the server does not know | §3.4 | The enum is not validated on decode; the handler needs an answer for a value outside it |
+| A7 | `agentboard.JoinableName` (not empty, not `chat.*`) is exposed to the WebUI as `harness.boardJoinable`, and 参加させる is disabled where it is false | §3.5 | Found live: the button was offered on `chat.*`, where every join is refused |

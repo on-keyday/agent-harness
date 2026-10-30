@@ -477,6 +477,23 @@ and the scope forms (`--json` for the machine-readable form).
   `tree.<your-full-task-id>.<suffix>`, readable and writable by the whole
   subtree with no bit. The `harness-cli` skill's "Who you can reach" has the
   full rule.
+- **Putting workers on a topic — `board join` / `board subscribe`.** To gather
+  workers on one discussion, `harness-cli board join <worker> <topic>` makes
+  each a member: subscribed, allowed to publish there with no `board_peer`,
+  and replies to its posts stay on the topic. `board subscribe <worker>
+  <topic>` only subscribes — the shape for a broadcast request whose answers
+  go to each poster privately. `board leave` / `board unsubscribe` undo them.
+  Both need `board_member` with the worker inside that bit's scope (default
+  `subtree`: your workers), and are bounded so you hand out nothing you lack:
+  never yourself as the target (`not_found`); a join only to a topic YOU may
+  publish to on your own reach — your lineage's `tree.<id>.*`, or a free-form
+  topic with a global `board_peer`; a contact does not count
+  (`not_publishable`); never `chat.*` or a `tree.<X>.*` outside the worker's
+  lineage (`not_joinable`); a subscribe only to a topic the worker could read
+  itself (`not_readable`). On `tree.<your-full-task-id>.<suffix>` your workers
+  can already write; joining them there adds the subscription, the reply
+  default, and — on a topic kept with `board retain` — a subscription that
+  survives a server restart.
 - **One capability can be narrowed below the others.** `--scope-for CAPS=SCOPE`
   (repeatable, capability lists must not overlap) gives named bits their own
   target set: `--scope-for exec_cowrite,file_write=descendants` is "may drive
@@ -534,7 +551,7 @@ and the scope forms (`--json` for the machine-readable form).
 Granular names: `spawn`, `resume_exact`, `resume`, `cancel`, `exec_view`, `exec_cowrite`,
 `exec_control`, `exec_resize`, `exec_run`, `exec_tap`, `file_read`, `file_write`,
 `forward_local`, `forward_remote`, `forward_link`, `forward_tap`, `notify`, `prune`,
-`runner_admin`, `board_observe`, `board_purge`, `board_send`, `board_peer` — plus the aliases `none` / `all`. `harness-cli caps`
+`runner_admin`, `board_observe`, `board_purge`, `board_send`, `board_peer`, `board_persist`, `board_member` — plus the aliases `none` / `all`. `harness-cli caps`
 prints the authoritative list with a line each; this one can fall behind it.
 `spawn` creates a task and nothing else. `resume` re-queues a finished one under
 its own id, free to change its prompt, agent, args, caps and scope; it implies
