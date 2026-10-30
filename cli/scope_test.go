@@ -279,7 +279,7 @@ func TestParseScopeForRejectsVisibilityAndEmptyMasks(t *testing.T) {
 // Overlapping masks are what disjointness buys: caught client-side so a typo
 // costs a parse error rather than a round trip.
 func TestMergeScopeOverrideRejectsOverlap(t *testing.T) {
-	_, a, err := ParseScopeFor("cancel,purge=none")
+	_, a, err := ParseScopeFor("cancel,board_purge=none")
 	if err != nil {
 		t.Fatal(err)
 	}

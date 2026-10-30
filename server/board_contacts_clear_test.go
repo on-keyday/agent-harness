@@ -8,7 +8,7 @@ import (
 	"github.com/on-keyday/objtrsf/objproto"
 )
 
-// board_contacts_clear names a task, so it is gated on the purge bit's scope as
+// board_contacts_clear names a task, so it is gated on the board_purge bit's scope as
 // well as on the bit: a subtree-scoped caller forgets contacts of its own
 // descendants and gets not_found — not permission_denied — for anyone else.
 func TestBoardContactsClearIsScopeGated(t *testing.T) {

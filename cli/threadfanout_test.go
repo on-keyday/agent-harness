@@ -101,7 +101,7 @@ func TestFanoutStopsOnErrorAndSkipsTheRest(t *testing.T) {
 		{Topic: "t", Msg: BoardMessage{Seq: 2}},
 		{Topic: "t", Msg: BoardMessage{Seq: 3}},
 	}
-	boom := errors.New("permission denied: BoardRetract requires capability purge")
+	boom := errors.New("permission denied: BoardRetract requires capability board_purge")
 	n := 0
 	res := fanoutRows(rows, "hdr", "retracted", true,
 		func(string, uint64) (bool, error) {

@@ -60,10 +60,10 @@ func TestCapsAuditLiveOnlyByDefault(t *testing.T) {
 
 func TestCapsAuditFoldsEmptyBits(t *testing.T) {
 	a := auditTask(0xa1, protocol.TaskStatus_Running, protocol.Capability_Spawn, protocol.ScopeBase_Subtree)
-	if r := rowFor(CapsAudit([]protocol.TaskInfo{a}, false, false), protocol.Capability_Purge); r != nil {
+	if r := rowFor(CapsAudit([]protocol.TaskInfo{a}, false, false), protocol.Capability_BoardPurge); r != nil {
 		t.Fatal("purge has no holder but is listed")
 	}
-	if r := rowFor(CapsAudit([]protocol.TaskInfo{a}, false, true), protocol.Capability_Purge); r == nil || len(r.Holders) != 0 {
+	if r := rowFor(CapsAudit([]protocol.TaskInfo{a}, false, true), protocol.Capability_BoardPurge); r == nil || len(r.Holders) != 0 {
 		t.Fatalf("with includeEmpty purge = %+v, want an empty row", r)
 	}
 }

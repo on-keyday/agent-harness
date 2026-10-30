@@ -953,7 +953,7 @@ Each task carries a **capability set** — a server-enforced bitmask of
 what control-plane operations it may request (spawn, resume, cancel, the three
 session-attach powers, file read / write, local / remote port-forward, an ip
 link (`forward_link`, implied by neither port-forward bit),
-reading a forward's or an exec's payload, notify, prune, purge, runner-admin,
+reading a forward's or an exec's payload, notify, prune, board_purge, runner-admin,
 enrolling runner keys (`runner_enroll`), global info, publishing to the board beyond the task's own lineage, publishing to the
 board as the operator, keeping a board topic past its TTL (`board_persist`)) — and a **target scope** bounding WHICH tasks those
 capabilities may be pointed at.
@@ -1013,7 +1013,7 @@ By default a spawned task gets **no capabilities at all**, scoped to
 nothing — the task can still message its own lineage on the agentboard
 (see **Board reach** below) and see its own subtree in `ls` / `watch`, but
 every control-plane verb (spawn, cancel,
-attach, file read/write, forwards, notify, prune, purge, runner-admin,
+attach, file read/write, forwards, notify, prune, board_purge, runner-admin,
 runner enrollment, global info) answers `permission denied` until something
 grants it.
 Reading a task's log is `exec_view`, whether by `logs`, by following it, or
@@ -1145,7 +1145,7 @@ including from that operator view.
 The operator withdraws somebody else's message with `board retract
 <topic> --seq N` (TUI board view: `w`; WebUI board panel: ⊘ on a
 message). It is the same move without the authorship check, gated on
-`purge` — no new bit, because that bit already reaches the same message
+`board_purge` — no new bit, because that bit already reaches the same message
 through `board purge --seq N` and destroys it outright. This is the half
 that leaves the payload behind for reading: the agents lose it now, the
 operator keeps it until the topic ages out. `--seq` is required and
@@ -1181,7 +1181,7 @@ has gone longest without writing again dropped first — are listed by `agent
 contacts` for the task itself and on every `board subscribers` row (CLI, TUI,
 WebUI) for the operator, which is what to read before granting `board_peer`.
 `board clear-contacts <task> [--topic T]` forgets one of them, or all (gated on
-`purge` and its scope; TUI: `x` in the subscribers view; WebUI: × and 「全消去」
+`board_purge` and its scope; TUI: `x` in the subscribers view; WebUI: × and 「全消去」
 on the row) — the only way to close a route short of a server restart, since
 `caps set` removing `board_peer` leaves contacts alone. A message sent with
 `agent send --no-contact` adds no contact at all — for a tool that publishes in
@@ -1252,7 +1252,7 @@ bin/harness-cli board retract-thread  --conversation 60542da9+70fbad4a   # agent
 bin/harness-cli board purge-thread    --conversation 60542da9+70fbad4a   # bytes gone
 ```
 
-Both are gated on `purge` — no new bit, since `board retract` and `board purge`
+Both are gated on `board_purge` — no new bit, since `board retract` and `board purge`
 already reach the same messages one at a time — and **neither takes a `<topic>`
 argument**: a conversation spans topics by construction, so naming one cannot
 select one conversation. **A selector is required.** `board thread` with none

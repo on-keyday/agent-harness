@@ -40,7 +40,7 @@ func TestClampScopeUnderCarriesEveryAxis(t *testing.T) {
 		ExcludeSelf: true,
 		Overrides: []ScopeOverride{
 			{Caps: protocol.Capability_Cancel, Base: protocol.ScopeBase_Subtree},
-			{Caps: protocol.Capability_Purge, Base: protocol.ScopeBase_Subtree},
+			{Caps: protocol.Capability_BoardPurge, Base: protocol.ScopeBase_Subtree},
 		},
 	}
 
@@ -73,7 +73,7 @@ func TestClampScopeUnderDropsOverridesForLostBits(t *testing.T) {
 	parent := NewReach("00112233445566778899aabbccddeeff", Scope{Base: protocol.ScopeBase_Subtree}, nil)
 	child := Scope{
 		Base:      protocol.ScopeBase_Subtree,
-		Overrides: []ScopeOverride{{Caps: protocol.Capability_Cancel | protocol.Capability_Purge}},
+		Overrides: []ScopeOverride{{Caps: protocol.Capability_Cancel | protocol.Capability_BoardPurge}},
 	}
 	out := ClampUnder(child, protocol.Capability_Cancel, parent)
 	if len(out.Overrides) != 1 {

@@ -12,7 +12,7 @@ import (
 )
 
 // Purge is the entry for `harness-cli agent purge`. It destroys a topic's
-// retained-message ring on the server (Capability_Purge required), flushing an
+// retained-message ring on the server (Capability_BoardPurge required), flushing an
 // unwanted payload out of the server-side buffer so a since=0 re-read can't
 // resurface it. The cursor stays valid: the board seq counter is global, so a
 // post-purge message gets a strictly higher seq.

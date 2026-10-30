@@ -1757,8 +1757,8 @@ func TestSetCapsValidatesConsistencyNotWidth(t *testing.T) {
 		scope authority.Scope
 	}{
 		{"intersecting masks", authority.Scope{Overrides: []authority.ScopeOverride{
-			{Caps: protocol.Capability_Cancel | protocol.Capability_Purge},
-			{Caps: protocol.Capability_Purge},
+			{Caps: protocol.Capability_Cancel | protocol.Capability_BoardPurge},
+			{Caps: protocol.Capability_BoardPurge},
 		}}},
 		{"empty mask", authority.Scope{Overrides: []authority.ScopeOverride{{Caps: protocol.Capability_None}}}},
 		{"non-canonical vis_base", authority.Scope{VisBase: protocol.ScopeBase_Global}},

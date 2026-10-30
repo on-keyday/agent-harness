@@ -305,7 +305,7 @@ func payloadStreamOf(req *protocol.TaskControlRequest) uint64 {
 // is returned here without also having been recorded as delivered.
 
 // agentHandlePurge destroys a topic's retained-message ring. Gated by
-// Capability_Purge (distinct from Prune): purge drops live retained messages on
+// Capability_BoardPurge (distinct from Prune): purge drops live retained messages on
 // a possibly-shared topic, so a confined task must be granted it explicitly.
 
 // agentHandleRetract withdraws one message the CALLER published. The withdrawn
@@ -315,7 +315,7 @@ func payloadStreamOf(req *protocol.TaskControlRequest) uint64 {
 // audit what was said.
 //
 // There is NO capability gate here, and that is the design rather than an
-// omission. Purge needs Capability_Purge because it can destroy a topic full
+// omission. Purge needs Capability_BoardPurge because it can destroy a topic full
 // of other agents' unread messages; retract reaches exactly the bytes the
 // caller wrote and nothing else, so the authority argument is authorship, not
 // a grantable bit. The gate lives in Board.RetractSeq, which matches FromTask
@@ -334,4 +334,4 @@ func payloadStreamOf(req *protocol.TaskControlRequest) uint64 {
 // board_observe gates). It never surfaces more than the caller could read: the
 // whole ring on its own and group topics, only its own rows on a topic whose
 // subscription is gated (reach spec D15). Destruction (purge) still needs
-// Capability_Purge; reading does not.
+// Capability_BoardPurge; reading does not.

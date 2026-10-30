@@ -20,7 +20,7 @@ func auditApp(t *testing.T) (*App, string) {
 	setAuditTasks(a,
 		protocol.TaskInfo{Id: sp, Status: protocol.TaskStatus_Running, Capabilities: protocol.Capability_Spawn | protocol.Capability_ExecCowrite},
 		protocol.TaskInfo{Id: obs, Status: protocol.TaskStatus_Running, Capabilities: protocol.Capability_BoardObserve},
-		protocol.TaskInfo{Id: done, Status: protocol.TaskStatus_Succeeded, Capabilities: protocol.Capability_Purge},
+		protocol.TaskInfo{Id: done, Status: protocol.TaskStatus_Succeeded, Capabilities: protocol.Capability_BoardPurge},
 	)
 	return a, hex.EncodeToString(sp.Id[:])
 }

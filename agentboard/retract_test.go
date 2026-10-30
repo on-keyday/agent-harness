@@ -422,7 +422,7 @@ func TestRetract_IsIdempotentAndBlind(t *testing.T) {
 }
 
 // TestForceRetract_WithdrawsSomebodyElsesMessage is the board_retract path: a
-// caller holding Capability_Purge withdraws a message it did not write. The
+// caller holding Capability_BoardPurge withdraws a message it did not write. The
 // authorship check that guards RetractSeq is deliberately absent, so what this
 // pins is the rest of the contract — the entry leaves the live ring exactly as
 // an author retract does, and the withdrawn copy records which check let it

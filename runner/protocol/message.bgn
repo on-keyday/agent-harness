@@ -499,9 +499,9 @@ enum TaskControlKind:
     exec_run_kill           # stop one running exec by id
     board_retract           # withdraw ONE retained message (by seq) from every
                             # agent-facing path while leaving it readable on the
-                            # operator surfaces. Requires purge — the same bit
+                            # operator surfaces. Requires board_purge — the same bit
                             # board_purge takes, because anything it can reach,
-                            # purge can already reach and destroy outright; this
+                            # board_purge can already reach and destroy outright; this
                             # is the gentler half of that authority, not a new
                             # one. Distinct from the agentboard RetractRequest,
                             # which takes no capability and is gated on
@@ -546,7 +546,7 @@ enum TaskControlKind:
     # That is the line
     # the agent_ prefix draws, and it is where the gates already sat: of the
     # twelve verbs on the retired enum, exactly two were capability-gated --
-    # list_topics (board_observe) and purge (purge) -- and those two are not
+    # list_topics (board_observe) and purge (board_purge) -- and those two are not
     # here, because they are board_topics and board_purge, which they
     # duplicated. A verb that reaches topics the caller need not subscribe to
     # is a board_ kind and takes a bit; a future verb is named by that test,
@@ -572,7 +572,7 @@ enum TaskControlKind:
     agent_retract           # withdraw one message I published. Gated on
                             # AUTHORSHIP, not a capability -- distinct from
                             # board_retract, which skips that check on the
-                            # purge bit and is recorded as by=purge_cap.
+                            # board_purge bit and is recorded as by=purge_cap.
     await_list              # appended: enumerate armed watchers (idle and
                             # progress conditions; renamed from await_idle_list).
                             # No capability. An agent sees the ones it armed on
@@ -598,7 +598,7 @@ enum TaskControlKind:
                             # spec section 3). No capability: keyed to the
                             # caller, like agent_list_subscriptions.
     board_contacts_clear    # appended: forget one contact of a task, or all of
-                            # them. Gated on purge -- it removes another task's
+                            # them. Gated on board_purge -- it removes another task's
                             # state, as board_retract does -- and target-gated
                             # on that bit's scope, because it names a task.
     progress_set            # appended: write the CALLER'S OWN self-reported
@@ -1397,7 +1397,7 @@ enum RetractedBy:
     author    = 0, "author"
     # A holder of Capability_Purge withdrew somebody else's message:
     # TaskControlKind.board_retract. Not necessarily an operator — a task
-    # granted `purge` can do this too, which is why the value names the check
+    # granted `board_purge` can do this too, which is why the value names the check
     # that passed rather than a kind of caller.
     purge_cap = 1, "purge_cap"
 
@@ -1592,7 +1592,7 @@ format BoardContactsClearRequest:
     topic_len :u16
     topic :[topic_len]u8
 
-# not_found: the task is outside the caller's purge scope, or the board holds
+# not_found: the task is outside the caller's board_purge scope, or the board holds
 # no state for it -- one answer, so the reply is no existence oracle. ok with
 # removed = 0: the task is there and the named route was not a contact.
 format BoardContactsClearResponse:
@@ -1928,7 +1928,7 @@ format ContactsBody:
 # task's chat.<id>, chat.operator, a tree.<id> it is not in, without
 # board_observe) it is only the rows the caller published, flagged by
 # own_only — which is what lets a sender check its own message on a peer's
-# topic. Destruction (purge) needs Capability.purge; this read does not.
+# topic. Destruction (purge) needs Capability.board_purge; this read does not.
 format AgentListRetainedRequest:
     request_id :u32
     topic_len :u16
@@ -2017,7 +2017,7 @@ format AgentReadSeqResponse:
 # No capability gate. The gate is AUTHORSHIP — the server compares the stored
 # message's from_task against the caller's authenticated task id and refuses
 # otherwise, so a retract can never destroy something the caller did not write.
-# Capability.purge stays the gate for board_purge, which erases the bytes for
+# Capability.board_purge stays the gate for board_purge, which erases the bytes for
 # real; that remains the escape hatch for a payload which must not survive at
 # all (a leaked credential), and it reaches retracted messages too.
 format AgentRetractRequest:
@@ -3888,15 +3888,15 @@ enum Capability:
     # topics, messages and subscribers. An agent denied "board_read" would go
     # debugging a messaging path that is working fine.
     board_observe  = 0x400, "board_observe"
-    # purge authorizes destroying an agentboard topic's retained-message ring
+    # board_purge (0x800) authorizes destroying an agentboard topic's retained-message ring
     # (agent purge --topic). Distinct from prune (which forgets TERMINAL TASK
-    # records, self-scoped/benign): purge drops LIVE retained messages on a
+    # records, self-scoped/benign): it drops LIVE retained messages on a
     # possibly-shared topic, so it can wipe another agent's unconsumed inbound
     # channel. Different blast radius → its own bit, default-off.
     #
     # It gates board_retract too, which withdraws ONE message from every
     # agent-facing path while leaving it readable on the operator surfaces.
-    # That is strictly less than this bit already permits — purge reaches the
+    # That is strictly less than this bit already permits — this bit reaches the
     # same message and destroys the bytes — so it rides here rather than
     # claiming a bit of its own. The consequence, stated because it is a real
     # limit: "may withdraw but may not destroy" is not a grantable shape.
@@ -3904,7 +3904,10 @@ enum Capability:
     # And board_contacts_clear, which forgets a task's contacts: another
     # task's board state, as a retract is. That one names a TASK, so unlike
     # the topic verbs it is bounded by this bit's scope.
-    purge          = 0x800, "purge"
+    # Renamed from purge (2026-10-31), keeping 0x800: the bit is agentboard-only,
+    # and the bare name read as a general one. The WAL persists the number, so no
+    # record migrates.
+    board_purge    = 0x800, "board_purge"
     # exec_view / exec_cowrite are the two weaker attach powers, split out of
     # what exec_attach used to grant wholesale. Default-off and appended, so no
     # existing grant changes meaning.
@@ -4011,8 +4014,8 @@ enum Capability:
     # retention period, which keeps it past the TTL and a server restart on
     # disk (forever included), and clearing it. A task holding it may do so
     # only on topics it may publish to (the board reach check); chat.<id>
-    # topics are never retainable. Not purge: retaining consumes disk, while
-    # purge destroys messages, and handing an agent the first must not hand it
+    # topics are never retainable. Not board_purge: retaining consumes disk, while
+    # board_purge destroys messages, and handing an agent the first must not hand it
     # the second. Names topics, not tasks, so no scope bounds it.
     # Default-off, appended. See
     # docs/superpowers/specs/2026-10-30-agentboard-retention-design.md

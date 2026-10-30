@@ -14,7 +14,7 @@ func TestTierMark(t *testing.T) {
 		tier verb.CapTier
 		ok   bool
 	}{
-		{protocol.Capability_Spawn | protocol.Capability_Purge | protocol.Capability_ExecView, "強2", verb.TierStrong, true},
+		{protocol.Capability_Spawn | protocol.Capability_BoardPurge | protocol.Capability_ExecView, "強2", verb.TierStrong, true},
 		{protocol.Capability_ExecView, "弱1", verb.TierWeak, true},
 		{protocol.Capability_ExecCowrite | protocol.Capability_FileRead, "中1", verb.TierMid, true},
 	} {

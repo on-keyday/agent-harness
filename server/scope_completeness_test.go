@@ -62,7 +62,7 @@ var kindTargetClass = map[protocol.TaskControlKind]targetClass{
 	// The watcher resolves to a task; idleWatcherVisibleTo gates it.
 	protocol.TaskControlKind_AwaitKill: targetGated,
 	// board_contacts_clear names a task whose board state it removes:
-	// inScope on purge, not_found outside it.
+	// inScope on board_purge, not_found outside it.
 	protocol.TaskControlKind_BoardContactsClear: targetGated,
 	// progress_set writes the caller's OWN row, resolved from its principal;
 	// the request names no task.

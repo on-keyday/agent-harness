@@ -108,7 +108,7 @@ func TestTasksTree_IDCellCarriesTheGutter(t *testing.T) {
 func TestTreeIDCellCarriesTierMark(t *testing.T) {
 	m := NewTasks()
 	task := tuiTask('a', 0, 10)
-	task.Capabilities = protocol.Capability_Spawn | protocol.Capability_Purge
+	task.Capabilities = protocol.Capability_Spawn | protocol.Capability_BoardPurge
 	m.SetSize(160, 20)
 	m.SetRows([]protocol.TaskInfo{task}, nil)
 	if cell := m.table.Rows()[0][1]; strings.Contains(cell, "強") {
@@ -138,7 +138,7 @@ func TestTreeIDCellNoMarkForNoCaps(t *testing.T) {
 // columns and a marked holder read as unmarked.
 func TestTreeMarksSurviveNarrowPanels(t *testing.T) {
 	root := tuiTask('a', 0, 10)
-	root.Capabilities = protocol.Capability_Spawn | protocol.Capability_Purge
+	root.Capabilities = protocol.Capability_Spawn | protocol.Capability_BoardPurge
 	child := tuiTask('b', 'a', 20)
 	child.Capabilities = protocol.Capability_Spawn
 	grand := tuiTask('c', 'b', 30)

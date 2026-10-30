@@ -287,7 +287,7 @@ capability-gated and this is not.
 
 **Somebody else can withdraw your message.** `harness-cli board retract <topic>
 --seq <N>` makes the same move without the authorship check, gated on the
-`purge` capability instead — so the operator, or any task granted `purge`, can
+`board_purge` capability instead — so the operator, or any task granted `board_purge`, can
 do it. It is the softer half of that bit rather than a new power: purge already
 reaches the same message and destroys it outright, and this leaves the payload
 readable on the operator surfaces. `--seq` is required, and purge's "seq 0 means
@@ -300,7 +300,7 @@ for your own retract, `by=purge_cap:<task-id>` (or `by=purge_cap:operator`) for
 this one.
 
 **A whole conversation can go at once.** `board retract-thread` and
-`board purge-thread` take the same `purge` bit and act on every message of one
+`board purge-thread` take the same `board_purge` bit and act on every message of one
 conversation, across each topic it spans — so an exchange you have been having
 can empty in a single operator action, your side and the peer's together. It is
 how a finished discussion is cleared: withdrawn first so a resumed peer cannot
@@ -371,9 +371,9 @@ message is delivered exactly once.
 
 Because purge destroys live retained messages on a possibly-shared topic (it
 can wipe another agent's unconsumed inbound channel), it is gated by its own
-`purge` capability — distinct from `prune` (which only forgets terminal task
+`board_purge` capability — distinct from `prune` (which only forgets terminal task
 records). An operator task holds it via `all`; a confined worker must be
-granted `--caps ...,purge` explicitly or it gets `denied`.
+granted `--caps ...,board_purge` explicitly or it gets `denied`.
 
 ### Choosing which message to purge — `agent retained` (metadata only)
 

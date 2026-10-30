@@ -113,7 +113,7 @@ harness-cli agent retract <seq>
 ```
 
 No capability — the check is authorship, so you withdraw only what your own
-process sent. (`board retract` is the operator surface and needs `purge`.)
+process sent. (`board retract` is the operator surface and needs `board_purge`.)
 Probe and test messages on someone else's topic are litter; withdraw them when
 the probe is done.
 

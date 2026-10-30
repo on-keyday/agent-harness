@@ -240,8 +240,8 @@ func TestScopeOverrideDisjointnessIsNotAWireConcern(t *testing.T) {
 	in.SetRepoPath([]byte("/r"))
 	in.SetPrompt([]byte("p"))
 	in.Overrides = []ScopeOverride{
-		{Caps: Capability_Cancel | Capability_Purge},
-		{Caps: Capability_Purge}, // intersects the first
+		{Caps: Capability_Cancel | Capability_BoardPurge},
+		{Caps: Capability_BoardPurge}, // intersects the first
 		{Caps: Capability_None},  // empty mask
 	}
 	in.OverridesLen = uint8(len(in.Overrides))

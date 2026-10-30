@@ -534,7 +534,7 @@ and the scope forms (`--json` for the machine-readable form).
 Granular names: `spawn`, `resume_exact`, `resume`, `cancel`, `exec_view`, `exec_cowrite`,
 `exec_control`, `exec_resize`, `exec_run`, `exec_tap`, `file_read`, `file_write`,
 `forward_local`, `forward_remote`, `forward_link`, `forward_tap`, `notify`, `prune`,
-`runner_admin`, `board_observe`, `purge`, `board_send`, `board_peer` — plus the aliases `none` / `all`. `harness-cli caps`
+`runner_admin`, `board_observe`, `board_purge`, `board_send`, `board_peer` — plus the aliases `none` / `all`. `harness-cli caps`
 prints the authoritative list with a line each; this one can fall behind it.
 `spawn` creates a task and nothing else. `resume` re-queues a finished one under
 its own id, free to change its prompt, agent, args, caps and scope; it implies

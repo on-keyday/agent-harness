@@ -43,7 +43,7 @@ type RetainedMessage struct {
 	// carries the zero value.
 	RetractedAt time.Time
 	// RetractedBy names which authority check withdrew it: authorship
-	// (RetractSeq) or Capability_Purge (ForceRetractSeq). RetractedByTask is
+	// (RetractSeq) or Capability_BoardPurge (ForceRetractSeq). RetractedByTask is
 	// the caller, equal to FromTask on the authorship path and zero when the
 	// caller had no principal task at all — an operator client holds its
 	// capabilities directly rather than through a task. Both are meaningful
@@ -194,7 +194,7 @@ func (t *topic) retract(seq uint64, by protocol.TaskID, now time.Time) bool {
 }
 
 // forceRetract is retract without the authorship match: the caller proved
-// Capability_Purge instead of authorship, so it may withdraw a message it did
+// Capability_BoardPurge instead of authorship, so it may withdraw a message it did
 // not write. Same move, same effect on every agent-facing read; the difference
 // is recorded on the withdrawn entry rather than left to be inferred.
 //

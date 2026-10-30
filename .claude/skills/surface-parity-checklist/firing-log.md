@@ -3658,3 +3658,18 @@ done:    11/12-equivalent for board topics (CLI line `until=`, `--json`
          Playwright 1280/390 (a send moved until= 17:37:13 → 17:37:38),
          harness-tui in a dummy PTY at 200/100/80 columns
 missed:  —
+
+### 2026-10-31 (pre-landing) — capability rename `purge` → `board_purge` (0x800 kept)
+
+done:    15 (`caps` catalog lists board_purge 0x800; `CapDescription` text),
+         28 (WAL stores the number: no record migrates, as for
+         exec_attach→exec_control and info_global→board_observe), 35 (README
+         capability lists and gating sentences), 36 (harness-cli,
+         supervising-workers, harness-cli-from-a-tool skills, all three
+         mirrors), help notes `(cap: board_purge)` on six board verbs
+omitted: no alias for the old name (the two earlier renames kept none);
+         `--caps …,purge` now fails with the valid-name list. The
+         RetractedBy value `purge_cap` (board read's `by=purge_cap:`) still
+         carries the old word — a display rename, left for its own change.
+n/a:     the rest; TUI/WebUI pickers enumerate the enum
+missed:  —

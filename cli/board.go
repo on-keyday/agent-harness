@@ -112,7 +112,7 @@ type BoardMessage struct {
 	ReceivedAtMs uint64
 	Payload      []byte
 	// Retracted is true when the message was withdrawn — by its author
-	// (`agent retract`) or by a holder of the purge capability
+	// (`agent retract`) or by a holder of the board_purge capability
 	// (`board retract`). A withdrawn message is invisible to every agent-facing
 	// path and reaches only this operator view, so a retract at agent speed
 	// cannot shrink the window a human has to audit what was said.
@@ -121,7 +121,7 @@ type BoardMessage struct {
 	RetractedAtMs uint64
 	// RetractedBy names which authority check the withdrawal passed:
 	// RetractedBy_Author (authorship) or RetractedBy_PurgeCap
-	// (Capability_Purge). RetractedByTaskHex is the caller, equal to
+	// (Capability_BoardPurge). RetractedByTaskHex is the caller, equal to
 	// FromTaskHex on the author path. It is EMPTY when the caller had no
 	// principal task — an operator client (cli/tui/webui) holds its
 	// capabilities directly rather than through a task, so there is no id to
@@ -442,7 +442,7 @@ func (c *Client) BoardPurge(ctx context.Context, topic string, seq uint64) (int,
 // It is a separate verb from BoardPurge rather than a flag on it because the
 // two differ in what SURVIVES, not in what they target, and because purge's
 // "seq 0 means the whole topic" shorthand must not be inherited by a call that
-// a mistyped seq would otherwise widen. Both need Capability_Purge.
+// a mistyped seq would otherwise widen. Both need Capability_BoardPurge.
 func (c *Client) BoardRetract(ctx context.Context, topic string, seq uint64) (bool, error) {
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_BoardRetract}
 	rr := protocol.BoardRetractRequest{Seq: seq}
@@ -463,7 +463,7 @@ func (c *Client) BoardRetract(ctx context.Context, topic string, seq uint64) (bo
 // BoardContactsClear forgets one contact of the task (topic non-empty) or all
 // of them (topic empty). found is false when the task is outside the caller's
 // purge scope or the board holds no state for it -- the server does not tell
-// those apart. Requires Capability_Purge.
+// those apart. Requires Capability_BoardPurge.
 func (c *Client) BoardContactsClear(ctx context.Context, taskIDHex, topic string) (removed int, found bool, err error) {
 	raw, err := hex.DecodeString(taskIDHex)
 	if err != nil || len(raw) != 16 {

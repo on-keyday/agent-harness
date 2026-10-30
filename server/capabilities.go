@@ -56,14 +56,14 @@ var requiredCap = map[protocol.TaskControlKind]protocol.Capability{
 	protocol.TaskControlKind_RunnerKeys:     protocol.Capability_RunnerEnroll,
 	protocol.TaskControlKind_BoardTopics:    protocol.Capability_BoardObserve,
 	protocol.TaskControlKind_BoardRead:      protocol.Capability_BoardObserve,
-	protocol.TaskControlKind_BoardPurge:     protocol.Capability_Purge,
+	protocol.TaskControlKind_BoardPurge:     protocol.Capability_BoardPurge,
 	// A task caller is also checked against the board reach in the handler:
 	// it may retain only a topic it may publish to.
 	protocol.TaskControlKind_BoardRetain:  protocol.Capability_BoardPersist,
-	protocol.TaskControlKind_BoardRetract: protocol.Capability_Purge,
+	protocol.TaskControlKind_BoardRetract: protocol.Capability_BoardPurge,
 	// Forgetting a task's contacts removes another task's board state, the
 	// same class as withdrawing its message; the handler adds the scope gate.
-	protocol.TaskControlKind_BoardContactsClear: protocol.Capability_Purge,
+	protocol.TaskControlKind_BoardContactsClear: protocol.Capability_BoardPurge,
 	protocol.TaskControlKind_BoardSubscribers:   protocol.Capability_BoardObserve,
 	protocol.TaskControlKind_BoardSend:          protocol.Capability_BoardSend,
 	protocol.TaskControlKind_BoardWake:          protocol.Capability_BoardSend,

@@ -1298,7 +1298,7 @@ var Verbs = []VerbSpec{
 			{Surface: TUI, At: "tui/board.go:BoardModal"},
 		},
 		Notes: []string{
-			"withdraw one message: gone from every agent path, still readable here until the topic ages out (cap: purge)",
+			"withdraw one message: gone from every agent path, still readable here until the topic ages out (cap: board_purge)",
 		},
 		CmdlineSurfaces: CLI,
 		Action:          "BoardAction",
@@ -1328,7 +1328,7 @@ var Verbs = []VerbSpec{
 			{Surface: WebUI, At: "webui/index.html#board-subscribers"},
 		},
 		Notes: []string{
-			"forget one contact of a task (--topic), or all of them; a forgotten route needs board_peer again until the task is addressed from it (cap: purge, scoped)",
+			"forget one contact of a task (--topic), or all of them; a forgotten route needs board_peer again until the task is addressed from it (cap: board_purge, scoped)",
 		},
 		CmdlineSurfaces: CLI,
 		Action:          "BoardAction",
@@ -1350,7 +1350,7 @@ var Verbs = []VerbSpec{
 		},
 		Notes: []string{
 			"drop the whole topic ring (seq=0) or one message by seq.",
-			"Unlike retract this destroys the bytes, operator view included (cap: purge)",
+			"Unlike retract this destroys the bytes, operator view included (cap: board_purge)",
 		},
 		CmdlineSurfaces: CLI,
 		Action:          "BoardAction",
@@ -1410,7 +1410,7 @@ var Verbs = []VerbSpec{
 		Notes: []string{
 			"withdraw every message in ONE conversation from every agent-facing path,",
 			"across all the topics it spans. They stay readable to the operator marked",
-			"RETRACTED, exactly as `board retract` leaves one (cap: purge).",
+			"RETRACTED, exactly as `board retract` leaves one (cap: board_purge).",
 			"No <topic>: a conversation spans topics, so naming one cannot select it.",
 			"A selector is REQUIRED -- run `board thread` with the same selector first to",
 			"see what this will reach.",
@@ -1444,7 +1444,7 @@ var Verbs = []VerbSpec{
 		Path: []string{"board", "purge-thread"},
 		Notes: []string{
 			"destroy every message in ONE conversation, across all the topics it spans,",
-			"operator view included (cap: purge). It reaches messages retract-thread",
+			"operator view included (cap: board_purge). It reaches messages retract-thread",
 			"already withdrew, which is how the two are meant to be used in order.",
 			"No <topic> and a REQUIRED selector, for the same reasons as retract-thread.",
 			"Irreversible, and the board is the only copy: `board thread` with the same",
@@ -3138,7 +3138,7 @@ var Verbs = []VerbSpec{
 		Path: []string{"agent", "purge"}, CmdlineSurfaces: CLI,
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
-			"drop a topic's retained buffer, or one message by seq (cap: purge)",
+			"drop a topic's retained buffer, or one message by seq (cap: board_purge)",
 		},
 		Action: "AgentAction",
 		Const:  map[string]string{"Sub": "purge"},

@@ -103,7 +103,7 @@ func TestScopeMatrixRedundantFormsAreAccepted(t *testing.T) {
 			Base: protocol.ScopeBase_Subtree, IDs: []string{id}, VisIDs: []string{id}}},
 		{"an override for a bit nothing holds", authority.Scope{
 			Base:      protocol.ScopeBase_Subtree,
-			Overrides: []authority.ScopeOverride{{Caps: protocol.Capability_Purge, Base: protocol.ScopeBase_None}}}},
+			Overrides: []authority.ScopeOverride{{Caps: protocol.Capability_BoardPurge, Base: protocol.ScopeBase_None}}}},
 		{"the empty action set", authority.Scope{Base: protocol.ScopeBase_None, ExcludeSelf: true}},
 	} {
 		if err := authority.Validate(tc.scope); err != nil {
@@ -122,8 +122,8 @@ func TestScopeMatrixEveryRejection(t *testing.T) {
 		{"1: empty override mask", authority.Scope{
 			Overrides: []authority.ScopeOverride{{Caps: protocol.Capability_None}}}},
 		{"2: override masks intersect", authority.Scope{Overrides: []authority.ScopeOverride{
-			{Caps: protocol.Capability_Cancel | protocol.Capability_Purge},
-			{Caps: protocol.Capability_Purge},
+			{Caps: protocol.Capability_Cancel | protocol.Capability_BoardPurge},
+			{Caps: protocol.Capability_BoardPurge},
 		}}},
 		{"3: vis_base set without its presence bit", authority.Scope{VisBase: protocol.ScopeBase_Global}},
 	} {

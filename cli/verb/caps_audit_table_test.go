@@ -43,7 +43,7 @@ func TestAuditOrderIsStrongFirstAndComplete(t *testing.T) {
 
 func TestTierTableMatchesTheSpec(t *testing.T) {
 	want := map[CapTier][]protocol.Capability{
-		TierStrong: {protocol.Capability_Spawn, protocol.Capability_Resume, protocol.Capability_ExecControl, protocol.Capability_Purge, protocol.Capability_Prune, protocol.Capability_BoardSend, protocol.Capability_RunnerAdmin, protocol.Capability_RunnerEnroll, protocol.Capability_ExecTap, protocol.Capability_ForwardTap, protocol.Capability_ForwardLocal, protocol.Capability_ForwardRemote, protocol.Capability_ForwardLink},
+		TierStrong: {protocol.Capability_Spawn, protocol.Capability_Resume, protocol.Capability_ExecControl, protocol.Capability_BoardPurge, protocol.Capability_Prune, protocol.Capability_BoardSend, protocol.Capability_RunnerAdmin, protocol.Capability_RunnerEnroll, protocol.Capability_ExecTap, protocol.Capability_ForwardTap, protocol.Capability_ForwardLocal, protocol.Capability_ForwardRemote, protocol.Capability_ForwardLink},
 		TierMid:    {protocol.Capability_ExecCowrite, protocol.Capability_ExecRun, protocol.Capability_FileWrite, protocol.Capability_Cancel, protocol.Capability_BoardPeer, protocol.Capability_BoardObserve, protocol.Capability_ResumeExact, protocol.Capability_BoardPersist},
 		TierWeak:   {protocol.Capability_ExecView, protocol.Capability_ExecResize, protocol.Capability_FileRead, protocol.Capability_Notify},
 	}

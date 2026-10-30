@@ -17,7 +17,7 @@ func TestCapabilityBits(t *testing.T) {
 	or := Capability_Spawn | Capability_Cancel | Capability_ExecControl |
 		Capability_FileRead | Capability_FileWrite | Capability_ForwardLocal |
 		Capability_ForwardRemote | Capability_Notify | Capability_Prune |
-		Capability_RunnerAdmin | Capability_BoardObserve | Capability_Purge |
+		Capability_RunnerAdmin | Capability_BoardObserve | Capability_BoardPurge |
 		Capability_ExecRun | Capability_ForwardTap |
 		Capability_ExecView | Capability_ExecCowrite | Capability_ExecResize |
 		Capability_BoardSend | Capability_ExecTap | Capability_BoardPeer |

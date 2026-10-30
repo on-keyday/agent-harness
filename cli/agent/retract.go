@@ -24,7 +24,7 @@ import (
 //
 // No capability is required. The check is authorship: the server withdraws the
 // message only when its recorded sender is this task, so retract can reach
-// nothing the caller did not write. `agent purge` still needs Capability_Purge
+// nothing the caller did not write. `agent purge` still needs Capability_BoardPurge
 // — it erases the bytes for real, including from the operator's view, and can
 // take a whole topic of other agents' unread messages with it.
 //

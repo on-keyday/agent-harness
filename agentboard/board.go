@@ -839,7 +839,7 @@ func (b *Board) mirrorRetract(name string, t *topic, seq uint64) {
 }
 
 // ForceRetractSeq withdraws a message from a NAMED topic without the authorship
-// match: the caller proved Capability_Purge instead. `by` is that caller,
+// match: the caller proved Capability_BoardPurge instead. `by` is that caller,
 // recorded on the withdrawn entry; the zero value is legitimate here and means
 // an operator client, which holds its capabilities directly and has no
 // principal task.

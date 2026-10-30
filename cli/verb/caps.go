@@ -56,7 +56,7 @@ func GrantableCaps() []protocol.Capability {
 		// decides which keys may register at all.
 		protocol.Capability_RunnerEnroll,
 		protocol.Capability_BoardObserve,
-		protocol.Capability_Purge,
+		protocol.Capability_BoardPurge,
 		// board_send after the other two board bits: it is the only one that
 		// WRITES, and what it writes carries the operator's name.
 		protocol.Capability_BoardSend,
@@ -135,7 +135,7 @@ func CapDescription(c protocol.Capability) string {
 		return "list board topics, read a topic's retained messages, list its subscribers; " +
 			"and read another task's direct messages (its chat.<id>, chat.operator, a tree.<id> you are not in) by any agent verb. " +
 			"NOT required to send, to read your own inbox, or to read a group topic"
-	case protocol.Capability_Purge:
+	case protocol.Capability_BoardPurge:
 		return "destroy an agentboard topic's retained-message buffer (agent purge / board purge) " +
 			"or every message of one conversation, across each topic it spans (board purge-thread); " +
 			"or withdraw messages from every agent path while leaving them readable to the operator " +
@@ -150,7 +150,7 @@ func CapDescription(c protocol.Capability) string {
 			"NOT required for its own lineage, chat.operator, or replying to a message addressed to it (board subscribers shows each task's contacts); never opens a tree.<id> it is not in"
 	case protocol.Capability_BoardPersist:
 		return "keep an agentboard topic past its TTL and a server restart (board retain --ttl <d>|forever, --clear), " +
-			"on topics the task may publish to; never a chat.<id> topic. NOT purge, and NOT implied by it"
+			"on topics the task may publish to; never a chat.<id> topic. NOT board_purge, and NOT implied by it"
 	case protocol.Capability_All:
 		return "full capability set (operator-equivalent)"
 	default:
@@ -411,7 +411,7 @@ var capAuditTable = map[protocol.Capability]capAuditEntry{
 	protocol.Capability_Spawn:         {tier: TierStrong, scope: ScopeNone},
 	protocol.Capability_Resume:        {tier: TierStrong},
 	protocol.Capability_ExecControl:   {tier: TierStrong},
-	protocol.Capability_Purge:         {tier: TierStrong},
+	protocol.Capability_BoardPurge:         {tier: TierStrong},
 	protocol.Capability_Prune:         {tier: TierStrong},
 	protocol.Capability_BoardSend:     {tier: TierStrong, scope: ScopeNone},
 	protocol.Capability_RunnerAdmin:   {tier: TierStrong, scope: ScopeNone},

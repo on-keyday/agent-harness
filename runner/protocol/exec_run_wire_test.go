@@ -114,7 +114,7 @@ func TestExecRunCapabilityBit(t *testing.T) {
 		Capability_Spawn, Capability_Cancel, Capability_ExecControl,
 		Capability_FileRead, Capability_FileWrite, Capability_ForwardLocal,
 		Capability_ForwardRemote, Capability_Notify, Capability_Prune,
-		Capability_RunnerAdmin, Capability_BoardObserve, Capability_Purge,
+		Capability_RunnerAdmin, Capability_BoardObserve, Capability_BoardPurge,
 		Capability_ExecView, Capability_ExecCowrite, Capability_ExecResize,
 	} {
 		if Capability_ExecRun&other != 0 {

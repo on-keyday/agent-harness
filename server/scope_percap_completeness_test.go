@@ -114,7 +114,7 @@ var capTargetClasses = map[protocol.Capability]capTargetClass{
 	// purge's topic verbs (board purge / retract and their thread forms) name a
 	// TOPIC, which no task scope bounds; board clear-contacts names a TASK and
 	// passes the bit to inScope by name. The literal is that call.
-	protocol.Capability_Purge: {kind: capResolvedLiteral},
+	protocol.Capability_BoardPurge: {kind: capResolvedLiteral},
 	protocol.Capability_BoardSend: {
 		kind:   capNoTargetResolution,
 		reason: "board_send names a board TOPIC, for the same reason as board_observe",

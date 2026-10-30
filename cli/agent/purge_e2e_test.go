@@ -14,7 +14,7 @@ import (
 	"github.com/on-keyday/agent-harness/server"
 )
 
-// TestAgentCLI_E2E_Purge_Granted verifies that an agent holding Capability_Purge
+// TestAgentCLI_E2E_Purge_Granted verifies that an agent holding Capability_BoardPurge
 // can drop a topic's retained-message ring, that the reported count matches, and
 // that a subsequent since=0 read no longer resurfaces the purged payloads.
 func TestAgentCLI_E2E_Purge_Granted(t *testing.T) {
@@ -31,7 +31,7 @@ func TestAgentCLI_E2E_Purge_Granted(t *testing.T) {
 		{
 			Type:           "task_created",
 			TaskID:         hex.EncodeToString(tid.Id[:]),
-			Capabilities:   uint32(protocol.Capability_Purge | protocol.Capability_BoardPeer),
+			Capabilities:   uint32(protocol.Capability_BoardPurge | protocol.Capability_BoardPeer),
 			ScopeOverrides: boardPeerGlobal(),
 		},
 	})
@@ -68,7 +68,7 @@ func TestAgentCLI_E2E_Purge_Granted(t *testing.T) {
 }
 
 // TestAgentCLI_E2E_Purge_Denied verifies that an agent whose TaskStore entry
-// lacks Capability_Purge is refused — the server returns denied and the CLI
+// lacks Capability_BoardPurge is refused — the server returns denied and the CLI
 // surfaces an error rather than silently succeeding.
 func TestAgentCLI_E2E_Purge_Denied(t *testing.T) {
 	addr := freePortE2E(t)
@@ -80,7 +80,7 @@ func TestAgentCLI_E2E_Purge_Denied(t *testing.T) {
 	rid := mkRidE2E([4]byte{5, 6, 7, 8}, 9601, 62)
 	e2eRegister(t, board, rid, tid, ticket)
 
-	// Inject an entry WITHOUT the purge bit.
+	// Inject an entry WITHOUT the board_purge bit.
 	srv.Tasks().ReplayEvents([]server.WALEvent{
 		{
 			Type:           "task_created",
@@ -128,7 +128,7 @@ func TestAgentCLI_E2E_Purge_Seq(t *testing.T) {
 		{
 			Type:           "task_created",
 			TaskID:         hex.EncodeToString(tid.Id[:]),
-			Capabilities:   uint32(protocol.Capability_Purge | protocol.Capability_BoardPeer),
+			Capabilities:   uint32(protocol.Capability_BoardPurge | protocol.Capability_BoardPeer),
 			ScopeOverrides: boardPeerGlobal(),
 		},
 	})

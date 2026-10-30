@@ -384,7 +384,7 @@ func TestHandleBoardRetract_OperatorClientHasNoTaskID(t *testing.T) {
 // destroys it outright, so this grants nothing new — but that is an argument
 // about a specific bit, and the map is where it is stated.
 func TestBoardRetractNeedsPurge(t *testing.T) {
-	if got := requiredCap[protocol.TaskControlKind_BoardRetract]; got != protocol.Capability_Purge {
+	if got := requiredCap[protocol.TaskControlKind_BoardRetract]; got != protocol.Capability_BoardPurge {
 		t.Errorf("board_retract required cap = %v, want purge", got)
 	}
 }

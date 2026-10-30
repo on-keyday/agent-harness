@@ -414,7 +414,7 @@ func (h *TaskHandler) handleAgentListRetained(conn ConnHandle, requestID uint32,
 // handleAgentRetract withdraws one message the CALLER published.
 //
 // No capability gate, and that is the design rather than an omission: purge
-// needs Capability_Purge because it can destroy a topic full of other agents'
+// needs Capability_BoardPurge because it can destroy a topic full of other agents'
 // unread messages, while this reaches exactly the bytes the caller wrote. The
 // authority is AUTHORSHIP, enforced in Board.RetractSeq, which matches the
 // stored FromTask against the caller's authenticated id.
