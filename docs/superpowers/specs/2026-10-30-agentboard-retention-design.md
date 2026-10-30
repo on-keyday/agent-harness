@@ -71,7 +71,7 @@ explicitly ruled on.
 | 6 | A retention period counts from the last publish, like today's TTL; expiry deletes the disk copy | author |
 | 7 | One request kind `board_retain` on the `board_` face, gated by `board_persist` (operators hold it through `all`), plus a per-request `Publishable` check when the caller has a principal task. Not an `agent_` kind: it reaches topics the caller need not subscribe to, which is the line the `TaskControlKind` comment draws | author |
 | 8 | Disk writes are batched (§3.3) to bound flash wear; the last few seconds are lost on a crash | author |
-| 9 | Of the by-seq operations only `purge` / `purge-thread` must reach messages that are on disk only. `retract`, `agent read <seq>`, `in_reply_to` resolution and the thread verbs stay ring-only | author |
+| 9 | Of the by-seq operations only `board purge` must reach messages that are on disk only. `retract`, `agent read <seq>`, `in_reply_to` resolution and the thread verbs — `purge-thread` included, which is client-side and purges what `board thread` lists — stay ring-only | author |
 | 10 | The board's seq seed becomes `max(wall-clock seed, persisted high-water + 1)` | author |
 | 11 | The paged history read is operator-face only, gated like `board read` (`board_observe`) | author |
 | 12 | Include `--exclude-self`, a per-send flag; the default delivery rule (publisher included, so a send to one's own `chat.<id>` is a self-ping) is unchanged | operator, 2026-10-30 |
@@ -144,13 +144,14 @@ Constraints:
 
 ### 3.4 Destruction reaches the disk
 
-- `board purge` (one seq or the whole topic) and `purge-thread` remove the
-  bytes from the log — a rewrite, not a tombstone. Today `PurgeSeq` /
-  `topic.removeSeq` scan memory only; per D9 they must also find a seq that
-  exists only on disk, which needs a seq → retained-topic lookup that does
-  not scan every log (**builder's call** how). `LookupSeq`'s
-  MaxTopics×RingN bound stays, because the other by-seq operations stay
-  ring-only.
+- `board purge` (one seq or the whole topic) removes the bytes from the log —
+  a rewrite, not a tombstone. Today `PurgeSeq` / `topic.removeSeq` scan
+  memory only; per D9 they must also find a seq that exists only on disk.
+  `BoardPurgeRequest` names the topic, so this is a scan of one log, and no
+  seq → topic index is needed. `purge-thread` is client-side
+  (`cli/cmd_board.go`) and purges what `board thread` lists, which is the
+  ring; a disk-only message is purged by `board purge <topic> --seq` after
+  finding it with the paged read. `LookupSeq`'s MaxTopics×RingN bound stays.
 - Expiry and `--clear` delete the file.
 - `retract` keeps the bytes, as in memory; the withdrawal is persisted as a
   state change of the entry.
