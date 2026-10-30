@@ -42,3 +42,21 @@ test("the open-by-name input takes a trimmed name and nothing else", () => {
   assert.equal(page.boardOpenTopicName("   "), null);
   assert.equal(page.boardOpenTopicName(""), null);
 });
+
+test("the bridge has a separate unretain, and it refuses without a client", async () => {
+  assert.equal(typeof page.harness.boardUnretain, "function");
+  await assert.rejects(page.harness.boardUnretain("tree.x.d"));
+});
+
+test("the Retain button says what pressing it does on this topic", () => {
+  assert.equal(page.boardRetainButtonLabel(true), "⏳ 期間を変更");
+  assert.equal(page.boardRetainButtonLabel(false), "⏳ Retain");
+});
+
+test("one unformattable timestamp renders as - instead of throwing", () => {
+  // What a server before 84ba1a35 sent for a retained topic nothing was
+  // published to: the zero time's negative UnixMilli wrapped to u64.
+  assert.equal(page.boardTimeLabel(18446681938112751616), "-");
+  assert.equal(page.boardTimeLabel(0), "-");
+  assert.equal(page.boardTimeLabel(1793376778357), new Date(1793376778357).toISOString());
+});

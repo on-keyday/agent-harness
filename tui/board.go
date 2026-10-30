@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -637,7 +638,9 @@ func boardTopicToRow(r *cli.BoardTopicRow, subs map[string]int) table.Row {
 	// name. Dash out its seq too: "0 / 0" would read as a topic that was
 	// published to and emptied, which is a different state.
 	at, lastSeq := "-", "-"
-	if r.LastPublishedAtMs > 0 {
+	// Above MaxInt64 is not a time: a server before 84ba1a35 sent a retained,
+	// never-published topic's zero time wrapped to ~1.8e19.
+	if r.LastPublishedAtMs > 0 && r.LastPublishedAtMs <= math.MaxInt64 {
 		at = time.UnixMilli(int64(r.LastPublishedAtMs)).UTC().Format(time.RFC3339)
 		lastSeq = fmt.Sprintf("%d", r.LastSeq)
 	}
@@ -832,7 +835,8 @@ func (m BoardModal) View() string {
 	case boardTopics:
 		header := HeaderStyle.Render(fmt.Sprintf("agentboard topics (%d)", len(m.rowTopics)))
 		footer := FooterStyle.Render("Enter: read  " + modalKeys.BoardOpenTopic + ": open by name  c: chains  s: subscribers  " +
-			modalKeys.BoardWake + ": wake  " + modalKeys.BoardRetain + ": retain  r: refresh  x: purge topic  Esc: close")
+			modalKeys.BoardWake + ": wake  " + modalKeys.BoardRetain + ": retain" + m.unretainHint(m.SelectedTopicName()) +
+			"  r: refresh  x: purge topic  Esc: close")
 		if m.retain != nil {
 			footer = m.retainView()
 		}
@@ -877,7 +881,7 @@ func (m BoardModal) View() string {
 		header := HeaderStyle.Render(fmt.Sprintf("topic: %s  (%d msgs)", m.curTopic, len(m.msgs)))
 		footer := FooterStyle.Render("↑/↓ select · " + scrollHint + " · " +
 			modalKeys.BoardCompose + ": send  " + modalKeys.BoardReply + ": reply  " + modalKeys.BoardWake + ": wake  " +
-			modalKeys.BoardRetain + ": retain · w: retract msg  X: purge msg  r: re-read  Esc: back")
+			modalKeys.BoardRetain + ": retain" + m.unretainHint(m.curTopic) + " · w: retract msg  X: purge msg  r: re-read  Esc: back")
 		if m.compose != nil {
 			footer = m.composeView()
 		}

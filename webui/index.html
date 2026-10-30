@@ -376,8 +376,13 @@
                  empty when it is not retained. Refreshed after Retain, which is
                  the only on-screen answer that press gets on this tab. -->
             <span id="board-detail-retain" class="board-detail-retain"></span>
-            <button id="board-wake-btn" type="button" title="Wake this topic's subscribers without publishing">⏰ Wake</button>
+            <!-- The retention controls sit together, beside the state they
+                 change. Unretain shows only while the topic is retained:
+                 stopping is its own button, not a word typed into the prompt. -->
             <button id="board-retain-btn" type="button" title="Keep this topic past the TTL and a server restart (board retain)">⏳ Retain</button>
+            <button id="board-unretain-btn" type="button" hidden
+                    title="保持をやめる: disk の写しを消し、最後の投稿から 30 分で消える通常の topic に戻す">保持を解除</button>
+            <button id="board-wake-btn" type="button" title="Wake this topic's subscribers without publishing">⏰ Wake</button>
             <button id="board-purge-topic-btn" class="btn-danger">Purge topic</button>
           </div>
           <div id="board-subscribers"></div>

@@ -171,6 +171,7 @@ func main() {
 		"boardSend":          js.FuncOf(harnessBoardSend),
 		"boardWake":          js.FuncOf(harnessBoardWake),
 		"boardRetain":        js.FuncOf(harnessBoardRetain),
+		"boardUnretain":      js.FuncOf(harnessBoardUnretain),
 		// Synchronous: the server's own rule, so the page offers Retain only
 		// where the server would accept it.
 		"boardRetainable": js.FuncOf(func(this js.Value, args []js.Value) any {
@@ -2496,12 +2497,41 @@ func harnessBoardSend(this js.Value, args []js.Value) any {
 	return js.Global().Get("Promise").New(executor)
 }
 
-// harnessBoardRetain sets or clears a topic's retention. value is what
-// `board retain --ttl` takes ("72h", "forever"), or "clear"; it is parsed here,
-// by the CLI's own parser, so the page holds no second copy of the grammar.
+// harnessBoardRetain sets a topic's retention. value is what `board retain
+// --ttl` takes ("72h", "forever"); it is parsed here, by the CLI's own parser,
+// so the page holds no second copy of the grammar. Stopping is
+// harnessBoardUnretain, its own call, as it is its own button.
 //
 //	harness.boardRetain(topic, value) -> Promise<{label}>
 func harnessBoardRetain(this js.Value, args []js.Value) any {
+	return boardRetainPromise(args, "boardRetain", func(c *cli.Client, topic, value string) (string, error) {
+		ttl, forever, err := cli.ParseRetainTTL(value)
+		if err != nil {
+			return "", err
+		}
+		if err := c.BoardRetain(rootCtx, topic, ttl, forever, false); err != nil {
+			return "", err
+		}
+		return cli.TopicRetention{TTL: ttl, Forever: forever}.Label(), nil
+	})
+}
+
+// harnessBoardUnretain stops retaining a topic: its disk copy goes and it
+// falls back to the board TTL.
+//
+//	harness.boardUnretain(topic) -> Promise<{label: "cleared"}>
+func harnessBoardUnretain(this js.Value, args []js.Value) any {
+	return boardRetainPromise(args, "boardUnretain", func(c *cli.Client, topic, _ string) (string, error) {
+		if err := c.BoardRetain(rootCtx, topic, 0, false, true); err != nil {
+			return "", err
+		}
+		return "cleared", nil
+	})
+}
+
+// boardRetainPromise runs one retention call off the JS thread: args[0] is
+// the topic, args[1] (when given) the value do reads.
+func boardRetainPromise(args []js.Value, name string, do func(c *cli.Client, topic, value string) (string, error)) any {
 	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
 		resolve := promiseArgs[0]
 		reject := promiseArgs[1]
@@ -2511,27 +2541,18 @@ func harnessBoardRetain(this js.Value, args []js.Value) any {
 				rejectErr(reject, err)
 				return
 			}
-			if len(args) < 2 || args[0].String() == "" {
-				rejectErr(reject, errors.New("boardRetain: missing topic/value"))
+			if len(args) < 1 || args[0].String() == "" {
+				rejectErr(reject, fmt.Errorf("%s: missing topic", name))
 				return
 			}
-			topic, value := args[0].String(), args[1].String()
-			var ttl time.Duration
-			var forever bool
-			clear := value == "clear"
-			if !clear {
-				if ttl, forever, err = cli.ParseRetainTTL(value); err != nil {
-					rejectErr(reject, fmt.Errorf("boardRetain: %w", err))
-					return
-				}
+			value := ""
+			if len(args) > 1 {
+				value = args[1].String()
 			}
-			if err := c.BoardRetain(rootCtx, topic, ttl, forever, clear); err != nil {
-				rejectErr(reject, fmt.Errorf("boardRetain: %w", err))
+			label, err := do(c, args[0].String(), value)
+			if err != nil {
+				rejectErr(reject, fmt.Errorf("%s: %w", name, err))
 				return
-			}
-			label := "cleared"
-			if !clear {
-				label = cli.TopicRetention{TTL: ttl, Forever: forever}.Label()
 			}
 			resolve.Invoke(js.ValueOf(map[string]any{"label": label}))
 		}()

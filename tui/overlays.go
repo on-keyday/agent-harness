@@ -287,8 +287,8 @@ func (a *App) inBoardModal(msg tea.KeyMsg) tea.Cmd {
 		return nil
 	}
 	if a.boardModal.Retaining() {
-		if submit, topic, ttl, forever, clear := a.boardModal.HandleRetainKey(msg); submit {
-			return DoBoardRetain(a.client, topic, ttl, forever, clear)
+		if submit, topic, ttl, forever := a.boardModal.HandleRetainKey(msg); submit {
+			return DoBoardRetain(a.client, topic, ttl, forever, false)
 		}
 		return nil
 	}
@@ -335,6 +335,11 @@ func (a *App) inBoardModal(msg tea.KeyMsg) tea.Cmd {
 			return nil
 		case modalKeys.BoardOpenTopic:
 			a.boardModal.BeginOpenTopic()
+			return nil
+		case modalKeys.BoardUnretain:
+			if topic := a.boardModal.SelectedTopicName(); a.boardModal.Unretain(topic) {
+				return DoBoardRetain(a.client, topic, 0, false, true)
+			}
 			return nil
 		case modalKeys.BoardSubscribers:
 			topic := a.boardModal.SelectedTopicName()
@@ -420,6 +425,11 @@ func (a *App) inBoardModal(msg tea.KeyMsg) tea.Cmd {
 			// The open topic, which may be one opened by name with nothing
 			// published to it yet.
 			a.boardModal.BeginRetain(a.boardModal.CurTopic())
+			return nil
+		case modalKeys.BoardUnretain:
+			if topic := a.boardModal.CurTopic(); a.boardModal.Unretain(topic) {
+				return DoBoardRetain(a.client, topic, 0, false, true)
+			}
 			return nil
 		}
 	}

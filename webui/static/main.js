@@ -6249,9 +6249,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
         metaSpan.className = "board-topic-meta";
         const subs = subCounts ? `  subs=${subCounts.get(name) || 0}` : "";
         if (t) {
-          const lastTime = t.lastPublishedAtMs
-            ? new Date(t.lastPublishedAtMs).toISOString()
-            : "-";
+          const lastTime = boardTimeLabel(t.lastPublishedAtMs);
           // retracted= shows only when the topic holds withdrawn messages, and
           // is never folded into msgs= — that count answers "how much would a
           // subscriber receive", so a topic emptied by retraction reads msgs=0
@@ -6370,9 +6368,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
 
         const timeSpan = document.createElement("span");
         timeSpan.className = "board-msg-time";
-        timeSpan.textContent = m.receivedAtMs
-          ? new Date(m.receivedAtMs).toISOString()
-          : "-";
+        timeSpan.textContent = boardTimeLabel(m.receivedAtMs);
 
         // How many subscribers have been handed this message. Printed on every
         // row, zeros included: a message nobody has been given yet is exactly
@@ -6703,17 +6699,46 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // on screen is what the board holds.
   async function refreshBoardRetainBadge(topic) {
     if (!boardRetainBadge) return;
+    const unretainBtn = document.getElementById("board-unretain-btn");
+    const retainBtn = document.getElementById("board-retain-btn");
     boardRetainBadge.classList.remove("error");
     boardRetainBadge.textContent = "";
+    // Hidden until the server says the topic is retained: offered only where
+    // it acts.
+    if (unretainBtn) unretainBtn.hidden = true;
+    if (retainBtn) retainBtn.textContent = boardRetainButtonLabel(false);
     if (!window.harness) return;
     try {
       const topics = await window.harness.boardTopics();
       if (topic !== currentBoardTopic) return; // the operator moved on
       const t = (topics || []).find((x) => x.name === topic);
+      const retained = !!(t && t.retain);
       boardRetainBadge.textContent = boardRetainMeta(t).trim();
+      if (unretainBtn) unretainBtn.hidden = !retained;
+      if (retainBtn) retainBtn.textContent = boardRetainButtonLabel(retained);
     } catch (_) {
       // The badge is a nicety; the topic view itself must still render.
     }
+  }
+
+  const boardUnretainBtn = document.getElementById("board-unretain-btn");
+  if (boardUnretainBtn) {
+    boardUnretainBtn.addEventListener("click", async () => {
+      if (!currentBoardTopic || !window.harness) return;
+      const topic = currentBoardTopic;
+      if (!window.confirm(`${topic} の保持を解除しますか？\n（disk の写しを消し、最後の投稿から 30 分で消える通常の topic に戻ります）`)) return;
+      try {
+        const r = await window.harness.boardUnretain(topic);
+        appendCmdOutput(boardRetainResultLine(topic, r.label));
+        await refreshBoardRetainBadge(topic);
+      } catch (err) {
+        appendCmdOutput(`board retain error: ${err.message}`);
+        if (boardRetainBadge && topic === currentBoardTopic) {
+          boardRetainBadge.classList.add("error");
+          boardRetainBadge.textContent = `unretain error: ${err.message}`;
+        }
+      }
+    });
   }
 
   const boardRetainBtn = document.getElementById("board-retain-btn");
@@ -6723,7 +6748,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       const topic = currentBoardTopic;
       // Typed, because a period is free-form; parsed in Go (harness.boardRetain
       // calls the CLI's parser), so this holds no copy of the grammar.
-      const value = window.prompt(`${topic} の保持期間 (例: 72h / forever / clear で解除)`, "168h");
+      const value = window.prompt(`${topic} の保持期間 (例: 72h / forever)`, "168h");
       if (value === null || value.trim() === "") return;
       try {
         const r = await window.harness.boardRetain(topic, value.trim());
@@ -7773,6 +7798,23 @@ function boardOpenTopicName(raw) {
 function boardRetainMeta(t) {
   if (!t || !t.retain) return "";
   return `  retain=${t.retain} by=${t.retainBy} disk=${t.diskBytes}`;
+}
+
+// boardTimeLabel renders a board timestamp (Unix ms) as ISO, or "-" when
+// there is none or it cannot be a date. One bad value must not throw: the
+// list renderer catches it by replacing EVERY row with the error, which is
+// what a server before 84ba1a35 caused with one retained, never-published
+// topic (its zero publish time arrived wrapped to ~1.8e19).
+function boardTimeLabel(ms) {
+  if (!ms) return "-";
+  const d = new Date(ms);
+  return isNaN(d.getTime()) ? "-" : d.toISOString();
+}
+
+// boardRetainButtonLabel says what Retain does on the open topic: set a
+// period, or change the one it has.
+function boardRetainButtonLabel(retained) {
+  return retained ? "⏳ 期間を変更" : "⏳ Retain";
 }
 
 // boardRetainResultLine names the target and the change.

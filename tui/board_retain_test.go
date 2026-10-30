@@ -62,24 +62,64 @@ func TestApp_BoardRetainKey(t *testing.T) {
 	}
 }
 
+// The editor takes a period only. Stopping retention is its own key (T), not
+// a word typed into the period box.
 func TestBoardRetainInput(t *testing.T) {
 	for _, c := range []struct {
 		in      string
 		ttl     time.Duration
 		forever bool
-		clear   bool
 		bad     bool
 	}{
 		{in: "72h", ttl: 72 * time.Hour},
 		{in: "forever", forever: true},
-		{in: "clear", clear: true},
+		{in: "clear", bad: true},
 		{in: "soon", bad: true},
 		{in: "0s", bad: true},
 	} {
-		ttl, forever, clear, err := parseRetainInput(c.in)
-		if (err != nil) != c.bad || ttl != c.ttl || forever != c.forever || clear != c.clear {
-			t.Errorf("%q = %v %v %v %v", c.in, ttl, forever, clear, err)
+		ttl, forever, err := cli.ParseRetainTTL(c.in)
+		if (err != nil) != c.bad || ttl != c.ttl || forever != c.forever {
+			t.Errorf("%q = %v %v %v", c.in, ttl, forever, err)
 		}
+	}
+}
+
+// T stops retaining — offered, in the footer and as a key, only on a topic
+// that is retained.
+func TestApp_BoardUnretainKey(t *testing.T) {
+	a := &App{boardModal: NewBoardModal()}
+	a.boardModal.Open()
+	a.boardModal.SetSize(160, 45)
+	a.boardModal.ApplyTopics([]cli.BoardTopicRow{
+		{Name: "kept", MsgCount: 1, LastSeq: 1, LastPublishedAtMs: 1, Retention: &cli.TopicRetention{Forever: true}},
+		{Name: "plain", MsgCount: 1, LastSeq: 2, LastPublishedAtMs: 1},
+	}, nil)
+	if !strings.Contains(a.boardModal.View(), "T: unretain") {
+		t.Error("footer on a retained row does not offer T: unretain")
+	}
+	if _, cmd := a.updateKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'T'}}); cmd == nil {
+		t.Fatal("T on a retained row produced no request")
+	}
+	a.updateKey(tea.KeyMsg{Type: tea.KeyDown})
+	if a.boardModal.SelectedTopicName() != "plain" {
+		t.Fatalf("cursor on %q, want plain", a.boardModal.SelectedTopicName())
+	}
+	if strings.Contains(a.boardModal.View(), "T: unretain") {
+		t.Error("footer on a plain row offers T: unretain")
+	}
+	if _, cmd := a.updateKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'T'}}); cmd != nil {
+		t.Fatal("T on a topic that is not retained produced a request")
+	}
+	if !strings.Contains(a.boardModal.View(), "not retained") {
+		t.Error("T on a plain row did not say why nothing happened")
+	}
+	// From the message view of a retained topic.
+	a.boardModal.ApplyMessages("kept", nil, nil, true)
+	if !strings.Contains(a.boardModal.View(), "T: unretain") {
+		t.Error("message view of a retained topic does not offer T: unretain")
+	}
+	if _, cmd := a.updateKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'T'}}); cmd == nil {
+		t.Fatal("T in a retained topic's message view produced no request")
 	}
 }
 
@@ -128,5 +168,15 @@ func TestApp_BoardOpenTopicByName(t *testing.T) {
 	a.updateKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
 	if !a.boardModal.Retaining() {
 		t.Fatal("`t` in the message view did not open the retain editor for the open topic")
+	}
+}
+
+// A server before 84ba1a35 sent a retained, never-published topic's zero
+// publish time wrapped to ~1.8e19; the row must read as "nothing published",
+// not year 1.
+func TestBoardTopicRow_WrappedPublishTimeIsAbsent(t *testing.T) {
+	row := boardTopicToRow(&cli.BoardTopicRow{Name: "beta.sns", LastPublishedAtMs: 18446681938112751616}, nil)
+	if row[4] != "-" || row[5] != "-" {
+		t.Fatalf("LastSeq/LastAt = %q / %q, want - / -", row[4], row[5])
 	}
 }

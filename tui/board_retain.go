@@ -34,16 +34,6 @@ func DoBoardRetain(c *cli.Client, topic string, ttl time.Duration, forever, clea
 	}
 }
 
-// parseRetainInput reads the retain editor's line: "clear", or what
-// `board retain --ttl` takes, through the CLI's own parser.
-func parseRetainInput(s string) (ttl time.Duration, forever, clear bool, err error) {
-	if s == "clear" {
-		return 0, false, true, nil
-	}
-	ttl, forever, err = cli.ParseRetainTTL(s)
-	return ttl, forever, false, err
-}
-
 // boardRetainEdit is the one-line editor `t` opens on a topic.
 type boardRetainEdit struct {
 	input textinput.Model
@@ -62,7 +52,7 @@ func (m *BoardModal) BeginRetain(topic string) {
 	prompt := "retain " + topic + " ▶ "
 	ti := textinput.New()
 	ti.Prompt = prompt
-	ti.Placeholder = "72h, forever, or clear"
+	ti.Placeholder = "72h or forever"
 	ti.Width = m.content.Width - len(prompt)
 	ti.Focus()
 	m.retain = &boardRetainEdit{input: ti, topic: topic}
@@ -72,35 +62,70 @@ func (m *BoardModal) BeginRetain(topic string) {
 // key here while it is.
 func (m *BoardModal) Retaining() bool { return m.retain != nil }
 
-// HandleRetainKey feeds one key to the retain editor. submit is true when
-// Enter produced a valid request; the editor is closed then. A value that
-// does not parse keeps the editor open with the reason on the status line.
-func (m *BoardModal) HandleRetainKey(k tea.KeyMsg) (submit bool, topic string, ttl time.Duration, forever, clear bool) {
+// HandleRetainKey feeds one key to the retain editor, which takes a period
+// only (stopping is its own key). submit is true when Enter produced a valid
+// period; the editor is closed then. A value that does not parse keeps the
+// editor open with the reason on the status line.
+func (m *BoardModal) HandleRetainKey(k tea.KeyMsg) (submit bool, topic string, ttl time.Duration, forever bool) {
 	if m.retain == nil {
-		return false, "", 0, false, false
+		return false, "", 0, false
 	}
 	switch k.Type {
 	case tea.KeyEsc:
 		m.retain = nil
-		return false, "", 0, false, false
+		return false, "", 0, false
 	case tea.KeyEnter:
 		var err error
-		ttl, forever, clear, err = parseRetainInput(m.retain.input.Value())
+		ttl, forever, err = cli.ParseRetainTTL(m.retain.input.Value())
 		if err != nil {
 			m.status = "retain: " + err.Error()
-			return false, "", 0, false, false
+			return false, "", 0, false
 		}
 		topic = m.retain.topic
 		m.retain = nil
-		return true, topic, ttl, forever, clear
+		return true, topic, ttl, forever
 	}
 	m.retain.input, _ = m.retain.input.Update(k)
-	return false, "", 0, false, false
+	return false, "", 0, false
 }
 
 func (m *BoardModal) retainView() string {
 	return m.retain.input.View() + "\n" +
-		MutedStyle.Render("enter sets · a duration counts from the last publish · forever · clear returns to the default TTL · esc cancels")
+		MutedStyle.Render("enter sets · a duration counts from the last publish, or forever · esc cancels")
+}
+
+// retentionOf is topic's retention as the last topic listing reported it,
+// nil when it is not retained (or not listed).
+func (m *BoardModal) retentionOf(topic string) *cli.TopicRetention {
+	for i := range m.rowTopics {
+		if m.rowTopics[i].Name == topic {
+			return m.rowTopics[i].Retention
+		}
+	}
+	return nil
+}
+
+// unretainHint is the footer's "T: unretain", present only when T would do
+// something: on a retained topic.
+func (m *BoardModal) unretainHint(topic string) string {
+	if m.retentionOf(topic) == nil {
+		return ""
+	}
+	return "  " + modalKeys.BoardUnretain + ": unretain"
+}
+
+// Unretain reports whether T should stop retaining topic. On a topic that is
+// not retained it says so on the status line instead: the key is offered
+// only where it acts.
+func (m *BoardModal) Unretain(topic string) bool {
+	if topic == "" {
+		return false
+	}
+	if m.retentionOf(topic) == nil {
+		m.status = "unretain: " + topic + " is not retained"
+		return false
+	}
+	return true
 }
 
 // retainCell is the topics table's Retain column: filled on a retained row

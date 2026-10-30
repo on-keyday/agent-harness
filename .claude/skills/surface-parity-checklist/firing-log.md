@@ -3632,3 +3632,15 @@ done:    4 (TUI `o` on the topic list; `t` in the message view retains the
 n/a:     1–3, 5, 7–29, 31–36, 38, 39, S1–S6 (no new verb or request field:
          it reads with board_read and sends with board_send as before)
 missed:  —
+
+### 2026-10-31 (pre-landing) — separate unretain control (WebUI button, TUI `T`)
+
+done:    4 (TUI `T`, footer hint only on a retained topic, in the list and
+         the message view), 6 (WebUI 保持を解除 beside ⏳, shown only while
+         retained; ⏳ reads 期間を変更 then), 8 (bridge boardUnretain), 29/30
+         (result lines and the header refresh), 31 (both controls gated on the
+         topic BEING retained), 33 (the period editors refuse `clear` with the
+         reason), 34a (a button for an action, not a word in a text box), 37
+         (spec §3.1); driven live in both — Playwright 1280/390 and
+         harness-tui in a dummy PTY
+missed:  —

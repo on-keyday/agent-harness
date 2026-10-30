@@ -102,7 +102,11 @@ harness-cli board read <topic> --before <seq> --limit <n>    # pages into the di
   Both panes also open a topic by NAME (TUI `o`, WebUI the input above the
   list), a topic nothing was published to yet included: before that they had
   no way to start a topic at all, so a new retained topic could only be made
-  from the CLI. (Added 2026-10-31, operator.) Walk
+  from the CLI. (Added 2026-10-31, operator.) Stopping retention is its own
+  control, offered only on a retained topic: the WebUI's 保持を解除 button
+  (beside ⏳, which reads 期間を変更 while retained) and the TUI's `T`. The
+  period prompt and editor take a period only; the `clear` word they used to
+  accept named an action nothing on screen showed. (2026-10-31, operator.) Walk
   `.claude/skills/surface-parity-checklist` for the new verb, the new bit and
   the new `board topics` columns.
 
