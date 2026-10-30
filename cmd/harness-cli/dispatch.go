@@ -578,6 +578,10 @@ func (h cliVerbs) BoardRetract(a verb.BoardAction) error       { return h.board(
 func (h cliVerbs) BoardPurge(a verb.BoardAction) error         { return h.board(a) }
 func (h cliVerbs) BoardRetain(a verb.BoardAction) error        { return h.board(a) }
 func (h cliVerbs) BoardClearContacts(a verb.BoardAction) error { return h.board(a) }
+func (h cliVerbs) BoardSubscribe(a verb.BoardAction) error     { return h.board(a) }
+func (h cliVerbs) BoardUnsubscribe(a verb.BoardAction) error   { return h.board(a) }
+func (h cliVerbs) BoardJoin(a verb.BoardAction) error          { return h.board(a) }
+func (h cliVerbs) BoardLeave(a verb.BoardAction) error         { return h.board(a) }
 func (h cliVerbs) BoardRetractThread(a verb.BoardAction) error { return h.board(a) }
 func (h cliVerbs) BoardPurgeThread(a verb.BoardAction) error   { return h.board(a) }
 func (h cliVerbs) BoardWake(a verb.BoardAction) error          { return h.board(a) }

@@ -398,6 +398,16 @@ func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.Boar
 		}
 		fmt.Fprintln(out, ClearContactsLabel(ba.Task, ba.Topic, removed, found))
 
+	case verb.SubSubscribe, verb.SubUnsubscribe, verb.SubJoin, verb.SubLeave:
+		op := map[string]protocol.BoardMembershipOp{
+			verb.SubSubscribe: protocol.BoardMembershipOp_Subscribe, verb.SubUnsubscribe: protocol.BoardMembershipOp_Unsubscribe,
+			verb.SubJoin: protocol.BoardMembershipOp_Join, verb.SubLeave: protocol.BoardMembershipOp_Leave,
+		}[ba.Sub]
+		if err := BoardMembership(ctx, cid, ba.Task, ba.Topic, op); err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "{\"status\":\"ok\",\"task\":%q,\"topic\":%q,\"op\":%q}\n", shortID(ba.Task), ba.Topic, ba.Sub)
+
 	case verb.SubRetain:
 		var ttl time.Duration
 		var forever bool
@@ -685,7 +695,7 @@ func renderSubscriberRows(out io.Writer, rows []BoardSubscriberRow, asJSON bool)
 			pats := make([]map[string]any, 0, len(r.Patterns))
 			for _, p := range r.Patterns {
 				pats = append(pats, map[string]any{
-					"topic": p.Name, "shown": p.Shown, "pending": p.Pending,
+					"topic": p.Name, "shown": p.Shown, "pending": p.Pending, "joined": p.Joined,
 				})
 			}
 			contacts := r.Contacts
@@ -710,7 +720,12 @@ func renderSubscriberRows(out io.Writer, rows []BoardSubscriberRow, asJSON bool)
 		if len(r.Patterns) > 0 {
 			parts := make([]string, 0, len(r.Patterns))
 			for _, p := range r.Patterns {
-				parts = append(parts, fmt.Sprintf("%s(shown=%d pending=%d)", p.Name, p.Shown, p.Pending))
+				// joined: marks a member (board join): it may publish there.
+				name := p.Name
+				if p.Joined {
+					name = "joined:" + name
+				}
+				parts = append(parts, fmt.Sprintf("%s(shown=%d pending=%d)", name, p.Shown, p.Pending))
 			}
 			pats = strings.Join(parts, ",")
 		}

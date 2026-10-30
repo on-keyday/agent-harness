@@ -94,7 +94,7 @@ type AwaitProgressAction struct {
 	WatcherIDs []uint64
 }
 
-// BoardAction is built by: board clear-contacts, board purge, board purge-thread, board read, board retain, board retract, board retract-thread, board subscribers, board thread, board topics, board wake.
+// BoardAction is built by: board clear-contacts, board join, board leave, board purge, board purge-thread, board read, board retain, board retract, board retract-thread, board subscribe, board subscribers, board thread, board topics, board unsubscribe, board wake.
 type BoardAction struct {
 	ActionMarker
 	// JSON Lines instead of text
@@ -2032,6 +2032,50 @@ func init() {
 			}
 			return a, nil
 		},
+		"board subscribe\x00cli": func(b Bound) (Action, error) {
+			a := BoardAction{}
+			a.Sub = "subscribe"
+			if len(b.Args) > 0 {
+				a.Task = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.Topic = b.Args[1]
+			}
+			return a, nil
+		},
+		"board unsubscribe\x00cli": func(b Bound) (Action, error) {
+			a := BoardAction{}
+			a.Sub = "unsubscribe"
+			if len(b.Args) > 0 {
+				a.Task = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.Topic = b.Args[1]
+			}
+			return a, nil
+		},
+		"board join\x00cli": func(b Bound) (Action, error) {
+			a := BoardAction{}
+			a.Sub = "join"
+			if len(b.Args) > 0 {
+				a.Task = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.Topic = b.Args[1]
+			}
+			return a, nil
+		},
+		"board leave\x00cli": func(b Bound) (Action, error) {
+			a := BoardAction{}
+			a.Sub = "leave"
+			if len(b.Args) > 0 {
+				a.Task = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.Topic = b.Args[1]
+			}
+			return a, nil
+		},
 		"board retract-thread\x00cli": func(b Bound) (Action, error) {
 			a := BoardAction{}
 			a.Sub = "retract-thread"
@@ -3788,6 +3832,10 @@ const (
 	CmdBoardClearContacts     = "board clear-contacts"
 	CmdBoardPurge             = "board purge"
 	CmdBoardRetain            = "board retain"
+	CmdBoardSubscribe         = "board subscribe"
+	CmdBoardUnsubscribe       = "board unsubscribe"
+	CmdBoardJoin              = "board join"
+	CmdBoardLeave             = "board leave"
 	CmdBoardRetractThread     = "board retract-thread"
 	CmdBoardPurgeThread       = "board purge-thread"
 	CmdBoardSend              = "board send"
@@ -3890,7 +3938,9 @@ const (
 	SubForwardRm       = "forward-rm"
 	SubHelp            = "help"
 	SubInbox           = "inbox"
+	SubJoin            = "join"
 	SubKill            = "kill"
+	SubLeave           = "leave"
 	SubLog             = "log"
 	SubLs              = "ls"
 	SubNotifyWatch     = "notify-watch"
@@ -4895,6 +4945,90 @@ func ParseCmdBoardRetain(sf Surface, args []string, ctx map[string]string) (Boar
 	sp, ok := Lookup("board", "retain")
 	if !ok {
 		return zero, fmt.Errorf("board retain: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(BoardAction)
+	return a, nil
+}
+
+func ParseCmdBoardSubscribe(sf Surface, args []string, ctx map[string]string) (BoardAction, error) {
+	var zero BoardAction
+	sp, ok := Lookup("board", "subscribe")
+	if !ok {
+		return zero, fmt.Errorf("board subscribe: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(BoardAction)
+	return a, nil
+}
+
+func ParseCmdBoardUnsubscribe(sf Surface, args []string, ctx map[string]string) (BoardAction, error) {
+	var zero BoardAction
+	sp, ok := Lookup("board", "unsubscribe")
+	if !ok {
+		return zero, fmt.Errorf("board unsubscribe: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(BoardAction)
+	return a, nil
+}
+
+func ParseCmdBoardJoin(sf Surface, args []string, ctx map[string]string) (BoardAction, error) {
+	var zero BoardAction
+	sp, ok := Lookup("board", "join")
+	if !ok {
+		return zero, fmt.Errorf("board join: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(BoardAction)
+	return a, nil
+}
+
+func ParseCmdBoardLeave(sf Surface, args []string, ctx map[string]string) (BoardAction, error) {
+	var zero BoardAction
+	sp, ok := Lookup("board", "leave")
+	if !ok {
+		return zero, fmt.Errorf("board leave: not in the verb table")
 	}
 	sp = sp.For(sf)
 	fs := sp.NewFlagSet(flag.ContinueOnError)
@@ -6601,6 +6735,14 @@ type CLIDispatch[R any] interface {
 	BoardPurge(BoardAction) R
 	// board retain
 	BoardRetain(BoardAction) R
+	// board subscribe
+	BoardSubscribe(BoardAction) R
+	// board unsubscribe
+	BoardUnsubscribe(BoardAction) R
+	// board join
+	BoardJoin(BoardAction) R
+	// board leave
+	BoardLeave(BoardAction) R
 	// board retract-thread
 	BoardRetractThread(BoardAction) R
 	// board purge-thread
@@ -6978,6 +7120,30 @@ func DispatchCLI[R any](h CLIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.BoardRetain(a), true, nil
+	case CmdBoardSubscribe:
+		a, perr := ParseCmdBoardSubscribe(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.BoardSubscribe(a), true, nil
+	case CmdBoardUnsubscribe:
+		a, perr := ParseCmdBoardUnsubscribe(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.BoardUnsubscribe(a), true, nil
+	case CmdBoardJoin:
+		a, perr := ParseCmdBoardJoin(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.BoardJoin(a), true, nil
+	case CmdBoardLeave:
+		a, perr := ParseCmdBoardLeave(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.BoardLeave(a), true, nil
 	case CmdBoardRetractThread:
 		a, perr := ParseCmdBoardRetractThread(CLI, args, ctx)
 		if perr != nil {
@@ -7459,6 +7625,14 @@ func DispatchCLIAction[R any](h CLIDispatch[R], act Action) (r R, handled bool) 
 			return h.BoardPurge(a), true
 		case "retain":
 			return h.BoardRetain(a), true
+		case "subscribe":
+			return h.BoardSubscribe(a), true
+		case "unsubscribe":
+			return h.BoardUnsubscribe(a), true
+		case "join":
+			return h.BoardJoin(a), true
+		case "leave":
+			return h.BoardLeave(a), true
 		case "retract-thread":
 			return h.BoardRetractThread(a), true
 		case "purge-thread":
@@ -7862,6 +8036,30 @@ func ParseCLICommand(tokens []string, ctx map[string]string) (act Action, handle
 			return a, true, nil
 		case CmdBoardRetain:
 			a, perr := ParseCmdBoardRetain(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdBoardSubscribe:
+			a, perr := ParseCmdBoardSubscribe(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdBoardUnsubscribe:
+			a, perr := ParseCmdBoardUnsubscribe(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdBoardJoin:
+			a, perr := ParseCmdBoardJoin(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdBoardLeave:
+			a, perr := ParseCmdBoardLeave(CLI, tokens[n:], ctx)
 			if perr != nil {
 				return nil, true, perr
 			}

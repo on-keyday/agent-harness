@@ -1393,6 +1393,22 @@ var Verbs = []VerbSpec{
 		},
 		Examples: []string{"board retain tree.<task-id>.design --ttl 168h", "board retain sns.timeline --ttl forever", "board retain tree.<task-id>.design --clear"},
 	},
+	// --- board, a task's standing on a topic ---
+	//
+	// Four verbs on one request kind (board_membership). subscribe /
+	// unsubscribe touch the subscription only and grant nothing; join also
+	// lets the task publish there and keeps it subscribed across a resume (and,
+	// on a retained topic, a server restart); leave undoes join. See
+	// docs/superpowers/specs/2026-10-31-board-membership-design.md.
+	membershipVerb("subscribe",
+		"subscribe <task> to <topic>, as its own agent subscribe would: only a topic the task could read itself; grants nothing (cap: board_member, scoped)"),
+	membershipVerb("unsubscribe",
+		"drop <task>'s subscription to <topic>; a membership stays (use leave) (cap: board_member, scoped)"),
+	membershipVerb("join",
+		"make <task> a member of <topic>: subscribed, may publish there, and its posts are answered on the topic unless it names --reply-to.",
+		"not chat.*, not a tree.<X>.* outside the task's lineage; a task caller may join others only to a topic it may publish to (cap: board_member, scoped)"),
+	membershipVerb("leave",
+		"end <task>'s membership of <topic> and its subscription (cap: board_member, scoped)"),
 	// --- board, thread-scoped ---
 	//
 	// Neither takes a <topic>, which is the visible difference from the two
@@ -3330,5 +3346,24 @@ func init() {
 	}
 	FamilyNotes["board"] = []string{
 		"inspect/withdraw/purge/publish on the agentboard (cap: board_observe; retract and purge: purge; send and wake: board_send)",
+	}
+}
+
+// membershipVerb is one of the four board verbs on board_membership: they
+// differ only in the operation and its notes.
+func membershipVerb(sub string, notes ...string) VerbSpec {
+	return VerbSpec{
+		Path:            []string{"board", sub},
+		Notes:           notes,
+		CmdlineSurfaces: CLI,
+		Action:          "BoardAction",
+		Const:           map[string]string{"Sub": sub},
+		Args: []Arg{
+			{Name: "task", Type: ArgTaskID, Field: "Task"},
+			{Name: "topic", Type: ArgTopic, Field: "Topic"},
+		},
+		Examples: []string{"board " + sub + " <taskid32hex> sns.timeline"},
+		NoModalSurface: "not yet: the TUI keys and WebUI buttons are the next two changes of " +
+			"docs/superpowers/plans/2026-10-31-board-membership.md",
 	}
 }

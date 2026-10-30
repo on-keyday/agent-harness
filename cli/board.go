@@ -163,6 +163,7 @@ type BoardSubscriberPattern struct {
 	Name    string
 	Shown   uint64
 	Pending uint32
+	Joined  bool // a member of the topic (board join), not only subscribed
 }
 
 // BoardSubscribers lists each task's agentboard subscription set. A non-empty
@@ -199,6 +200,7 @@ func (c *Client) BoardSubscribers(ctx context.Context, topic string) ([]BoardSub
 				Name:    string(p.Name),
 				Shown:   p.Shown,
 				Pending: p.Pending,
+				Joined:  p.Joined(),
 			})
 		}
 		sort.Slice(patterns, func(i, j int) bool { return patterns[i].Name < patterns[j].Name })
@@ -346,6 +348,35 @@ func (c *Client) BoardRetain(ctx context.Context, topic string, ttl time.Duratio
 	}
 	if br.Status != protocol.BoardRetainStatus_Ok {
 		return fmt.Errorf("board retain %s: %s", topic, br.Status)
+	}
+	return nil
+}
+
+// BoardMembership subscribes task to topic, unsubscribes it, makes it a
+// member, or ends the membership. Requires Capability_BoardMember; a task
+// caller is bounded by that bit's scope and, for join, by its own publish
+// reach. A non-ok status is returned as an error naming it.
+func (c *Client) BoardMembership(ctx context.Context, taskHex, topic string, op protocol.BoardMembershipOp) error {
+	task, err := membershipTask(taskHex, op)
+	if err != nil {
+		return err
+	}
+	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_BoardMembership}
+	mr := protocol.BoardMembershipRequest{Task: task, Op: op}
+	if !mr.SetTopic([]byte(topic)) {
+		return fmt.Errorf("board %s: topic too long", op)
+	}
+	req.SetBoardMembership(mr)
+	resp, err := c.RoundTripTaskControl(ctx, req)
+	if err != nil {
+		return err
+	}
+	br := resp.BoardMembership()
+	if br == nil || resp.Kind != protocol.TaskControlKind_BoardMembership {
+		return fmt.Errorf("BoardMembership: unexpected response kind=%v", resp.Kind)
+	}
+	if br.Status != protocol.BoardMembershipStatus_Ok {
+		return fmt.Errorf("board %s %s %s: %s", op, shortID(taskHex), topic, br.Status)
 	}
 	return nil
 }
@@ -554,6 +585,30 @@ func BoardRetain(ctx context.Context, peerCID objproto.ConnectionID, topic strin
 	}
 	defer c.Close()
 	return c.BoardRetain(ctx, topic, ttl, forever, clear)
+}
+
+func membershipTask(taskHex string, op protocol.BoardMembershipOp) (protocol.TaskID, error) {
+	var task protocol.TaskID
+	raw, err := hex.DecodeString(taskHex)
+	if err != nil || len(raw) != len(task.Id) {
+		return task, fmt.Errorf("board %s: task id must be 32 hex: %q", op, taskHex)
+	}
+	copy(task.Id[:], raw)
+	return task, nil
+}
+
+// BoardMembership is a package-level fresh-dial wrapper for
+// (*Client).BoardMembership. A malformed task id is refused before dialing.
+func BoardMembership(ctx context.Context, peerCID objproto.ConnectionID, taskHex, topic string, op protocol.BoardMembershipOp) error {
+	if _, err := membershipTask(taskHex, op); err != nil {
+		return err
+	}
+	c, err := Dial(ctx, peerCID, protocol.ClientKind_Cli)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	return c.BoardMembership(ctx, taskHex, topic, op)
 }
 
 // BoardSubscribers is a package-level fresh-dial wrapper for

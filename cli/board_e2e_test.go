@@ -22,11 +22,15 @@ import (
 // operatorE2E wraps an in-process server and its Board for operator-plane tests.
 type operatorE2E struct {
 	board  *agentboard.Board
+	tasks  *server.TaskStore
 	cancel context.CancelFunc
 }
 
 // Board returns the agentboard.Board seeded by the test.
 func (e *operatorE2E) Board() *agentboard.Board { return e.board }
+
+// Tasks returns the server's task store, for tests whose verb names a task.
+func (e *operatorE2E) Tasks() *server.TaskStore { return e.tasks }
 
 // startOperatorServerE2E starts an in-process server with a Board on a free
 // port. It returns (wrapper, dialableCID) where the CID is suitable for
@@ -85,7 +89,7 @@ func startOperatorServerE2E(t *testing.T) (*operatorE2E, objproto.ConnectionID) 
 		t.Fatalf("startOperatorServerE2E: parse CID: %v", err)
 	}
 
-	e := &operatorE2E{board: board, cancel: cancel}
+	e := &operatorE2E{board: board, tasks: s.Tasks(), cancel: cancel}
 	t.Cleanup(func() {
 		cancel()
 		board.Close()
