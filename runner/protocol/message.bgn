@@ -624,6 +624,11 @@ enum TaskControlKind:
                             # No capability: the target is the connection's
                             # principal, as progress_set. See
                             # docs/superpowers/specs/2026-10-27-task-lifecycle-design.md
+    board_retain            # appended: set or clear an agentboard topic's
+                            # retention (kept past the TTL and a server
+                            # restart, on disk). Gated on board_persist; a task
+                            # caller must also be able to publish to the topic.
+                            # See docs/superpowers/specs/2026-10-30-agentboard-retention-design.md
 
 # ClientKind tags the kind of caller that opened a TaskControl session.
 # `agent` is an in-task harness-cli that proves its identity via agent_info;
@@ -1340,11 +1345,34 @@ format BoardTopicsResponse:
 format BoardTopicsBody:
     topics_len :u16
     topics :[topics_len]BoardTopicRow
+    # The retained topics among them, keyed by name. A parallel list rather
+    # than fields on BoardTopicRow: a row is an array element, so growing it
+    # would misdecode every later row in an older client, while a list
+    # appended here ends where an older client already stops reading.
+    retention_len :u16
+    retention :[retention_len]BoardTopicRetention
+
+# BoardTopicRetention is one retained topic's setting as board topics shows
+# it. set_by is the task that set it; zero is the operator.
+format BoardTopicRetention:
+    name_len :u16
+    name :[name_len]u8
+    ttl_ms :u64          # 0 when forever
+    forever :u1
+    reserved :u7
+    set_by :TaskID
+    disk_bytes :u64
 
 format BoardReadRequest:
     request_id :u32
     topic_len :u16
     topic :[topic_len]u8
+    # Paging, appended. limit 0 is the answer this request always gave: the
+    # ring and the withdrawn list, oldest first. limit > 0 returns up to limit
+    # messages with seq below before_seq (0 = from the newest), newest first;
+    # on a retained topic that reaches past the ring into its disk log.
+    before_seq :u64
+    limit :u16
 
 # RetractedBy names WHICH authority check withdrew a message, because there are
 # now two and they answer different questions for a reader of the board.
@@ -1489,6 +1517,29 @@ format BoardSubscribersResponse:
 format BoardSubscribersBody:
     rows_len :u16
     rows :[rows_len]BoardSubscriberRow
+
+# BoardRetainRequest sets or clears a topic's retention (TaskControlKind
+# board_retain). clear ignores ttl_ms and forever. ttl_ms 0 without forever is
+# a bad request.
+format BoardRetainRequest:
+    topic_len :u16
+    topic :[topic_len]u8
+    ttl_ms :u64
+    forever :u1
+    clear :u1
+    reserved :u6
+
+enum BoardRetainStatus:
+    :u8
+    ok = 0
+    not_retainable = 1   # empty name or a chat.* topic: direct messages stay temporary
+    not_publishable = 2  # a task caller that may not publish to the topic
+    bad_request = 3      # neither clear, forever nor a positive ttl_ms
+    store_error = 4      # the server could not write the store; see its log
+    too_many_topics = 5  # a new topic would exceed max-topics and nothing can be evicted
+
+format BoardRetainResponse:
+    status :BoardRetainStatus
 
 format BoardPurgeRequest:
     request_id :u32
@@ -2485,6 +2536,7 @@ format TaskControlRequest:
         TaskControlKind.runner_unenroll          => runner_unenroll          :RunnerUnenrollRequest
         TaskControlKind.runner_keys              => runner_keys              :RunnerKeysRequest
         TaskControlKind.lifecycle_set            => lifecycle_set            :LifecycleSetRequest
+        TaskControlKind.board_retain             => board_retain             :BoardRetainRequest
         .. => error("Unexpected task")
 
 # CancelResult replaces a bare u8 that every reply wrote as 0. ok stays 0, so
@@ -2568,6 +2620,7 @@ format TaskControlResponse:
         TaskControlKind.runner_unenroll          => runner_unenroll          :RunnerUnenrollResponse
         TaskControlKind.runner_keys              => runner_keys              :RunnerKeysResponse
         TaskControlKind.lifecycle_set            => lifecycle_set            :LifecycleSetResponse
+        TaskControlKind.board_retain             => board_retain             :BoardRetainResponse
 
 # --- runner enrollment (2026-10-27-runner-enrollment-design.md) --------------
 # The server lets a runner register under AuthRole.runner only when it signs

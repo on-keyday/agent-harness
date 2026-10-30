@@ -131,6 +131,39 @@ func (b *Board) Publishable(c *ConnState, topic string) bool {
 		return false
 	}
 	_, self, _, _ := c.task.identity()
+	return b.publishableFor(r, self, c.task.hasContact, topic)
+}
+
+// PublishableBy is Publishable for a task named by id rather than by its
+// agent connection — for an operator-face request a task makes, where the
+// connection carries a principal but no board state. Its contacts are those
+// of any board state held under that task id.
+func (b *Board) PublishableBy(tid protocol.TaskID, topic string) bool {
+	r := b.reachSource()
+	if r == nil {
+		return true
+	}
+	want := hexTaskIDProto(tid)
+	b.mu.Lock()
+	var states []*taskState
+	for k, ts := range b.tasks {
+		if k.task == want {
+			states = append(states, ts)
+		}
+	}
+	b.mu.Unlock()
+	hasContact := func(topic string) bool {
+		for _, ts := range states {
+			if ts.hasContact(topic) {
+				return true
+			}
+		}
+		return false
+	}
+	return b.publishableFor(r, tid, hasContact, topic)
+}
+
+func (b *Board) publishableFor(r ReachSource, self protocol.TaskID, hasContact func(string) bool, topic string) bool {
 	if x, ok := parseTreeTopic(topic); ok {
 		return b.member(r, self, x) // no bit opens a tree the task is not in (D7)
 	}
@@ -143,7 +176,7 @@ func (b *Board) Publishable(c *ConnState, topic string) bool {
 	if short, ok := strings.CutPrefix(topic, SelfTopicPrefix); ok && len(short) == selfTopicShortLen && r.HasChild(self, short) {
 		return true
 	}
-	if c.task.hasContact(topic) {
+	if hasContact(topic) {
 		return true
 	}
 	if !hasCap(r, self, protocol.Capability_BoardPeer) {

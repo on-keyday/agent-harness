@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"sort"
+	"time"
 
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/appwire"
@@ -15,6 +16,7 @@ import (
 // Cap (board_observe) is enforced centrally via requiredCap before dispatch.
 func (h *TaskHandler) handleBoardTopics(conn ConnHandle, requestID uint32) {
 	var rows []protocol.BoardTopicRow
+	var retained []protocol.BoardTopicRetention
 	for _, r := range h.Board.ListTopics() {
 		row := protocol.BoardTopicRow{
 			LastSeq:               r.LastSeq,
@@ -37,9 +39,20 @@ func (h *TaskHandler) handleBoardTopics(conn ConnHandle, requestID uint32) {
 			}
 		}
 		rows = append(rows, row)
+		if ret, disk, ok := h.Board.RetentionOf(r.Name); ok {
+			rr := protocol.BoardTopicRetention{SetBy: ret.SetBy, DiskBytes: uint64(disk)}
+			rr.SetName([]byte(r.Name))
+			if ret.Forever {
+				rr.SetForever(true)
+			} else {
+				rr.TtlMs = uint64(ret.TTL.Milliseconds())
+			}
+			retained = append(retained, rr)
+		}
 	}
 	body := &protocol.BoardTopicsBody{}
 	body.SetTopics(rows)
+	body.SetRetention(retained)
 	respondWithBody(conn, "board_topics", body, func(streamID uint64) {
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_BoardTopics, RequestId: requestID}
 		resp.SetBoardTopics(protocol.BoardTopicsResponse{RequestId: requestID, StreamId: streamID})
@@ -88,10 +101,10 @@ func (h *TaskHandler) handleBoardSubscribers(conn ConnHandle, requestID uint32, 
 }
 
 // handleBoardRead returns every retained message in a topic, bodies included,
-// as a BoardReadBody on a stream. Cap (board_observe) is enforced centrally via
-// requiredCap before dispatch. An unknown topic answers not_found with no
-// stream.
-func (h *TaskHandler) handleBoardRead(conn ConnHandle, requestID uint32, topic string) {
+// as a BoardReadBody on a stream — or, with limit > 0, one page of them newest
+// first. Cap (board_observe) is enforced centrally via requiredCap before
+// dispatch. An unknown topic answers not_found with no stream.
+func (h *TaskHandler) handleBoardRead(conn ConnHandle, requestID uint32, topic string, beforeSeq uint64, limit uint16) {
 	respond := func(status protocol.BoardStatus) func(streamID uint64) {
 		return func(streamID uint64) {
 			resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_BoardRead, RequestId: requestID}
@@ -105,13 +118,21 @@ func (h *TaskHandler) handleBoardRead(conn ConnHandle, requestID uint32, topic s
 		respond(protocol.BoardStatus_NotFound)(0)
 		return
 	}
-	// The operator sees live AND withdrawn messages, in one seq-ordered list.
-	// This is the only surface that reads the withdrawn list: an author can
-	// retract in seconds, and if that also emptied the operator's view there
-	// would be no window left in which to audit what was said. Merging here
-	// rather than in the board keeps the storage layer neutral about who may
-	// see what (see agentboard.Board.Retained).
-	if withdrawn, ok := h.Board.ListRetracted(topic); ok && len(withdrawn) > 0 {
+	if limit > 0 {
+		// A page, newest first. On a retained topic it reaches past the ring
+		// into the log, withdrawn messages included as in the merged view below.
+		page, err := h.Board.Page(topic, beforeSeq, int(limit))
+		if err != nil {
+			slog.Error("board_read: page", "topic", topic, "err", err)
+		}
+		msgs = page
+	} else if withdrawn, ok := h.Board.ListRetracted(topic); ok && len(withdrawn) > 0 {
+		// The operator sees live AND withdrawn messages, in one seq-ordered list.
+		// This is the only surface that reads the withdrawn list: an author can
+		// retract in seconds, and if that also emptied the operator's view there
+		// would be no window left in which to audit what was said. Merging here
+		// rather than in the board keeps the storage layer neutral about who may
+		// see what (see agentboard.Board.Retained).
 		msgs = append(msgs, withdrawn...)
 		sort.Slice(msgs, func(i, j int) bool { return msgs[i].Seq < msgs[j].Seq })
 	}
@@ -319,4 +340,49 @@ func (h *TaskHandler) handleBoardWake(conn ConnHandle, requestID uint32, topic s
 	resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_BoardWake, RequestId: requestID}
 	resp.SetBoardWake(protocol.BoardWakeResponse{RequestId: requestID, Woken: uint16(woken)})
 	conn.SendMessage(resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})) //nolint:errcheck
+}
+
+// handleBoardRetain sets or clears a topic's retention. The board_persist bit
+// is checked centrally (requiredCap); a task caller (by non-zero) may also
+// retain only a topic it may publish to, so the bit cannot reach into a
+// conversation the task is not part of. An operator retains any topic.
+func (h *TaskHandler) handleBoardRetain(conn ConnHandle, requestID uint32, r *protocol.BoardRetainRequest, by protocol.TaskID) {
+	respond := func(status protocol.BoardRetainStatus) {
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_BoardRetain, RequestId: requestID}
+		resp.SetBoardRetain(protocol.BoardRetainResponse{Status: status})
+		respondAgent(conn, resp)
+	}
+	topic := string(r.Topic)
+	if h.Board == nil {
+		respond(protocol.BoardRetainStatus_StoreError)
+		return
+	}
+	if by != (protocol.TaskID{}) && !h.Board.PublishableBy(by, topic) {
+		respond(protocol.BoardRetainStatus_NotPublishable)
+		return
+	}
+	var err error
+	switch {
+	case r.Clear():
+		err = h.Board.ClearRetain(topic)
+	case r.Forever() || r.TtlMs > 0:
+		err = h.Board.Retain(topic, agentboard.Retention{
+			TTL: time.Duration(r.TtlMs) * time.Millisecond, Forever: r.Forever(),
+			SetBy: by, SetAt: time.Now(),
+		})
+	default:
+		respond(protocol.BoardRetainStatus_BadRequest)
+		return
+	}
+	switch {
+	case err == nil:
+		respond(protocol.BoardRetainStatus_Ok)
+	case errors.Is(err, agentboard.ErrNotRetainable):
+		respond(protocol.BoardRetainStatus_NotRetainable)
+	case errors.Is(err, agentboard.ErrTooManyTopics):
+		respond(protocol.BoardRetainStatus_TooManyTopics)
+	default:
+		slog.Error("board_retain", "topic", topic, "err", err)
+		respond(protocol.BoardRetainStatus_StoreError)
+	}
 }

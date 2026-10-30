@@ -853,9 +853,19 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		}
 		h.handleBoardWake(conn, req.RequestId, string(bw.Topic))
 
+	case protocol.TaskControlKind_BoardRetain:
+		if r := req.BoardRetain(); r != nil {
+			// The setter is the connection's principal, never a request field:
+			// it is what board topics shows as by=, the operator's lead when a
+			// retention needs undoing.
+			h.handleBoardRetain(conn, req.RequestId, r, h.lookupPrincipal(cid))
+		} else {
+			slog.Error("board_retain variant is nil", "request_id", req.RequestId)
+		}
+
 	case protocol.TaskControlKind_BoardRead:
 		if r := req.BoardRead(); r != nil {
-			h.handleBoardRead(conn, req.RequestId, string(r.Topic))
+			h.handleBoardRead(conn, req.RequestId, string(r.Topic), r.BeforeSeq, r.Limit)
 		} else {
 			slog.Error("board_read variant is nil", "request_id", req.RequestId)
 		}

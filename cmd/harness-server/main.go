@@ -351,6 +351,19 @@ func main() {
 		SeqSeed: uint64(time.Now().UnixMilli()) << 20,
 	})
 	defer board.Close()
+	// Retained topics (board retain) live under <data-dir>/board. A store that
+	// cannot be opened costs retention, not the server: board retain then
+	// answers store_error and the log says why.
+	if boardStore, err := agentboard.OpenFileStore(filepath.Join(*dataDir, "board"), 2*time.Second); err != nil {
+		slog.Error("agentboard store unavailable; board retain is disabled", "err", err)
+	} else if err := board.AttachStore(boardStore); err != nil {
+		slog.Error("agentboard store unreadable; board retain is disabled", "err", err)
+		_ = boardStore.Close()
+	} else {
+		// Deferred after board.Close so it runs first: the store flushes
+		// while the board still holds every retained topic.
+		defer boardStore.Close()
+	}
 	s.SetBoard(board)
 
 	// Publish the server to the shutdown path now that it exists. A signal

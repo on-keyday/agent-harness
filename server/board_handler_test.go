@@ -89,7 +89,7 @@ func TestHandleBoardRead_StreamsPayloadsInOrder(t *testing.T) {
 	h.Board.Send("chat.r", []byte("alpha"), protocol.RunnerID{}, protocol.TaskID{}, "h", "", 0)
 	h.Board.Send("chat.r", []byte("bravo"), protocol.RunnerID{}, protocol.TaskID{}, "h", "", 0)
 
-	h.handleBoardRead(conn, 1, "chat.r")
+	h.handleBoardRead(conn, 1, "chat.r", 0, 0)
 
 	resp := conn.lastTaskControlResponse(t)
 	br := resp.BoardRead()
@@ -102,7 +102,7 @@ func TestHandleBoardRead_StreamsPayloadsInOrder(t *testing.T) {
 	}
 
 	// unknown topic → not_found, stream_id 0
-	h.handleBoardRead(conn, 2, "nope")
+	h.handleBoardRead(conn, 2, "nope", 0, 0)
 	br = conn.lastTaskControlResponse(t).BoardRead()
 	if br.Status != protocol.BoardStatus_NotFound || br.StreamId != 0 {
 		t.Fatalf("unknown read = %+v, want not_found/0", br)
@@ -119,7 +119,7 @@ func TestHandleBoardRead_CarriesInReplyTo(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h.handleBoardRead(conn, 1, "chat.r")
+	h.handleBoardRead(conn, 1, "chat.r", 0, 0)
 
 	resp := lastTaskControlResponse(t, conn)
 	br := resp.BoardRead()
@@ -217,7 +217,7 @@ func TestHandleBoardRead_CarriesReplyToTopic(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h.handleBoardRead(conn, 1, "chat.r")
+	h.handleBoardRead(conn, 1, "chat.r", 0, 0)
 
 	resp := lastTaskControlResponse(t, conn)
 	br := resp.BoardRead()
@@ -280,7 +280,7 @@ func TestHandleBoardRetract_WithdrawsAndKeepsItReadable(t *testing.T) {
 	}
 
 	// Still in the operator's read, payload included, marked with who took it.
-	h.handleBoardRead(conn, 2, "chat.w")
+	h.handleBoardRead(conn, 2, "chat.w", 0, 0)
 	br := boardReadResp(t, conn)
 	if br == nil {
 		t.Fatal("no board_read variant")
@@ -362,7 +362,7 @@ func TestHandleBoardRetract_OperatorClientHasNoTaskID(t *testing.T) {
 	if got := boardRetractResp(t, conn); got.Status != protocol.BoardStatus_Ok {
 		t.Fatalf("retract = %v, want ok", got.Status)
 	}
-	h.handleBoardRead(conn, 2, "chat.op")
+	h.handleBoardRead(conn, 2, "chat.op", 0, 0)
 	br := boardReadResp(t, conn)
 	if br == nil {
 		t.Fatal("no board_read variant")

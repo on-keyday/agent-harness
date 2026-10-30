@@ -44,6 +44,7 @@ var kindCapClass = map[protocol.TaskControlKind]capClass{
 	protocol.TaskControlKind_BoardPurge:         capInMap,
 	protocol.TaskControlKind_BoardRetract:       capInMap,
 	protocol.TaskControlKind_BoardContactsClear: capInMap,
+	protocol.TaskControlKind_BoardRetain:        capInMap,
 	// progress_set touches only the caller's own row (its principal), the
 	// reasoning whoami's self-introspection rests on.
 	protocol.TaskControlKind_ProgressSet: capNone,
@@ -145,7 +146,7 @@ var kindCapClass = map[protocol.TaskControlKind]capClass{
 }
 
 func TestEveryTaskControlKindHasACapVerdict(t *testing.T) {
-	for i := 0; i <= int(protocol.TaskControlKind_LifecycleSet); i++ {
+	for i := 0; i <= int(protocol.TaskControlKind_BoardRetain); i++ {
 		k := protocol.TaskControlKind(i)
 		if k.String() == fmt.Sprintf("TaskControlKind(%d)", i) {
 			continue // gap in the enum, not a real kind

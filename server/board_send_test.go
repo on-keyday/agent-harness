@@ -111,7 +111,7 @@ func TestHandleBoardRead_CarriesSenderKind(t *testing.T) {
 		agentboard.WithSenderKind(protocol.SenderKind_Operator)); err != nil {
 		t.Fatal(err)
 	}
-	h.handleBoardRead(conn, 1, "chat.sk")
+	h.handleBoardRead(conn, 1, "chat.sk", 0, 0)
 	br := boardReadResp(t, conn)
 	if br == nil {
 		t.Fatal("no board_read variant")

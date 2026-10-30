@@ -69,6 +69,9 @@ var kindTargetClass = map[protocol.TaskControlKind]targetClass{
 	protocol.TaskControlKind_ProgressSet: noTarget,
 	// lifecycle_set writes the caller's OWN row, as progress_set does.
 	protocol.TaskControlKind_LifecycleSet: noTarget,
+	// board_retain names a topic, not a task; a task caller is bounded by the
+	// board reach check in the handler instead.
+	protocol.TaskControlKind_BoardRetain: noTarget,
 	// await_progress names a task and resolves it through inScope, as
 	// await_idle does.
 	protocol.TaskControlKind_AwaitProgress: targetGated,
@@ -148,7 +151,7 @@ var kindTargetClass = map[protocol.TaskControlKind]targetClass{
 }
 
 func TestEveryTaskControlKindIsClassified(t *testing.T) {
-	for i := 0; i <= int(protocol.TaskControlKind_LifecycleSet); i++ {
+	for i := 0; i <= int(protocol.TaskControlKind_BoardRetain); i++ {
 		k := protocol.TaskControlKind(i)
 		if k.String() == fmt.Sprintf("TaskControlKind(%d)", i) {
 			continue // gap in the enum, not a real kind
@@ -163,19 +166,19 @@ func TestEveryTaskControlKindIsClassified(t *testing.T) {
 	}
 }
 
-// lifecycle_set is the last kind; if the enum grows past it the loops above
-// stop short and silently cover nothing new. It has caught twelve appends now:
+// board_retain is the last kind; if the enum grows past it the loops above
+// stop short and silently cover nothing new. It has caught thirteen appends now:
 // restore_tasks, when the bound was open_forward_tap; trsf_state; the ten
 // agent_* kinds, which arrived together and would otherwise have dispatched
 // with whatever gate their neighbours happened to have; the two
 // await_idle_* kinds; board_send / board_wake; open_exec_tap;
 // agent_list_contacts; board_contacts_clear; progress_set / await_progress;
-// progress_clear; runner_enroll / runner_unenroll / runner_keys; and
-// lifecycle_set.
-func TestLifecycleSetIsStillTheLastKind(t *testing.T) {
-	next := protocol.TaskControlKind(int(protocol.TaskControlKind_LifecycleSet) + 1)
+// progress_clear; runner_enroll / runner_unenroll / runner_keys;
+// lifecycle_set; and board_retain.
+func TestBoardRetainIsStillTheLastKind(t *testing.T) {
+	next := protocol.TaskControlKind(int(protocol.TaskControlKind_BoardRetain) + 1)
 	if next.String() != fmt.Sprintf("TaskControlKind(%d)", int(next)) {
-		t.Fatalf("a kind was appended after lifecycle_set (%v) — raise the loop bound in "+
+		t.Fatalf("a kind was appended after board_retain (%v) — raise the loop bound in "+
 			"TestEveryTaskControlKindIsClassified and in TestEveryTaskControlKindHasACapVerdict, "+
 			"which otherwise stop before it", next)
 	}
