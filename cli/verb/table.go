@@ -2079,6 +2079,7 @@ var Verbs = []VerbSpec{
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"the commit this binary \u2014 and the skills embedded in it \u2014 was built from",
+			"only this binary: the server's build is the server= line of `harness-cli whoami`",
 		},
 		Action:   "CatalogAction",
 		Const:    map[string]string{"Sub": "version"},
