@@ -122,6 +122,9 @@ var capTargetClasses = map[protocol.Capability]capTargetClass{
 	// board_peer opens the chat.<id> of tasks in its target set (reach spec
 	// D16); the board's reach source resolves it through authority.ActionSet by name.
 	protocol.Capability_BoardPeer: {kind: capResolvedLiteral},
+	// board_member names the task it subscribes or joins; the handler checks
+	// that task against this bit's own scope.
+	protocol.Capability_BoardMember: {kind: capResolvedLiteral},
 }
 
 // serverSources concatenates the package's non-test sources, which is what the

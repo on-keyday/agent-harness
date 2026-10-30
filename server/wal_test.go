@@ -343,3 +343,21 @@ func TestWALReplay_OldAllMaskLacksBoardPersist(t *testing.T) {
 		t.Fatalf("caps %#x lost runner_enroll, which the old all mask held", uint32(e.Capabilities))
 	}
 }
+
+// board_member was appended after all widened to 0x1ffffff: a task recorded
+// with that mask keeps the number and does not gain the new bit.
+func TestWALReplay_OldAllMaskLacksBoardMember(t *testing.T) {
+	s := NewTaskStore()
+	id := "1123456789abcdef0123456789abcdef"
+	s.ReplayEvents([]WALEvent{{Type: "task_created", TaskID: id, Capabilities: 0x1ffffff, Ts: 1}})
+	e, ok := s.Get(id)
+	if !ok {
+		t.Fatal("replayed task missing")
+	}
+	if e.Capabilities&protocol.Capability_BoardMember != 0 {
+		t.Fatalf("caps %#x gained board_member on replay", uint32(e.Capabilities))
+	}
+	if e.Capabilities&protocol.Capability_BoardPersist == 0 {
+		t.Fatalf("caps %#x lost board_persist, which the old all mask held", uint32(e.Capabilities))
+	}
+}

@@ -64,11 +64,14 @@ var requiredCap = map[protocol.TaskControlKind]protocol.Capability{
 	// Forgetting a task's contacts removes another task's board state, the
 	// same class as withdrawing its message; the handler adds the scope gate.
 	protocol.TaskControlKind_BoardContactsClear: protocol.Capability_BoardPurge,
-	protocol.TaskControlKind_BoardSubscribers:   protocol.Capability_BoardObserve,
-	protocol.TaskControlKind_BoardSend:          protocol.Capability_BoardSend,
-	protocol.TaskControlKind_BoardWake:          protocol.Capability_BoardSend,
-	protocol.TaskControlKind_GitQuery:           protocol.Capability_FileRead,
-	protocol.TaskControlKind_OpenExecRun:        protocol.Capability_ExecRun,
+	// Subscribing another task, or making it a member of a topic; the handler
+	// adds the scope gate and the reach bounds.
+	protocol.TaskControlKind_BoardMembership:  protocol.Capability_BoardMember,
+	protocol.TaskControlKind_BoardSubscribers: protocol.Capability_BoardObserve,
+	protocol.TaskControlKind_BoardSend:        protocol.Capability_BoardSend,
+	protocol.TaskControlKind_BoardWake:        protocol.Capability_BoardSend,
+	protocol.TaskControlKind_GitQuery:         protocol.Capability_FileRead,
+	protocol.TaskControlKind_OpenExecRun:      protocol.Capability_ExecRun,
 	// OpenForwardTap sits in this map, and NOT inline like KillPortForward's,
 	// because it is direction-INDEPENDENT: reading the payload of a -R forward
 	// is the same power as reading a -L one, so the bit is known without the

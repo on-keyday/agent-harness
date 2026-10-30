@@ -955,7 +955,7 @@ session-attach powers, file read / write, local / remote port-forward, an ip
 link (`forward_link`, implied by neither port-forward bit),
 reading a forward's or an exec's payload, notify, prune, board_purge, runner-admin,
 enrolling runner keys (`runner_enroll`), global info, publishing to the board beyond the task's own lineage, publishing to the
-board as the operator, keeping a board topic past its TTL (`board_persist`)) — and a **target scope** bounding WHICH tasks those
+board as the operator, keeping a board topic past its TTL (`board_persist`), putting another task on a board topic (`board_member`)) — and a **target scope** bounding WHICH tasks those
 capabilities may be pointed at.
 
 Attaching to a session is three capabilities, not one, because the three

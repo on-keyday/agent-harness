@@ -863,6 +863,13 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("board_retain variant is nil", "request_id", req.RequestId)
 		}
 
+	case protocol.TaskControlKind_BoardMembership:
+		if r := req.BoardMembership(); r != nil {
+			h.handleBoardMembership(conn, req.RequestId, cid, r)
+		} else {
+			slog.Error("board_membership variant is nil", "request_id", req.RequestId)
+		}
+
 	case protocol.TaskControlKind_BoardRead:
 		if r := req.BoardRead(); r != nil {
 			h.handleBoardRead(conn, req.RequestId, string(r.Topic), r.BeforeSeq, r.Limit)

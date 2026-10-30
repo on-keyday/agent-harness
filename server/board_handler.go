@@ -91,6 +91,7 @@ func (h *TaskHandler) handleBoardSubscribers(conn ConnHandle, requestID uint32, 
 			// everything.
 			sp.Shown = p.Shown
 			sp.Pending = p.Pending
+			sp.SetJoined(p.Joined)
 			patterns = append(patterns, sp)
 		}
 		row.SetPatterns(patterns)
@@ -397,5 +398,66 @@ func (h *TaskHandler) handleBoardRetain(conn ConnHandle, requestID uint32, r *pr
 	default:
 		slog.Error("board_retain", "topic", topic, "err", err)
 		respond(protocol.BoardRetainStatus_StoreError)
+	}
+}
+
+// handleBoardMembership subscribes a task to a topic, makes it a member, or
+// undoes either. Cap (board_member) is enforced centrally. A task caller is
+// bounded so it hands out nothing it lacks: the target must be in the bit's
+// scope (not_found otherwise, indistinguishable from a missing task, as
+// board_contacts_clear), and a join needs the caller itself to be able to
+// publish to the topic. A subscribe is bounded by the target's own reach in
+// the board.
+func (h *TaskHandler) handleBoardMembership(conn ConnHandle, requestID uint32, cid string, r *protocol.BoardMembershipRequest) {
+	respond := func(status protocol.BoardMembershipStatus) {
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_BoardMembership, RequestId: requestID}
+		resp.SetBoardMembership(protocol.BoardMembershipResponse{Status: status})
+		respondAgent(conn, resp)
+	}
+	topic := string(r.Topic)
+	taskHex := hex.EncodeToString(r.Task.Id[:])
+	if h.Board == nil {
+		respond(protocol.BoardMembershipStatus_NotFound)
+		return
+	}
+	if _, ok := h.Tasks.Get(taskHex); !ok {
+		respond(protocol.BoardMembershipStatus_NotFound)
+		return
+	}
+	if !h.inScope(cid, protocol.Capability_BoardMember, taskHex) {
+		respond(protocol.BoardMembershipStatus_NotFound)
+		return
+	}
+	var err error
+	switch r.Op {
+	case protocol.BoardMembershipOp_Subscribe:
+		err = h.Board.SubscribeTask(r.Task, topic)
+	case protocol.BoardMembershipOp_Unsubscribe:
+		h.Board.UnsubscribeTask(r.Task, topic)
+	case protocol.BoardMembershipOp_Join:
+		if by := h.lookupPrincipal(cid); by != (protocol.TaskID{}) && !h.Board.PublishableBy(by, topic) {
+			respond(protocol.BoardMembershipStatus_NotPublishable)
+			return
+		}
+		err = h.Board.Join(r.Task, topic)
+	case protocol.BoardMembershipOp_Leave:
+		h.Board.Leave(r.Task, topic)
+	default:
+		respond(protocol.BoardMembershipStatus_BadRequest)
+		return
+	}
+	switch {
+	case err == nil:
+		slog.Info("board membership", "op", r.Op.String(), "task", taskHex, "topic", topic)
+		respond(protocol.BoardMembershipStatus_Ok)
+	case errors.Is(err, agentboard.ErrNotJoinable):
+		respond(protocol.BoardMembershipStatus_NotJoinable)
+	case errors.Is(err, agentboard.ErrNotPermitted), errors.Is(err, agentboard.ErrReservedTopic):
+		respond(protocol.BoardMembershipStatus_NotReadable)
+	case errors.Is(err, agentboard.ErrNotRunning):
+		respond(protocol.BoardMembershipStatus_NotFound)
+	default:
+		slog.Error("board_membership", "op", r.Op.String(), "topic", topic, "err", err)
+		respond(protocol.BoardMembershipStatus_BadRequest)
 	}
 }

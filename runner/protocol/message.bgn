@@ -629,6 +629,12 @@ enum TaskControlKind:
                             # restart, on disk). Gated on board_persist; a task
                             # caller must also be able to publish to the topic.
                             # See docs/superpowers/specs/2026-10-30-agentboard-retention-design.md
+    board_membership        # appended: subscribe ANOTHER task to a topic, or
+                            # make it a member (subscribed, may publish there,
+                            # replies to its posts stay on the topic), or undo
+                            # either. Gated on board_member and target-gated on
+                            # that bit's scope, because it names a task.
+                            # See docs/superpowers/specs/2026-10-31-board-membership-design.md
 
 # ClientKind tags the kind of caller that opened a TaskControl session.
 # `agent` is an in-task harness-cli that proves its identity via agent_info;
@@ -1497,6 +1503,13 @@ format SubscriptionPattern:
     # subscriber.
     shown :u64
     pending :u32
+    # joined: the task is a member of the topic (board join), not only
+    # subscribed. A member may publish to the topic, and its subscription comes
+    # back when the task is resumed on another runner or re-adopted after a
+    # server restart (a retained topic's membership survives the restart); a
+    # plain subscription is lost in both cases.
+    joined :u1
+    reserved :u7
 
 format BoardSubscriberRow:
     task :TaskID
@@ -1551,6 +1564,34 @@ enum BoardRetainStatus:
 
 format BoardRetainResponse:
     status :BoardRetainStatus
+
+# BoardMembershipRequest changes one task's standing on one topic (TaskControlKind
+# board_membership). subscribe / unsubscribe touch the subscription only;
+# join records a membership and subscribes; leave removes both.
+enum BoardMembershipOp:
+    :u8
+    subscribe = 0, "subscribe"
+    unsubscribe = 1, "unsubscribe"
+    join = 2, "join"
+    leave = 3, "leave"
+
+format BoardMembershipRequest:
+    task :TaskID
+    topic_len :u16
+    topic :[topic_len]u8
+    op :BoardMembershipOp
+
+enum BoardMembershipStatus:
+    :u8
+    ok = 0, "ok"
+    not_found = 1, "not_found"              # the task does not exist, is outside the caller's board_member scope, or (subscribe) holds no board state -- one answer, so the reply is no existence oracle
+    not_readable = 2, "not_readable"        # subscribe: the task could not subscribe to the topic itself (chat.operator, another task's chat.<id>, a tree outside its lineage)
+    not_joinable = 3, "not_joinable"        # join: an empty name, a chat.* topic, or a tree.<X>.* outside the task's lineage
+    not_publishable = 4, "not_publishable"  # join by a task caller that may not publish to the topic itself
+    bad_request = 5, "bad_request"          # an op this server does not know
+
+format BoardMembershipResponse:
+    status :BoardMembershipStatus
 
 format BoardPurgeRequest:
     request_id :u32
@@ -2548,6 +2589,7 @@ format TaskControlRequest:
         TaskControlKind.runner_keys              => runner_keys              :RunnerKeysRequest
         TaskControlKind.lifecycle_set            => lifecycle_set            :LifecycleSetRequest
         TaskControlKind.board_retain             => board_retain             :BoardRetainRequest
+        TaskControlKind.board_membership         => board_membership         :BoardMembershipRequest
         .. => error("Unexpected task")
 
 # CancelResult replaces a bare u8 that every reply wrote as 0. ok stays 0, so
@@ -2632,6 +2674,7 @@ format TaskControlResponse:
         TaskControlKind.runner_keys              => runner_keys              :RunnerKeysResponse
         TaskControlKind.lifecycle_set            => lifecycle_set            :LifecycleSetResponse
         TaskControlKind.board_retain             => board_retain             :BoardRetainResponse
+        TaskControlKind.board_membership         => board_membership         :BoardMembershipResponse
 
 # --- runner enrollment (2026-10-27-runner-enrollment-design.md) --------------
 # The server lets a runner register under AuthRole.runner only when it signs
@@ -4020,18 +4063,28 @@ enum Capability:
     # Default-off, appended. See
     # docs/superpowers/specs/2026-10-30-agentboard-retention-design.md
     board_persist  = 0x1000000, "board_persist"
+    # board_member authorizes board_membership on ANOTHER task: subscribing it
+    # to a topic, or making it a member (subscribed, read/write on that one
+    # topic, replies to its posts staying there). Bounded so the holder hands
+    # out nothing it lacks: the target must be in this bit's scope (a TASK is
+    # named, so it is scoped like board_contacts_clear's use of board_purge);
+    # subscribe needs the target to read the topic already; join needs the
+    # CALLER to be able to publish there, and never opens chat.* or a
+    # tree.<X>.* outside X's lineage. Default-off, appended. See
+    # docs/superpowers/specs/2026-10-31-board-membership-design.md
+    board_member   = 0x2000000, "board_member"
     # `all` is a LITERAL, not "every defined bit", so it widens by hand — the
     # same edit exec_view / exec_cowrite / exec_resize each needed. The WAL
     # persists the NUMBER, so a task already granted `all` holds 0xffff and
     # does NOT gain forward_tap until it is re-granted (nor, at 0x3fffff,
     # forward_link; nor, at 0x7fffff, runner_enroll; nor, at 0xffffff,
-    # board_persist). That is the safe
+    # board_persist; nor, at 0x1ffffff, board_member). That is the safe
     # direction and needs no migration.
     #
     # Widening it is REQUIRED, not stylistic: callerCaps hands operator
     # connections Capability_All, so a literal left at 0xffff would deny the
     # operator its own feature.
-    all            = 0x1ffffff, "all"
+    all            = 0x3ffffff, "all"
 
 # ScopeBase is the base target set a TaskScope starts from, before its explicit
 # id list is unioned in. Self joins that union unless exclude_self removes it,

@@ -66,6 +66,9 @@ func GrantableCaps() []protocol.Capability {
 		// board_persist after the publish bits: it changes how long a topic
 		// is kept, not who may read or write it.
 		protocol.Capability_BoardPersist,
+		// board_member after board_persist: both change another party's
+		// relation to a topic, and this one names a task.
+		protocol.Capability_BoardMember,
 		protocol.Capability_All,
 	}
 }
@@ -151,6 +154,10 @@ func CapDescription(c protocol.Capability) string {
 	case protocol.Capability_BoardPersist:
 		return "keep an agentboard topic past its TTL and a server restart (board retain --ttl <d>|forever, --clear), " +
 			"on topics the task may publish to; never a chat.<id> topic. NOT board_purge, and NOT implied by it"
+	case protocol.Capability_BoardMember:
+		return "subscribe another task to a topic, or make it a member (board subscribe / unsubscribe / join / leave), " +
+			"for tasks in the bit's scope; subscribe only where the target can already read, join only where the holder " +
+			"can itself publish; never chat.*, never a tree.<id> outside its lineage"
 	case protocol.Capability_All:
 		return "full capability set (operator-equivalent)"
 	default:
@@ -411,7 +418,7 @@ var capAuditTable = map[protocol.Capability]capAuditEntry{
 	protocol.Capability_Spawn:         {tier: TierStrong, scope: ScopeNone},
 	protocol.Capability_Resume:        {tier: TierStrong},
 	protocol.Capability_ExecControl:   {tier: TierStrong},
-	protocol.Capability_BoardPurge:         {tier: TierStrong},
+	protocol.Capability_BoardPurge:    {tier: TierStrong},
 	protocol.Capability_Prune:         {tier: TierStrong},
 	protocol.Capability_BoardSend:     {tier: TierStrong, scope: ScopeNone},
 	protocol.Capability_RunnerAdmin:   {tier: TierStrong, scope: ScopeNone},
@@ -428,6 +435,7 @@ var capAuditTable = map[protocol.Capability]capAuditEntry{
 	protocol.Capability_BoardPeer:     {tier: TierMid},
 	protocol.Capability_BoardObserve:  {tier: TierMid, scope: ScopeNone},
 	protocol.Capability_BoardPersist:  {tier: TierMid, scope: ScopeNone},
+	protocol.Capability_BoardMember:   {tier: TierMid},
 	protocol.Capability_ResumeExact:   {tier: TierMid, impliedBy: []protocol.Capability{protocol.Capability_Resume}},
 	protocol.Capability_ExecView:      {tier: TierWeak, impliedBy: []protocol.Capability{protocol.Capability_ExecCowrite, protocol.Capability_ExecControl}},
 	protocol.Capability_ExecResize:    {tier: TierWeak},
