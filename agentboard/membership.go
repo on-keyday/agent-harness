@@ -73,8 +73,16 @@ func (b *Board) UnsubscribeTask(tid protocol.TaskID, topic string) {
 	}
 }
 
+// JoinableName reports whether some task could join topic: not an empty
+// name and not chat.*. A tree.<X>.* topic is further limited to X's lineage,
+// which depends on the task. The rule every surface asks, so a control the
+// server would refuse for everyone is never offered.
+func JoinableName(topic string) bool {
+	return topic != "" && !strings.HasPrefix(topic, SelfTopicPrefix)
+}
+
 func (b *Board) joinable(tid protocol.TaskID, topic string) bool {
-	if topic == "" || strings.HasPrefix(topic, SelfTopicPrefix) {
+	if !JoinableName(topic) {
 		return false
 	}
 	if x, ok := parseTreeTopic(topic); ok {

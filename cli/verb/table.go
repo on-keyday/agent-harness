@@ -3366,6 +3366,8 @@ func membershipVerb(sub string, notes ...string) VerbSpec {
 		ModalSurfaces: []ModalSurface{
 			// S / J / U / L in the board modal's subscribers view.
 			{Surface: TUI, At: "tui/board.go:BoardModal"},
+			// 購読させる / 参加させる and each row's 購読を外す / 外す.
+			{Surface: WebUI, At: "webui/static/main.js:boardMembershipApply"},
 		},
 	}
 }

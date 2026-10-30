@@ -168,10 +168,14 @@ func main() {
 		"boardPurge":         js.FuncOf(harnessBoardPurge),
 		"boardRetract":       js.FuncOf(harnessBoardRetract),
 		"boardContactsClear": js.FuncOf(harnessBoardContactsClear),
-		"boardSend":          js.FuncOf(harnessBoardSend),
-		"boardWake":          js.FuncOf(harnessBoardWake),
-		"boardRetain":        js.FuncOf(harnessBoardRetain),
-		"boardUnretain":      js.FuncOf(harnessBoardUnretain),
+		"boardMembership":    js.FuncOf(harnessBoardMembership),
+		"boardJoinable": js.FuncOf(func(this js.Value, args []js.Value) any {
+			return len(args) > 0 && agentboard.JoinableName(args[0].String())
+		}),
+		"boardSend":     js.FuncOf(harnessBoardSend),
+		"boardWake":     js.FuncOf(harnessBoardWake),
+		"boardRetain":   js.FuncOf(harnessBoardRetain),
+		"boardUnretain": js.FuncOf(harnessBoardUnretain),
 		// Synchronous: the server's own rule, so the page offers Retain only
 		// where the server would accept it.
 		"boardRetainable": js.FuncOf(func(this js.Value, args []js.Value) any {
@@ -2139,6 +2143,8 @@ func harnessBoardSubscribers(this js.Value, args []js.Value) any {
 						// silently rounds to the nearest ULP (~256).
 						"shown":   strconv.FormatUint(pt.Shown, 10),
 						"pending": float64(pt.Pending),
+						// A member (board join), not only a subscriber.
+						"joined": pt.Joined,
 					})
 				}
 				out = append(out, map[string]any{
@@ -2629,6 +2635,53 @@ func harnessBoardContactsClear(this js.Value, args []js.Value) any {
 				"removed": n,
 				"label":   cli.ClearContactsLabel(task, topic, n, found),
 			}))
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
+// harnessBoardMembership subscribes / joins / unsubscribes / leaves a task on
+// a topic, as `board <op> <task> <topic>` does:
+//
+//	harness.boardMembership(taskId, topic, op) -> Promise<{label}>
+//
+// op is "subscribe", "unsubscribe", "join" or "leave"; a refusal rejects with
+// the status name, as the CLI exits naming it.
+func harnessBoardMembership(this js.Value, args []js.Value) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		go func() {
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			if len(args) < 3 {
+				rejectErr(reject, errors.New("boardMembership: missing taskId/topic/op args"))
+				return
+			}
+			task, topic, name := args[0].String(), args[1].String(), args[2].String()
+			ops := map[string]protocol.BoardMembershipOp{
+				"subscribe": protocol.BoardMembershipOp_Subscribe, "unsubscribe": protocol.BoardMembershipOp_Unsubscribe,
+				"join": protocol.BoardMembershipOp_Join, "leave": protocol.BoardMembershipOp_Leave,
+			}
+			op, ok := ops[name]
+			if !ok {
+				rejectErr(reject, fmt.Errorf("boardMembership: unknown op %q", name))
+				return
+			}
+			if err := c.BoardMembership(rootCtx, task, topic, op); err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			short := task
+			if len(short) > 8 {
+				short = short[:8]
+			}
+			resolve.Invoke(js.ValueOf(map[string]any{"label": fmt.Sprintf("board %s %s %s: ok", name, short, topic)}))
 		}()
 		return nil
 	})

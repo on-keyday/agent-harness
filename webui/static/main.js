@@ -6276,6 +6276,8 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     // A different topic starts a fresh composer; re-reading the same one (a
     // refresh after a send) leaves what is being written alone.
     if (topic !== currentBoardTopic && typeof resetBoardCompose === "function") resetBoardCompose();
+    // A membership result belongs to the topic it changed.
+    if (topic !== currentBoardTopic) boardMemberStatus = "";
     currentBoardTopic = topic;
     boardTopicsEl.hidden = true;
     boardDetailEl.hidden = false;
@@ -6492,6 +6494,73 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     return h;
   }
 
+  // ── Board membership (board subscribe / join / unsubscribe / leave) ──────
+  // The result of the last request, shown in the subscribers panel it
+  // changed: cmd-output is not on screen while the board is.
+  let boardMemberStatus = "";
+  async function boardMembershipApply(ids, op) {
+    const topic = currentBoardTopic;
+    const lines = [];
+    for (const id of ids) {
+      try {
+        const res = await window.harness.boardMembership(id, topic, op);
+        lines.push(res.label);
+      } catch (err) {
+        // A refusal already names the op, task and topic, as the CLI's does.
+        const named = err.message.startsWith(`board ${op} `);
+        lines.push(named ? err.message : `board ${op} ${id.slice(0, 8)} ${topic}: ${err.message}`);
+      }
+    }
+    boardMemberStatus = lines.join(" / ");
+    lines.forEach((l) => appendCmdOutput(l));
+    renderBoardSubscribers();
+  }
+
+  // 購読させる / 参加させる: pick tasks from the checklist the spawn form uses.
+  const boardMemberModal = document.getElementById("board-member-modal");
+  let boardMemberOp = "";
+  let boardMemberIds = new Set();
+  function openBoardMemberDialog(op) {
+    if (!boardMemberModal || !currentBoardTopic) return;
+    boardMemberOp = op;
+    boardMemberIds = new Set();
+    document.getElementById("board-member-title").textContent =
+      `${op === "join" ? "参加させる" : "購読させる"}: ${currentBoardTopic}`;
+    document.getElementById("board-member-hint").textContent = op === "join"
+      ? "member になる: 購読し、この topic に投稿でき、投稿への返信はこの topic に届く (board join)"
+      : "購読だけ: 読めるようになるだけで、投稿権は増えない (board subscribe)";
+    buildTaskChecklist(document.getElementById("board-member-tasks"), boardMemberIds, "", () => {});
+    boardMemberModal.showModal();
+  }
+  if (boardMemberModal) {
+    document.getElementById("board-member-apply").addEventListener("click", () => {
+      boardMemberModal.close();
+      if (boardMemberIds.size) boardMembershipApply([...boardMemberIds], boardMemberOp);
+    });
+    document.getElementById("board-member-cancel").addEventListener("click", () => boardMemberModal.close());
+  }
+  function boardMemberActions() {
+    const bar = document.createElement("div");
+    bar.className = "board-sub-actions";
+    for (const [op, label, title] of [
+      ["subscribe", "購読させる", "Subscribe tasks to this topic: they read it, nothing more (board subscribe)"],
+      ["join", "参加させる", "Make tasks members: subscribed, may publish here, answers to their posts stay here (board join)"],
+    ]) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = label;
+      b.title = title;
+      b.addEventListener("click", () => openBoardMemberDialog(op));
+      // Offered only where the server could accept it: no task joins chat.*.
+      if (op === "join" && !window.harness.boardJoinable(currentBoardTopic)) {
+        b.disabled = true;
+        b.title = "chat.* topics cannot be joined: direct messages have no members";
+      }
+      bar.appendChild(b);
+    }
+    return bar;
+  }
+
   async function renderBoardSubscribers() {
     if (!boardSubscribersEl || !currentBoardTopic) return;
     boardSubscribersEl.innerHTML = "";
@@ -6506,6 +6575,14 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       const n = rows ? rows.length : 0;
       boardSubscribersEl.appendChild(
         boardSubHeading(`subscribers of ${currentBoardTopic} (${n})`));
+      boardSubscribersEl.appendChild(boardMemberActions());
+      if (boardMemberStatus) {
+        const st = document.createElement("div");
+        st.className = "board-sub-status";
+        st.textContent = boardMemberStatus;
+        boardSubscribersEl.appendChild(st);
+      }
+      applyBoardReplyDefault(rows || []);
       if (n === 0) {
         const empty = document.createElement("div");
         empty.className = "board-sub-empty";
@@ -6526,9 +6603,22 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
         // board seq, delivered as a decimal STRING because those exceed
         // Number.MAX_SAFE_INTEGER -- render it, never arithmetic on it.
         const pats = (r.patterns && r.patterns.length)
-          ? r.patterns.map((p) => `${p.name}(shown=${p.shown} pending=${p.pending})`).join(",")
+          ? r.patterns.map(boardPatternLabel).join(",")
           : "-";
-        line.textContent = `\u2022 ${id}  host=${host}  agent=${agent}  topics=${pats}`;
+        const removal = boardRowRemoval(r, currentBoardTopic);
+        // The open topic's membership first: the topics list wraps, and this
+        // is what the panel is read for.
+        const joined = removal.op === "leave" ? "  joined" : "";
+        line.appendChild(document.createTextNode(`\u2022 ${id}${joined}  host=${host}  agent=${agent}  topics=${pats} `));
+        const rm = document.createElement("button");
+        rm.type = "button";
+        rm.className = "board-sub-remove";
+        rm.textContent = removal.label;
+        rm.title = removal.op === "leave"
+          ? `End ${id}'s membership of ${currentBoardTopic} and its subscription (board leave)`
+          : `Unsubscribe ${id} from ${currentBoardTopic} (board unsubscribe)`;
+        rm.addEventListener("click", () => boardMembershipApply([r.taskId], removal.op));
+        line.appendChild(rm);
         boardSubscribersEl.appendChild(line);
         // The task's reply routes -- what it may publish to without
         // board_peer beyond its lineage -- on a line of their own that wraps:
@@ -6604,6 +6694,15 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   const boardComposeReplyTo = document.getElementById("board-compose-reply-to");
   const boardComposeReplying = document.getElementById("board-compose-replying");
   let boardReplyingSeq = ""; // decimal string; "" = a new message on the open topic
+  // The reply-to the composer last set by itself. A subscribers refresh moves
+  // the field to the topic's default only while it still holds this, so what
+  // the operator typed there is never overwritten.
+  let boardAutoReplyTo = "";
+  function applyBoardReplyDefault(rows) {
+    if (!boardComposeReplyTo || boardComposeReplyTo.value !== boardAutoReplyTo) return;
+    boardAutoReplyTo = boardComposeReplyDefault(currentBoardTopic, rows);
+    boardComposeReplyTo.value = boardAutoReplyTo;
+  }
 
   // Back to a new message with the defaults, so a reply-to cleared for one
   // note does not silently carry over to the next.
@@ -6614,6 +6713,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     if (boardComposeWake) boardComposeWake.checked = d.wake;
     if (boardComposeKeep) boardComposeKeep.checked = d.keep;
     if (boardComposeReplyTo) boardComposeReplyTo.value = d.replyTo;
+    boardAutoReplyTo = d.replyTo;
   }
   resetBoardCompose();
 
@@ -7753,6 +7853,28 @@ function boardSendDefaults(_target) {
   // keep = --no-retire-on-reply, off as on the CLI: an answered message is
   // withdrawn so a resumed agent does not redo it.
   return { replyTo: "chat.operator", wake: true, keep: false };
+}
+
+// boardComposeReplyDefault is the composer's reply-to for a new message on
+// topic: the topic itself when one of its subscribers is a member (board
+// join) -- the members read the answers there -- else chat.operator.
+function boardComposeReplyDefault(topic, rows) {
+  const member = (rows || []).some((r) =>
+    (r.patterns || []).some((p) => p.name === topic && p.joined));
+  return member ? topic : "chat.operator";
+}
+
+// boardRowRemoval is a subscriber row's remove button on topic: a member
+// leaves (membership and subscription), anyone else is unsubscribed.
+function boardRowRemoval(row, topic) {
+  const joined = (row.patterns || []).some((p) => p.name === topic && p.joined);
+  return joined ? { label: "外す", op: "leave" } : { label: "購読を外す", op: "unsubscribe" };
+}
+
+// boardPatternLabel is one subscribed topic in board subscribers' words: a
+// member's marked joined:.
+function boardPatternLabel(p) {
+  return `${p.joined ? "joined:" : ""}${p.name}(shown=${p.shown} pending=${p.pending})`;
 }
 
 // boardComposeTarget is where the composer's message goes: a reply names its

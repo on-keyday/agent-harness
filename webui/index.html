@@ -594,6 +594,19 @@
 <!-- Runner-picker modal: shown when an interactive open hits ambiguous_runner
      (>=2 candidate runners for the selector). Body-level for the same
      top-layer reason as file-preview-modal above. -->
+<!-- Board membership picker: 購読させる / 参加させる in a topic's subscribers
+     panel. The task checklist is the spawn form's (buildTaskChecklist). -->
+<dialog id="board-member-modal" class="picker-modal regrant-modal">
+  <form method="dialog" class="picker-form">
+    <h3 class="picker-title" id="board-member-title"></h3>
+    <div id="board-member-hint" class="picker-hint"></div>
+    <div id="board-member-tasks" class="task-checklist" aria-label="Tasks"></div>
+    <menu class="picker-actions">
+      <button type="button" id="board-member-apply">適用</button>
+      <button type="button" id="board-member-cancel">キャンセル</button>
+    </menu>
+  </form>
+</dialog>
 <dialog id="runner-picker-modal" class="picker-modal">
   <form method="dialog" class="picker-form">
     <h3 class="picker-title">Ambiguous runner — pick one</h3>

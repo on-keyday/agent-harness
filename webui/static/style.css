@@ -1781,11 +1781,20 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
   margin-bottom: 0.3rem;
   white-space: nowrap;
 }
-.board-sub-row { white-space: pre; color: #b5cea8; font-family: monospace; }
+/* pre-wrap, not pre: on a phone the row's remove button sat past the
+   panel's right edge, reachable only by scrolling the panel sideways. */
+.board-sub-row { white-space: pre-wrap; overflow-wrap: anywhere; color: #b5cea8; font-family: monospace; }
 .board-sub-empty { color: #999; font-style: italic; }
 .board-sub-contacts { color: #999; font-family: monospace; padding-left: 2.5em; white-space: normal; overflow-wrap: anywhere; }
 .board-sub-contact { display: inline-block; margin: 0 0.4em 0.2em 0; padding: 0 0.3em; border: 1px solid #444; border-radius: 3px; }
 .board-sub-contact-forget, .board-sub-contacts-clear { margin-left: 0.3em; padding: 0 0.35em; font-size: 0.8rem; color: #e0a0a0; background: #2a2a2a; border: 1px solid #555; border-radius: 3px; cursor: pointer; }
+/* Membership: the two "put a task on this topic" buttons under the heading,
+   and each row's remove button, in the forget buttons' muted palette. */
+.board-sub-actions { display: flex; flex-wrap: wrap; gap: 0.4em; margin-bottom: 0.3rem; }
+.board-sub-actions button, .board-sub-remove { padding: 0.1em 0.5em; font-size: 0.8rem; color: #d4d4d4; background: #2a2a2a; border: 1px solid #555; border-radius: 3px; cursor: pointer; }
+.board-sub-remove { color: #e0a0a0; font-family: inherit; }
+.board-sub-status { color: #dcdcaa; margin-bottom: 0.3rem; overflow-wrap: anywhere; }
+#board-member-hint { color: #999; font-size: 0.85rem; margin-bottom: 0.4rem; }
 /* A topic with nothing published is LESS than a normal one, so it reads
    dimmer, not brighter. The meaning is carried by its meta text
    ("nothing published yet"), so no colour has to be learned. */
