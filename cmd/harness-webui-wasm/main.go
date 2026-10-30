@@ -19,6 +19,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -2166,28 +2168,45 @@ func harnessBoardSubscribers(this js.Value, args []js.Value) any {
 	return js.Global().Get("Promise").New(executor)
 }
 
-// harnessBoardRead returns all retained messages for a topic.
+// harnessBoardRead returns all retained messages for a topic, or with
+// beforeSeq and limit one page of those below beforeSeq (a decimal string),
+// as `board read --before --limit` does: past the ring on a retained topic.
+// Either way the rows come oldest first.
 //
-//	harness.boardRead(topic) -> Promise<{found, msgs:[{seq,fromTask,fromHostname,agentProfile,replyToTopic,receivedAtMs,payload,retracted,retractedAtMs,retractedBy,retractedByTask}]}>
+//	harness.boardRead(topic, beforeSeq?, limit?) -> Promise<{found, msgs:[{seq,fromTask,fromHostname,agentProfile,replyToTopic,receivedAtMs,payload,retracted,retractedAtMs,retractedBy,retractedByTask}]}>
 func harnessBoardRead(this js.Value, args []js.Value) any {
 	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
 		resolve := promiseArgs[0]
 		reject := promiseArgs[1]
 		go func() {
-			c, err := currentClient()
-			if err != nil {
-				rejectErr(reject, err)
-				return
-			}
 			if len(args) < 1 {
 				rejectErr(reject, errors.New("boardRead: missing topic arg"))
 				return
 			}
 			topic := args[0].String()
-			msgs, found, err := c.BoardRead(rootCtx, topic)
+			var beforeSeq uint64
+			var limit uint16
+			if len(args) >= 3 && args[2].Type() == js.TypeNumber && args[2].Int() > 0 {
+				b, perr := strconv.ParseUint(args[1].String(), 10, 64)
+				if perr != nil {
+					rejectErr(reject, fmt.Errorf("boardRead: beforeSeq %q is not a seq", args[1].String()))
+					return
+				}
+				beforeSeq, limit = b, uint16(min(args[2].Int(), math.MaxUint16))
+			}
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			msgs, found, err := c.BoardReadPage(rootCtx, topic, beforeSeq, limit)
 			if err != nil {
 				rejectErr(reject, fmt.Errorf("boardRead: %w", err))
 				return
+			}
+			if limit > 0 {
+				// A page comes newest first; the pane lists oldest first.
+				sort.Slice(msgs, func(i, j int) bool { return msgs[i].Seq < msgs[j].Seq })
 			}
 			// The per-message delivery answer is computed HERE, in Go, and
 			// shipped as a result rather than as inputs: comparing board seqs

@@ -151,16 +151,18 @@ type modalKeyMap struct {
 	BoardJoinTask        string
 	BoardUnsubscribeTask string
 	BoardLeaveTask       string
-	GitSetBase           string
-	GitStatus            string
-	GitNextFile          string
-	GitPrevFile          string
-	GitSubmodule         string
-	GitUp                string
-	GitOpenFile          string
-	ConnsTrsf            string
-	ConnsReadRunner      string
-	ConnsReadServer      string
+	// BoardOlder loads the page of messages before the oldest one shown.
+	BoardOlder      string
+	GitSetBase      string
+	GitStatus       string
+	GitNextFile     string
+	GitPrevFile     string
+	GitSubmodule    string
+	GitUp           string
+	GitOpenFile     string
+	ConnsTrsf       string
+	ConnsReadRunner string
+	ConnsReadServer string
 }
 
 var modalKeys = modalKeyMap{
@@ -220,13 +222,16 @@ var modalKeys = modalKeyMap{
 	BoardJoinTask:        "J",
 	BoardUnsubscribeTask: "U",
 	BoardLeaveTask:       "L",
-	GitSetBase:           "B",
-	GitStatus:            "s",
-	GitNextFile:          "n",
-	GitPrevFile:          "N",
-	GitSubmodule:         "m",
-	GitUp:                "backspace",
-	GitOpenFile:          "o",
+	// O (older) pages back past the 64-message ring on a retained topic. Not
+	// b, which pages the content viewport.
+	BoardOlder:   "O",
+	GitSetBase:   "B",
+	GitStatus:    "s",
+	GitNextFile:  "n",
+	GitPrevFile:  "N",
+	GitSubmodule: "m",
+	GitUp:        "backspace",
+	GitOpenFile:  "o",
 	// Same letter and the same reasoning as ForwardTap: the trsf columns are a
 	// READING of the rows already on screen, not a stronger form of anything
 	// beside it.

@@ -447,6 +447,58 @@ func (m *BoardModal) ApplyTopics(rows []cli.BoardTopicRow, subs map[string]int) 
 	m.takePendingStatus()
 }
 
+// BoardOlderMsg carries one page of messages older than those shown, in
+// ascending seq, for PrependOlder.
+type BoardOlderMsg struct {
+	Topic string
+	Msgs  []cli.BoardMessage
+	Err   error
+}
+
+// boardOlderPage is how many messages O asks for: the ring's size.
+const boardOlderPage = 64
+
+// DoBoardReadOlder reads the page of topic's messages below beforeSeq, as
+// `board read --before` does: past the ring on a retained topic, from the
+// disk log.
+func DoBoardReadOlder(c *cli.Client, topic string, beforeSeq uint64) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		msgs, _, err := c.BoardReadPage(ctx, topic, beforeSeq, boardOlderPage)
+		// The page comes newest first; the view lists oldest first.
+		for i, j := 0, len(msgs)-1; i < j; i, j = i+1, j-1 {
+			msgs[i], msgs[j] = msgs[j], msgs[i]
+		}
+		return BoardOlderMsg{Topic: topic, Msgs: msgs, Err: err}
+	}
+}
+
+// OldestSeq is the seq of the oldest message shown, 0 when none is.
+func (m *BoardModal) OldestSeq() uint64 {
+	if len(m.msgs) == 0 {
+		return 0
+	}
+	return m.msgs[0].Seq
+}
+
+// PrependOlder puts an older page in front of the messages shown, keeping the
+// selection on the message it was on. A page for a topic no longer open is
+// dropped; an empty one says there is nothing older.
+func (m *BoardModal) PrependOlder(topic string, older []cli.BoardMessage) {
+	if topic != m.curTopic || m.mode != boardMessages {
+		return
+	}
+	if len(older) == 0 {
+		m.status = "no older messages on " + topic + " (only a retained topic keeps more than the last 64)"
+		return
+	}
+	m.msgs = append(append([]cli.BoardMessage{}, older...), m.msgs...)
+	m.msgCursor += len(older)
+	m.status = fmt.Sprintf("loaded %d older message(s)", len(older))
+	m.updateContentFromCursor()
+}
+
 // ApplyMessages populates message-drilldown mode with the given messages for
 // topic. Sets mode to boardMessages on success. Called when DoBoardRead
 // completes.
@@ -857,8 +909,34 @@ func (m BoardModal) View() string {
 	case boardMessages:
 		// Build a mini-list with a cursor indicator showing which message is
 		// selected; the full payload is shown in the content viewport below.
+		// Wrapped to the box rather than cut by the terminal: the keys at its
+		// tail (older, retract, purge) were the ones an 80-column TUI lost.
+		// Wrapped between items, so no "key: label" is split across lines.
+		items := []string{"↑/↓ select", scrollHint,
+			modalKeys.BoardCompose + ": send", modalKeys.BoardReply + ": reply", modalKeys.BoardWake + ": wake",
+			modalKeys.BoardRetain + ": retain"}
+		if h := strings.TrimSpace(m.unretainHint(m.curTopic)); h != "" {
+			items = append(items, h)
+		}
+		items = append(items, modalKeys.BoardOlder+": older", modalKeys.BoardRetractMsg+": retract msg",
+			"X: purge msg", "r: re-read", "Esc: back")
+		footer := FooterStyle.Render(packItems(items, m.content.Width))
+		if m.compose != nil {
+			footer = m.composeView()
+		}
+		if m.retain != nil {
+			footer = m.retainView()
+		}
+		// Windowed around the cursor: a topic paged back past the ring holds
+		// more rows than the modal has. Border, header, status and the blank
+		// line take 5 rows beside the content viewport and the footer.
+		lo, hi := 0, len(m.msgs)
+		if room := m.height - m.content.Height - 5 - lipgloss.Height(footer); room > 0 && hi > room {
+			lo = min(max(m.msgCursor-room/2, 0), hi-room)
+			hi = lo + room
+		}
 		var msgList strings.Builder
-		for i := range m.msgs {
+		for i := lo; i < hi; i++ {
 			cursor := "  "
 			if i == m.msgCursor {
 				cursor = "> "
@@ -888,15 +966,6 @@ func (m BoardModal) View() string {
 			msgList.WriteString("  " + boardEmptyReason(m.curFound) + "\n")
 		}
 		header := HeaderStyle.Render(fmt.Sprintf("topic: %s  (%d msgs)", m.curTopic, len(m.msgs)))
-		footer := FooterStyle.Render("↑/↓ select · " + scrollHint + " · " +
-			modalKeys.BoardCompose + ": send  " + modalKeys.BoardReply + ": reply  " + modalKeys.BoardWake + ": wake  " +
-			modalKeys.BoardRetain + ": retain" + m.unretainHint(m.curTopic) + " · w: retract msg  X: purge msg  r: re-read  Esc: back")
-		if m.compose != nil {
-			footer = m.composeView()
-		}
-		if m.retain != nil {
-			footer = m.retainView()
-		}
 		return box.Render(header + "\n" + msgList.String() + "\n" + m.content.View() + statusLine + "\n" + footer)
 
 	case boardSubscribers:
@@ -1019,4 +1088,28 @@ func (m BoardModal) View() string {
 		return box.Render(header + "\n" + m.content.View() + statusLine + "\n" + footer)
 	}
 	return box.Render("(unknown board mode)")
+}
+
+// packItems joins items with " · ", starting a new line before an item that
+// would cross width, so no item is split across lines. An item wider than
+// width stands on a line of its own.
+func packItems(items []string, width int) string {
+	var lines []string
+	cur := ""
+	for _, it := range items {
+		if cur == "" {
+			cur = it
+			continue
+		}
+		if lipgloss.Width(cur)+lipgloss.Width(" · ")+lipgloss.Width(it) > width {
+			lines = append(lines, cur)
+			cur = it
+			continue
+		}
+		cur += " · " + it
+	}
+	if cur != "" {
+		lines = append(lines, cur)
+	}
+	return strings.Join(lines, "\n")
 }

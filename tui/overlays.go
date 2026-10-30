@@ -440,6 +440,11 @@ func (a *App) inBoardModal(msg tea.KeyMsg) tea.Cmd {
 			return nil
 		case modalKeys.BoardRefresh:
 			return DoBoardRead(a.client, a.boardModal.CurTopic())
+		case modalKeys.BoardOlder:
+			if seq := a.boardModal.OldestSeq(); seq != 0 {
+				return DoBoardReadOlder(a.client, a.boardModal.CurTopic(), seq)
+			}
+			return nil
 		case modalKeys.BoardCompose:
 			a.boardModal.BeginCompose()
 			return nil

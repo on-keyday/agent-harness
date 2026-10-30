@@ -1726,6 +1726,9 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
 .board-open-form button:hover { background: #333; }
 
 /* Message cards */
+/* Pages a topic back past the ring's 64 messages (retained topics keep more). */
+.board-older-btn { display: block; width: 100%; margin-bottom: 0.4rem; padding: 0.3em; font-size: 0.85rem; color: #9cdcfe; background: #252526; border: 1px dashed #555; border-radius: 4px; cursor: pointer; }
+.board-older-btn:disabled { color: #888; cursor: default; }
 .board-msg {
   background: #252526;
   border: 1px solid #383838;

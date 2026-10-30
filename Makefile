@@ -132,7 +132,7 @@ js-test: webui-build
 	@if command -v node >/dev/null 2>&1; then \
 	  node --test webui/static/cmd_test.mjs webui/static/preview_test.mjs \
 	              webui/static/board_send_test.mjs webui/static/board_retain_test.mjs \
-	              webui/static/board_membership_test.mjs \
+	              webui/static/board_membership_test.mjs webui/static/board_older_test.mjs \
 	              webui/static/delegation_test.mjs \
 	              examples/memory-viewer/maplayout_test.mjs; \
 	else echo "js-test: no node on PATH, skipping"; fi

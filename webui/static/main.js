@@ -6318,7 +6318,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
         boardMessagesEl.textContent = "(no messages)";
         return;
       }
-      for (const m of r.msgs) {
+      const renderCard = (m) => {
         const card = document.createElement("div");
         card.className = "board-msg";
         // A withdrawn message — by its author (`agent retract`) or by a
@@ -6469,8 +6469,35 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
 
         card.appendChild(hdr);
         card.appendChild(pre);
-        boardMessagesEl.appendChild(card);
-      }
+        return card;
+      };
+      // Older than what was read: a retained topic keeps its whole log on
+      // disk, past the ring's 64 messages (board read --before).
+      const older = document.createElement("button");
+      older.type = "button";
+      older.className = "board-older-btn";
+      older.textContent = "さらに古いメッセージを読み込む";
+      let oldest = boardMinSeq(r.msgs.map((m) => m.seq));
+      older.addEventListener("click", async () => {
+        older.disabled = true;
+        try {
+          const p = await window.harness.boardRead(topic, oldest, 64);
+          if (topic !== currentBoardTopic) return;
+          if (!p.msgs || p.msgs.length === 0) {
+            older.textContent = "これより古いメッセージはありません(64 件より前が残るのは retain した topic だけ)";
+            return;
+          }
+          const first = older.nextSibling;
+          for (const m of p.msgs) boardMessagesEl.insertBefore(renderCard(m), first);
+          oldest = boardMinSeq(p.msgs.map((m) => m.seq));
+          older.disabled = false;
+        } catch (err) {
+          appendCmdOutput(`board read (older) error: ${err.message}`);
+          older.disabled = false;
+        }
+      });
+      boardMessagesEl.appendChild(older);
+      for (const m of r.msgs) boardMessagesEl.appendChild(renderCard(m));
     } catch (err) {
       boardMessagesEl.textContent = `error: ${err.message}`;
     }
@@ -7859,6 +7886,17 @@ function boardSendDefaults(_target) {
   // keep = --no-retire-on-reply, off as on the CLI: an answered message is
   // withdrawn so a resumed agent does not redo it.
   return { replyTo: "chat.operator", wake: true, keep: false };
+}
+
+// boardMinSeq is the smallest of board seqs given as decimal strings ("" for
+// none). Compared as strings, by length and then digit by digit: seqs exceed
+// Number.MAX_SAFE_INTEGER, so as numbers neighbours round to one value.
+function boardMinSeq(seqs) {
+  let min = "";
+  for (const s of seqs || []) {
+    if (min === "" || s.length < min.length || (s.length === min.length && s < min)) min = s;
+  }
+  return min;
 }
 
 // boardComposeReplyDefault is the composer's reply-to for a new message on
