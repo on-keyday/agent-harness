@@ -3,6 +3,8 @@ package server
 import (
 	"encoding/hex"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -11,9 +13,24 @@ import (
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
+// storeDirs remembers each test board's store directory, for tests that
+// reach the log file itself.
+var storeDirs = map[*agentboard.Board]string{}
+
+func boardLogPath(t *testing.T, h *TaskHandler, topic string) string {
+	t.Helper()
+	matches, _ := filepath.Glob(filepath.Join(storeDirs[h.Board], "*.log"))
+	if len(matches) != 1 {
+		t.Fatalf("want one log in the store, found %v", matches)
+	}
+	return matches[0]
+}
+
 func attachTestStore(t *testing.T, b *agentboard.Board) {
 	t.Helper()
-	s, err := agentboard.OpenFileStore(t.TempDir(), time.Hour)
+	dir := t.TempDir()
+	storeDirs[b] = dir
+	s, err := agentboard.OpenFileStore(dir, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,6 +142,15 @@ func TestBoardRetain_ChatRefused(t *testing.T) {
 	if st := retainStatus(t, retain(t, h, conn, "free.y", 0, false, false)); st != protocol.BoardRetainStatus_BadRequest {
 		t.Fatalf("no ttl, no forever, no clear: %v, want bad_request", st)
 	}
+	// A ttl_ms past what a Duration holds would wrap negative and expire at once.
+	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_BoardRetain, RequestId: 8}
+	r := protocol.BoardRetainRequest{TtlMs: 1 << 63}
+	r.SetTopic([]byte("free.z"))
+	req.SetBoardRetain(r)
+	h.Handle(conn, encodeTaskControlRequest(t, req))
+	if st := retainStatus(t, lastTaskControlResponse(t, conn)); st != protocol.BoardRetainStatus_BadRequest {
+		t.Fatalf("overflowing ttl_ms: %v, want bad_request", st)
+	}
 }
 
 func TestBoardRead_Pages(t *testing.T) {
@@ -155,5 +181,31 @@ func TestBoardRead_Pages(t *testing.T) {
 	ring := read(0, 0)
 	if len(ring) != 8 || ring[0].Seq >= ring[7].Seq {
 		t.Fatalf("limit 0 = %d rows, want the 8-entry ring oldest first", len(ring))
+	}
+}
+
+// A paged read whose log cannot be read answers an error status, not ok with
+// zero rows — an empty history and a failed read must not look alike.
+func TestBoardRead_PageFailureIsNotEmpty(t *testing.T) {
+	h, conn, _ := retainHandler(t, nil)
+	_ = retain(t, h, conn, "unreadable", 0, true, false)
+	h.Board.Send("unreadable", []byte("m"), protocol.RunnerID{}, protocol.TaskID{}, "h", "", 0)
+	// Flush it to disk, then make the log unreadable.
+	if _, err := h.Board.Page("unreadable", 0, 1); err != nil {
+		t.Fatal(err)
+	}
+	path := boardLogPath(t, h, "unreadable")
+	if err := os.Chmod(path, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(path, 0o644) })
+	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_BoardRead, RequestId: 9}
+	r := protocol.BoardReadRequest{Limit: 10}
+	r.SetTopic([]byte("unreadable"))
+	req.SetBoardRead(r)
+	h.Handle(conn, encodeTaskControlRequest(t, req))
+	resp := lastTaskControlResponse(t, conn)
+	if st := resp.BoardRead().Status; st != protocol.BoardStatus_StoreError {
+		t.Fatalf("status %v, want store_error", st)
 	}
 }

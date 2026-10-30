@@ -285,12 +285,12 @@ func (s *FileStore) Truncate(topic string) error {
 	defer s.mu.Unlock()
 	s.closeLogLocked(topic)
 	path := filepath.Join(s.dir, storeFileName(topic))
-	p, err := parseFile(path, topic)
+	meta, err := scanMeta(path, topic)
 	if err != nil {
 		return err
 	}
 	// The purge empties the topic now: its period counts from here.
-	out := append(headerLine(topic), floorLine(p.maxSeq, time.Now())...)
+	out := append(headerLine(topic), floorLine(meta.maxSeq, time.Now())...)
 	return writeFileAtomic(path, out)
 }
 
@@ -328,58 +328,67 @@ func (s *FileStore) Remove(topic string, seq uint64) (bool, error) {
 	s.purged[topic][seq] = true
 	s.closeLogLocked(topic)
 	path := filepath.Join(s.dir, storeFileName(topic))
-	p, err := parseFile(path, topic)
-	if err != nil {
+	meta, err := scanMeta(path, topic)
+	if err != nil || !meta.msgs[seq] {
 		return false, err
 	}
-	f, err := os.Open(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	var out bytes.Buffer
-	found := false
-	err = eachLine(f, func(line []byte) {
-		var rec storeRecord
-		if json.Unmarshal(line, &rec) == nil && rec.Seq == seq && (rec.T == "msg" || rec.T == "retract") {
-			found = found || rec.T == "msg"
-			return
+	// Streamed into the replacement line by line: a log may hold far more
+	// than the server can hold in memory.
+	err = rewriteFile(path, func(w io.Writer) error {
+		f, err := os.Open(path)
+		if err != nil {
+			return err
 		}
-		out.Write(line)
-		out.WriteByte('\n')
+		defer f.Close()
+		var werr error
+		if err := eachLine(f, func(line []byte) {
+			var rec metaRecord
+			if json.Unmarshal(line, &rec) == nil && rec.Seq == seq && (rec.T == "msg" || rec.T == "retract") {
+				return
+			}
+			if werr == nil {
+				_, werr = w.Write(append(line, '\n'))
+			}
+		}); err != nil {
+			return err
+		}
+		if werr != nil {
+			return werr
+		}
+		// The removed record may have been the newest: keep the floor it set.
+		_, err = w.Write(floorLine(meta.maxSeq, meta.lastAt))
+		return err
 	})
-	f.Close()
-	if err != nil {
-		return false, err
-	}
-	if !found {
-		return false, nil
-	}
-	// The removed record may have been the newest: keep the floor it set.
-	out.Write(floorLine(p.maxSeq, p.lastAt))
-	return true, writeFileAtomic(path, out.Bytes())
+	return err == nil, err
 }
 
 func (s *FileStore) Page(topic string, beforeSeq uint64, limit int) ([]RetainedMessage, error) {
-	parsed, err := s.read(topic)
+	path, err := s.flushed(topic)
 	if err != nil {
 		return nil, err
 	}
-	all := append(parsed.live, parsed.withdrawn...)
-	sort.Slice(all, func(i, j int) bool { return all[i].Seq > all[j].Seq })
-	out := make([]RetainedMessage, 0, limit)
-	for _, m := range all {
-		if beforeSeq != 0 && m.Seq >= beforeSeq {
+	meta, err := scanMeta(path, topic)
+	if err != nil {
+		return nil, err
+	}
+	seqs := meta.seqs()
+	sort.Slice(seqs, func(i, j int) bool { return seqs[i] > seqs[j] })
+	want := map[uint64]bool{}
+	for _, seq := range seqs {
+		if beforeSeq != 0 && seq >= beforeSeq {
 			continue
 		}
-		if len(out) == limit {
+		if len(want) == limit {
 			break
 		}
-		out = append(out, m)
+		want[seq] = true
 	}
-	return out, nil
+	msgs, err := fetchMessages(path, topic, want, meta)
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(msgs, func(i, j int) bool { return msgs[i].Seq > msgs[j].Seq })
+	return msgs, nil
 }
 
 func (s *FileStore) Bytes(topic string) int64 {
@@ -407,18 +416,51 @@ func (s *FileStore) Load(ringN int) ([]StoredTopic, error) {
 	s.sweepOrphans(names)
 	out := make([]StoredTopic, 0, len(names))
 	for _, name := range names {
-		parsed, err := s.read(name)
+		path, err := s.flushed(name)
 		if err != nil {
 			return nil, err
 		}
+		meta, err := scanMeta(path, name)
+		if err != nil {
+			return nil, err
+		}
+		// Payloads only for what the ring will hold: the log itself can be
+		// far larger than the server's memory.
+		var live, withdrawn []uint64
+		for _, seq := range meta.seqs() {
+			if _, ok := meta.retracts[seq]; ok {
+				withdrawn = append(withdrawn, seq)
+			} else {
+				live = append(live, seq)
+			}
+		}
+		want := map[uint64]bool{}
+		for _, seqs := range [][]uint64{live, withdrawn} {
+			sort.Slice(seqs, func(i, j int) bool { return seqs[i] < seqs[j] })
+			if len(seqs) > ringN {
+				seqs = seqs[len(seqs)-ringN:]
+			}
+			for _, seq := range seqs {
+				want[seq] = true
+			}
+		}
+		msgs, err := fetchMessages(path, name, want, meta)
+		if err != nil {
+			return nil, err
+		}
+		sort.Slice(msgs, func(i, j int) bool { return msgs[i].Seq < msgs[j].Seq })
+		st := StoredTopic{Name: name, Shown: meta.shown, MaxSeq: meta.maxSeq, LastPublishedAt: meta.lastAt}
+		for _, m := range msgs {
+			if m.RetractedAt.IsZero() {
+				st.Ring = append(st.Ring, m)
+			} else {
+				st.Retracted = append(st.Retracted, m)
+			}
+		}
 		s.mu.Lock()
-		r := s.ret[name]
+		st.Retention = s.ret[name]
 		s.mu.Unlock()
-		out = append(out, StoredTopic{
-			Name: name, Retention: r,
-			Ring: tail(parsed.live, ringN), Retracted: tail(parsed.withdrawn, ringN),
-			Shown: parsed.shown, MaxSeq: parsed.maxSeq, LastPublishedAt: parsed.lastAt,
-		})
+		out = append(out, st)
 	}
 	return out, nil
 }
@@ -466,89 +508,156 @@ func (s *FileStore) Close() error {
 	return errors.Join(errs...)
 }
 
-type parsedLog struct {
-	live      []RetainedMessage // ascending seq
-	withdrawn []RetainedMessage // ascending seq
-	shown     map[protocol.TaskID]uint64
-	maxSeq    uint64
-	lastAt    time.Time
+// logMeta is a log's index: every record but the message bodies.
+type logMeta struct {
+	msgs     map[uint64]bool // seqs with a msg record
+	retracts map[uint64]metaRecord
+	shown    map[protocol.TaskID]uint64
+	maxSeq   uint64
+	lastAt   time.Time
 }
 
-// read flushes topic's buffered records and parses its log.
-func (s *FileStore) read(topic string) (parsedLog, error) {
+// seqs is every message seq in the log, unordered.
+func (m logMeta) seqs() []uint64 {
+	out := make([]uint64, 0, len(m.msgs))
+	for seq := range m.msgs {
+		out = append(out, seq)
+	}
+	return out
+}
+
+// metaRecord is storeRecord without the payload. Decoding a line into it
+// scans the body without allocating it, which is what keeps an index pass
+// over a large log in bounded memory.
+type metaRecord struct {
+	T            string `json:"t"`
+	Seq          uint64 `json:"seq"`
+	ReceivedAtMs int64  `json:"received_at_ms"`
+	AtMs         int64  `json:"at_ms"`
+	By           uint8  `json:"by"`
+	ByTask       string `json:"by_task"`
+	Task         string `json:"task"`
+}
+
+// flushed writes topic's buffered records out and returns its log path.
+func (s *FileStore) flushed(topic string) (string, error) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	if l, ok := s.logs[topic]; ok {
 		if err := l.w.Flush(); err != nil {
-			s.mu.Unlock()
-			return parsedLog{}, err
+			return "", err
 		}
 	}
-	s.mu.Unlock()
-	return parseFile(filepath.Join(s.dir, storeFileName(topic)), topic)
+	return filepath.Join(s.dir, storeFileName(topic)), nil
 }
 
-// parseFile parses one topic log. A line that does not decode — a damaged
+// scanMeta indexes one topic log. A line that does not decode — a damaged
 // record — is skipped with a warning; the rest of the log still loads. A
 // missing file is an empty log.
-func parseFile(path, topic string) (parsedLog, error) {
-	p := parsedLog{shown: map[protocol.TaskID]uint64{}}
+func scanMeta(path, topic string) (logMeta, error) {
+	m := logMeta{msgs: map[uint64]bool{}, retracts: map[uint64]metaRecord{}, shown: map[protocol.TaskID]uint64{}}
 	f, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return p, nil
+		return m, nil
 	}
 	if err != nil {
-		return p, err
+		return m, err
 	}
 	defer f.Close()
-	byseq := map[uint64]RetainedMessage{}
-	retracts := map[uint64]storeRecord{}
-	raise := func(seq uint64) {
-		if seq > p.maxSeq {
-			p.maxSeq = seq
-		}
-	}
 	lineNo := 0
 	err = eachLine(f, func(line []byte) {
 		lineNo++
-		var rec storeRecord
+		var rec metaRecord
 		if err := json.Unmarshal(line, &rec); err != nil {
 			slog.Warn("agentboard store: skipping unreadable record", "topic", topic, "line", lineNo, "err", err)
 			return
 		}
-		raise(rec.Seq)
+		if rec.Seq > m.maxSeq {
+			m.maxSeq = rec.Seq
+		}
 		switch rec.T {
 		case "msg":
-			m := rec.message(topic)
-			byseq[m.Seq] = m
-			if m.ReceivedAt.After(p.lastAt) {
-				p.lastAt = m.ReceivedAt
+			m.msgs[rec.Seq] = true
+			if at := time.UnixMilli(rec.ReceivedAtMs); at.After(m.lastAt) {
+				m.lastAt = at
 			}
 		case "retract":
-			retracts[rec.Seq] = rec
+			m.retracts[rec.Seq] = rec
 		case "shown":
-			p.shown[taskFromHex(rec.Task)] = rec.Seq
+			m.shown[taskFromHex(rec.Task)] = rec.Seq
 		case "floor":
-			if at := time.UnixMilli(rec.AtMs); at.After(p.lastAt) {
-				p.lastAt = at
+			if at := time.UnixMilli(rec.AtMs); at.After(m.lastAt) {
+				m.lastAt = at
 			}
 		}
 	})
-	if err != nil {
-		return p, err
+	return m, err
+}
+
+// fetchMessages decodes the msg records whose seq is in want, with their
+// withdrawal from meta applied. Only those bodies are allocated.
+func fetchMessages(path, topic string, want map[uint64]bool, meta logMeta) ([]RetainedMessage, error) {
+	out := make([]RetainedMessage, 0, len(want))
+	if len(want) == 0 {
+		return out, nil
 	}
-	for seq, m := range byseq {
-		if r, ok := retracts[seq]; ok {
+	f, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return out, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	err = eachLine(f, func(line []byte) {
+		var head metaRecord
+		if json.Unmarshal(line, &head) != nil || head.T != "msg" || !want[head.Seq] {
+			return
+		}
+		var rec storeRecord
+		if json.Unmarshal(line, &rec) != nil {
+			return
+		}
+		m := rec.message(topic)
+		if r, ok := meta.retracts[m.Seq]; ok {
 			m.RetractedAt = time.UnixMilli(r.AtMs)
 			m.RetractedBy = protocol.RetractedBy(r.By)
 			m.RetractedByTask = taskFromHex(r.ByTask)
-			p.withdrawn = append(p.withdrawn, m)
-			continue
 		}
-		p.live = append(p.live, m)
+		out = append(out, m)
+	})
+	return out, err
+}
+
+// rewriteFile replaces path with what write produces, streamed through a
+// temporary file: a crash leaves the old file or the new one, never a mix.
+func rewriteFile(path string, write func(io.Writer) error) error {
+	tmp := path + ".tmp"
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
 	}
-	sort.Slice(p.live, func(i, j int) bool { return p.live[i].Seq < p.live[j].Seq })
-	sort.Slice(p.withdrawn, func(i, j int) bool { return p.withdrawn[i].Seq < p.withdrawn[j].Seq })
-	return p, nil
+	bw := bufio.NewWriter(f)
+	if err := write(bw); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err := bw.Flush(); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 func floorLine(maxSeq uint64, lastAt time.Time) []byte {
@@ -590,19 +699,32 @@ func cutTornTail(f *os.File, size int64) error {
 }
 
 // eachLine calls fn for every newline-terminated line and for a final
-// unterminated one. A bufio.Reader rather than a Scanner: a Scanner fails the
-// whole read on one line over its token cap, which is how the WAL once lost
-// its entire file.
+// unterminated one. fn must not keep the slice: one buffer is reused across
+// lines, so a pass over a large log holds one line at a time. A line over
+// storeMaxLine is skipped with a warning without being buffered whole. Not a
+// Scanner: a Scanner fails the whole read on one line over its token cap,
+// which is how the WAL once lost its entire file.
 func eachLine(r io.Reader, fn func([]byte)) error {
-	br := bufio.NewReader(r)
+	br := bufio.NewReaderSize(r, 64<<10)
+	var buf []byte
+	oversize := false
 	for {
-		line, err := br.ReadBytes('\n')
-		if len(line) > 0 {
-			line = bytes.TrimRight(line, "\n")
-			if len(line) > 0 && len(line) <= storeMaxLine {
-				fn(line)
+		chunk, err := br.ReadSlice('\n')
+		if !oversize {
+			buf = append(buf, chunk...)
+			if len(buf) > storeMaxLine {
+				oversize, buf = true, buf[:0]
 			}
 		}
+		if errors.Is(err, bufio.ErrBufferFull) {
+			continue
+		}
+		if oversize {
+			slog.Warn("agentboard store: skipping a record over the line limit", "limit", storeMaxLine)
+		} else if line := bytes.TrimRight(buf, "\n"); len(line) > 0 {
+			fn(line)
+		}
+		buf, oversize = buf[:0], false
 		if errors.Is(err, io.EOF) {
 			return nil
 		}
@@ -649,11 +771,4 @@ func taskFromHex(s string) protocol.TaskID {
 		copy(t.Id[:], raw)
 	}
 	return t
-}
-
-func tail(ms []RetainedMessage, n int) []RetainedMessage {
-	if len(ms) > n {
-		return ms[len(ms)-n:]
-	}
-	return ms
 }

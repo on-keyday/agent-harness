@@ -1308,6 +1308,9 @@ enum BoardStatus:
     :u8
     ok
     not_found
+    # appended: the server could not read a retained topic's disk log (a paged
+    # board read). Distinct from ok-with-no-rows, which is an empty history.
+    store_error
 
 format BoardTopicsRequest:
     request_id :u32
@@ -1345,10 +1348,12 @@ format BoardTopicsResponse:
 format BoardTopicsBody:
     topics_len :u16
     topics :[topics_len]BoardTopicRow
-    # The retained topics among them, keyed by name. A parallel list rather
-    # than fields on BoardTopicRow: a row is an array element, so growing it
-    # would misdecode every later row in an older client, while a list
-    # appended here ends where an older client already stops reading.
+    # The retained topics among them, keyed by name. Appended: an older
+    # client decodes this body with DecodeExact, which refuses the trailing
+    # bytes, so its `board topics` fails against a newer server (no compat
+    # shim, as for every wire change outside the upgrade path). A parallel
+    # list rather than fields on BoardTopicRow only keeps the row a pure
+    # topic summary; it buys no compatibility.
     retention_len :u16
     retention :[retention_len]BoardTopicRetention
 
@@ -1368,7 +1373,9 @@ format BoardReadRequest:
     topic_len :u16
     topic :[topic_len]u8
     # Paging, appended. limit 0 is the answer this request always gave: the
-    # ring and the withdrawn list, oldest first. limit > 0 returns up to limit
+    # ring and the withdrawn list, oldest first. A request from an older
+    # client is too short for a newer server's DecodeExact and goes
+    # unanswered; no compat shim, as above. limit > 0 returns up to limit
     # messages with seq below before_seq (0 = from the newest), newest first;
     # on a retained topic that reaches past the ring into its disk log.
     before_seq :u64

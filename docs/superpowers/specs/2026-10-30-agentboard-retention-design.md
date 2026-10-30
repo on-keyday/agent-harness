@@ -104,7 +104,14 @@ harness-cli board read <topic> --before <seq> --limit <n>    # pages into the di
 ### 3.2 Semantics
 
 - **TTL.** `evictExpiredTopics` uses the topic's own TTL when one is set;
-  `forever` is never evicted by time.
+  `forever` is never evicted by time. When a retention runs out the topic
+  stops being retained — its disk copy is deleted — and its messages fall
+  back to the board TTL counted from the last publish. Expiry never deletes
+  them itself: a retention may only add to a topic's life, or a
+  `board_persist` holder could destroy any topic it may publish to (one the
+  operator retained `forever` included) by setting a 1 ms period. (Corrected
+  2026-10-31 after the final review; the first implementation deleted the
+  topic.)
 - **MaxTopics.** `evictOldestTopicLocked` skips retained topics. If every
   topic is retained, the publish that needs a slot fails with the existing
   `ErrTooManyTopics` rather than evicting one.

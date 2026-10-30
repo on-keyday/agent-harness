@@ -352,6 +352,9 @@ func (c *Client) BoardReadPage(ctx context.Context, topic string, beforeSeq uint
 	if br.Status == protocol.BoardStatus_NotFound {
 		return nil, false, nil
 	}
+	if br.Status != protocol.BoardStatus_Ok {
+		return nil, true, fmt.Errorf("board read %s: %s (see the server log)", topic, br.Status)
+	}
 	var body protocol.BoardReadBody
 	if err := ReadResponseBody(ctx, c.Transport(), br.StreamId, &body); err != nil {
 		return nil, true, fmt.Errorf("BoardRead: %w", err)

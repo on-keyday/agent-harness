@@ -95,11 +95,17 @@ func TestRetain_ExpiresFromRetainCall(t *testing.T) {
 	}
 	time.Sleep(90 * time.Millisecond)
 	b.evictExpiredTopics()
-	if _, ok := b.ListRetained("quiet"); ok {
-		t.Fatal("retained topic outlived its period")
+	if _, _, ok := b.RetentionOf("quiet"); ok {
+		t.Fatal("retention outlived its period")
 	}
 	if _, err := os.Stat(filepath.Join(dir, storeFileName("quiet"))); !os.IsNotExist(err) {
 		t.Fatalf("expired topic's log still on disk: %v", err)
+	}
+	// Expiry only stops keeping it: the board TTL then applies, and a topic
+	// never published to is past it at once.
+	b.evictExpiredTopics()
+	if _, ok := b.ListRetained("quiet"); ok {
+		t.Fatal("the topic did not fall back to the board TTL")
 	}
 }
 

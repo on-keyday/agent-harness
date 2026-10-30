@@ -502,15 +502,17 @@ func (b *Board) Wait(ctx context.Context, c *ConnState, topicName string, since,
 			msgs = t.since(since)
 		}
 		b.mu.Unlock()
-		if inReplyTo != 0 {
-			kept := msgs[:0]
-			for _, m := range msgs {
-				if m.InReplyTo == inReplyTo {
-					kept = append(kept, m)
-				}
+		_, self, _, _ := c.task.identity()
+		kept := msgs[:0]
+		for _, m := range msgs {
+			// The caller's own --exclude-self messages are passed over, as
+			// inbox and the hook pass them over.
+			if m.ownExcluded(self) || (inReplyTo != 0 && m.InReplyTo != inReplyTo) {
+				continue
 			}
-			msgs = kept
+			kept = append(kept, m)
 		}
+		msgs = kept
 		if len(msgs) > 0 {
 			return msgs, false, nil
 		}
@@ -558,10 +560,14 @@ func (b *Board) evictExpiredTopics() {
 		// v1 race: a torn timestamp read at worst delays eviction by one tick. Not a
 		// correctness issue; acceptable for v1.
 		if t.retention != nil {
-			// A retained topic runs on its own period; expiry deletes its
-			// disk copy too.
+			// A retained topic runs on its own period. When it runs out the
+			// topic stops being retained — its disk copy goes — and its
+			// messages fall back to the board TTL below. Expiry never deletes
+			// them itself: a retention may only add to a topic's life, or a
+			// board_persist holder could destroy any topic it may publish to
+			// by setting a 1ms period.
 			if at := t.retention.expiresAt(t.lastPublishedAt); !at.IsZero() && at.Before(now) {
-				delete(b.topics, name)
+				t.retention = nil
 				dropped = append(dropped, name)
 			}
 			continue

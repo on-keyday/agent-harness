@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"log/slog"
+	"math"
 	"sort"
 	"time"
 
@@ -123,7 +124,10 @@ func (h *TaskHandler) handleBoardRead(conn ConnHandle, requestID uint32, topic s
 		// into the log, withdrawn messages included as in the merged view below.
 		page, err := h.Board.Page(topic, beforeSeq, int(limit))
 		if err != nil {
+			// Not ok with zero rows: that is what an empty history reads as.
 			slog.Error("board_read: page", "topic", topic, "err", err)
+			respond(protocol.BoardStatus_StoreError)(0)
+			return
 		}
 		msgs = page
 	} else if withdrawn, ok := h.Board.ListRetracted(topic); ok && len(withdrawn) > 0 {
@@ -365,6 +369,10 @@ func (h *TaskHandler) handleBoardRetain(conn ConnHandle, requestID uint32, r *pr
 	switch {
 	case r.Clear():
 		err = h.Board.ClearRetain(topic)
+	case !r.Forever() && r.TtlMs > uint64(math.MaxInt64/int64(time.Millisecond)):
+		// Past what a time.Duration holds: converting would wrap negative.
+		respond(protocol.BoardRetainStatus_BadRequest)
+		return
 	case r.Forever() || r.TtlMs > 0:
 		err = h.Board.Retain(topic, agentboard.Retention{
 			TTL: time.Duration(r.TtlMs) * time.Millisecond, Forever: r.Forever(),
