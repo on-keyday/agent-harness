@@ -53,6 +53,9 @@ type Board struct {
 	// hosting those tasks. Called outside b.mu.
 	onDeliver func(protocol.RunnerID, protocol.TaskID)
 	reach     ReachSource // nil = no reach enforcement; see SetReach
+	// store mirrors retained topics to disk; nil until AttachStore. Topics
+	// without a retention never touch it.
+	store Store
 }
 
 func New(cfg Config) *Board {
@@ -122,7 +125,11 @@ const (
 func (b *Board) ForgetShown(tid protocol.TaskID) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	for _, t := range b.topics {
+	for name, t := range b.topics {
+		if t.retention != nil && t.shownMark(tid) != 0 {
+			// Zero is "no mark" on load, so the forgetting survives a restart.
+			storeLog("shown", name, b.store.SetShown(name, tid, 0))
+		}
 		t.forgetShown(tid)
 	}
 }
@@ -211,7 +218,7 @@ func (b *Board) Revoke(rid protocol.RunnerID, tid protocol.TaskID) {
 			//
 			// Lock order is b.mu -> t.mu; no topic method reaches back into the
 			// board, so the nesting cannot invert.
-			if !t.isEmpty() {
+			if !t.isEmpty() || t.retention != nil {
 				continue
 			}
 			delete(b.topics, p)
@@ -320,11 +327,16 @@ func (b *Board) Send(topicName string, payload []byte, fromRid protocol.RunnerID
 		}
 		targets = append(targets, ts)
 	}
+	retained := t.retention != nil
+	store := b.store
 	b.mu.Unlock()
 	targets = b.readableTargets(targets, topicName)
 
 	seq := b.seq.Add(1)
-	t.append(seq, payload, fromRid, fromTid, fromHost, fromProfile, inReplyTo, cfg)
+	m := t.append(seq, payload, fromRid, fromTid, fromHost, fromProfile, inReplyTo, cfg)
+	if retained {
+		storeLog("append", topicName, store.Append(topicName, m))
+	}
 
 	b.deliver(targets, topicName, !cfg.noWake)
 	return seq, len(targets), nil
@@ -437,16 +449,25 @@ func (b *Board) InboxAdvance(c *ConnState) []RetainedMessage {
 
 	b.mu.Lock()
 	found := make([]*topic, 0, len(patterns))
+	retained := make([]bool, 0, len(patterns))
 	for _, p := range patterns {
 		if t, ok := b.topics[p]; ok {
 			found = append(found, t)
+			retained = append(retained, t.retention != nil)
 		}
 	}
+	store := b.store
 	b.mu.Unlock()
 
 	out := make([]RetainedMessage, 0)
-	for _, t := range found {
+	for i, t := range found {
+		before := t.shownMark(tid)
 		out = append(out, t.takeUnshown(tid)...)
+		// A retained topic keeps its marks across a restart, or the first
+		// hook after one hands every subscriber the ring again.
+		if after := t.shownMark(tid); retained[i] && after != before {
+			storeLog("shown", t.name, store.SetShown(t.name, tid, after))
+		}
 	}
 	return out
 }
@@ -527,17 +548,32 @@ func (b *Board) evictLoop() {
 }
 
 func (b *Board) evictExpiredTopics() {
-	cutoff := time.Now().Add(-b.cfg.TopicTTL)
+	now := time.Now()
+	cutoff := now.Add(-b.cfg.TopicTTL)
+	var dropped []string
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	for name, t := range b.topics {
 		// NOTE: t.lastPublishedAt is read here without t.mu held (b.mu is held instead).
 		// topic.append writes lastPublishedAt under t.mu. This is a known approximate-read
 		// v1 race: a torn timestamp read at worst delays eviction by one tick. Not a
 		// correctness issue; acceptable for v1.
+		if t.retention != nil {
+			// A retained topic runs on its own period; expiry deletes its
+			// disk copy too.
+			if at := t.retention.expiresAt(t.lastPublishedAt); !at.IsZero() && at.Before(now) {
+				delete(b.topics, name)
+				dropped = append(dropped, name)
+			}
+			continue
+		}
 		if t.lastPublishedAt.Before(cutoff) {
 			delete(b.topics, name)
 		}
+	}
+	store := b.store
+	b.mu.Unlock()
+	for _, name := range dropped {
+		storeLog("drop", name, store.Drop(name))
 	}
 }
 
@@ -549,6 +585,12 @@ func (b *Board) evictOldestTopicLocked() {
 	var oldestName string
 	var oldestT time.Time
 	for n, t := range b.topics {
+		// A retained topic is never the one that makes room: the operator
+		// (or a board_persist holder) asked for it to stay. A board full of
+		// retained topics refuses the new one with ErrTooManyTopics.
+		if t.retention != nil {
+			continue
+		}
 		// Same approximate-read caveat as evictExpiredTopics above.
 		if oldestName == "" || t.lastPublishedAt.Before(oldestT) {
 			oldestName, oldestT = n, t.lastPublishedAt
@@ -574,6 +616,16 @@ func (b *Board) PurgeTopic(name string) (purged int, found bool) {
 		return 0, false
 	}
 	_, _, n := t.summary()
+	if t.retention != nil {
+		// The content goes, the retention stays: a later publish lands in a
+		// retained topic again. The log is emptied, so the bytes are gone.
+		fresh := newTopic(name, b.cfg.RingN)
+		fresh.retention = t.retention
+		fresh.lastPublishedAt = time.Now()
+		b.topics[name] = fresh
+		storeLog("truncate", name, b.store.Truncate(name))
+		return n, true
+	}
 	delete(b.topics, name)
 	return n, true
 }
@@ -586,11 +638,21 @@ func (b *Board) PurgeTopic(name string) (purged int, found bool) {
 func (b *Board) PurgeSeq(name string, seq uint64) (removed, found bool) {
 	b.mu.Lock()
 	t, ok := b.topics[name]
+	retained := ok && t.retention != nil
+	store := b.store
 	b.mu.Unlock()
 	if !ok {
 		return false, false
 	}
-	return t.removeSeq(seq), true
+	removed = t.removeSeq(seq)
+	if retained {
+		// The message may be in the log only, past the ring; either way its
+		// bytes must leave the disk.
+		onDisk, err := store.Remove(name, seq)
+		storeLog("remove", name, err)
+		removed = removed || onDisk
+	}
+	return removed, true
 }
 
 // ListRetained returns metadata for every message in a topic's ring (no
@@ -749,10 +811,25 @@ func (b *Board) retractAsAuthor(seq uint64, by protocol.TaskID) (topicName strin
 
 	for i, t := range tps {
 		if t.retract(seq, by, now) {
+			b.mirrorRetract(names[i], t, seq)
 			return names[i], true
 		}
 	}
 	return "", false
+}
+
+// mirrorRetract records a withdrawal in the store when t is retained.
+func (b *Board) mirrorRetract(name string, t *topic, seq uint64) {
+	b.mu.Lock()
+	retained := t.retention != nil
+	store := b.store
+	b.mu.Unlock()
+	if !retained {
+		return
+	}
+	if m, ok := t.withdrawnEntry(seq); ok {
+		storeLog("retract", name, store.Retract(name, m))
+	}
 }
 
 // ForceRetractSeq withdraws a message from a NAMED topic without the authorship
@@ -785,7 +862,11 @@ func (b *Board) ForceRetractSeq(name string, seq uint64, by protocol.TaskID) (re
 	if seq == 0 {
 		return false, true
 	}
-	return t.forceRetract(seq, by, time.Now()), true
+	if !t.forceRetract(seq, by, time.Now()) {
+		return false, true
+	}
+	b.mirrorRetract(name, t, seq)
+	return true, true
 }
 
 // LookupSeq resolves a published seq to the topic whose ring still retains it

@@ -105,13 +105,17 @@ type topic struct {
 	// Keyed by task id alone, so a resume on another runner finds it. A
 	// finished task's entry costs one map slot until the topic itself goes.
 	shown map[protocol.TaskID]uint64
+	// retention is set when the topic is retained (Board.Retain): it is kept
+	// past the board TTL and mirrored into the board's Store. Guarded by the
+	// Board's mu, not t.mu — the board decides eviction and mirroring.
+	retention *Retention
 }
 
 func newTopic(name string, cap int) *topic {
 	return &topic{name: name, cap: cap, ring: make([]RetainedMessage, 0, cap)}
 }
 
-func (t *topic) append(seq uint64, payload []byte, fromRid protocol.RunnerID, fromTid protocol.TaskID, fromHost, fromProfile string, inReplyTo uint64, cfg sendConfig) {
+func (t *topic) append(seq uint64, payload []byte, fromRid protocol.RunnerID, fromTid protocol.TaskID, fromHost, fromProfile string, inReplyTo uint64, cfg sendConfig) RetainedMessage {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	now := time.Now()
@@ -120,7 +124,7 @@ func (t *topic) append(seq uint64, payload []byte, fromRid protocol.RunnerID, fr
 		copy(t.ring, t.ring[1:])
 		t.ring = t.ring[:t.cap-1]
 	}
-	t.ring = append(t.ring, RetainedMessage{
+	m := RetainedMessage{
 		Seq:              seq,
 		InReplyTo:        inReplyTo,
 		Topic:            t.name,
@@ -135,7 +139,9 @@ func (t *topic) append(seq uint64, payload []byte, fromRid protocol.RunnerID, fr
 		NoRetireOnReply:  cfg.noRetireOnReply,
 		NoContact:        cfg.noContact,
 		ExcludeSelf:      cfg.excludeSelf,
-	})
+	}
+	t.ring = append(t.ring, m)
+	return m
 }
 
 // removeSeq drops the single retained message with the given seq, preserving
@@ -233,6 +239,19 @@ func (t *topic) snapshotRetracted() []RetainedMessage {
 	out := make([]RetainedMessage, len(t.retracted))
 	copy(out, t.retracted)
 	return out
+}
+
+// withdrawnEntry returns the withdrawn message with seq, for mirroring a
+// retract into the store.
+func (t *topic) withdrawnEntry(seq uint64) (RetainedMessage, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, m := range t.retracted {
+		if m.Seq == seq {
+			return m, true
+		}
+	}
+	return RetainedMessage{}, false
 }
 
 // hasRetracted reports whether the topic still holds withdrawn messages.
