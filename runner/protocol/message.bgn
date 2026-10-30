@@ -1584,10 +1584,10 @@ format BoardMembershipRequest:
 enum BoardMembershipStatus:
     :u8
     ok = 0, "ok"
-    not_found = 1, "not_found"              # the task does not exist, is outside the caller's board_member scope, or (subscribe) holds no board state -- one answer, so the reply is no existence oracle
+    not_found = 1, "not_found"              # the task does not exist, is outside the caller's board_member scope, is the calling task itself, or (subscribe) holds no board state -- one answer, so the reply is no existence oracle
     not_readable = 2, "not_readable"        # subscribe: the task could not subscribe to the topic itself (chat.operator, another task's chat.<id>, a tree outside its lineage)
     not_joinable = 3, "not_joinable"        # join: an empty name, a chat.* topic, or a tree.<X>.* outside the task's lineage
-    not_publishable = 4, "not_publishable"  # join by a task caller that may not publish to the topic itself
+    not_publishable = 4, "not_publishable"  # join by a task caller that may not publish to the topic on its own reach (a contact does not count)
     bad_request = 5, "bad_request"          # an op this server does not know
 
 format BoardMembershipResponse:
@@ -4068,8 +4068,9 @@ enum Capability:
     # topic, replies to its posts staying there). Bounded so the holder hands
     # out nothing it lacks: the target must be in this bit's scope (a TASK is
     # named, so it is scoped like board_contacts_clear's use of board_purge);
-    # subscribe needs the target to read the topic already; join needs the
-    # CALLER to be able to publish there, and never opens chat.* or a
+    # the caller never targets itself; subscribe needs the target to read the
+    # topic already; join needs the CALLER to be able to publish there on its
+    # own reach (a contact does not count), and never opens chat.* or a
     # tree.<X>.* outside X's lineage. Default-off, appended. See
     # docs/superpowers/specs/2026-10-31-board-membership-design.md
     board_member   = 0x2000000, "board_member"

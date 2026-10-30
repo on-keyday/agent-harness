@@ -60,10 +60,14 @@ func (b *Board) SubscribeTask(tid protocol.TaskID, topic string) error {
 	return nil
 }
 
-// UnsubscribeTask removes topic from every state of tid. A membership stays:
-// the task keeps its publish right and is subscribed again on its next
-// registration.
+// UnsubscribeTask removes topic from every state of tid. On a topic tid is a
+// member of it leaves: a membership with no subscription would be a publish
+// right board subscribers no longer shows.
 func (b *Board) UnsubscribeTask(tid protocol.TaskID, topic string) {
+	if b.IsMember(tid, topic) {
+		b.Leave(tid, topic)
+		return
+	}
 	for _, ts := range b.statesOf(tid) {
 		ts.removePattern(topic)
 	}

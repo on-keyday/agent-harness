@@ -155,6 +155,18 @@ func (b *Board) PublishableBy(tid protocol.TaskID, topic string) bool {
 	return b.publishableFor(r, tid, hasContact, topic)
 }
 
+// GrantableBy is PublishableBy without contacts: may tid hand out publishing
+// on topic to another task (board join)? A contact is the right to answer
+// someone who spoke first, revocable and bounded; granting from it would turn
+// it into a membership that outlives both.
+func (b *Board) GrantableBy(tid protocol.TaskID, topic string) bool {
+	r := b.reachSource()
+	if r == nil {
+		return true
+	}
+	return b.publishableFor(r, tid, func(string) bool { return false }, topic)
+}
+
 func (b *Board) publishableFor(r ReachSource, self protocol.TaskID, hasContact func(string) bool, topic string) bool {
 	if x, ok := parseTreeTopic(topic); ok {
 		return b.member(r, self, x) // no bit opens a tree the task is not in (D7)

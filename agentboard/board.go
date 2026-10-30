@@ -315,8 +315,10 @@ func (b *Board) Send(topicName string, payload []byte, fromRid protocol.RunnerID
 		o(&cfg)
 	}
 	b.mu.Lock()
-	// A member's publish is answered on the topic unless it names a route.
-	if cfg.replyToTopic == "" && fromTid != (protocol.TaskID{}) && b.isMemberLocked(fromTid, topicName) {
+	// A member's own publish is answered on the topic unless it names a route.
+	// Not a server notification or an operator-face send made in its name.
+	if cfg.replyToTopic == "" && cfg.senderKind == protocol.SenderKind_Agent &&
+		fromTid != (protocol.TaskID{}) && b.isMemberLocked(fromTid, topicName) {
 		cfg.replyToTopic = topicName
 	}
 	t, ok := b.topics[topicName]

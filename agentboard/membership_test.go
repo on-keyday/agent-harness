@@ -164,6 +164,53 @@ func TestMembership_ReplyRouteDefault(t *testing.T) {
 	if m, _ := b.Retained(seq); m.ReplyToTopic != "" {
 		t.Errorf("non-member's publish reply_to = %q, want empty", m.ReplyToTopic)
 	}
+	// Only what the member itself publishes: a server notification on the
+	// member's behalf, or an operator-face send it made, keeps no route.
+	for _, k := range []protocol.SenderKind{protocol.SenderKind_Server, protocol.SenderKind_Operator} {
+		seq, _, _ = b.Send("grp", []byte("n"), protocol.RunnerID{}, me, "server", "", 0, WithSenderKind(k))
+		if m, _ := b.Retained(seq); m.ReplyToTopic != "" {
+			t.Errorf("%v publish naming a member got reply_to = %q, want empty", k, m.ReplyToTopic)
+		}
+	}
+}
+
+// Unsubscribing a member from outside leaves the topic, as the member's own
+// unsubscribe does: a membership with no subscription would be a publish right
+// that board subscribers no longer shows.
+func TestMembership_UnsubscribeTaskOfMemberLeaves(t *testing.T) {
+	r := newFakeReach()
+	me := tidN(1)
+	r.add(me, protocol.TaskID{}, 0)
+	b := reachBoard(t, r)
+	c := b.Attach(protocol.RunnerID{}, me, "h", "bash")
+	if err := b.Join(me, "grp"); err != nil {
+		t.Fatal(err)
+	}
+	b.UnsubscribeTask(me, "grp")
+	if b.IsMember(me, "grp") || b.Publishable(c, "grp") {
+		t.Error("unsubscribing a member left its membership")
+	}
+}
+
+// GrantableBy is PublishableBy without contacts: a contact answers someone who
+// spoke first, and must not become a lasting grant for anyone.
+func TestMembership_GrantableIgnoresContacts(t *testing.T) {
+	r := newFakeReach()
+	me, peer := tidN(1), tidN(2)
+	r.add(me, protocol.TaskID{}, 0)
+	r.add(peer, protocol.TaskID{}, 0)
+	b := reachBoard(t, r)
+	c := b.Attach(protocol.RunnerID{}, me, "h", "bash")
+	b.NoteDelivered(c, []RetainedMessage{{Topic: SelfTopic(me), FromTask: peer, ReplyToTopic: "grp"}})
+	if !b.PublishableBy(me, "grp") {
+		t.Fatal("setup: the contact did not open grp")
+	}
+	if b.GrantableBy(me, "grp") {
+		t.Error("GrantableBy counted a contact")
+	}
+	if !b.GrantableBy(me, treeOf(me)) {
+		t.Error("GrantableBy refused the task's own tree")
+	}
 }
 
 func TestMembership_RetainedSurvivesRestart(t *testing.T) {

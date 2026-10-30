@@ -404,10 +404,10 @@ func (h *TaskHandler) handleBoardRetain(conn ConnHandle, requestID uint32, r *pr
 // handleBoardMembership subscribes a task to a topic, makes it a member, or
 // undoes either. Cap (board_member) is enforced centrally. A task caller is
 // bounded so it hands out nothing it lacks: the target must be in the bit's
-// scope (not_found otherwise, indistinguishable from a missing task, as
-// board_contacts_clear), and a join needs the caller itself to be able to
-// publish to the topic. A subscribe is bounded by the target's own reach in
-// the board.
+// scope and not the caller itself (not_found otherwise, indistinguishable
+// from a missing task, as board_contacts_clear), and a join needs the caller
+// to be able to publish to the topic on its own reach, contacts excluded
+// (GrantableBy). A subscribe is bounded by the target's own reach in the board.
 func (h *TaskHandler) handleBoardMembership(conn ConnHandle, requestID uint32, cid string, r *protocol.BoardMembershipRequest) {
 	respond := func(status protocol.BoardMembershipStatus) {
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_BoardMembership, RequestId: requestID}
@@ -424,7 +424,10 @@ func (h *TaskHandler) handleBoardMembership(conn ConnHandle, requestID uint32, c
 		respond(protocol.BoardMembershipStatus_NotFound)
 		return
 	}
-	if !h.inScope(cid, protocol.Capability_BoardMember, taskHex) {
+	// Not itself: a self-join would turn what the caller may publish now — a
+	// board_peer that can be revoked — into a membership that outlives it.
+	by := h.lookupPrincipal(cid)
+	if by == r.Task || !h.inScope(cid, protocol.Capability_BoardMember, taskHex) {
 		respond(protocol.BoardMembershipStatus_NotFound)
 		return
 	}
@@ -435,7 +438,7 @@ func (h *TaskHandler) handleBoardMembership(conn ConnHandle, requestID uint32, c
 	case protocol.BoardMembershipOp_Unsubscribe:
 		h.Board.UnsubscribeTask(r.Task, topic)
 	case protocol.BoardMembershipOp_Join:
-		if by := h.lookupPrincipal(cid); by != (protocol.TaskID{}) && !h.Board.PublishableBy(by, topic) {
+		if by != (protocol.TaskID{}) && !h.Board.GrantableBy(by, topic) {
 			respond(protocol.BoardMembershipStatus_NotPublishable)
 			return
 		}

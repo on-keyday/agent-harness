@@ -125,4 +125,24 @@ func TestBoardMembership_TaskBounds(t *testing.T) {
 	if s := membershipStatus(t, membership(t, h, conn, gid, "grp", protocol.BoardMembershipOp_Subscribe)); s != protocol.BoardMembershipStatus_Ok {
 		t.Errorf("subscribe of a descendant to a free-form topic: %v, want ok", s)
 	}
+
+	// A task never changes its own standing: a self-join would turn what it
+	// may publish now (a contact, a board_peer that can be revoked) into a
+	// membership that outlives it.
+	cid := hexToTaskID(t, c)
+	h.Board.Attach(protocol.RunnerID{}, cid, "h", "bash")
+	if s := membershipStatus(t, membership(t, h, conn, cid, own, protocol.BoardMembershipOp_Join)); s != protocol.BoardMembershipStatus_NotFound {
+		t.Errorf("self-join: %v, want not_found", s)
+	}
+	// A contact is no ground for a join: it answers someone who spoke first.
+	cst := h.Board.Attach(protocol.RunnerID{}, cid, "h", "bash")
+	var peer protocol.TaskID
+	peer.Id[0] = 0x77
+	h.Board.NoteDelivered(cst, []agentboard.RetainedMessage{{Topic: agentboard.SelfTopic(cid), FromTask: peer, ReplyToTopic: "talk"}})
+	if !h.Board.PublishableBy(cid, "talk") {
+		t.Fatal("setup: the contact did not open talk")
+	}
+	if s := membershipStatus(t, membership(t, h, conn, gid, "talk", protocol.BoardMembershipOp_Join)); s != protocol.BoardMembershipStatus_NotPublishable {
+		t.Errorf("join on a contact's ground: %v, want not_publishable", s)
+	}
 }
