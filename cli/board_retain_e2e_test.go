@@ -54,11 +54,14 @@ func TestBoardRetainCLI(t *testing.T) {
 	if out, err := run("retain", "free.x", "--ttl", "2h"); err != nil || !strings.Contains(out, `"status":"ok"`) {
 		t.Fatalf("retain --ttl 2h: %q, %v", out, err)
 	}
-	if l := topicLine("free.x"); !regexp.MustCompile(`retain=2h0m0s by=operator disk=\d+`).MatchString(l) {
-		t.Errorf("topics line = %q, want retain=2h0m0s by=operator disk=<n>", l)
+	if l := topicLine("free.x"); !regexp.MustCompile(`retain=2h0m0s until=\d{4}-\d\d-\d\dT\S+ by=operator disk=\d+`).MatchString(l) {
+		t.Errorf("topics line = %q, want retain=2h0m0s until=<time> by=operator disk=<n>", l)
 	}
 	if out, err := run("retain", "free.x", "--ttl", "forever"); err != nil || !strings.Contains(out, `"retain":"forever"`) {
 		t.Fatalf("retain --ttl forever: %q, %v", out, err)
+	}
+	if l := topicLine("free.x"); !strings.Contains(l, "retain=forever by=") || strings.Contains(l, "until=") {
+		t.Errorf("forever topics line = %q, want retain=forever with no until=", l)
 	}
 	if out, err := run("retain", "free.x", "--clear"); err != nil || !strings.Contains(out, `"status":"ok"`) {
 		t.Fatalf("retain --clear: %q, %v", out, err)

@@ -134,7 +134,7 @@ func retainCell(r *cli.BoardTopicRow) string {
 	if r.Retention == nil {
 		return ""
 	}
-	return fmt.Sprintf("%s by=%s disk=%d", r.Retention.Label(), r.Retention.SetByLabel(), r.Retention.DiskBytes)
+	return fmt.Sprintf("%s%s by=%s disk=%d", r.Retention.Label(), r.Retention.UntilLabel(), r.Retention.SetByLabel(), r.Retention.DiskBytes)
 }
 
 // boardOpenEdit is the one-line editor `o` opens on the topic list: a topic

@@ -28,8 +28,8 @@ import (
 	"flag"
 	"io"
 
-	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/agentboard"
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/cli/verb"
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -2080,6 +2080,12 @@ func harnessBoardTopics(this js.Value, args []js.Value) any {
 					row["retain"] = rt.Label()
 					row["retainBy"] = rt.SetByLabel()
 					row["diskBytes"] = float64(rt.DiskBytes)
+					// 0 when forever; Unix ms otherwise (safe as a JS number:
+					// far below 2^53).
+					row["retainUntilMs"] = float64(0)
+					if !rt.ExpiresAt.IsZero() {
+						row["retainUntilMs"] = float64(rt.ExpiresAt.UnixMilli())
+					}
 				}
 				out = append(out, row)
 			}

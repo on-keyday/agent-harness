@@ -25,9 +25,10 @@ func Retainable(topic string) bool {
 	return topic != "" && !strings.HasPrefix(topic, SelfTopicPrefix)
 }
 
-// expiresAt is when a retained topic's period runs out, counted from its last
-// publish or from the retain call, whichever is later. Zero for forever.
-func (r Retention) expiresAt(lastPublishedAt time.Time) time.Time {
+// ExpiresAt is when a retained topic's period runs out, counted from its last
+// publish or from the retain call, whichever is later. Zero for forever. The
+// board evicts by it, and board topics reports it, so the two cannot differ.
+func (r Retention) ExpiresAt(lastPublishedAt time.Time) time.Time {
 	if r.Forever {
 		return time.Time{}
 	}

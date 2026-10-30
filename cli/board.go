@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -34,6 +35,10 @@ type TopicRetention struct {
 	// SetByHex is the task that set it; empty means the operator.
 	SetByHex  string
 	DiskBytes uint64
+	// ExpiresAt is when it runs out (zero when Forever): the period counts
+	// from the later of the last publish and the retain call, so TTL alone
+	// does not say when.
+	ExpiresAt time.Time
 }
 
 // Label renders the period the way `board retain --ttl` takes it.
@@ -55,6 +60,22 @@ func ParseRetainTTL(s string) (ttl time.Duration, forever bool, err error) {
 		return 0, false, fmt.Errorf("--ttl %q: want a positive duration such as 72h, or forever", s)
 	}
 	return d, false, nil
+}
+
+// UntilLabel is " until=<RFC3339>" when the retention has an end, "" for
+// forever: the one spelling of the expiry for the CLI line and the TUI cell.
+func (r TopicRetention) UntilLabel() string {
+	if r.ExpiresAt.IsZero() {
+		return ""
+	}
+	return " until=" + r.ExpiresAt.UTC().Format(time.RFC3339)
+}
+
+// Summary is the retention in board topics' words —
+// "retain=<period>[ until=<time>] by=<setter> disk=<bytes>" — the one
+// spelling the CLI line, the TUI and the WebUI print.
+func (r TopicRetention) Summary() string {
+	return fmt.Sprintf("retain=%s%s by=%s disk=%d", r.Label(), r.UntilLabel(), r.SetByLabel(), r.DiskBytes)
 }
 
 // SetByLabel is the setter's short id, or "operator".
@@ -279,6 +300,9 @@ func (c *Client) BoardTopics(ctx context.Context) ([]BoardTopicRow, error) {
 		tr := &TopicRetention{Forever: r.Forever(), DiskBytes: r.DiskBytes}
 		if !tr.Forever {
 			tr.TTL = time.Duration(r.TtlMs) * time.Millisecond
+		}
+		if r.ExpiresAtUnixMs != 0 && r.ExpiresAtUnixMs <= math.MaxInt64 {
+			tr.ExpiresAt = time.UnixMilli(int64(r.ExpiresAtUnixMs)).UTC()
 		}
 		if r.SetBy.Id != ([16]byte{}) {
 			tr.SetByHex = hex.EncodeToString(r.SetBy.Id[:])

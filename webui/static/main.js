@@ -7797,7 +7797,10 @@ function boardOpenTopicName(raw) {
 // Empty on a topic that is not retained: there, absence is the answer.
 function boardRetainMeta(t) {
   if (!t || !t.retain) return "";
-  return `  retain=${t.retain} by=${t.retainBy} disk=${t.diskBytes}`;
+  // until= says when it runs out: the period counts from the later of the
+  // last publish and the retain call, so the period alone does not.
+  const until = t.retainUntilMs ? ` until=${boardTimeLabel(t.retainUntilMs)}` : "";
+  return `  retain=${t.retain}${until} by=${t.retainBy} disk=${t.diskBytes}`;
 }
 
 // boardTimeLabel renders a board timestamp (Unix ms) as ISO, or "-" when

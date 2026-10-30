@@ -3644,3 +3644,17 @@ done:    4 (TUI `T`, footer hint only on a retained topic, in the list and
          (spec §3.1); driven live in both — Playwright 1280/390 and
          harness-tui in a dummy PTY
 missed:  —
+
+### 2026-10-31 (pre-landing) — retention expiry (`until=`)
+
+done:    11/12-equivalent for board topics (CLI line `until=`, `--json`
+         `retain_until`), 16 (TUI Retain cell, plus a full line for the
+         highlighted retained topic: at 80 columns the cell is cut right
+         after `until=2026-`, which the live PTY run showed), 20/21 (WebUI row
+         and detail header), 23 (wasm `retainUntilMs`), 31 (forever prints no
+         until — the subject is "when does it end", and forever has no end),
+         32 (one spelling: `cli.TopicRetention.Summary`/`UntilLabel`; the
+         page formats through `boardTimeLabel`), 37 (spec); live: CLI,
+         Playwright 1280/390 (a send moved until= 17:37:13 → 17:37:38),
+         harness-tui in a dummy PTY at 200/100/80 columns
+missed:  —

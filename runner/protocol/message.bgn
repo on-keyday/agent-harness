@@ -1367,6 +1367,10 @@ format BoardTopicRetention:
     reserved :u7
     set_by :TaskID
     disk_bytes :u64
+    # When the retention runs out: the period after the later of the last
+    # publish and the retain call, the same instant the board evicts at. 0
+    # when forever. Moves on every publish.
+    expires_at_unix_ms :u64
 
 format BoardReadRequest:
     request_id :u32

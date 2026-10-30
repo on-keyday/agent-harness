@@ -361,7 +361,7 @@ func NewBoardModal() BoardModal {
 		{Title: "Subs", Width: 5},
 		{Title: "LastSeq", Width: 9},
 		{Title: "LastAt", Width: 22},
-		{Title: "Retain", Width: 34},
+		{Title: "Retain", Width: 60},
 	}
 	t := table.New(table.WithColumns(cols), table.WithFocused(true))
 	baseCols := cols
@@ -843,7 +843,13 @@ func (m BoardModal) View() string {
 		if m.opening != nil {
 			footer = m.openTopicView()
 		}
-		return box.Render(header + "\n" + m.topicsTable.View() + statusLine + "\n" + footer)
+		// The highlighted topic's retention in full: the table's Retain cell
+		// is cut on a narrow terminal, and the expiry is what gets cut.
+		selected := ""
+		if rt := m.retentionOf(m.SelectedTopicName()); rt != nil {
+			selected = "\n" + MutedStyle.Width(m.content.Width).Render(m.SelectedTopicName()+": "+rt.Summary())
+		}
+		return box.Render(header + "\n" + m.topicsTable.View() + selected + statusLine + "\n" + footer)
 
 	case boardMessages:
 		// Build a mini-list with a cursor indicator showing which message is

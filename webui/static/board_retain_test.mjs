@@ -60,3 +60,11 @@ test("one unformattable timestamp renders as - instead of throwing", () => {
   assert.equal(page.boardTimeLabel(0), "-");
   assert.equal(page.boardTimeLabel(1793376778357), new Date(1793376778357).toISOString());
 });
+
+test("a timed retention says until when; forever does not", () => {
+  const until = Date.UTC(2026, 9, 31, 2, 15, 0);
+  assert.equal(page.boardRetainMeta({ retain: "1h0m0s", retainUntilMs: until, retainBy: "operator", diskBytes: 7 }),
+    "  retain=1h0m0s until=2026-10-31T02:15:00.000Z by=operator disk=7");
+  assert.equal(page.boardRetainMeta({ retain: "forever", retainUntilMs: 0, retainBy: "operator", diskBytes: 7 }),
+    "  retain=forever by=operator disk=7");
+});

@@ -566,7 +566,7 @@ func (b *Board) evictExpiredTopics() {
 			// them itself: a retention may only add to a topic's life, or a
 			// board_persist holder could destroy any topic it may publish to
 			// by setting a 1ms period.
-			if at := t.retention.expiresAt(t.lastPublishedAt); !at.IsZero() && at.Before(now) {
+			if at := t.retention.ExpiresAt(t.lastPublishedAt); !at.IsZero() && at.Before(now) {
 				t.retention = nil
 				dropped = append(dropped, name)
 			}

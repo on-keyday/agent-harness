@@ -44,6 +44,9 @@ func (h *TaskHandler) handleBoardTopics(conn ConnHandle, requestID uint32) {
 		rows = append(rows, row)
 		if ret, disk, ok := h.Board.RetentionOf(r.Name); ok {
 			rr := protocol.BoardTopicRetention{SetBy: ret.SetBy, DiskBytes: uint64(disk)}
+			if at := ret.ExpiresAt(r.LastPublishedAt); !at.IsZero() {
+				rr.ExpiresAtUnixMs = uint64(at.UnixMilli())
+			}
 			rr.SetName([]byte(r.Name))
 			if ret.Forever {
 				rr.SetForever(true)

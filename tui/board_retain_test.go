@@ -32,6 +32,11 @@ func TestBoardModalRetainColumn(t *testing.T) {
 	if got := rows[0][col]; got != "forever by=operator disk=321" {
 		t.Errorf("retained row cell = %q", got)
 	}
+	timed := retainCell(&cli.BoardTopicRow{Retention: &cli.TopicRetention{TTL: time.Hour,
+		ExpiresAt: time.Date(2026, 10, 31, 2, 15, 0, 0, time.UTC), DiskBytes: 7}})
+	if timed != "1h0m0s until=2026-10-31T02:15:00Z by=operator disk=7" {
+		t.Errorf("timed retention cell = %q", timed)
+	}
 	if got := rows[1][col]; got != "" {
 		t.Errorf("plain row cell = %q, want empty", got)
 	}
@@ -178,5 +183,23 @@ func TestBoardTopicRow_WrappedPublishTimeIsAbsent(t *testing.T) {
 	row := boardTopicToRow(&cli.BoardTopicRow{Name: "beta.sns", LastPublishedAtMs: 18446681938112751616}, nil)
 	if row[4] != "-" || row[5] != "-" {
 		t.Fatalf("LastSeq/LastAt = %q / %q, want - / -", row[4], row[5])
+	}
+}
+
+// The Retain cell is cut on a narrow terminal (at 80 columns, right after
+// "until=2026-"), so the highlighted topic's retention is spelled out in full
+// on its own line, whatever the width.
+func TestBoardModal_SelectedRetentionLineAtNarrowWidth(t *testing.T) {
+	m := NewBoardModal()
+	m.Open()
+	m.SetSize(80, 30)
+	m.ApplyTopics([]cli.BoardTopicRow{{Name: "timed.topic", MsgCount: 1, LastSeq: 1, LastPublishedAtMs: 1,
+		Retention: &cli.TopicRetention{TTL: time.Hour, ExpiresAt: time.Date(2026, 10, 31, 2, 15, 0, 0, time.UTC), DiskBytes: 7}}}, nil)
+	if v := m.View(); !strings.Contains(v, "until=2026-10-31T02:15:00Z") {
+		t.Fatalf("the full expiry is not on screen at 80 columns:\n%s", v)
+	}
+	m.ApplyTopics([]cli.BoardTopicRow{{Name: "plain", MsgCount: 1, LastSeq: 1, LastPublishedAtMs: 1}}, nil)
+	if v := m.View(); strings.Contains(v, "retain=") {
+		t.Fatalf("a plain topic got a retention line:\n%s", v)
 	}
 }

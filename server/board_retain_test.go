@@ -227,3 +227,32 @@ func TestBoardTopics_RetainedEmptyTopicHasNoPublishTime(t *testing.T) {
 	}
 	t.Fatal("retained empty topic not listed")
 }
+
+// board topics says when a retention runs out — the period alone does not,
+// since it counts from the later of the last publish and the retain call.
+func TestBoardTopics_RetentionCarriesExpiry(t *testing.T) {
+	h, conn, _ := retainHandler(t, nil)
+	before := time.Now()
+	_ = retain(t, h, conn, "ex", time.Hour, false, false)
+	_ = retain(t, h, conn, "ever", 0, true, false)
+	after := time.Now()
+	expiry := func() map[string]uint64 {
+		out := map[string]uint64{}
+		for _, r := range topicsBody(t, h, conn).Retention {
+			out[string(r.Name)] = r.ExpiresAtUnixMs
+		}
+		return out
+	}
+	got := expiry()
+	if lo, hi := uint64(before.Add(time.Hour).UnixMilli()), uint64(after.Add(time.Hour).UnixMilli()); got["ex"] < lo || got["ex"] > hi {
+		t.Fatalf("unpublished: expires_at %d, want the retain call + 1h (%d..%d)", got["ex"], lo, hi)
+	}
+	if got["ever"] != 0 {
+		t.Fatalf("forever: expires_at %d, want 0", got["ever"])
+	}
+	time.Sleep(5 * time.Millisecond)
+	h.Board.Send("ex", []byte("m"), protocol.RunnerID{}, protocol.TaskID{}, "h", "", 0)
+	if moved := expiry()["ex"]; moved <= got["ex"] {
+		t.Fatalf("a publish did not move the expiry (%d -> %d)", got["ex"], moved)
+	}
+}

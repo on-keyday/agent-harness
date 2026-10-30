@@ -193,6 +193,9 @@ func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.Boar
 				// is the subject here, so absence is the answer, not elision.
 				if rt := r.retention; rt != nil {
 					rec["retain"] = rt.Label()
+					if !rt.ExpiresAt.IsZero() {
+						rec["retain_until"] = rt.ExpiresAt.UTC().Format(time.RFC3339)
+					}
 					rec["retain_by"] = rt.SetByLabel()
 					rec["disk_bytes"] = rt.DiskBytes
 				}
@@ -210,7 +213,7 @@ func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.Boar
 			}
 			retainCol := ""
 			if rt := r.retention; rt != nil {
-				retainCol = fmt.Sprintf("  retain=%s by=%s disk=%d", rt.Label(), rt.SetByLabel(), rt.DiskBytes)
+				retainCol = "  " + rt.Summary()
 			}
 			if !r.published {
 				fmt.Fprintf(out, "%s  msgs=0%s%s  (nothing published yet)\n", r.name, subCol, retainCol)
