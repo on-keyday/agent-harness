@@ -96,7 +96,9 @@ the first alone settles whether you are a later incarnation:
 
 **The server has a lifetime of its own, independent of all three.** Its board
 is in memory: a restart drops every retained message and every subscription,
-then re-seeds only `chat.<short-id>` for live assignments. Anything else you
+then re-seeds only `chat.<short-id>` for live assignments. The exception is a
+topic someone kept with `board retain` (see "Keeping a topic"): its messages
+come back, its subscribers do not. Anything else you
 subscribed to is gone, and `agent subscriptions` reports the reduced set without
 comment. It is detectable without any capability: a board `seq` carries the
 server's boot time in its high bits (`seq >> 20` is Unix ms), so a fresh `seq`
@@ -1154,12 +1156,41 @@ Limits worth knowing before you rely on it:
   not redo them.
 - Past **1024** topics the board evicts the least recently published one —
   which is exactly a quiet per-subject topic.
+- All of the above except the subscription rule changes for a topic kept with
+  `board retain` — see "Keeping a topic".
 - A single message is capped at **1 MiB** by default
   (`--agentboard-max-payload`); an over-size `send` is refused with
   `PayloadTooLarge` rather than truncated, so nothing is silently lost.
 - Bodies over **64 KiB** are not inlined into the auto-injected wake context;
   the record carries `payload_bytes` and a `read_with` command instead. See
   "Reading one message whole".
+
+### Keeping a topic — `board retain`
+
+A topic is deleted 30 minutes after its last publish, holds 64 messages, and
+is lost when the server restarts. To keep a discussion past that, retain it:
+
+```bash
+harness-cli board retain tree.<your-full-task-id>.design --ttl 168h   # 7 days after the last publish
+harness-cli board retain tree.<your-full-task-id>.design --ttl forever
+harness-cli board retain tree.<your-full-task-id>.design --clear      # back to the 30-minute TTL
+```
+
+- It needs the `board_persist` capability, and only works on a topic you may
+  publish to. A `chat.<id>` topic can never be retained: direct messages stay
+  temporary. Without the bit you get a permission denial naming it — ask
+  whoever spawned you (or the operator) rather than working around it.
+- A retained topic is written to the server's disk and comes back after a
+  restart, every message included. Your subscription to it does not: after a
+  restart, subscribe again.
+- The ring you read through `inbox` / `read` / `retained` is still the last 64
+  messages. The operator pages further back with `board read <topic> --limit
+  N --before SEQ`.
+- Retention does not change who can read or write the topic: a retained
+  `tree.<id>.*` is still your lineage's only.
+- `board topics` (operator view) shows `retain=<period> by=<who set it>
+  disk=<bytes>`, so a retained topic is always attributable. Do not retain
+  `forever` unless asked to: the operator removes retentions nobody needs.
 
 ### "My message never arrived"
 
