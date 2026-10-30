@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/cli"
 )
 
@@ -51,6 +52,10 @@ type boardRetainEdit struct {
 // BeginRetain opens the retain editor for topic.
 func (m *BoardModal) BeginRetain(topic string) {
 	if topic == "" {
+		return
+	}
+	if !agentboard.Retainable(topic) {
+		m.status = "retain: " + topic + " cannot be retained — chat.* topics stay temporary"
 		return
 	}
 	prompt := "retain " + topic + " ▶ "

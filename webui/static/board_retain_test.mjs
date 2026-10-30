@@ -29,3 +29,10 @@ test("the result line names the target and the change", () => {
   assert.equal(page.boardRetainResultLine("tree.x.d", "168h0m0s"), "board retain: tree.x.d retain=168h0m0s");
   assert.equal(page.boardRetainResultLine("tree.x.d", "cleared"), "board retain: tree.x.d retention cleared");
 });
+
+test("the bridge says which topics can be retained, by the server's own rule", () => {
+  assert.equal(page.harness.boardRetainable("tree.x.d"), true);
+  assert.equal(page.harness.boardRetainable("chat.0123abcd"), false);
+  assert.equal(page.harness.boardRetainable("chat.operator"), false);
+  assert.equal(page.harness.boardRetainable(""), false);
+});

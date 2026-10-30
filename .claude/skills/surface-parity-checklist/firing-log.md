@@ -3610,4 +3610,13 @@ omitted: `board read` paging on TUI/WebUI — their message views read the
          D11 puts paging on the operator face; the panes did not get a
          pager). 7 n/a: board verbs are CmdlineSurfaces CLI only.
 n/a:     3, 5, 9–14, 16–22, 24–28, 28a, 34, 34a (no form), 35, 38, S1–S6
-missed:  —
+missed:  34a's corollary (found in a live Playwright check the same day, after
+         landing): Retain was pressable on chat.* topics, which the server
+         always refuses — now disabled with the reason, and the TUI's `t`
+         says why instead of opening the editor, both via
+         agentboard.Retainable. Also missed at that walk: the 390px row
+         overflowed (the meta span is nowrap and retain= made it 543px), and
+         Retain's result went only to #cmd-output, which is hidden on the
+         Board tab — so the press had no visible answer. "n/a (no form)" on
+         34a was the wrong reading: a control that can only be refused is
+         the item's subject whether or not there is a form.

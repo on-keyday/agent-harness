@@ -82,3 +82,19 @@ func TestBoardRetainInput(t *testing.T) {
 		}
 	}
 }
+
+// A chat.* topic can never be retained, so `t` there says why instead of
+// opening an editor whose every answer the server refuses.
+func TestApp_BoardRetainKeyOnChatTopic(t *testing.T) {
+	a := &App{boardModal: NewBoardModal()}
+	a.boardModal.Open()
+	a.boardModal.SetSize(160, 45)
+	a.boardModal.ApplyTopics([]cli.BoardTopicRow{{Name: "chat.0123abcd", MsgCount: 1, LastSeq: 1, LastPublishedAtMs: 1}}, nil)
+	a.updateKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
+	if a.boardModal.Retaining() {
+		t.Fatal("`t` on a chat topic opened the retain editor")
+	}
+	if !strings.Contains(a.boardModal.View(), "cannot be retained") {
+		t.Error("no reason shown for refusing to retain a chat topic")
+	}
+}

@@ -29,6 +29,7 @@ import (
 	"io"
 
 	"github.com/on-keyday/agent-harness/authority"
+	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/cli/verb"
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -170,6 +171,11 @@ func main() {
 		"boardSend":          js.FuncOf(harnessBoardSend),
 		"boardWake":          js.FuncOf(harnessBoardWake),
 		"boardRetain":        js.FuncOf(harnessBoardRetain),
+		// Synchronous: the server's own rule, so the page offers Retain only
+		// where the server would accept it.
+		"boardRetainable": js.FuncOf(func(this js.Value, args []js.Value) any {
+			return len(args) > 0 && agentboard.Retainable(args[0].String())
+		}),
 		"boardRetractThread": js.FuncOf(harnessBoardThreadOp(cli.ThreadRetract, "boardRetractThread")),
 		"boardPurgeThread":   js.FuncOf(harnessBoardThreadOp(cli.ThreadPurge, "boardPurgeThread")),
 		"boardSubscribers":   js.FuncOf(harnessBoardSubscribers),

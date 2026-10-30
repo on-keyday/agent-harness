@@ -6280,6 +6280,18 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     boardTopicsEl.hidden = true;
     boardDetailEl.hidden = false;
     boardDetailTitle.textContent = topic;
+    refreshBoardRetainBadge(topic);
+    // Offered only where the server would accept it: chat.* topics stay
+    // temporary, and a button that only ever answers "refused" reads as if
+    // the topic could be kept.
+    const retainBtn = document.getElementById("board-retain-btn");
+    if (retainBtn) {
+      const ok = !!(window.harness && window.harness.boardRetainable(topic));
+      retainBtn.disabled = !ok;
+      retainBtn.title = ok
+        ? "Keep this topic past the TTL and a server restart (board retain)"
+        : "chat.* topics stay temporary and cannot be retained";
+    }
     boardMessagesEl.innerHTML = "";
     // Always shown, so there is no toggle state to keep in step with the topic
     // or with Refresh — which is where this pane's only two bugs came from.
@@ -6668,6 +6680,26 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     boardComposeReplying.hidden = true;
   });
 
+  const boardRetainBadge = document.getElementById("board-detail-retain");
+
+  // refreshBoardRetainBadge shows the open topic's retention in its header,
+  // read back from the server rather than echoed from the request, so what is
+  // on screen is what the board holds.
+  async function refreshBoardRetainBadge(topic) {
+    if (!boardRetainBadge) return;
+    boardRetainBadge.classList.remove("error");
+    boardRetainBadge.textContent = "";
+    if (!window.harness) return;
+    try {
+      const topics = await window.harness.boardTopics();
+      if (topic !== currentBoardTopic) return; // the operator moved on
+      const t = (topics || []).find((x) => x.name === topic);
+      boardRetainBadge.textContent = boardRetainMeta(t).trim();
+    } catch (_) {
+      // The badge is a nicety; the topic view itself must still render.
+    }
+  }
+
   const boardRetainBtn = document.getElementById("board-retain-btn");
   if (boardRetainBtn) {
     boardRetainBtn.addEventListener("click", async () => {
@@ -6680,8 +6712,14 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       try {
         const r = await window.harness.boardRetain(topic, value.trim());
         appendCmdOutput(boardRetainResultLine(topic, r.label));
+        await refreshBoardRetainBadge(topic);
       } catch (err) {
         appendCmdOutput(`board retain error: ${err.message}`);
+        // The command output is not on this tab: say it where the press was.
+        if (boardRetainBadge && topic === currentBoardTopic) {
+          boardRetainBadge.classList.add("error");
+          boardRetainBadge.textContent = `retain error: ${err.message}`;
+        }
       }
     });
   }

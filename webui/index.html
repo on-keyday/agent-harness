@@ -363,6 +363,10 @@
           <div class="board-detail-header">
             <button id="board-back-btn" class="board-back-btn">← Back</button>
             <span id="board-detail-title" class="board-detail-title"></span>
+            <!-- This topic's retention (board retain), in the list row's words;
+                 empty when it is not retained. Refreshed after Retain, which is
+                 the only on-screen answer that press gets on this tab. -->
+            <span id="board-detail-retain" class="board-detail-retain"></span>
             <button id="board-wake-btn" type="button" title="Wake this topic's subscribers without publishing">⏰ Wake</button>
             <button id="board-retain-btn" type="button" title="Keep this topic past the TTL and a server restart (board retain)">⏳ Retain</button>
             <button id="board-purge-topic-btn" class="btn-danger">Purge topic</button>

@@ -18,7 +18,10 @@ var (
 	ErrNoStore = errors.New("agentboard: no store attached")
 )
 
-func retainable(topic string) bool {
+// Retainable reports whether topic may be retained: not an empty name and not
+// any chat.* topic. The one rule every surface asks, so a control the server
+// would refuse is never offered.
+func Retainable(topic string) bool {
 	return topic != "" && !strings.HasPrefix(topic, SelfTopicPrefix)
 }
 
@@ -79,7 +82,7 @@ func (b *Board) AttachStore(s Store) error {
 // exist. On a topic that was not retained yet, what it already holds is
 // written to the store first. Calling it again replaces the setting.
 func (b *Board) Retain(topic string, r Retention) error {
-	if !retainable(topic) {
+	if !Retainable(topic) {
 		return ErrNotRetainable
 	}
 	b.mu.Lock()
