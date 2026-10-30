@@ -325,6 +325,17 @@ func (t *topic) takeUnshown(task protocol.TaskID) []RetainedMessage {
 	return kept
 }
 
+// snapshotShown copies every task's delivery mark on this topic.
+func (t *topic) snapshotShown() map[protocol.TaskID]uint64 {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	out := make(map[protocol.TaskID]uint64, len(t.shown))
+	for k, v := range t.shown {
+		out[k] = v
+	}
+	return out
+}
+
 // shownMark is task's delivery mark on this topic, 0 when it has none.
 func (t *topic) shownMark(task protocol.TaskID) uint64 {
 	t.mu.Lock()

@@ -29,6 +29,10 @@ type FileStore struct {
 	mu   sync.Mutex
 	ret  map[string]Retention
 	logs map[string]*topicLog
+	// purged holds the seqs Remove was asked for, so a late Append of one —
+	// the publish's mirror racing the purge — is dropped instead of putting
+	// the bytes back on disk. Process lifetime only: the race is in-process.
+	purged map[string]map[uint64]bool
 
 	stop chan struct{}
 	done chan struct{}
@@ -56,7 +60,9 @@ func storeFileName(topic string) string {
 
 // storeRecord is one line of a topic log. "hdr" opens the log; "msg" is a
 // published message; "retract" withdraws one; "shown" moves a task's delivery
-// mark. Fields not used by a type are omitted.
+// mark; "floor" is written by a purge rewrite and carries the highest seq and
+// the last publish time the removed records held, so a purge lowers neither.
+// Fields not used by a type are omitted.
 type storeRecord struct {
 	T     string `json:"t"`
 	V     int    `json:"v,omitempty"`
@@ -102,7 +108,7 @@ func OpenFileStore(dir string, flushEvery time.Duration) (*FileStore, error) {
 		return nil, err
 	}
 	s := &FileStore{dir: dir, ret: map[string]Retention{}, logs: map[string]*topicLog{},
-		stop: make(chan struct{}), done: make(chan struct{})}
+		purged: map[string]map[uint64]bool{}, stop: make(chan struct{}), done: make(chan struct{})}
 	raw, err := os.ReadFile(filepath.Join(dir, storeRetentionFile))
 	switch {
 	case errors.Is(err, os.ErrNotExist):
@@ -204,15 +210,23 @@ func (s *FileStore) logLocked(topic string) (*topicLog, error) {
 		return l, nil
 	}
 	path := filepath.Join(s.dir, storeFileName(topic))
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_RDWR, 0o644)
 	if err != nil {
 		return nil, err
 	}
-	if st, err := f.Stat(); err == nil && st.Size() == 0 {
+	st, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	if st.Size() == 0 {
 		if _, err := f.Write(headerLine(topic)); err != nil {
 			f.Close()
 			return nil, err
 		}
+	} else if err := cutTornTail(f, st.Size()); err != nil {
+		f.Close()
+		return nil, err
 	}
 	l := &topicLog{f: f, w: bufio.NewWriter(f)}
 	s.logs[topic] = l
@@ -228,6 +242,9 @@ func (s *FileStore) closeLogLocked(topic string) {
 }
 
 func (s *FileStore) appendLocked(topic string, rec storeRecord) error {
+	if _, ok := s.ret[topic]; !ok {
+		return nil
+	}
 	l, err := s.logLocked(topic)
 	if err != nil {
 		return err
@@ -256,6 +273,7 @@ func (s *FileStore) Drop(topic string) error {
 	defer s.mu.Unlock()
 	s.closeLogLocked(topic)
 	delete(s.ret, topic)
+	delete(s.purged, topic)
 	if err := os.Remove(filepath.Join(s.dir, storeFileName(topic))); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
@@ -266,12 +284,22 @@ func (s *FileStore) Truncate(topic string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.closeLogLocked(topic)
-	return writeFileAtomic(filepath.Join(s.dir, storeFileName(topic)), headerLine(topic))
+	path := filepath.Join(s.dir, storeFileName(topic))
+	p, err := parseFile(path, topic)
+	if err != nil {
+		return err
+	}
+	// The purge empties the topic now: its period counts from here.
+	out := append(headerLine(topic), floorLine(p.maxSeq, time.Now())...)
+	return writeFileAtomic(path, out)
 }
 
 func (s *FileStore) Append(topic string, m RetainedMessage) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.purged[topic][m.Seq] {
+		return nil
+	}
 	return s.appendLocked(topic, msgRecord(m))
 }
 
@@ -294,8 +322,16 @@ func (s *FileStore) SetShown(topic string, task protocol.TaskID, seq uint64) err
 func (s *FileStore) Remove(topic string, seq uint64) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.purged[topic] == nil {
+		s.purged[topic] = map[uint64]bool{}
+	}
+	s.purged[topic][seq] = true
 	s.closeLogLocked(topic)
 	path := filepath.Join(s.dir, storeFileName(topic))
+	p, err := parseFile(path, topic)
+	if err != nil {
+		return false, err
+	}
 	f, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
@@ -321,6 +357,8 @@ func (s *FileStore) Remove(topic string, seq uint64) (bool, error) {
 	if !found {
 		return false, nil
 	}
+	// The removed record may have been the newest: keep the floor it set.
+	out.Write(floorLine(p.maxSeq, p.lastAt))
 	return true, writeFileAtomic(path, out.Bytes())
 }
 
@@ -366,6 +404,7 @@ func (s *FileStore) Load(ringN int) ([]StoredTopic, error) {
 	}
 	s.mu.Unlock()
 	sort.Strings(names)
+	s.sweepOrphans(names)
 	out := make([]StoredTopic, 0, len(names))
 	for _, name := range names {
 		parsed, err := s.read(name)
@@ -378,10 +417,35 @@ func (s *FileStore) Load(ringN int) ([]StoredTopic, error) {
 		out = append(out, StoredTopic{
 			Name: name, Retention: r,
 			Ring: tail(parsed.live, ringN), Retracted: tail(parsed.withdrawn, ringN),
-			Shown: parsed.shown, MaxSeq: parsed.maxSeq,
+			Shown: parsed.shown, MaxSeq: parsed.maxSeq, LastPublishedAt: parsed.lastAt,
 		})
 	}
 	return out, nil
+}
+
+// sweepOrphans deletes every log that belongs to no retained topic — left by
+// a Drop that removed the retention but not the file, or by a version before
+// writes were refused for unretained topics. retention.json is the authority
+// on what is retained; a log it does not name holds bytes no purge can reach.
+func (s *FileStore) sweepOrphans(names []string) {
+	keep := map[string]bool{}
+	for _, n := range names {
+		keep[storeFileName(n)] = true
+	}
+	entries, err := os.ReadDir(s.dir)
+	if err != nil {
+		slog.Error("agentboard store: list for orphan sweep", "err", err)
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() || filepath.Ext(e.Name()) != ".log" || keep[e.Name()] {
+			continue
+		}
+		slog.Warn("agentboard store: removing a log no retained topic owns", "file", e.Name())
+		if err := os.Remove(filepath.Join(s.dir, e.Name())); err != nil {
+			slog.Error("agentboard store: orphan sweep", "file", e.Name(), "err", err)
+		}
+	}
 }
 
 func (s *FileStore) Close() error {
@@ -407,11 +471,10 @@ type parsedLog struct {
 	withdrawn []RetainedMessage // ascending seq
 	shown     map[protocol.TaskID]uint64
 	maxSeq    uint64
+	lastAt    time.Time
 }
 
-// read flushes topic's buffered records and parses its log. A line that does
-// not decode — a torn last write, a damaged record — is skipped with a
-// warning; the rest of the log still loads.
+// read flushes topic's buffered records and parses its log.
 func (s *FileStore) read(topic string) (parsedLog, error) {
 	s.mu.Lock()
 	if l, ok := s.logs[topic]; ok {
@@ -421,8 +484,15 @@ func (s *FileStore) read(topic string) (parsedLog, error) {
 		}
 	}
 	s.mu.Unlock()
+	return parseFile(filepath.Join(s.dir, storeFileName(topic)), topic)
+}
+
+// parseFile parses one topic log. A line that does not decode — a damaged
+// record — is skipped with a warning; the rest of the log still loads. A
+// missing file is an empty log.
+func parseFile(path, topic string) (parsedLog, error) {
 	p := parsedLog{shown: map[protocol.TaskID]uint64{}}
-	f, err := os.Open(filepath.Join(s.dir, storeFileName(topic)))
+	f, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return p, nil
 	}
@@ -432,6 +502,11 @@ func (s *FileStore) read(topic string) (parsedLog, error) {
 	defer f.Close()
 	byseq := map[uint64]RetainedMessage{}
 	retracts := map[uint64]storeRecord{}
+	raise := func(seq uint64) {
+		if seq > p.maxSeq {
+			p.maxSeq = seq
+		}
+	}
 	lineNo := 0
 	err = eachLine(f, func(line []byte) {
 		lineNo++
@@ -440,17 +515,22 @@ func (s *FileStore) read(topic string) (parsedLog, error) {
 			slog.Warn("agentboard store: skipping unreadable record", "topic", topic, "line", lineNo, "err", err)
 			return
 		}
+		raise(rec.Seq)
 		switch rec.T {
 		case "msg":
 			m := rec.message(topic)
 			byseq[m.Seq] = m
-			if m.Seq > p.maxSeq {
-				p.maxSeq = m.Seq
+			if m.ReceivedAt.After(p.lastAt) {
+				p.lastAt = m.ReceivedAt
 			}
 		case "retract":
 			retracts[rec.Seq] = rec
 		case "shown":
 			p.shown[taskFromHex(rec.Task)] = rec.Seq
+		case "floor":
+			if at := time.UnixMilli(rec.AtMs); at.After(p.lastAt) {
+				p.lastAt = at
+			}
 		}
 	})
 	if err != nil {
@@ -469,6 +549,44 @@ func (s *FileStore) read(topic string) (parsedLog, error) {
 	sort.Slice(p.live, func(i, j int) bool { return p.live[i].Seq < p.live[j].Seq })
 	sort.Slice(p.withdrawn, func(i, j int) bool { return p.withdrawn[i].Seq < p.withdrawn[j].Seq })
 	return p, nil
+}
+
+func floorLine(maxSeq uint64, lastAt time.Time) []byte {
+	rec := storeRecord{T: "floor", Seq: maxSeq}
+	if !lastAt.IsZero() {
+		rec.AtMs = lastAt.UnixMilli()
+	}
+	raw, _ := json.Marshal(rec)
+	return append(raw, '\n')
+}
+
+// cutTornTail truncates f after its last newline: a record a crash left half
+// written is removed before anything is appended behind it, which would
+// otherwise fuse the two into one unreadable line — and leave the torn bytes
+// where no purge can reach them.
+func cutTornTail(f *os.File, size int64) error {
+	const chunk = 64 << 10
+	buf := make([]byte, chunk)
+	for end := size; end > 0; {
+		start := end - chunk
+		if start < 0 {
+			start = 0
+		}
+		n, err := f.ReadAt(buf[:end-start], start)
+		if err != nil && !errors.Is(err, io.EOF) {
+			return err
+		}
+		if i := bytes.LastIndexByte(buf[:n], '\n'); i >= 0 {
+			if cut := start + int64(i) + 1; cut != size {
+				slog.Warn("agentboard store: cutting a torn record", "file", f.Name(), "bytes", size-cut)
+				return f.Truncate(cut)
+			}
+			return nil
+		}
+		end = start
+	}
+	// No newline at all: not even the header survived.
+	return f.Truncate(0)
 }
 
 // eachLine calls fn for every newline-terminated line and for a final

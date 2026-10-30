@@ -61,9 +61,7 @@ func (b *Board) AttachStore(s Store) error {
 			}
 			t.shown[tid] = seq
 		}
-		if n := len(st.Ring); n > 0 {
-			t.lastPublishedAt = st.Ring[n-1].ReceivedAt
-		}
+		t.lastPublishedAt = st.LastPublishedAt
 		r := st.Retention
 		t.retention = &r
 		b.topics[st.Name] = t
@@ -125,6 +123,13 @@ func (b *Board) Retain(topic string, r Retention) error {
 			return err
 		}
 	}
+	// The marks too, or the first hook after a restart hands every
+	// subscriber what it was already given before the retain.
+	for tid, seq := range t.snapshotShown() {
+		if err := store.SetShown(topic, tid, seq); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -139,12 +144,15 @@ func (b *Board) ClearRetain(topic string) error {
 		return nil
 	}
 	t.retention = nil
+	store := b.store
 	// The board TTL counts from the last publish; a topic retained without one
 	// starts its ordinary countdown now rather than being evicted at once.
+	// Under t.mu, where topic.append writes it.
+	t.mu.Lock()
 	if t.lastPublishedAt.IsZero() {
 		t.lastPublishedAt = time.Now()
 	}
-	store := b.store
+	t.mu.Unlock()
 	b.mu.Unlock()
 	return store.Drop(topic)
 }

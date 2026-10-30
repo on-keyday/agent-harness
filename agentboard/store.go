@@ -24,7 +24,14 @@ type StoredTopic struct {
 	Ring      []RetainedMessage // the newest ringN live messages, ascending seq
 	Retracted []RetainedMessage // the newest ringN withdrawn messages, ascending seq
 	Shown     map[protocol.TaskID]uint64
-	MaxSeq    uint64 // highest seq in the log, live or withdrawn
+	// MaxSeq is the highest seq the log has ever held — messages, marks, and
+	// the floor a purge rewrite records — so a purge never lowers the seq a
+	// restart seeds from.
+	MaxSeq uint64
+	// LastPublishedAt is the newest publish the log has seen, withdrawn
+	// messages included, or the time of a whole-topic purge: what the
+	// topic's period counts from after a restart.
+	LastPublishedAt time.Time
 }
 
 // Store persists retained topics. The board mirrors into it only the topics
@@ -34,6 +41,8 @@ type Store interface {
 	// skipped and logged; it never discards the rest of its log.
 	Load(ringN int) ([]StoredTopic, error)
 	// SetRetention records topic's retention, creating its log if absent.
+	// Append, Retract and SetShown write nothing for a topic without one, so
+	// a mirror racing a Drop cannot leave a log behind.
 	SetRetention(topic string, r Retention) error
 	// Drop removes topic's log and its retention.
 	Drop(topic string) error
@@ -43,7 +52,9 @@ type Store interface {
 	// Retract records that m — carrying RetractedAt / RetractedBy /
 	// RetractedByTask — was withdrawn. The bytes stay.
 	Retract(topic string, m RetainedMessage) error
-	// Remove rewrites topic's log without seq, so its bytes are gone.
+	// Remove rewrites topic's log without seq, so its bytes are gone. An
+	// Append of seq that arrives afterwards — a purge racing the publish's
+	// mirror — is dropped.
 	Remove(topic string, seq uint64) (bool, error)
 	SetShown(topic string, task protocol.TaskID, seq uint64) error
 	// Page returns up to limit messages, live and withdrawn, with seq below
