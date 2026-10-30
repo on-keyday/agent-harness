@@ -61,11 +61,13 @@ type boardCompose struct {
 // reads from here as an agent that never answered. ctrl+r drops it for a note
 // that wants no answer on the board.
 //
-// On a topic with a member the answers go to the topic itself, where the
-// members read them; a member's own posts default the same way.
+// On a topic whose subscribers are all members the answers go to the topic
+// itself, where they read them; a member's own posts default the same way. One
+// plain subscriber keeps chat.operator: it may not publish to the topic, so an
+// answer routed there would be refused.
 func (m *BoardModal) BeginCompose() {
 	replyTo := agentboard.OperatorTopic
-	if hasMember(m.msgSubs, m.curTopic) {
+	if allMembers(m.msgSubs, m.curTopic) {
 		replyTo = m.curTopic
 	}
 	m.openCompose(cli.BoardSendParams{Topic: m.curTopic, ReplyTo: replyTo},

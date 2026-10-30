@@ -41,7 +41,9 @@ test("a joined topic is marked as board subscribers marks it", () => {
 });
 
 test("the composer asks for answers on the topic when it has a member", () => {
-  assert.equal(page.boardComposeReplyDefault("grp", [plain, member]), "grp");
+  assert.equal(page.boardComposeReplyDefault("grp", [member]), "grp");
+  // A plain subscriber could not answer on the topic: it may not publish there.
+  assert.equal(page.boardComposeReplyDefault("grp", [plain, member]), "chat.operator");
   assert.equal(page.boardComposeReplyDefault("grp", [plain]), "chat.operator");
   assert.equal(page.boardComposeReplyDefault("grp", []), "chat.operator");
 });

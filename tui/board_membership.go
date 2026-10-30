@@ -124,6 +124,17 @@ func joinedOn(r cli.BoardSubscriberRow, topic string) bool {
 	return false
 }
 
+// allMembers reports whether subs is non-empty and every one of them is a
+// member of topic: then every task that could answer may answer on it.
+func allMembers(subs []cli.BoardSubscriberRow, topic string) bool {
+	for _, r := range subs {
+		if !joinedOn(r, topic) {
+			return false
+		}
+	}
+	return len(subs) > 0
+}
+
 // hasMember reports whether any of subs is a member of topic.
 func hasMember(subs []cli.BoardSubscriberRow, topic string) bool {
 	for _, r := range subs {

@@ -6511,8 +6511,10 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
         lines.push(named ? err.message : `board ${op} ${id.slice(0, 8)} ${topic}: ${err.message}`);
       }
     }
-    boardMemberStatus = lines.join(" / ");
     lines.forEach((l) => appendCmdOutput(l));
+    // Shown in the panel only while it still shows the topic it changed.
+    if (topic !== currentBoardTopic) return;
+    boardMemberStatus = lines.join(" / ");
     renderBoardSubscribers();
   }
 
@@ -6570,8 +6572,12 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
         Object.assign(document.createElement("div"), { textContent: "(not connected)" }));
       return;
     }
+    const topic = currentBoardTopic;
     try {
-      const rows = await window.harness.boardSubscribers(currentBoardTopic);
+      const rows = await window.harness.boardSubscribers(topic);
+      // The operator may have opened another topic meanwhile: these rows, and
+      // the buttons built from them, belong to the old one.
+      if (topic !== currentBoardTopic) return;
       const n = rows ? rows.length : 0;
       boardSubscribersEl.appendChild(
         boardSubHeading(`subscribers of ${currentBoardTopic} (${n})`));
@@ -7856,12 +7862,15 @@ function boardSendDefaults(_target) {
 }
 
 // boardComposeReplyDefault is the composer's reply-to for a new message on
-// topic: the topic itself when one of its subscribers is a member (board
-// join) -- the members read the answers there -- else chat.operator.
+// topic: the topic itself when every subscriber is a member (board join) --
+// they read the answers there and may publish there -- else chat.operator.
+// One plain subscriber is enough to keep chat.operator: its answer routed to
+// the topic would be refused, which reads as an agent that never answered.
 function boardComposeReplyDefault(topic, rows) {
-  const member = (rows || []).some((r) =>
+  const list = rows || [];
+  const all = list.length > 0 && list.every((r) =>
     (r.patterns || []).some((p) => p.name === topic && p.joined));
-  return member ? topic : "chat.operator";
+  return all ? topic : "chat.operator";
 }
 
 // boardRowRemoval is a subscriber row's remove button on topic: a member

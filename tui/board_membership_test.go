@@ -101,6 +101,15 @@ func TestBoardCompose_ReplyToTopicWithMember(t *testing.T) {
 		t.Errorf("compose on a topic with a member: reply-to %q, want grp", got)
 	}
 	m.EndCompose()
+	// A plain subscriber beside the member could not answer on the topic (it
+	// may not publish there), so the default stays chat.operator.
+	mixed := append(member, cli.BoardSubscriberRow{TaskHex: plainTask, Patterns: []cli.BoardSubscriberPattern{{Name: "grp"}}})
+	m.ApplyMessages("grp", nil, mixed, true)
+	m.BeginCompose()
+	if got := m.compose.params.ReplyTo; got != agentboard.OperatorTopic {
+		t.Errorf("compose on a topic with a plain subscriber: reply-to %q, want %s", got, agentboard.OperatorTopic)
+	}
+	m.EndCompose()
 	m.ApplyMessages("other", nil, nil, true)
 	m.BeginCompose()
 	if got := m.compose.params.ReplyTo; got != agentboard.OperatorTopic {
