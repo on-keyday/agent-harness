@@ -1,0 +1,56 @@
+package agentboard
+
+import (
+	"time"
+
+	"github.com/on-keyday/agent-harness/runner/protocol"
+)
+
+// Retention is how long a retained topic is kept. The period counts from the
+// topic's last publish, or from SetAt when nothing was published since — the
+// TTL rule every topic already has, with the topic's own period instead of
+// the board's. See docs/superpowers/specs/2026-10-30-agentboard-retention-design.md.
+type Retention struct {
+	TTL     time.Duration // ignored when Forever
+	Forever bool
+	SetBy   protocol.TaskID // the task that set it; zero = the operator
+	SetAt   time.Time
+}
+
+// StoredTopic is one retained topic as the store holds it at load time.
+type StoredTopic struct {
+	Name      string
+	Retention Retention
+	Ring      []RetainedMessage // the newest ringN live messages, ascending seq
+	Retracted []RetainedMessage // the newest ringN withdrawn messages, ascending seq
+	Shown     map[protocol.TaskID]uint64
+	MaxSeq    uint64 // highest seq in the log, live or withdrawn
+}
+
+// Store persists retained topics. The board mirrors into it only the topics
+// that carry a Retention; every other topic stays in memory alone.
+type Store interface {
+	// Load returns every retained topic. A record that cannot be read is
+	// skipped and logged; it never discards the rest of its log.
+	Load(ringN int) ([]StoredTopic, error)
+	// SetRetention records topic's retention, creating its log if absent.
+	SetRetention(topic string, r Retention) error
+	// Drop removes topic's log and its retention.
+	Drop(topic string) error
+	// Truncate empties topic's log and keeps its retention.
+	Truncate(topic string) error
+	Append(topic string, m RetainedMessage) error
+	// Retract records that m — carrying RetractedAt / RetractedBy /
+	// RetractedByTask — was withdrawn. The bytes stay.
+	Retract(topic string, m RetainedMessage) error
+	// Remove rewrites topic's log without seq, so its bytes are gone.
+	Remove(topic string, seq uint64) (bool, error)
+	SetShown(topic string, task protocol.TaskID, seq uint64) error
+	// Page returns up to limit messages, live and withdrawn, with seq below
+	// beforeSeq (beforeSeq 0 = from the newest), newest first.
+	Page(topic string, beforeSeq uint64, limit int) ([]RetainedMessage, error)
+	// Bytes is the size of topic's log, buffered records included.
+	Bytes(topic string) int64
+	// Close flushes and closes every log.
+	Close() error
+}
