@@ -169,6 +169,7 @@ func main() {
 		"boardContactsClear": js.FuncOf(harnessBoardContactsClear),
 		"boardSend":          js.FuncOf(harnessBoardSend),
 		"boardWake":          js.FuncOf(harnessBoardWake),
+		"boardRetain":        js.FuncOf(harnessBoardRetain),
 		"boardRetractThread": js.FuncOf(harnessBoardThreadOp(cli.ThreadRetract, "boardRetractThread")),
 		"boardPurgeThread":   js.FuncOf(harnessBoardThreadOp(cli.ThreadPurge, "boardPurgeThread")),
 		"boardSubscribers":   js.FuncOf(harnessBoardSubscribers),
@@ -2035,7 +2036,7 @@ func harnessCancel(this js.Value, args []js.Value) any {
 
 // harnessBoardTopics lists all agentboard topics with aggregate metadata.
 //
-//	harness.boardTopics() -> Promise<[{name, lastSeq, lastPublishedAtMs, msgCount, retractedCount}]>
+//	harness.boardTopics() -> Promise<[{name, lastSeq, lastPublishedAtMs, msgCount, retractedCount[, retain, retainBy, diskBytes]}]>
 func harnessBoardTopics(this js.Value, args []js.Value) any {
 	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
 		resolve := promiseArgs[0]
@@ -2053,7 +2054,7 @@ func harnessBoardTopics(this js.Value, args []js.Value) any {
 			}
 			out := make([]any, 0, len(topics))
 			for _, t := range topics {
-				out = append(out, map[string]any{
+				row := map[string]any{
 					"name": t.Name,
 					// Board seq is UnixNano-seeded (~1.9e18), well beyond
 					// JS Number.MAX_SAFE_INTEGER (2^53-1). Emit as a decimal
@@ -2066,7 +2067,14 @@ func harnessBoardTopics(this js.Value, args []js.Value) any {
 					// msgCount so that one keeps meaning "what a subscriber
 					// would receive".
 					"retractedCount": float64(t.RetractedCount),
-				})
+				}
+				// Present only on a retained topic, in the CLI's words.
+				if rt := t.Retention; rt != nil {
+					row["retain"] = rt.Label()
+					row["retainBy"] = rt.SetByLabel()
+					row["diskBytes"] = float64(rt.DiskBytes)
+				}
+				out = append(out, row)
 			}
 			resolve.Invoke(js.ValueOf(out))
 		}()
@@ -2475,6 +2483,51 @@ func harnessBoardSend(this js.Value, args []js.Value) any {
 				"seq":         strconv.FormatUint(res.Seq, 10),
 				"deliveredTo": int(res.DeliveredTo),
 			}))
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
+// harnessBoardRetain sets or clears a topic's retention. value is what
+// `board retain --ttl` takes ("72h", "forever"), or "clear"; it is parsed here,
+// by the CLI's own parser, so the page holds no second copy of the grammar.
+//
+//	harness.boardRetain(topic, value) -> Promise<{label}>
+func harnessBoardRetain(this js.Value, args []js.Value) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		go func() {
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			if len(args) < 2 || args[0].String() == "" {
+				rejectErr(reject, errors.New("boardRetain: missing topic/value"))
+				return
+			}
+			topic, value := args[0].String(), args[1].String()
+			var ttl time.Duration
+			var forever bool
+			clear := value == "clear"
+			if !clear {
+				if ttl, forever, err = cli.ParseRetainTTL(value); err != nil {
+					rejectErr(reject, fmt.Errorf("boardRetain: %w", err))
+					return
+				}
+			}
+			if err := c.BoardRetain(rootCtx, topic, ttl, forever, clear); err != nil {
+				rejectErr(reject, fmt.Errorf("boardRetain: %w", err))
+				return
+			}
+			label := "cleared"
+			if !clear {
+				label = cli.TopicRetention{TTL: ttl, Forever: forever}.Label()
+			}
+			resolve.Invoke(js.ValueOf(map[string]any{"label": label}))
 		}()
 		return nil
 	})

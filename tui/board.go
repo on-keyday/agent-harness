@@ -319,6 +319,8 @@ type BoardModal struct {
 	pendingStatus string
 	// compose is the open send/reply editor, nil when none is.
 	compose *boardCompose
+	// retain is the open retain editor, nil when none is.
+	retain *boardRetainEdit
 }
 
 // subItem is one selectable line of the subscribers view: a task line
@@ -356,6 +358,7 @@ func NewBoardModal() BoardModal {
 		{Title: "Subs", Width: 5},
 		{Title: "LastSeq", Width: 9},
 		{Title: "LastAt", Width: 22},
+		{Title: "Retain", Width: 34},
 	}
 	t := table.New(table.WithColumns(cols), table.WithFocused(true))
 	baseCols := cols
@@ -653,6 +656,7 @@ func boardTopicToRow(r *cli.BoardTopicRow, subs map[string]int) table.Row {
 		sub,
 		lastSeq,
 		at,
+		retainCell(r),
 	}
 }
 
@@ -825,7 +829,11 @@ func (m BoardModal) View() string {
 	switch m.mode {
 	case boardTopics:
 		header := HeaderStyle.Render(fmt.Sprintf("agentboard topics (%d)", len(m.rowTopics)))
-		footer := FooterStyle.Render("Enter: read  c: chains  s: subscribers  " + modalKeys.BoardWake + ": wake  r: refresh  x: purge topic  Esc: close")
+		footer := FooterStyle.Render("Enter: read  c: chains  s: subscribers  " + modalKeys.BoardWake + ": wake  " +
+			modalKeys.BoardRetain + ": retain  r: refresh  x: purge topic  Esc: close")
+		if m.retain != nil {
+			footer = m.retainView()
+		}
 		return box.Render(header + "\n" + m.topicsTable.View() + statusLine + "\n" + footer)
 
 	case boardMessages:

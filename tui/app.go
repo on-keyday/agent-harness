@@ -930,6 +930,14 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return a, DoBoardRead(a.client, a.boardModal.CurTopic())
 
+	case BoardRetainMsg:
+		if msg.Err != nil {
+			a.boardModal.SetStatus(msg.Err.Error())
+			return a, nil
+		}
+		a.boardModal.SetStatusAfterRefresh(fmt.Sprintf("retain %s: %s", msg.Topic, msg.Label))
+		return a, DoBoardTopics(a.client)
+
 	case BoardWakeMsg:
 		if msg.Err != nil {
 			a.boardModal.SetStatus("wake: " + msg.Err.Error())

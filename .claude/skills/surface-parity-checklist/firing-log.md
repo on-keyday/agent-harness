@@ -3586,3 +3586,28 @@ n/a:     1–14, 16–27, 29–34, 36, 38, 39 (a bit, not a verb or a field; the
          verb that uses it is walked with Task 5–7 of the retention plan),
          S1–S6
 missed:  —
+
+### 2026-10-30 (pre-landing) — `board retain` verb, `board topics` retention columns, `board read --limit/--before`
+
+done:    1 (`cli/verb/table.go`: `board retain` row, Exclusive+AtLeastOne
+         ttl/clear; `board read` --limit/--before with a Requires rule),
+         2 (cross-flag rules in the declaration), 4 (TUI `t` on a topic —
+         `k` rejected by TestModalKeysDoNotShadowScrolling), 6 (WebUI
+         `#board-retain-btn` in the topic detail header; prompt, parsed in Go
+         via `harness.boardRetain` → `cli.ParseRetainTTL`), 8 (wasm
+         `harnessBoardRetain`), 15 (`CapDescription` names `board retain`),
+         23 (wasm `boardTopics` carries retain/retainBy/diskBytes), 29 (result
+         lines name the topic and the period on all three), 30 (WebUI
+         `appendCmdOutput`; TUI status after refresh), 31 (retention shown
+         only on a retained topic — existence-gated, the subject is whether it
+         is retained), 32 (one `--ttl` parser, `cli.ParseRetainTTL`, used by
+         CLI, TUI and the wasm bridge), 33 (bad --ttl errors on every
+         surface), 36 (skill text, Task 8), 37 (spec), 39 (spec §3.1
+         surfaces: CLI/TUI/WebUI show retain/by/disk and set/clear — all
+         three built)
+omitted: `board read` paging on TUI/WebUI — their message views read the
+         ring as before; paging into a disk log is CLI-only for now (spec
+         D11 puts paging on the operator face; the panes did not get a
+         pager). 7 n/a: board verbs are CmdlineSurfaces CLI only.
+n/a:     3, 5, 9–14, 16–22, 24–28, 28a, 34, 34a (no form), 35, 38, S1–S6
+missed:  —

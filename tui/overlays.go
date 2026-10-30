@@ -286,6 +286,12 @@ func (a *App) inBoardModal(msg tea.KeyMsg) tea.Cmd {
 		}
 		return nil
 	}
+	if a.boardModal.Retaining() {
+		if submit, topic, ttl, forever, clear := a.boardModal.HandleRetainKey(msg); submit {
+			return DoBoardRetain(a.client, topic, ttl, forever, clear)
+		}
+		return nil
+	}
 	if msg.Type == tea.KeyEsc {
 		// The chain view is list -> detail like the topic one, so Esc walks back
 		// one level rather than all the way out.
@@ -317,6 +323,9 @@ func (a *App) inBoardModal(msg tea.KeyMsg) tea.Cmd {
 			if topic != "" {
 				return DoBoardPurge(a.client, topic, 0)
 			}
+			return nil
+		case modalKeys.BoardRetain:
+			a.boardModal.BeginRetain(a.boardModal.SelectedTopicName())
 			return nil
 		case modalKeys.BoardSubscribers:
 			topic := a.boardModal.SelectedTopicName()

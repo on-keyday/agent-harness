@@ -6257,7 +6257,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
           const retracted = t.retractedCount
             ? `  retracted=${t.retractedCount}`
             : "";
-          metaSpan.textContent = `msgs=${t.msgCount}${retracted}${subs}  last=${lastTime}`;
+          metaSpan.textContent = `msgs=${t.msgCount}${retracted}${subs}${boardRetainMeta(t)}  last=${lastTime}`;
         } else {
           metaSpan.textContent = `msgs=0${subs}  (nothing published yet)`;
         }
@@ -6667,6 +6667,24 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     boardReplyingSeq = "";
     boardComposeReplying.hidden = true;
   });
+
+  const boardRetainBtn = document.getElementById("board-retain-btn");
+  if (boardRetainBtn) {
+    boardRetainBtn.addEventListener("click", async () => {
+      if (!currentBoardTopic || !window.harness) return;
+      const topic = currentBoardTopic;
+      // Typed, because a period is free-form; parsed in Go (harness.boardRetain
+      // calls the CLI's parser), so this holds no copy of the grammar.
+      const value = window.prompt(`${topic} の保持期間 (例: 72h / forever / clear で解除)`, "168h");
+      if (value === null || value.trim() === "") return;
+      try {
+        const r = await window.harness.boardRetain(topic, value.trim());
+        appendCmdOutput(boardRetainResultLine(topic, r.label));
+      } catch (err) {
+        appendCmdOutput(`board retain error: ${err.message}`);
+      }
+    });
+  }
 
   const boardWakeBtn = document.getElementById("board-wake-btn");
   if (boardWakeBtn) {
@@ -7687,6 +7705,20 @@ function boardSendResultLine(res, req) {
     ? `as a reply to #${req.inReplyTo}`
     : `to ${req.topic}`;
   return `board send: sent #${res.seq} ${dest} (delivered_to=${res.deliveredTo}, wake ${req.noWake ? "off" : "on"})`;
+}
+
+// boardRetainMeta is a topic row's retention text, in board topics' words.
+// Empty on a topic that is not retained: there, absence is the answer.
+function boardRetainMeta(t) {
+  if (!t || !t.retain) return "";
+  return `  retain=${t.retain} by=${t.retainBy} disk=${t.diskBytes}`;
+}
+
+// boardRetainResultLine names the target and the change.
+function boardRetainResultLine(topic, label) {
+  return label === "cleared"
+    ? `board retain: ${topic} retention cleared`
+    : `board retain: ${topic} retain=${label}`;
 }
 
 function sortRunners(runners) {

@@ -1369,8 +1369,9 @@ var Verbs = []VerbSpec{
 	{
 		Path: []string{"board", "retain"},
 		ModalSurfaces: []ModalSurface{
-			// k on a topic inside the board modal.
+			// t on a topic inside the board modal.
 			{Surface: TUI, At: "tui/board.go:BoardModal"},
+			{Surface: WebUI, At: "webui/index.html#board-retain-btn"},
 		},
 		Notes: []string{
 			"keep <topic> past the board TTL and a server restart, on disk: --ttl <duration> counts from its last publish, --ttl forever never expires;",
