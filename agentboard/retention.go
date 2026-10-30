@@ -66,6 +66,9 @@ func (b *Board) AttachStore(s Store) error {
 			t.shown[tid] = seq
 		}
 		t.lastPublishedAt = st.LastPublishedAt
+		for _, tid := range st.Members {
+			b.addMemberLocked(st.Name, tid)
+		}
 		r := st.Retention
 		t.retention = &r
 		b.topics[st.Name] = t
@@ -106,6 +109,10 @@ func (b *Board) Retain(topic string, r Retention) error {
 	wasRetained := t.retention != nil
 	t.retention = &r
 	store := b.store
+	var members []protocol.TaskID
+	for tid := range b.members[topic] {
+		members = append(members, tid)
+	}
 	b.mu.Unlock()
 
 	if err := store.SetRetention(topic, r); err != nil {
@@ -131,6 +138,11 @@ func (b *Board) Retain(topic string, r Retention) error {
 	// subscriber what it was already given before the retain.
 	for tid, seq := range t.snapshotShown() {
 		if err := store.SetShown(topic, tid, seq); err != nil {
+			return err
+		}
+	}
+	for _, tid := range members {
+		if err := store.SetMember(topic, tid, true); err != nil {
 			return err
 		}
 	}

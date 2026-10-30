@@ -56,6 +56,8 @@ type Board struct {
 	// store mirrors retained topics to disk; nil until AttachStore. Topics
 	// without a retention never touch it.
 	store Store
+	// members is topic → the tasks that joined it (membership.go).
+	members map[string]map[protocol.TaskID]struct{}
 }
 
 func New(cfg Config) *Board {
@@ -99,9 +101,13 @@ func (b *Board) RegisterTask(rid protocol.RunnerID, tid protocol.TaskID, ticket 
 		ts = newTaskState()
 		b.tasks[key] = ts
 	}
+	joined := b.memberTopicsLocked(tid)
 	b.mu.Unlock()
 	ts.setIdentity(rid, tid, "", agentProfile)
 	ts.addPattern(SelfTopic(tid))
+	for _, topic := range joined {
+		ts.addPattern(topic)
+	}
 }
 
 // Conversation says whether the agent a task is being registered for carries
@@ -261,9 +267,15 @@ func (b *Board) Subscribe(c *ConnState, pattern string) error {
 	return nil
 }
 
+// Unsubscribe drops pattern from c's task. On a topic the task is a member of
+// it leaves the topic: otherwise its next registration would subscribe it
+// again against its will.
 func (b *Board) Unsubscribe(c *ConnState, pattern string) {
 	if c == nil || c.task == nil {
 		return
+	}
+	if _, tid, _, _ := c.task.identity(); b.IsMember(tid, pattern) {
+		b.Leave(tid, pattern)
 	}
 	c.task.removePattern(pattern)
 }
@@ -303,6 +315,10 @@ func (b *Board) Send(topicName string, payload []byte, fromRid protocol.RunnerID
 		o(&cfg)
 	}
 	b.mu.Lock()
+	// A member's publish is answered on the topic unless it names a route.
+	if cfg.replyToTopic == "" && fromTid != (protocol.TaskID{}) && b.isMemberLocked(fromTid, topicName) {
+		cfg.replyToTopic = topicName
+	}
 	t, ok := b.topics[topicName]
 	if !ok {
 		if len(b.topics) >= b.cfg.MaxTopics {
@@ -1021,6 +1037,7 @@ type SubscriberPattern struct {
 	Name    string
 	Shown   uint64
 	Pending uint32
+	Joined  bool // the task is a member of the topic, not only subscribed
 }
 
 type SubscriberRow struct {
@@ -1067,6 +1084,7 @@ func (b *Board) ListSubscribers(topic string) []SubscriberRow {
 			var pendingN uint32
 			b.mu.Lock()
 			tp, ok := b.topics[n]
+			joined := b.isMemberLocked(tid, n)
 			b.mu.Unlock()
 			if ok {
 				shown = tp.shownMark(tid)
@@ -1076,7 +1094,7 @@ func (b *Board) ListSubscribers(topic string) []SubscriberRow {
 					}
 				}
 			}
-			pats = append(pats, SubscriberPattern{Name: n, Shown: shown, Pending: pendingN})
+			pats = append(pats, SubscriberPattern{Name: n, Shown: shown, Pending: pendingN, Joined: joined})
 		}
 		out = append(out, SubscriberRow{
 			Task:         tid,

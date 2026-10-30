@@ -143,15 +143,7 @@ func (b *Board) PublishableBy(tid protocol.TaskID, topic string) bool {
 	if r == nil {
 		return true
 	}
-	want := hexTaskIDProto(tid)
-	b.mu.Lock()
-	var states []*taskState
-	for k, ts := range b.tasks {
-		if k.task == want {
-			states = append(states, ts)
-		}
-	}
-	b.mu.Unlock()
+	states := b.statesOf(tid)
 	hasContact := func(topic string) bool {
 		for _, ts := range states {
 			if ts.hasContact(topic) {
@@ -167,7 +159,7 @@ func (b *Board) publishableFor(r ReachSource, self protocol.TaskID, hasContact f
 	if x, ok := parseTreeTopic(topic); ok {
 		return b.member(r, self, x) // no bit opens a tree the task is not in (D7)
 	}
-	if isOwnChat(self, topic) || topic == OperatorTopic {
+	if isOwnChat(self, topic) || topic == OperatorTopic || b.IsMember(self, topic) {
 		return true
 	}
 	if creator, ok := r.CreatorOf(self); ok && creator != (protocol.TaskID{}) && topic == SelfTopic(creator) {
@@ -250,15 +242,7 @@ func (b *Board) Contacts(c *ConnState) []string {
 // after this call is addressed to the task from it. A task resumed on another runner has one state per
 // runner, so every one of them is cleared.
 func (b *Board) ClearContacts(tid protocol.TaskID, topic string) (removed int, found bool) {
-	want := hexTaskIDProto(tid)
-	b.mu.Lock()
-	var states []*taskState
-	for k, ts := range b.tasks {
-		if k.task == want {
-			states = append(states, ts)
-		}
-	}
-	b.mu.Unlock()
+	states := b.statesOf(tid)
 	floor := b.seq.Load()
 	for _, ts := range states {
 		removed += ts.forgetContacts(topic, floor)

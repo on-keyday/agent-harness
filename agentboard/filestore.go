@@ -60,8 +60,9 @@ func storeFileName(topic string) string {
 
 // storeRecord is one line of a topic log. "hdr" opens the log; "msg" is a
 // published message; "retract" withdraws one; "shown" moves a task's delivery
-// mark; "floor" is written by a purge rewrite and carries the highest seq and
-// the last publish time the removed records held, so a purge lowers neither.
+// mark; "member" records a task joining (on) or leaving the topic; "floor" is
+// written by a purge rewrite and carries the highest seq and the last publish
+// time the removed records held, so a purge lowers neither.
 // Fields not used by a type are omitted.
 type storeRecord struct {
 	T     string `json:"t"`
@@ -87,6 +88,7 @@ type storeRecord struct {
 	ByTask string `json:"by_task,omitempty"`
 
 	Task string `json:"task,omitempty"`
+	On   bool   `json:"on,omitempty"`
 }
 
 type retentionFile struct {
@@ -291,6 +293,9 @@ func (s *FileStore) Truncate(topic string) error {
 	}
 	// The purge empties the topic now: its period counts from here.
 	out := append(headerLine(topic), floorLine(meta.maxSeq, time.Now())...)
+	for _, task := range meta.memberList() {
+		out = append(out, memberLine(task, true)...)
+	}
 	return writeFileAtomic(path, out)
 }
 
@@ -317,6 +322,17 @@ func (s *FileStore) SetShown(topic string, task protocol.TaskID, seq uint64) err
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.appendLocked(topic, storeRecord{T: "shown", Task: hex.EncodeToString(task.Id[:]), Seq: seq})
+}
+
+func (s *FileStore) SetMember(topic string, task protocol.TaskID, on bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.appendLocked(topic, storeRecord{T: "member", Task: hex.EncodeToString(task.Id[:]), On: on})
+}
+
+func memberLine(task protocol.TaskID, on bool) []byte {
+	raw, _ := json.Marshal(storeRecord{T: "member", Task: hex.EncodeToString(task.Id[:]), On: on})
+	return append(raw, '\n')
 }
 
 func (s *FileStore) Remove(topic string, seq uint64) (bool, error) {
@@ -449,7 +465,7 @@ func (s *FileStore) Load(ringN int) ([]StoredTopic, error) {
 			return nil, err
 		}
 		sort.Slice(msgs, func(i, j int) bool { return msgs[i].Seq < msgs[j].Seq })
-		st := StoredTopic{Name: name, Shown: meta.shown, MaxSeq: meta.maxSeq, LastPublishedAt: meta.lastAt}
+		st := StoredTopic{Name: name, Shown: meta.shown, Members: meta.memberList(), MaxSeq: meta.maxSeq, LastPublishedAt: meta.lastAt}
 		for _, m := range msgs {
 			if m.RetractedAt.IsZero() {
 				st.Ring = append(st.Ring, m)
@@ -513,8 +529,22 @@ type logMeta struct {
 	msgs     map[uint64]bool // seqs with a msg record
 	retracts map[uint64]metaRecord
 	shown    map[protocol.TaskID]uint64
+	members  map[protocol.TaskID]bool // the last member record per task
 	maxSeq   uint64
 	lastAt   time.Time
+}
+
+// memberList is the tasks whose last member record joined, sorted so a
+// rewrite is deterministic.
+func (m logMeta) memberList() []protocol.TaskID {
+	var out []protocol.TaskID
+	for task, on := range m.members {
+		if on {
+			out = append(out, task)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return bytes.Compare(out[i].Id[:], out[j].Id[:]) < 0 })
+	return out
 }
 
 // seqs is every message seq in the log, unordered.
@@ -537,6 +567,7 @@ type metaRecord struct {
 	By           uint8  `json:"by"`
 	ByTask       string `json:"by_task"`
 	Task         string `json:"task"`
+	On           bool   `json:"on"`
 }
 
 // flushed writes topic's buffered records out and returns its log path.
@@ -555,7 +586,7 @@ func (s *FileStore) flushed(topic string) (string, error) {
 // record — is skipped with a warning; the rest of the log still loads. A
 // missing file is an empty log.
 func scanMeta(path, topic string) (logMeta, error) {
-	m := logMeta{msgs: map[uint64]bool{}, retracts: map[uint64]metaRecord{}, shown: map[protocol.TaskID]uint64{}}
+	m := logMeta{msgs: map[uint64]bool{}, retracts: map[uint64]metaRecord{}, shown: map[protocol.TaskID]uint64{}, members: map[protocol.TaskID]bool{}}
 	f, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return m, nil
@@ -585,6 +616,8 @@ func scanMeta(path, topic string) (logMeta, error) {
 			m.retracts[rec.Seq] = rec
 		case "shown":
 			m.shown[taskFromHex(rec.Task)] = rec.Seq
+		case "member":
+			m.members[taskFromHex(rec.Task)] = rec.On
 		case "floor":
 			if at := time.UnixMilli(rec.AtMs); at.After(m.lastAt) {
 				m.lastAt = at

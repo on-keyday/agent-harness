@@ -24,6 +24,7 @@ type StoredTopic struct {
 	Ring      []RetainedMessage // the newest ringN live messages, ascending seq
 	Retracted []RetainedMessage // the newest ringN withdrawn messages, ascending seq
 	Shown     map[protocol.TaskID]uint64
+	Members   []protocol.TaskID // the tasks that joined it; the last record per task wins
 	// MaxSeq is the highest seq the log has ever held — messages, marks, and
 	// the floor a purge rewrite records — so a purge never lowers the seq a
 	// restart seeds from.
@@ -57,6 +58,9 @@ type Store interface {
 	// mirror — is dropped.
 	Remove(topic string, seq uint64) (bool, error)
 	SetShown(topic string, task protocol.TaskID, seq uint64) error
+	// SetMember records that task joined (on) or left topic. Truncate keeps
+	// the memberships: a purge empties the content, not the participants.
+	SetMember(topic string, task protocol.TaskID, on bool) error
 	// Page returns up to limit messages, live and withdrawn, with seq below
 	// beforeSeq (beforeSeq 0 = from the newest), newest first.
 	Page(topic string, beforeSeq uint64, limit int) ([]RetainedMessage, error)
