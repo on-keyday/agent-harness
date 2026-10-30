@@ -868,6 +868,14 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.boardModal.ApplySubscribers(msg.Topic, msg.Rows)
 		return a, nil
 
+	case BoardMembershipMsg:
+		if msg.Err != nil {
+			a.boardModal.SetStatus(msg.Err.Error())
+			return a, nil
+		}
+		a.boardModal.SetStatusAfterRefresh(msg.Label())
+		return a, DoBoardSubscribers(a.client, msg.Topic)
+
 	case BoardContactsClearMsg:
 		if msg.Err != nil {
 			a.boardModal.SetStatus("clear-contacts: " + msg.Err.Error())

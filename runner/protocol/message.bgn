@@ -1566,8 +1566,9 @@ format BoardRetainResponse:
     status :BoardRetainStatus
 
 # BoardMembershipRequest changes one task's standing on one topic (TaskControlKind
-# board_membership). subscribe / unsubscribe touch the subscription only;
-# join records a membership and subscribes; leave removes both.
+# board_membership). subscribe touches the subscription only; join records a
+# membership and subscribes; leave removes both, and so does unsubscribe on a
+# member.
 enum BoardMembershipOp:
     :u8
     subscribe = 0, "subscribe"

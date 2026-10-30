@@ -1403,10 +1403,10 @@ var Verbs = []VerbSpec{
 	membershipVerb("subscribe",
 		"subscribe <task> to <topic>, as its own agent subscribe would: only a topic the task could read itself; grants nothing (cap: board_member, scoped)"),
 	membershipVerb("unsubscribe",
-		"drop <task>'s subscription to <topic>; a membership stays (use leave) (cap: board_member, scoped)"),
+		"drop <task>'s subscription to <topic>; on a member it is leave (cap: board_member, scoped)"),
 	membershipVerb("join",
 		"make <task> a member of <topic>: subscribed, may publish there, and its posts are answered on the topic unless it names --reply-to.",
-		"not chat.*, not a tree.<X>.* outside the task's lineage; a task caller may join others only to a topic it may publish to (cap: board_member, scoped)"),
+		"not chat.*, not a tree.<X>.* outside the task's lineage; a task caller joins only OTHER tasks, to a topic it may publish to without a contact (cap: board_member, scoped)"),
 	membershipVerb("leave",
 		"end <task>'s membership of <topic> and its subscription (cap: board_member, scoped)"),
 	// --- board, thread-scoped ---
@@ -3363,7 +3363,9 @@ func membershipVerb(sub string, notes ...string) VerbSpec {
 			{Name: "topic", Type: ArgTopic, Field: "Topic"},
 		},
 		Examples: []string{"board " + sub + " <taskid32hex> sns.timeline"},
-		NoModalSurface: "not yet: the TUI keys and WebUI buttons are the next two changes of " +
-			"docs/superpowers/plans/2026-10-31-board-membership.md",
+		ModalSurfaces: []ModalSurface{
+			// S / J / U / L in the board modal's subscribers view.
+			{Surface: TUI, At: "tui/board.go:BoardModal"},
+		},
 	}
 }

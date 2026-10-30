@@ -298,6 +298,17 @@ func (a *App) inBoardModal(msg tea.KeyMsg) tea.Cmd {
 		}
 		return nil
 	}
+	if a.boardModal.EditingMember() {
+		if submit, op, prefix, topic := a.boardModal.HandleMemberKey(msg); submit {
+			task, why := a.resolveTaskIDPrefix(prefix)
+			if task == "" {
+				a.boardModal.SetStatus(op.String() + ": " + why)
+				return nil
+			}
+			return DoBoardMembership(a.client, task, topic, op)
+		}
+		return nil
+	}
 	if msg.Type == tea.KeyEsc {
 		// The chain view is list -> detail like the topic one, so Esc walks back
 		// one level rather than all the way out.
@@ -364,6 +375,22 @@ func (a *App) inBoardModal(msg tea.KeyMsg) tea.Cmd {
 		case modalKeys.BoardForgetContact:
 			if task, topic, ok := a.boardModal.SelectedContactTarget(); ok {
 				return DoBoardContactsClear(a.client, task, topic, a.boardModal.CurTopic())
+			}
+			return nil
+		case modalKeys.BoardSubscribeTask:
+			a.boardModal.BeginMemberEdit(protocol.BoardMembershipOp_Subscribe)
+			return nil
+		case modalKeys.BoardJoinTask:
+			a.boardModal.BeginMemberEdit(protocol.BoardMembershipOp_Join)
+			return nil
+		case modalKeys.BoardUnsubscribeTask:
+			if task, ok := a.boardModal.MembershipTarget(protocol.BoardMembershipOp_Unsubscribe); ok {
+				return DoBoardMembership(a.client, task, a.boardModal.CurTopic(), protocol.BoardMembershipOp_Unsubscribe)
+			}
+			return nil
+		case modalKeys.BoardLeaveTask:
+			if task, ok := a.boardModal.MembershipTarget(protocol.BoardMembershipOp_Leave); ok {
+				return DoBoardMembership(a.client, task, a.boardModal.CurTopic(), protocol.BoardMembershipOp_Leave)
 			}
 			return nil
 		}

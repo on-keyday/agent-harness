@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/on-keyday/agent-harness/cli"
 )
 
@@ -324,6 +325,8 @@ type BoardModal struct {
 	retain *boardRetainEdit
 	// opening is the open-a-topic-by-name editor, nil when none is.
 	opening *boardOpenEdit
+	// member is the task-id editor S / J open, nil when none is.
+	member *boardMemberEdit
 }
 
 // subItem is one selectable line of the subscribers view: a task line
@@ -932,11 +935,17 @@ func (m BoardModal) View() string {
 			if len(r.Patterns) > 0 {
 				parts := make([]string, 0, len(r.Patterns))
 				for _, p := range r.Patterns {
-					parts = append(parts, fmt.Sprintf("%s(shown=%d pending=%d)", p.Name, p.Shown, p.Pending))
+					parts = append(parts, fmt.Sprintf("%s(shown=%d pending=%d)", patternLabel(p), p.Shown, p.Pending))
 				}
 				pats = strings.Join(parts, ",")
 			}
-			lines = append(lines, fmt.Sprintf("%s%s  host=%s  agent=%s  topics=%s", mark(item), short, host, agentName, pats))
+			// The open topic's membership first: the topics list runs past a
+			// narrow box, and this is the one fact the view is opened for.
+			member := ""
+			if joinedOn(r, m.curTopic) {
+				member = "  joined"
+			}
+			lines = append(lines, fmt.Sprintf("%s%s%s  host=%s  agent=%s  topics=%s", mark(item), short, member, host, agentName, pats))
 			item++
 			// What the operator reads before granting board_peer, one route per
 			// line so each can be selected and forgotten. "-" is a
@@ -952,13 +961,21 @@ func (m BoardModal) View() string {
 		if len(m.subRows) == 0 {
 			lines = append(lines, "  (nobody subscribes — a publish here reaches no inbox)")
 		}
-		// Border, header, status and footer take 5 rows.
-		if room := m.height - 5; room > 0 && len(lines) > room {
+		header := HeaderStyle.Render(fmt.Sprintf("subscribers of %s (%d)", m.curTopic, len(m.subRows)))
+		// Wrapped to the box: four membership keys made it wider than a
+		// narrow terminal.
+		footer := FooterStyle.Width(m.content.Width).Render("↑/↓ select · " +
+			modalKeys.BoardSubscribeTask + "/" + modalKeys.BoardJoinTask + ": subscribe/join a task · " +
+			modalKeys.BoardUnsubscribeTask + "/" + modalKeys.BoardLeaveTask + ": unsubscribe/leave · " +
+			modalKeys.BoardForgetContact + ": forget contact (on a task line: all its contacts) · s: refresh · Esc: back")
+		if m.member != nil {
+			footer = m.memberEditView()
+		}
+		// Border, header and status take 4 rows; the footer what it wraps to.
+		if room := m.height - 4 - lipgloss.Height(footer); room > 0 && len(lines) > room {
 			start := min(max(cursorLine-room/2, 0), len(lines)-room)
 			lines = lines[start : start+room]
 		}
-		header := HeaderStyle.Render(fmt.Sprintf("subscribers of %s (%d)", m.curTopic, len(m.subRows)))
-		footer := FooterStyle.Render("↑/↓ select · " + modalKeys.BoardForgetContact + ": forget contact (on a task line: all its contacts)  s: refresh  Esc: back")
 		return box.Render(header + "\n" + strings.Join(lines, "\n") + statusLine + "\n" + footer)
 	case boardChainList:
 		var list strings.Builder

@@ -60,8 +60,15 @@ type boardCompose struct {
 // a destination the agent's answer would be refused (no_reply_route), which
 // reads from here as an agent that never answered. ctrl+r drops it for a note
 // that wants no answer on the board.
+//
+// On a topic with a member the answers go to the topic itself, where the
+// members read them; a member's own posts default the same way.
 func (m *BoardModal) BeginCompose() {
-	m.openCompose(cli.BoardSendParams{Topic: m.curTopic, ReplyTo: agentboard.OperatorTopic},
+	replyTo := agentboard.OperatorTopic
+	if hasMember(m.msgSubs, m.curTopic) {
+		replyTo = m.curTopic
+	}
+	m.openCompose(cli.BoardSendParams{Topic: m.curTopic, ReplyTo: replyTo},
 		"send to "+m.curTopic+" ▶ ")
 }
 
@@ -111,11 +118,7 @@ func (m *BoardModal) HandleComposeKey(k tea.KeyMsg) (send bool, p cli.BoardSendP
 		m.compose.params.NoRetireOnReply = !m.compose.params.NoRetireOnReply
 		return false, p, ""
 	case tea.KeyCtrlR:
-		if m.compose.params.ReplyTo == "" {
-			m.compose.params.ReplyTo = agentboard.OperatorTopic
-		} else {
-			m.compose.params.ReplyTo = ""
-		}
+		m.compose.params.ReplyTo = nextReplyTo(m.compose.params, m.msgSubs)
 		return false, p, ""
 	case tea.KeyEnter:
 		body = m.compose.input.Value()
