@@ -94,7 +94,7 @@ type AwaitProgressAction struct {
 	WatcherIDs []uint64
 }
 
-// BoardAction is built by: board clear-contacts, board purge, board purge-thread, board read, board retract, board retract-thread, board subscribers, board thread, board topics, board wake.
+// BoardAction is built by: board clear-contacts, board purge, board purge-thread, board read, board retain, board retract, board retract-thread, board subscribers, board thread, board topics, board wake.
 type BoardAction struct {
 	ActionMarker
 	// JSON Lines instead of text
@@ -103,8 +103,12 @@ type BoardAction struct {
 	// only messages replying to this seq
 	InReplyTo uint64
 	// print the body bytes unescaped even on a terminal
-	Raw   bool
-	Topic string
+	Raw bool
+	// page newest first, at most this many (max 65535); on a retained topic this reaches past the 64-messa…
+	Limit uint64
+	// with --limit: only messages with a seq below this one
+	Before uint64
+	Topic  string
 	// only the chain containing this seq; a seq outside the visible set is an error, not an empty result
 	Seq uint64
 	// keep chains involving ANY named task (repeatable, 32-hex id); a task matches what it sent and what l…
@@ -114,6 +118,10 @@ type BoardAction struct {
 	// print rows without bodies
 	HeadersOnly bool
 	Task        string
+	// how long to keep the topic after its last publish (a Go duration such as 72h), or "forever"
+	TTL string
+	// stop retaining: back to the default TTL, disk copy deleted
+	Clear bool
 }
 
 // BoardSendAction is built by: board send.
@@ -1959,6 +1967,8 @@ func init() {
 			a.InReplyTo = uint64Of(b.Flags["in-reply-to"])
 			a.JSON = b.Bool("json")
 			a.Raw = b.Bool("raw")
+			a.Limit = uint64Of(b.Flags["limit"])
+			a.Before = uint64Of(b.Flags["before"])
 			if len(b.Args) > 0 {
 				a.Topic = b.Args[0]
 			}
@@ -2007,6 +2017,16 @@ func init() {
 			a := BoardAction{}
 			a.Sub = "purge"
 			a.Seq = uint64Of(b.Flags["seq"])
+			if len(b.Args) > 0 {
+				a.Topic = b.Args[0]
+			}
+			return a, nil
+		},
+		"board retain\x00cli": func(b Bound) (Action, error) {
+			a := BoardAction{}
+			a.Sub = "retain"
+			a.TTL = b.Str("ttl")
+			a.Clear = b.Bool("clear")
 			if len(b.Args) > 0 {
 				a.Topic = b.Args[0]
 			}
@@ -3767,6 +3787,7 @@ const (
 	CmdBoardRetract           = "board retract"
 	CmdBoardClearContacts     = "board clear-contacts"
 	CmdBoardPurge             = "board purge"
+	CmdBoardRetain            = "board retain"
 	CmdBoardRetractThread     = "board retract-thread"
 	CmdBoardPurgeThread       = "board purge-thread"
 	CmdBoardSend              = "board send"
@@ -3881,6 +3902,7 @@ const (
 	SubRefresh         = "refresh"
 	SubRepo            = "repo"
 	SubResize          = "resize"
+	SubRetain          = "retain"
 	SubRetained        = "retained"
 	SubRetract         = "retract"
 	SubRetractThread   = "retract-thread"
@@ -4852,6 +4874,27 @@ func ParseCmdBoardPurge(sf Surface, args []string, ctx map[string]string) (Board
 	sp, ok := Lookup("board", "purge")
 	if !ok {
 		return zero, fmt.Errorf("board purge: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(BoardAction)
+	return a, nil
+}
+
+func ParseCmdBoardRetain(sf Surface, args []string, ctx map[string]string) (BoardAction, error) {
+	var zero BoardAction
+	sp, ok := Lookup("board", "retain")
+	if !ok {
+		return zero, fmt.Errorf("board retain: not in the verb table")
 	}
 	sp = sp.For(sf)
 	fs := sp.NewFlagSet(flag.ContinueOnError)
@@ -6556,6 +6599,8 @@ type CLIDispatch[R any] interface {
 	BoardClearContacts(BoardAction) R
 	// board purge
 	BoardPurge(BoardAction) R
+	// board retain
+	BoardRetain(BoardAction) R
 	// board retract-thread
 	BoardRetractThread(BoardAction) R
 	// board purge-thread
@@ -6927,6 +6972,12 @@ func DispatchCLI[R any](h CLIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.BoardPurge(a), true, nil
+	case CmdBoardRetain:
+		a, perr := ParseCmdBoardRetain(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.BoardRetain(a), true, nil
 	case CmdBoardRetractThread:
 		a, perr := ParseCmdBoardRetractThread(CLI, args, ctx)
 		if perr != nil {
@@ -7406,6 +7457,8 @@ func DispatchCLIAction[R any](h CLIDispatch[R], act Action) (r R, handled bool) 
 			return h.BoardClearContacts(a), true
 		case "purge":
 			return h.BoardPurge(a), true
+		case "retain":
+			return h.BoardRetain(a), true
 		case "retract-thread":
 			return h.BoardRetractThread(a), true
 		case "purge-thread":
@@ -7803,6 +7856,12 @@ func ParseCLICommand(tokens []string, ctx map[string]string) (act Action, handle
 			return a, true, nil
 		case CmdBoardPurge:
 			a, perr := ParseCmdBoardPurge(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdBoardRetain:
+			a, perr := ParseCmdBoardRetain(CLI, tokens[n:], ctx)
 			if perr != nil {
 				return nil, true, perr
 			}

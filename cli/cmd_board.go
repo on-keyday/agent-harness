@@ -157,10 +157,11 @@ func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.Boar
 			lastSeq   uint64
 			lastMs    uint64
 			published bool
+			retention *TopicRetention
 		}
 		byName := map[string]topicRow{}
 		for _, r := range rows {
-			byName[r.Name] = topicRow{r.Name, r.MsgCount, r.RetractedCount, r.LastSeq, r.LastPublishedAtMs, true}
+			byName[r.Name] = topicRow{r.Name, r.MsgCount, r.RetractedCount, r.LastSeq, r.LastPublishedAtMs, r.Retention == nil || r.LastSeq > 0 || r.RetractedCount > 0, r.Retention}
 		}
 		for pat := range subs {
 			if _, ok := byName[pat]; !ok {
@@ -188,6 +189,13 @@ func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.Boar
 				if subsOK {
 					rec["subs"] = subs[n]
 				}
+				// Present only on a retained topic: whether a topic is retained
+				// is the subject here, so absence is the answer, not elision.
+				if rt := r.retention; rt != nil {
+					rec["retain"] = rt.Label()
+					rec["retain_by"] = rt.SetByLabel()
+					rec["disk_bytes"] = rt.DiskBytes
+				}
 				if err := enc.Encode(rec); err != nil {
 					return err
 				}
@@ -200,8 +208,12 @@ func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.Boar
 			if subsOK {
 				subCol = fmt.Sprintf("  subs=%d", subs[n])
 			}
+			retainCol := ""
+			if rt := r.retention; rt != nil {
+				retainCol = fmt.Sprintf("  retain=%s by=%s disk=%d", rt.Label(), rt.SetByLabel(), rt.DiskBytes)
+			}
 			if !r.published {
-				fmt.Fprintf(out, "%s  msgs=0%s  (nothing published yet)\n", r.name, subCol)
+				fmt.Fprintf(out, "%s  msgs=0%s%s  (nothing published yet)\n", r.name, subCol, retainCol)
 				continue
 			}
 			// retracted= appears only when the topic holds withdrawn messages.
@@ -213,14 +225,17 @@ func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.Boar
 			if r.retracted > 0 {
 				retractedCol = fmt.Sprintf("  retracted=%d", r.retracted)
 			}
-			fmt.Fprintf(out, "%s  msgs=%d%s%s  last_seq=%d  last=%s\n",
-				r.name, r.msgs, retractedCol, subCol, r.lastSeq, boardMsToRFC3339(r.lastMs))
+			fmt.Fprintf(out, "%s  msgs=%d%s%s%s  last_seq=%d  last=%s\n",
+				r.name, r.msgs, retractedCol, subCol, retainCol, r.lastSeq, boardMsToRFC3339(r.lastMs))
 		}
 
 	case verb.SubRead:
 		inReplyTo, asJSON := &ba.InReplyTo, &ba.JSON
 		topic := ba.Topic
-		msgs, found, err := BoardRead(ctx, cid, topic)
+		if ba.Limit > 65535 {
+			return fmt.Errorf("board read: --limit %d is over 65535", ba.Limit)
+		}
+		msgs, found, err := BoardReadPage(ctx, cid, topic, ba.Before, uint16(ba.Limit))
 		if err != nil {
 			return err
 		}
@@ -379,6 +394,24 @@ func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.Boar
 			})
 		}
 		fmt.Fprintln(out, ClearContactsLabel(ba.Task, ba.Topic, removed, found))
+
+	case verb.SubRetain:
+		var ttl time.Duration
+		var forever bool
+		if !ba.Clear {
+			var err error
+			if ttl, forever, err = ParseRetainTTL(ba.TTL); err != nil {
+				return fmt.Errorf("board retain: %w", err)
+			}
+		}
+		if err := BoardRetain(ctx, cid, ba.Topic, ttl, forever, ba.Clear); err != nil {
+			return err
+		}
+		retain := "cleared"
+		if !ba.Clear {
+			retain = TopicRetention{TTL: ttl, Forever: forever}.Label()
+		}
+		fmt.Fprintf(out, "{\"status\":\"ok\",\"topic\":%q,\"retain\":%q}\n", ba.Topic, retain)
 
 	case verb.SubPurge:
 		// Permuted, and load-bearing rather than convenient: with stdlib

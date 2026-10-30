@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
@@ -22,6 +23,46 @@ type BoardTopicRow struct {
 	// operator audit. Kept out of MsgCount, which answers "how much would a
 	// subscriber receive".
 	RetractedCount int
+	// Retention is set only on a retained topic (board retain).
+	Retention *TopicRetention
+}
+
+// TopicRetention is a retained topic's setting as board topics reports it.
+type TopicRetention struct {
+	TTL     time.Duration // zero when Forever
+	Forever bool
+	// SetByHex is the task that set it; empty means the operator.
+	SetByHex  string
+	DiskBytes uint64
+}
+
+// Label renders the period the way `board retain --ttl` takes it.
+func (r TopicRetention) Label() string {
+	if r.Forever {
+		return "forever"
+	}
+	return r.TTL.String()
+}
+
+// ParseRetainTTL reads a `board retain --ttl` value: "forever", or a positive
+// Go duration. One parser for every surface that takes it.
+func ParseRetainTTL(s string) (ttl time.Duration, forever bool, err error) {
+	if s == "forever" {
+		return 0, true, nil
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d <= 0 {
+		return 0, false, fmt.Errorf("--ttl %q: want a positive duration such as 72h, or forever", s)
+	}
+	return d, false, nil
+}
+
+// SetByLabel is the setter's short id, or "operator".
+func (r TopicRetention) SetByLabel() string {
+	if r.SetByHex == "" {
+		return "operator"
+	}
+	return r.SetByHex[:8]
 }
 
 // BoardMessage holds one retained message returned by BoardRead.
@@ -233,6 +274,17 @@ func (c *Client) BoardTopics(ctx context.Context) ([]BoardTopicRow, error) {
 	if err := ReadResponseBody(ctx, c.Transport(), bt.StreamId, &body); err != nil {
 		return nil, fmt.Errorf("BoardTopics: %w", err)
 	}
+	retained := map[string]*TopicRetention{}
+	for _, r := range body.Retention {
+		tr := &TopicRetention{Forever: r.Forever(), DiskBytes: r.DiskBytes}
+		if !tr.Forever {
+			tr.TTL = time.Duration(r.TtlMs) * time.Millisecond
+		}
+		if r.SetBy.Id != ([16]byte{}) {
+			tr.SetByHex = hex.EncodeToString(r.SetBy.Id[:])
+		}
+		retained[string(r.Name)] = tr
+	}
 	out := make([]BoardTopicRow, 0, len(body.Topics))
 	for _, r := range body.Topics {
 		out = append(out, BoardTopicRow{
@@ -241,16 +293,51 @@ func (c *Client) BoardTopics(ctx context.Context) ([]BoardTopicRow, error) {
 			LastPublishedAtMs: r.LastPublishedAtUnixMs,
 			MsgCount:          int(r.MsgCount),
 			RetractedCount:    int(r.RetractedCount),
+			Retention:         retained[string(r.Name)],
 		})
 	}
 	return out, nil
 }
 
+// BoardRetain sets topic's retention (forever, or ttl after its last
+// publish), or clears it. Requires Capability_BoardPersist; a task caller may
+// retain only a topic it may publish to. A non-ok status is returned as an
+// error naming it.
+func (c *Client) BoardRetain(ctx context.Context, topic string, ttl time.Duration, forever, clear bool) error {
+	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_BoardRetain}
+	rr := protocol.BoardRetainRequest{TtlMs: uint64(ttl.Milliseconds())}
+	if !rr.SetTopic([]byte(topic)) {
+		return errors.New("board retain: topic too long")
+	}
+	rr.SetForever(forever)
+	rr.SetClear(clear)
+	req.SetBoardRetain(rr)
+	resp, err := c.RoundTripTaskControl(ctx, req)
+	if err != nil {
+		return err
+	}
+	br := resp.BoardRetain()
+	if br == nil || resp.Kind != protocol.TaskControlKind_BoardRetain {
+		return fmt.Errorf("BoardRetain: unexpected response kind=%v", resp.Kind)
+	}
+	if br.Status != protocol.BoardRetainStatus_Ok {
+		return fmt.Errorf("board retain %s: %s", topic, br.Status)
+	}
+	return nil
+}
+
 // BoardRead returns all retained messages for the named topic, bodies
 // included. bool=false (not found) when the topic does not exist.
 func (c *Client) BoardRead(ctx context.Context, topic string) ([]BoardMessage, bool, error) {
+	return c.BoardReadPage(ctx, topic, 0, 0)
+}
+
+// BoardReadPage is BoardRead for one page: up to limit messages with seq
+// below beforeSeq (0 = from the newest), newest first. On a retained topic it
+// reaches past the ring into the disk log. limit 0 is BoardRead.
+func (c *Client) BoardReadPage(ctx context.Context, topic string, beforeSeq uint64, limit uint16) ([]BoardMessage, bool, error) {
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_BoardRead}
-	rr := protocol.BoardReadRequest{}
+	rr := protocol.BoardReadRequest{BeforeSeq: beforeSeq, Limit: limit}
 	rr.SetTopic([]byte(topic))
 	req.SetBoardRead(rr)
 
@@ -420,6 +507,26 @@ func BoardRead(ctx context.Context, peerCID objproto.ConnectionID, topic string)
 	}
 	defer c.Close()
 	return c.BoardRead(ctx, topic)
+}
+
+// BoardReadPage is a package-level fresh-dial wrapper for (*Client).BoardReadPage.
+func BoardReadPage(ctx context.Context, peerCID objproto.ConnectionID, topic string, beforeSeq uint64, limit uint16) ([]BoardMessage, bool, error) {
+	c, err := Dial(ctx, peerCID, protocol.ClientKind_Cli)
+	if err != nil {
+		return nil, false, err
+	}
+	defer c.Close()
+	return c.BoardReadPage(ctx, topic, beforeSeq, limit)
+}
+
+// BoardRetain is a package-level fresh-dial wrapper for (*Client).BoardRetain.
+func BoardRetain(ctx context.Context, peerCID objproto.ConnectionID, topic string, ttl time.Duration, forever, clear bool) error {
+	c, err := Dial(ctx, peerCID, protocol.ClientKind_Cli)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	return c.BoardRetain(ctx, topic, ttl, forever, clear)
 }
 
 // BoardSubscribers is a package-level fresh-dial wrapper for

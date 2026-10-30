@@ -1229,8 +1229,13 @@ var Verbs = []VerbSpec{
 			{Name: "json", Type: FlagBool, Default: false, Field: "JSON", Help: "JSON Lines instead of text"},
 			{Name: "raw", Type: FlagBool, Default: false, Field: "Raw",
 				Help: "print the body bytes unescaped even on a terminal"},
+			{Name: "limit", Type: FlagUint64, Default: uint64(0), Field: "Limit",
+				Help: "page newest first, at most this many (max 65535); on a retained topic this reaches past the 64-message ring"},
+			{Name: "before", Type: FlagUint64, Default: uint64(0), Field: "Before",
+				Help: "with --limit: only messages with a seq below this one"},
 		},
-		Examples: []string{"board read chat.abcd1234", "board read chat.abcd1234 --json"},
+		Requires: []Requirement{{Flags: []string{"before"}, Needs: "limit", Reason: "--before pages, and a page has a size"}},
+		Examples: []string{"board read chat.abcd1234", "board read chat.abcd1234 --json", "board read tree.<task-id>.design --limit 100 --before 4242"},
 	},
 	{
 		Path: []string{"board", "thread"},
@@ -1360,6 +1365,32 @@ var Verbs = []VerbSpec{
 				Help: "drop one message by seq; omitted drops the whole topic ring"},
 		},
 		Examples: []string{"board purge chat.abcd1234", "board purge chat.abcd1234 --seq 42"},
+	},
+	{
+		Path: []string{"board", "retain"},
+		ModalSurfaces: []ModalSurface{
+			// k on a topic inside the board modal.
+			{Surface: TUI, At: "tui/board.go:BoardModal"},
+		},
+		Notes: []string{
+			"keep <topic> past the board TTL and a server restart, on disk: --ttl <duration> counts from its last publish, --ttl forever never expires;",
+			"--clear returns it to the default TTL and deletes the disk copy. chat.* topics cannot be retained.",
+			"cap: board_persist; a task may retain only a topic it may publish to. board topics shows retain= by= disk=",
+		},
+		CmdlineSurfaces: CLI,
+		Action:          "BoardAction",
+		Const:           map[string]string{"Sub": "retain"},
+		Args:            []Arg{{Name: "topic", Type: ArgTopic, Field: "Topic"}},
+		AtLeastOne: []Rule{{Flags: []string{"ttl", "clear"},
+			Reason: "say how long to keep it, or --clear to stop keeping it"}},
+		Exclusive: []Rule{{Flags: []string{"ttl", "clear"}}},
+		Flags: []Flag{
+			{Name: "ttl", Type: FlagString, Default: "", Field: "TTL",
+				Help: `how long to keep the topic after its last publish (a Go duration such as 72h), or "forever"`},
+			{Name: "clear", Type: FlagBool, Default: false, Field: "Clear",
+				Help: "stop retaining: back to the default TTL, disk copy deleted"},
+		},
+		Examples: []string{"board retain tree.<task-id>.design --ttl 168h", "board retain sns.timeline --ttl forever", "board retain tree.<task-id>.design --clear"},
 	},
 	// --- board, thread-scoped ---
 	//

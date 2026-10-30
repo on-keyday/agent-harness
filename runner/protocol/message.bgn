@@ -1531,12 +1531,12 @@ format BoardRetainRequest:
 
 enum BoardRetainStatus:
     :u8
-    ok = 0
-    not_retainable = 1   # empty name or a chat.* topic: direct messages stay temporary
-    not_publishable = 2  # a task caller that may not publish to the topic
-    bad_request = 3      # neither clear, forever nor a positive ttl_ms
-    store_error = 4      # the server could not write the store; see its log
-    too_many_topics = 5  # a new topic would exceed max-topics and nothing can be evicted
+    ok = 0, "ok"
+    not_retainable = 1, "not_retainable"    # empty name or a chat.* topic: direct messages stay temporary
+    not_publishable = 2, "not_publishable"  # a task caller that may not publish to the topic
+    bad_request = 3, "bad_request"          # neither clear, forever nor a positive ttl_ms
+    store_error = 4, "store_error"          # the server could not write the store; see its log
+    too_many_topics = 5, "too_many_topics"  # a new topic would exceed max-topics and nothing can be evicted
 
 format BoardRetainResponse:
     status :BoardRetainStatus
