@@ -1245,7 +1245,7 @@ var Verbs = []VerbSpec{
 			"shown at root, never hidden. Indent marks a FORK, not a reply: a message answered",
 			"once keeps its parent's depth, and re=<seq> names the parent on every row.",
 			"Each topic holds at most the last 64 messages, kept until 30 minutes after that",
-			"topic's last publish.",
+			"topic's last publish (longer when retained: board retain).",
 		},
 		// Cmdline: CLI only, matching every other `board` sub-verb — neither the
 		// TUI nor the WebUI has a `board` verb family to type into at all.
@@ -3114,8 +3114,9 @@ var Verbs = []VerbSpec{
 		Notes: []string{
 			"print the calling task's side of the reply chain, across its subscribed topics (no cap).",
 			"Only what this task can see: a reply whose parent sat on a peer's topic renders as an",
-			"ORPHAN fragment, which is the honest answer, not a viewer bug. A topic dies with its",
-			"last subscriber task and holds at most the last 64 messages.",
+			"ORPHAN fragment, which is the honest answer, not a viewer bug. Each topic holds at most",
+			"the last 64 messages, kept until 30 minutes after its last publish (longer when retained:",
+			"board retain); one left empty goes when its last subscriber task finishes.",
 		},
 		Action: "AgentAction",
 		Const:  map[string]string{"Sub": "thread"},
