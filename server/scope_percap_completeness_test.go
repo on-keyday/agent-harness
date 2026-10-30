@@ -102,6 +102,10 @@ var capTargetClasses = map[protocol.Capability]capTargetClass{
 		kind:   capNoTargetResolution,
 		reason: "runner enroll / keys / unenroll name a KEY and the runners on it, which the task scope does not contain",
 	},
+	protocol.Capability_BoardPersist: {
+		kind:   capNoTargetResolution,
+		reason: "board retain names a TOPIC, which the task hierarchy does not contain; a task caller is bounded by the board reach check instead",
+	},
 	protocol.Capability_BoardObserve: {
 		kind: capNoTargetResolution,
 		reason: "the agentboard is keyed by topic, which the task hierarchy does not " +

@@ -3943,17 +3943,28 @@ enum Capability:
     # and registered runners' network reach, and a dialed runner still has to
     # pass the handshake. Default-off, appended.
     runner_enroll  = 0x800000, "runner_enroll"
+    # board_persist authorizes `board retain`: setting an agentboard topic's
+    # retention period, which keeps it past the TTL and a server restart on
+    # disk (forever included), and clearing it. A task holding it may do so
+    # only on topics it may publish to (the board reach check); chat.<id>
+    # topics are never retainable. Not purge: retaining consumes disk, while
+    # purge destroys messages, and handing an agent the first must not hand it
+    # the second. Names topics, not tasks, so no scope bounds it.
+    # Default-off, appended. See
+    # docs/superpowers/specs/2026-10-30-agentboard-retention-design.md
+    board_persist  = 0x1000000, "board_persist"
     # `all` is a LITERAL, not "every defined bit", so it widens by hand — the
     # same edit exec_view / exec_cowrite / exec_resize each needed. The WAL
     # persists the NUMBER, so a task already granted `all` holds 0xffff and
     # does NOT gain forward_tap until it is re-granted (nor, at 0x3fffff,
-    # forward_link; nor, at 0x7fffff, runner_enroll). That is the safe
+    # forward_link; nor, at 0x7fffff, runner_enroll; nor, at 0xffffff,
+    # board_persist). That is the safe
     # direction and needs no migration.
     #
     # Widening it is REQUIRED, not stylistic: callerCaps hands operator
     # connections Capability_All, so a literal left at 0xffff would deny the
     # operator its own feature.
-    all            = 0xffffff, "all"
+    all            = 0x1ffffff, "all"
 
 # ScopeBase is the base target set a TaskScope starts from, before its explicit
 # id list is unioned in. Self joins that union unless exclude_self removes it,

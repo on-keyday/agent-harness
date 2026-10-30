@@ -3573,3 +3573,16 @@ done:    24 (per path: proxy mode skips defaultAllow, ip mode skips the GitHub
          S6 (README, runner-up.md, probe.sh)
 n/a:     1–23, 25–30, 32, 34–36, 38, 39, S1, S2, S3, S5
 missed:  —
+
+### 2026-10-30 (pre-landing) — capability `board_persist`
+
+done:    15 (`cli/verb/caps.go`: ordering list, `CapDescription`,
+         `capAuditTable` TierMid/ScopeNone — the TUI picker and WebUI chips
+         enumerate `GrantableCaps`, pinned by `TestGrantableCapsCoversEveryBitOfAll`),
+         28 (WAL keeps the stored number: an old `all` replays without the
+         bit — `TestWALReplay_OldAllMaskLacksBoardPersist`), 35 (README
+         capability enumeration), 37 (spec §3.6)
+n/a:     1–14, 16–27, 29–34, 36, 38, 39 (a bit, not a verb or a field; the
+         verb that uses it is walked with Task 5–7 of the retention plan),
+         S1–S6
+missed:  —

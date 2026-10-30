@@ -63,6 +63,9 @@ func GrantableCaps() []protocol.Capability {
 		// board_peer last among the board bits: it widens where an agent may
 		// publish, where board_send changes whose name it publishes in.
 		protocol.Capability_BoardPeer,
+		// board_persist after the publish bits: it changes how long a topic
+		// is kept, not who may read or write it.
+		protocol.Capability_BoardPersist,
 		protocol.Capability_All,
 	}
 }
@@ -145,6 +148,9 @@ func CapDescription(c protocol.Capability) string {
 		return "publish beyond the task's base set, within the bit's scope: the chat.<id> of tasks the scope covers, " +
 			"and free-form topics when the scope is global (--scope-for board_peer=ids:<task> for one target); " +
 			"NOT required for its own lineage, chat.operator, or replying to a message addressed to it (board subscribers shows each task's contacts); never opens a tree.<id> it is not in"
+	case protocol.Capability_BoardPersist:
+		return "keep an agentboard topic past its TTL and a server restart (board retain --ttl <d>|forever, --clear), " +
+			"on topics the task may publish to; never a chat.<id> topic. NOT purge, and NOT implied by it"
 	case protocol.Capability_All:
 		return "full capability set (operator-equivalent)"
 	default:
@@ -421,6 +427,7 @@ var capAuditTable = map[protocol.Capability]capAuditEntry{
 	protocol.Capability_Cancel:        {tier: TierMid},
 	protocol.Capability_BoardPeer:     {tier: TierMid},
 	protocol.Capability_BoardObserve:  {tier: TierMid, scope: ScopeNone},
+	protocol.Capability_BoardPersist:  {tier: TierMid, scope: ScopeNone},
 	protocol.Capability_ResumeExact:   {tier: TierMid, impliedBy: []protocol.Capability{protocol.Capability_Resume}},
 	protocol.Capability_ExecView:      {tier: TierWeak, impliedBy: []protocol.Capability{protocol.Capability_ExecCowrite, protocol.Capability_ExecControl}},
 	protocol.Capability_ExecResize:    {tier: TierWeak},

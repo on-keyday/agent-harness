@@ -324,3 +324,22 @@ func TestScopeWALRoundTripCarriesEveryAxis(t *testing.T) {
 		t.Errorf("override lost: %+v", got.Overrides)
 	}
 }
+
+// A bit appended to the Capability enum widens `all`, but a task recorded
+// before the bit existed was granted the old `all` mask, and replay keeps the
+// number it stored: the appended bit changes no existing grant.
+func TestWALReplay_OldAllMaskLacksBoardPersist(t *testing.T) {
+	s := NewTaskStore()
+	id := "0123456789abcdef0123456789abcdef"
+	s.ReplayEvents([]WALEvent{{Type: "task_created", TaskID: id, Capabilities: 0xffffff, Ts: 1}})
+	e, ok := s.Get(id)
+	if !ok {
+		t.Fatal("replayed task missing")
+	}
+	if e.Capabilities&protocol.Capability_BoardPersist != 0 {
+		t.Fatalf("caps %#x gained board_persist on replay", uint32(e.Capabilities))
+	}
+	if e.Capabilities&protocol.Capability_RunnerEnroll == 0 {
+		t.Fatalf("caps %#x lost runner_enroll, which the old all mask held", uint32(e.Capabilities))
+	}
+}
