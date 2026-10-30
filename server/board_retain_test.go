@@ -209,3 +209,21 @@ func TestBoardRead_PageFailureIsNotEmpty(t *testing.T) {
 		t.Fatalf("status %v, want store_error", st)
 	}
 }
+
+// A topic retained before anything was published has no last-publish time,
+// and board topics must say 0 — not the zero time's negative UnixMilli cast
+// to u64, which the TUI drew as year 1 and the WebUI cannot format at all.
+func TestBoardTopics_RetainedEmptyTopicHasNoPublishTime(t *testing.T) {
+	h, conn, _ := retainHandler(t, nil)
+	_ = retain(t, h, conn, "never.published", 0, true, false)
+	body := topicsBody(t, h, conn)
+	for _, r := range body.Topics {
+		if string(r.Name) == "never.published" {
+			if r.LastPublishedAtUnixMs != 0 {
+				t.Fatalf("last_published_at_unix_ms = %d, want 0", r.LastPublishedAtUnixMs)
+			}
+			return
+		}
+	}
+	t.Fatal("retained empty topic not listed")
+}

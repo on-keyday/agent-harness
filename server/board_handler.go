@@ -19,9 +19,11 @@ func (h *TaskHandler) handleBoardTopics(conn ConnHandle, requestID uint32) {
 	var rows []protocol.BoardTopicRow
 	var retained []protocol.BoardTopicRetention
 	for _, r := range h.Board.ListTopics() {
-		row := protocol.BoardTopicRow{
-			LastSeq:               r.LastSeq,
-			LastPublishedAtUnixMs: uint64(r.LastPublishedAt.UnixMilli()),
+		row := protocol.BoardTopicRow{LastSeq: r.LastSeq}
+		// Zero for a topic nothing was published to — one board retain
+		// created. The zero time's UnixMilli is negative and would wrap.
+		if !r.LastPublishedAt.IsZero() {
+			row.LastPublishedAtUnixMs = uint64(r.LastPublishedAt.UnixMilli())
 		}
 		row.SetName([]byte(r.Name))
 		if r.MsgCount > 65535 {
