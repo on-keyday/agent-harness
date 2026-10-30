@@ -67,6 +67,8 @@ type AgentSendAction struct {
 	NoRetireOnReply bool
 	// open no reply route: the recipient gains no contact from this message (for a tool that waits for no …
 	NoContact bool
+	// do not deliver this message back to yourself: no wake, no inbox row (for a topic you both send to an…
+	ExcludeSelf bool
 	// the message body is free-form; --data or stdin are the alternatives
 	Positional string
 	Kind       string
@@ -131,6 +133,8 @@ type BoardSendAction struct {
 	NoRetireOnReply bool
 	// retain without waking subscribers; see board wake
 	NoWake bool
+	// do not deliver this message back to the caller's own task
+	ExcludeSelf bool
 	// the message body is free-form; --data or stdin are the alternatives
 	Positional string
 }
@@ -2035,6 +2039,7 @@ func init() {
 			a.ReplyTo = b.Str("reply-to")
 			a.NoRetireOnReply = b.Bool("no-retire-on-reply")
 			a.NoWake = b.Bool("no-wake")
+			a.ExcludeSelf = b.Bool("exclude-self")
 			a.Positional = b.Trail
 			return a, nil
 		},
@@ -2441,6 +2446,7 @@ func init() {
 			a.InReplyTo = uint64Of(b.Flags["in-reply-to"])
 			a.NoRetireOnReply = b.Bool("no-retire-on-reply")
 			a.NoContact = b.Bool("no-contact")
+			a.ExcludeSelf = b.Bool("exclude-self")
 			a.Positional = b.Trail
 			return a, nil
 		},

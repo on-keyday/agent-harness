@@ -486,7 +486,9 @@ harness-cli agent send --topic T --data 'hello'
 # ok` with `delivered_to: 0` means the topic exists but nobody is listening —
 # almost always a typo'd or stale chat.<short-id>. The message still lands in
 # the retained ring, so nothing else in the response tells you. It counts you
-# too when you publish to a topic you subscribe to, so a self-ping reads 1.
+# too when you publish to a topic you subscribe to, so a self-ping reads 1 —
+# unless you sent with --exclude-self (see "Only subscribe to topics you
+# receive on").
 # The one topic where 0 is always correct is chat.operator (see Subscriptions).
 #
 # READ bytes and source too: delivered_to says the message reached someone,
@@ -1006,6 +1008,12 @@ publisher, so a message you send to a topic you subscribe to comes back as a
 `<harness:agentboard-wake>` turn. Sending to your **own** `chat.<short-id>` is
 therefore a working self-ping — deliberate when you want one, an echo loop
 when you don't.
+
+On a topic you genuinely both send to and read — a group channel such as a
+`tree.<id>.<suffix>` team topic — send with `--exclude-self`. Your own message
+then does not wake you, does not appear in your inbox or hook, and is not
+counted in `delivered_to`; everyone else subscribed gets it as usual, and
+`agent read <seq>` still shows it to you.
 
 Typical per-agent setup:
 

@@ -310,9 +310,15 @@ func (b *Board) Send(topicName string, payload []byte, fromRid protocol.RunnerID
 	}
 	targets := make([]*taskState, 0)
 	for _, ts := range b.tasks {
-		if ts.matches(topicName) {
-			targets = append(targets, ts)
+		if !ts.matches(topicName) {
+			continue
 		}
+		if cfg.excludeSelf && fromTid != (protocol.TaskID{}) {
+			if _, tid, _, _ := ts.identity(); tid == fromTid {
+				continue
+			}
+		}
+		targets = append(targets, ts)
 	}
 	b.mu.Unlock()
 	targets = b.readableTargets(targets, topicName)
@@ -397,13 +403,18 @@ func (b *Board) Inbox(c *ConnState, since uint64) ([]RetainedMessage, uint64) {
 	}
 	b.mu.Unlock()
 
+	_, self, _, _ := c.task.identity()
 	max := since
+	kept := all[:0]
 	for _, m := range all {
 		if m.Seq > max {
 			max = m.Seq
 		}
+		if !m.ownExcluded(self) {
+			kept = append(kept, m)
+		}
 	}
-	return all, max
+	return kept, max
 }
 
 // InboxAdvance returns the retained messages on this task's subscribed topics
@@ -607,6 +618,15 @@ type sendConfig struct {
 	senderKind      protocol.SenderKind
 	noWake          bool
 	noContact       bool
+	excludeSelf     bool
+}
+
+// WithExcludeSelf keeps the message from its own publisher: the publisher's
+// task is not woken, not counted in deliveredTo, and gets no inbox or hook row
+// for it. The default (without it) delivers to the publisher like any
+// subscriber, which is what makes a send to one's own chat.<id> a self-ping.
+func WithExcludeSelf() SendOption {
+	return func(c *sendConfig) { c.excludeSelf = true }
 }
 
 // NoRetireOnReply marks the message as one that must survive being answered:

@@ -1453,6 +1453,7 @@ var Verbs = []VerbSpec{
 			"publish in the OPERATOR's name: the message is stamped sender=operator (cap: board_send).",
 			"--reply-to chat.operator lets the recipient answer with --in-reply-to alone; without a reply destination its reply is refused (no_reply_route).",
 			"--no-wake retains the message without waking anyone; `board wake <topic>` wakes them later.",
+			"--exclude-self keeps the message from the caller's own principal task; an operator with none has nothing to exclude.",
 			"The body is the trailing words, or --data STRING, or --data - to read stdin.",
 		},
 		CmdlineSurfaces: CLI,
@@ -1478,6 +1479,8 @@ var Verbs = []VerbSpec{
 				Help: "keep this message on the board even after its recipient replies"},
 			{Name: "no-wake", Type: FlagBool, Default: false, Field: "NoWake",
 				Help: "retain without waking subscribers; see board wake"},
+			{Name: "exclude-self", Type: FlagBool, Default: false, Field: "ExcludeSelf",
+				Help: "do not deliver this message back to the caller's own task"},
 		},
 		Examples: []string{"board send --topic chat.abcd1234 --reply-to chat.operator please look at the failing test"},
 	},
@@ -1783,6 +1786,7 @@ var Verbs = []VerbSpec{
 			"delivered_to counts subscribers. On chat.operator it is always 0 and that is the reply arriving: nothing can subscribe there, and the operator reads it on the board.",
 			"--reply-to R routes replies to THIS message to R instead of your own chat.<short-id>; the peer answers with --in-reply-to alone.",
 			"--no-contact adds neither route to the recipient's contacts. A reply is not refused: it still passes wherever the recipient's reach allows it without the contact.",
+			"--exclude-self keeps the message from yourself when you subscribe to the topic: no wake, no inbox row, not counted in delivered_to. `agent read <seq>` still shows it.",
 		},
 		CmdlineSurfaces: CLI,
 		Action:          "AgentSendAction",
@@ -3242,6 +3246,8 @@ func agentSendFlags(withTimeout bool) []Flag {
 		// open a route for (reach spec D17).
 		Flag{Name: "no-contact", Type: FlagBool, Default: false, Field: "NoContact",
 			Help: "open no reply route: the recipient gains no contact from this message (for a tool that waits for no answer)"},
+		Flag{Name: "exclude-self", Type: FlagBool, Default: false, Field: "ExcludeSelf",
+			Help: "do not deliver this message back to yourself: no wake, no inbox row (for a topic you both send to and read)"},
 	)
 }
 

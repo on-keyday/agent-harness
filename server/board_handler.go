@@ -230,7 +230,7 @@ func (h *TaskHandler) handleBoardPurge(conn ConnHandle, requestID uint32, topic 
 // from_task so a task granted board_send stays attributable. There is no
 // reply-retire: that rule fires only when the parent sits on the replier's own
 // chat.<short-id>, and the operator has none.
-func (h *TaskHandler) boardPublish(by protocol.TaskID, topic string, payload []byte, inReplyTo uint64, replyTo string, noRetire, noWake bool) (uint64, int, protocol.SendStatus) {
+func (h *TaskHandler) boardPublish(by protocol.TaskID, topic string, payload []byte, inReplyTo uint64, replyTo string, noRetire, noWake, excludeSelf bool) (uint64, int, protocol.SendStatus) {
 	dest, st := resolveReplyTarget(h.Board, topic, inReplyTo)
 	if st != protocol.SendStatus_Ok {
 		return 0, 0, st
@@ -244,6 +244,9 @@ func (h *TaskHandler) boardPublish(by protocol.TaskID, topic string, payload []b
 	}
 	if noWake {
 		opts = append(opts, agentboard.WithNoWake())
+	}
+	if excludeSelf {
+		opts = append(opts, agentboard.WithExcludeSelf())
 	}
 	// A zero RunnerID, as fireIdleBoard passes for a publish no runner made.
 	// RunnerID is 16 opaque bytes, so zero encodes.
@@ -286,6 +289,7 @@ func (h *TaskHandler) handleBoardSend(conn ConnHandle, requestID uint32, r *prot
 	replyTo := string(r.ReplyToTopic)
 	noRetire := r.NoRetireOnReply()
 	noWake := r.NoWake()
+	excludeSelf := r.ExcludeSelf()
 	streamID := r.PayloadStreamId
 	go func() {
 		payload, err := readAgentPayloadStream(conn, streamID, h.Board.MaxPayload())
@@ -298,7 +302,7 @@ func (h *TaskHandler) handleBoardSend(conn ConnHandle, requestID uint32, r *prot
 			reply(status, 0, 0)
 			return
 		}
-		seq, delivered, st := h.boardPublish(by, topic, payload, inReplyTo, replyTo, noRetire, noWake)
+		seq, delivered, st := h.boardPublish(by, topic, payload, inReplyTo, replyTo, noRetire, noWake, excludeSelf)
 		reply(st, seq, delivered)
 	}()
 }

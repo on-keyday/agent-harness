@@ -78,6 +78,9 @@ func SendWith(ctx context.Context, a verb.AgentSendAction, stdin io.Reader, stdo
 		if a.NoContact {
 			req.SetNoContact(true)
 		}
+		if a.ExcludeSelf {
+			req.SetExcludeSelf(true)
+		}
 		// An empty topic is the wire's "derive the destination from the
 		// parent"; the schema assertion guarantees it can only be empty on a
 		// reply.

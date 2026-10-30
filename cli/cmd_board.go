@@ -621,7 +621,7 @@ func RunBoardSend(ctx context.Context, cid objproto.ConnectionID, a verb.BoardSe
 	}
 	res, err := BoardSend(ctx, cid, BoardSendParams{
 		Topic: a.Topic, InReplyTo: a.InReplyTo, ReplyTo: a.ReplyTo,
-		NoRetireOnReply: a.NoRetireOnReply, NoWake: a.NoWake,
+		NoRetireOnReply: a.NoRetireOnReply, NoWake: a.NoWake, ExcludeSelf: a.ExcludeSelf,
 	}, payload)
 	if err != nil {
 		return err

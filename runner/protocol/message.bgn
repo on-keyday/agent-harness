@@ -1596,7 +1596,14 @@ format AgentSendRequest:
     # Negative for the reason no_retire_on_reply is. A server built before it
     # reads the bit as reserved and ignores it, so the contact is made anyway.
     no_contact :u1
-    reserved :u6
+    # exclude_self keeps the message from its own publisher: the publishing
+    # task is not woken, not counted in delivered_to, and gets no inbox or hook
+    # row for it. It changes only what the SENDER receives, so it does not
+    # reopen the reason no_wake is kept off this face (BoardSendRequest). For a
+    # topic the sender both publishes to and reads. A server built before it
+    # reads the bit as reserved and delivers to the sender as before.
+    exclude_self :u1
+    reserved :u5
     # reply_to_topic is where a reply to THIS message is routed. Empty = the
     # sender's own chat.<short-id>, which is what every message did before this
     # field existed and what one still does when it says nothing.
@@ -1669,7 +1676,10 @@ format BoardSendRequest:
     # subscriber. The message reaches them on their next inbox read (the
     # UserPromptSubmit hook), or when a board_wake on the topic wakes them.
     no_wake :u1
-    reserved :u6
+    # See AgentSendRequest.exclude_self. Excludes the caller's principal task;
+    # an operator with none has nothing to exclude.
+    exclude_self :u1
+    reserved :u5
     # See AgentSendRequest.reply_to_topic. An operator message without one has
     # no reply route: a reply to it that names no topic is refused with
     # SendStatus.no_reply_route.

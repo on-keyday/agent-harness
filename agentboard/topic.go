@@ -60,6 +60,15 @@ type RetainedMessage struct {
 	// NoContact carries SendRequest.no_contact: the author asked that handing
 	// this message over make no contact of either route (reach spec D17).
 	NoContact bool
+	// ExcludeSelf carries SendRequest.exclude_self: the publisher is not handed
+	// its own message — no wake, no row on its inbox or hook. Everything that
+	// reads by seq or for the operator still shows it.
+	ExcludeSelf bool
+}
+
+// ownExcluded reports whether reader published m with exclude_self.
+func (m RetainedMessage) ownExcluded(reader protocol.TaskID) bool {
+	return m.ExcludeSelf && m.FromTask == reader
 }
 
 // topic holds a bounded ring of recent messages plus metadata used for TTL eviction.
@@ -125,6 +134,7 @@ func (t *topic) append(seq uint64, payload []byte, fromRid protocol.RunnerID, fr
 		ReceivedAt:       now,
 		NoRetireOnReply:  cfg.noRetireOnReply,
 		NoContact:        cfg.noContact,
+		ExcludeSelf:      cfg.excludeSelf,
 	})
 }
 
@@ -285,7 +295,15 @@ func (t *topic) takeUnshown(task protocol.TaskID) []RetainedMessage {
 		}
 		t.shown[task] = out[len(out)-1].Seq
 	}
-	return out
+	// Filtered after the mark moved: the task's own excluded messages are
+	// passed over, not left to be offered on the next advance.
+	kept := out[:0]
+	for _, m := range out {
+		if !m.ownExcluded(task) {
+			kept = append(kept, m)
+		}
+	}
+	return kept
 }
 
 // shownMark is task's delivery mark on this topic, 0 when it has none.

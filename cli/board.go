@@ -471,6 +471,7 @@ type BoardSendParams struct {
 	ReplyTo         string
 	NoRetireOnReply bool
 	NoWake          bool
+	ExcludeSelf     bool
 }
 
 // BoardSendResult is what an accepted board send reports.
@@ -495,6 +496,7 @@ func (c *Client) BoardSend(ctx context.Context, p BoardSendParams, payload []byt
 		}
 		br.SetNoRetireOnReply(p.NoRetireOnReply)
 		br.SetNoWake(p.NoWake)
+		br.SetExcludeSelf(p.ExcludeSelf)
 		req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_BoardSend}
 		req.SetBoardSend(br)
 		return req, nil

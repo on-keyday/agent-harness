@@ -11,7 +11,7 @@ func TestBoardPublish_StampsOperatorAndPrincipal(t *testing.T) {
 	h, _ := newBoardTestHandler(t)
 	var by protocol.TaskID
 	by.Id[0] = 5
-	seq, _, st := h.boardPublish(by, "chat.op1", []byte("hi"), 0, "", false, false)
+	seq, _, st := h.boardPublish(by, "chat.op1", []byte("hi"), 0, "", false, false, false)
 	if st != protocol.SendStatus_Ok {
 		t.Fatalf("status = %v", st)
 	}
@@ -26,7 +26,7 @@ func TestBoardPublish_RepliesToAgentWithoutTopic(t *testing.T) {
 	var agentTid protocol.TaskID
 	agentTid.Id[0] = 0xab
 	parent, _, _ := h.Board.Send("shared", []byte("q"), protocol.RunnerID{}, agentTid, "h", "claude", 0)
-	seq, _, st := h.boardPublish(protocol.TaskID{}, "", []byte("a"), parent, agentboard.OperatorTopic, false, false)
+	seq, _, st := h.boardPublish(protocol.TaskID{}, "", []byte("a"), parent, agentboard.OperatorTopic, false, false, false)
 	if st != protocol.SendStatus_Ok {
 		t.Fatalf("status = %v", st)
 	}
