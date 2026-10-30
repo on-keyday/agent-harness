@@ -98,3 +98,35 @@ func TestApp_BoardRetainKeyOnChatTopic(t *testing.T) {
 		t.Error("no reason shown for refusing to retain a chat topic")
 	}
 }
+
+// o opens a topic by name — one that does not exist yet included — and from
+// its message view `m` sends to it and `t` retains it. That is the only way
+// to start a topic from the TUI.
+func TestApp_BoardOpenTopicByName(t *testing.T) {
+	a := &App{boardModal: NewBoardModal()}
+	a.boardModal.Open()
+	a.boardModal.SetSize(160, 45)
+	a.boardModal.ApplyTopics(nil, nil)
+
+	a.updateKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	if !a.boardModal.OpeningTopic() {
+		t.Fatal("`o` on the topic list did not open the name editor")
+	}
+	a.updateKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("tree.x.new")})
+	_, cmd := a.updateKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("Enter did not read the named topic")
+	}
+	if a.boardModal.OpeningTopic() {
+		t.Error("still editing after Enter")
+	}
+	// What DoBoardRead delivers for a topic nothing was published to.
+	a.boardModal.ApplyMessages("tree.x.new", nil, nil, false)
+	if a.boardModal.Mode() != boardMessages || a.boardModal.CurTopic() != "tree.x.new" {
+		t.Fatalf("mode %v topic %q, want the new topic's message view", a.boardModal.Mode(), a.boardModal.CurTopic())
+	}
+	a.updateKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
+	if !a.boardModal.Retaining() {
+		t.Fatal("`t` in the message view did not open the retain editor for the open topic")
+	}
+}

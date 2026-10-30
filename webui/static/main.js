@@ -6194,6 +6194,8 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   async function renderBoardTopics() {
     boardDetailEl.hidden = true;
     boardTopicsEl.hidden = false;
+    const openForm = document.getElementById("board-open-form");
+    if (openForm) openForm.hidden = false;
     boardTopicsEl.innerHTML = "";
     if (!window.harness) {
       boardTopicsEl.textContent = "(not connected)";
@@ -6279,6 +6281,8 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     currentBoardTopic = topic;
     boardTopicsEl.hidden = true;
     boardDetailEl.hidden = false;
+    const openForm = document.getElementById("board-open-form");
+    if (openForm) openForm.hidden = true;
     boardDetailTitle.textContent = topic;
     refreshBoardRetainBadge(topic);
     // Offered only where the server would accept it: chat.* topics stay
@@ -6679,6 +6683,18 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     boardReplyingSeq = "";
     boardComposeReplying.hidden = true;
   });
+
+  const boardOpenForm = document.getElementById("board-open-form");
+  if (boardOpenForm) {
+    boardOpenForm.addEventListener("submit", (ev) => {
+      ev.preventDefault();
+      const input = document.getElementById("board-open-topic");
+      const name = boardOpenTopicName(input ? input.value : "");
+      if (!name) return;
+      if (input) input.value = "";
+      openBoardTopic(name);
+    });
+  }
 
   const boardRetainBadge = document.getElementById("board-detail-retain");
 
@@ -7743,6 +7759,13 @@ function boardSendResultLine(res, req) {
     ? `as a reply to #${req.inReplyTo}`
     : `to ${req.topic}`;
   return `board send: sent #${res.seq} ${dest} (delivered_to=${res.deliveredTo}, wake ${req.noWake ? "off" : "on"})`;
+}
+
+// boardOpenTopicName is the name the open-by-name input asks for: trimmed,
+// and null when nothing is left.
+function boardOpenTopicName(raw) {
+  const name = String(raw || "").trim();
+  return name === "" ? null : name;
 }
 
 // boardRetainMeta is a topic row's retention text, in board topics' words.

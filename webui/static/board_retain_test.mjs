@@ -36,3 +36,9 @@ test("the bridge says which topics can be retained, by the server's own rule", (
   assert.equal(page.harness.boardRetainable("chat.operator"), false);
   assert.equal(page.harness.boardRetainable(""), false);
 });
+
+test("the open-by-name input takes a trimmed name and nothing else", () => {
+  assert.equal(page.boardOpenTopicName("  tree.x.new  "), "tree.x.new");
+  assert.equal(page.boardOpenTopicName("   "), null);
+  assert.equal(page.boardOpenTopicName(""), null);
+});

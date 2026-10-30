@@ -358,6 +358,15 @@
                 title="いま表示している会話を1枚にして開く（コピー／ダウンロードはそこから）">⭳ Export</button>
       </div>
       <div id="board-topics-view">
+        <!-- Opens a topic by NAME, one nothing was published to yet included:
+             the list shows only topics that exist or are subscribed, so this
+             is how a topic is started here — its composer sends the first
+             message, its Retain keeps it. -->
+        <form id="board-open-form" class="board-open-form">
+          <input id="board-open-topic" type="text" autocomplete="off" spellcheck="false"
+                 placeholder="topic 名を入れて開く（新しい topic も可）">
+          <button type="submit">開く</button>
+        </form>
         <div id="board-topics"></div>
         <div id="board-detail" hidden>
           <div class="board-detail-header">

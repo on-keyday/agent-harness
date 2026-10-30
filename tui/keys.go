@@ -137,6 +137,8 @@ type modalKeyMap struct {
 	BoardWake        string
 	// BoardRetain opens the retain editor on the highlighted topic.
 	BoardRetain string
+	// BoardOpenTopic opens a topic by name, one not published to yet included.
+	BoardOpenTopic string
 	// BoardForgetContact forgets the highlighted contact in the subscribers
 	// view, or every contact of the highlighted task.
 	BoardForgetContact string
@@ -193,6 +195,9 @@ var modalKeys = modalKeyMap{
 	// letter, because keeping is not a form of purging, waking or sending,
 	// and k is a scroll key.
 	BoardRetain: "t",
+	// o (open) reads a topic by name rather than from the list, which is how
+	// a topic nothing was published to yet is reached at all.
+	BoardOpenTopic: "o",
 	// x removes the highlighted thing, as it kills a forward and purges a
 	// topic; the views it means something in do not overlap.
 	BoardForgetContact: "x",

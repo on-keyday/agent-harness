@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -109,4 +110,53 @@ func retainCell(r *cli.BoardTopicRow) string {
 		return ""
 	}
 	return fmt.Sprintf("%s by=%s disk=%d", r.Retention.Label(), r.Retention.SetByLabel(), r.Retention.DiskBytes)
+}
+
+// boardOpenEdit is the one-line editor `o` opens on the topic list: a topic
+// by name, including one nothing was published to yet. Its message view is
+// where the TUI starts a topic — `m` sends the first message, `t` retains it.
+type boardOpenEdit struct {
+	input textinput.Model
+}
+
+// BeginOpenTopic opens the name editor.
+func (m *BoardModal) BeginOpenTopic() {
+	prompt := "open topic ▶ "
+	ti := textinput.New()
+	ti.Prompt = prompt
+	ti.Placeholder = "a topic name, new or existing"
+	ti.Width = m.content.Width - len(prompt)
+	ti.Focus()
+	m.opening = &boardOpenEdit{input: ti}
+}
+
+// OpeningTopic reports whether the name editor is open; the App routes every
+// key here while it is.
+func (m *BoardModal) OpeningTopic() bool { return m.opening != nil }
+
+// HandleOpenTopicKey feeds one key to the name editor. open is true when
+// Enter submitted a non-blank name; the editor is closed then.
+func (m *BoardModal) HandleOpenTopicKey(k tea.KeyMsg) (open bool, topic string) {
+	if m.opening == nil {
+		return false, ""
+	}
+	switch k.Type {
+	case tea.KeyEsc:
+		m.opening = nil
+		return false, ""
+	case tea.KeyEnter:
+		topic = strings.TrimSpace(m.opening.input.Value())
+		if topic == "" {
+			return false, ""
+		}
+		m.opening = nil
+		return true, topic
+	}
+	m.opening.input, _ = m.opening.input.Update(k)
+	return false, ""
+}
+
+func (m *BoardModal) openTopicView() string {
+	return m.opening.input.View() + "\n" +
+		MutedStyle.Render("enter opens it, even if nothing was published there yet · then m sends, t retains · esc cancels")
 }

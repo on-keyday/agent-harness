@@ -97,7 +97,12 @@ harness-cli board read <topic> --before <seq> --limit <n>    # pages into the di
   shown by `board topics` with the bytes on disk. This display is a
   requirement (D5): the operator cannot revoke what they cannot see.
 - Surfaces: CLI, TUI and WebUI board views all show `retain` / `by` / `disk`
-  and can set and clear retention. Walk
+  and can set and clear retention. Retain is offered only where
+  `agentboard.Retainable` allows it (disabled with the reason on `chat.*`).
+  Both panes also open a topic by NAME (TUI `o`, WebUI the input above the
+  list), a topic nothing was published to yet included: before that they had
+  no way to start a topic at all, so a new retained topic could only be made
+  from the CLI. (Added 2026-10-31, operator.) Walk
   `.claude/skills/surface-parity-checklist` for the new verb, the new bit and
   the new `board topics` columns.
 

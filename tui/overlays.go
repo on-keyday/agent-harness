@@ -292,6 +292,12 @@ func (a *App) inBoardModal(msg tea.KeyMsg) tea.Cmd {
 		}
 		return nil
 	}
+	if a.boardModal.OpeningTopic() {
+		if open, topic := a.boardModal.HandleOpenTopicKey(msg); open {
+			return DoBoardRead(a.client, topic)
+		}
+		return nil
+	}
 	if msg.Type == tea.KeyEsc {
 		// The chain view is list -> detail like the topic one, so Esc walks back
 		// one level rather than all the way out.
@@ -326,6 +332,9 @@ func (a *App) inBoardModal(msg tea.KeyMsg) tea.Cmd {
 			return nil
 		case modalKeys.BoardRetain:
 			a.boardModal.BeginRetain(a.boardModal.SelectedTopicName())
+			return nil
+		case modalKeys.BoardOpenTopic:
+			a.boardModal.BeginOpenTopic()
 			return nil
 		case modalKeys.BoardSubscribers:
 			topic := a.boardModal.SelectedTopicName()
@@ -407,6 +416,11 @@ func (a *App) inBoardModal(msg tea.KeyMsg) tea.Cmd {
 			return nil
 		case modalKeys.BoardWake:
 			return DoBoardWake(a.client, a.boardModal.CurTopic())
+		case modalKeys.BoardRetain:
+			// The open topic, which may be one opened by name with nothing
+			// published to it yet.
+			a.boardModal.BeginRetain(a.boardModal.CurTopic())
+			return nil
 		}
 	}
 	var cmd tea.Cmd

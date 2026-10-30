@@ -321,6 +321,8 @@ type BoardModal struct {
 	compose *boardCompose
 	// retain is the open retain editor, nil when none is.
 	retain *boardRetainEdit
+	// opening is the open-a-topic-by-name editor, nil when none is.
+	opening *boardOpenEdit
 }
 
 // subItem is one selectable line of the subscribers view: a task line
@@ -829,10 +831,13 @@ func (m BoardModal) View() string {
 	switch m.mode {
 	case boardTopics:
 		header := HeaderStyle.Render(fmt.Sprintf("agentboard topics (%d)", len(m.rowTopics)))
-		footer := FooterStyle.Render("Enter: read  c: chains  s: subscribers  " + modalKeys.BoardWake + ": wake  " +
-			modalKeys.BoardRetain + ": retain  r: refresh  x: purge topic  Esc: close")
+		footer := FooterStyle.Render("Enter: read  " + modalKeys.BoardOpenTopic + ": open by name  c: chains  s: subscribers  " +
+			modalKeys.BoardWake + ": wake  " + modalKeys.BoardRetain + ": retain  r: refresh  x: purge topic  Esc: close")
 		if m.retain != nil {
 			footer = m.retainView()
+		}
+		if m.opening != nil {
+			footer = m.openTopicView()
 		}
 		return box.Render(header + "\n" + m.topicsTable.View() + statusLine + "\n" + footer)
 
@@ -871,10 +876,13 @@ func (m BoardModal) View() string {
 		}
 		header := HeaderStyle.Render(fmt.Sprintf("topic: %s  (%d msgs)", m.curTopic, len(m.msgs)))
 		footer := FooterStyle.Render("↑/↓ select · " + scrollHint + " · " +
-			modalKeys.BoardCompose + ": send  " + modalKeys.BoardReply + ": reply  " + modalKeys.BoardWake + ": wake · " +
-			"w: retract msg  X: purge msg  r: re-read  Esc: back")
+			modalKeys.BoardCompose + ": send  " + modalKeys.BoardReply + ": reply  " + modalKeys.BoardWake + ": wake  " +
+			modalKeys.BoardRetain + ": retain · w: retract msg  X: purge msg  r: re-read  Esc: back")
 		if m.compose != nil {
 			footer = m.composeView()
+		}
+		if m.retain != nil {
+			footer = m.retainView()
 		}
 		return box.Render(header + "\n" + msgList.String() + "\n" + m.content.View() + statusLine + "\n" + footer)
 

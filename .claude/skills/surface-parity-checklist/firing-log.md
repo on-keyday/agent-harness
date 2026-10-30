@@ -3620,3 +3620,15 @@ missed:  34a's corollary (found in a live Playwright check the same day, after
          Board tab — so the press had no visible answer. "n/a (no form)" on
          34a was the wrong reading: a control that can only be refused is
          the item's subject whether or not there is a form.
+
+### 2026-10-31 (pre-landing) — open a board topic by name (TUI `o`, WebUI input)
+
+done:    4 (TUI `o` on the topic list; `t` in the message view retains the
+         open topic), 6 (WebUI `#board-open-form` above the list, hidden in
+         the detail and Chains views), 30 (the topic opens — the view itself
+         is the answer), 34a (a text input, as the CLI's topic argument; no
+         neighbouring control expresses a free name), 37 (spec §3.1),
+         and checked live at 1280 and 390px (Playwright, dummy harness)
+n/a:     1–3, 5, 7–29, 31–36, 38, 39, S1–S6 (no new verb or request field:
+         it reads with board_read and sends with board_send as before)
+missed:  —
