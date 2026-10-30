@@ -129,6 +129,7 @@ Format decisions (fixed here; the spec left them to the plan): `dir/retention.js
   - `TestFileStore_DropAndTruncate`: `Drop` → log file gone, `Load` has no topic; `Truncate` → `Load` has the topic with empty `Ring` and the retention.
   - `TestFileStore_UnsafeTopicNames` (Review Focus 1): names `a/b`, `..`, 300 × `x` round-trip through SetRetention/Append/Load.
   - `TestFileStore_TornLastLine` (Review Focus 2): append 3, Close, append garbage `{"t":"msg","se` to the file; `Load` returns the 3 messages and no error.
+  - `TestFileStore_BadMiddleLineSkipped`: append 5, Close, replace the 3rd `msg` line with `not json`; `Load` returns the other 4 and no error, and logs the skipped line with `slog.Warn`. One unreadable record must never discard the file (the WAL once lost its whole history this way).
   - `TestFileStore_FlushBatches`: with `flushEvery = time.Hour`, after `Append` the file size is unchanged; after `Close` it grew.
 - [ ] **Step 2: Run** `go test ./agentboard/ -run FileStore -v` — Expected: FAIL (undefined).
 - [ ] **Step 3: Implement** `FileStore`; one `bufio.Writer` per open log, a ticker goroutine flushing all every `flushEvery`, stopped by `Close`.
