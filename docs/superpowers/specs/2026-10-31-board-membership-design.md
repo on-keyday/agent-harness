@@ -240,3 +240,9 @@ report.
 | A6 | `BoardMembershipStatus` gains `bad_request` for an op value the server does not know | §3.4 | The enum is not validated on decode; the handler needs an answer for a value outside it |
 | A7 | `agentboard.JoinableName` (not empty, not `chat.*`) is exposed to the WebUI as `harness.boardJoinable`, and 参加させる is disabled where it is false | §3.5 | Found live: the button was offered on `chat.*`, where every join is refused |
 | A8 | The operator's composers start reply-to at the topic only when EVERY subscriber of it is a member; one plain subscriber keeps `chat.operator` (the topic stays one ctrl+r / one field edit away) | §3.2 "on a topic with members" | Found by the final review: on a topic mixing members and D13 subscribers, a plain subscriber's `--in-reply-to` answer was routed to the topic, where it may not publish, and refused — the "agent that never answered" the `chat.operator` default exists to prevent |
+
+## 7. Amendments (2026-10-31, after use on `beta.sns`)
+
+| # | Amendment | Replaces | Why | Decided-by |
+|---|---|---|---|---|
+| A9 | `agent subscriptions` reports each pattern's membership: `AgentSubscriptionSummary` gains `joined :u1` (with `reserved :u7`), and every JSON line carries `"joined":true|false`. No capability: it is about the caller itself | the skill's "`agent subscriptions` does not tell the two apart" | A member could not tell from the agent side that it was one; on `beta.sns` a `sandbox-pi` task holding only `exec_view` had to rely on another agent's `board subscribers` reading. Who else is a member stays operator-face (`board_observe`) | operator, 2026-10-31 |

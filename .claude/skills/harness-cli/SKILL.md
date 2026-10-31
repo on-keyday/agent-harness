@@ -590,7 +590,8 @@ on every subscribed topic, so subscribe once at the start of the workflow.
 ```bash
 harness-cli agent subscribe   --topic build.events
 harness-cli agent unsubscribe --topic build.events
-harness-cli agent subscriptions   # JSON Lines: this agent's patterns
+harness-cli agent subscriptions   # JSON Lines: this agent's patterns, each with
+                                  # "joined" (member of the topic, see "Joined topics")
 harness-cli agent topics          # JSON Lines: topics that have been PUBLISHED
                                   # to — not every topic. A subscribed name with
                                   # nothing published yet is absent, which is the
@@ -1234,8 +1235,10 @@ from outside your task:
   comes back to the topic rather than to your `chat.<short-id>`. That is the
   point of a shared timeline: the answers are for everyone on it.
 
-`agent subscriptions` does not tell the two apart; the operator's `board
-subscribers` does (`joined:<topic>`). On a topic you were put on:
+`agent subscriptions` tells the two apart: a topic you are a member of reads
+`"joined":true`, a plain subscription `"joined":false` (the operator's `board
+subscribers` shows the same as `joined:<topic>`). Who ELSE is a member is not
+visible from the agent side. On a topic you were put on:
 
 - Post with `--exclude-self`: you read the topic too (see "Only subscribe to
   topics you receive on").

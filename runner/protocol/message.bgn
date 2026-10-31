@@ -1940,6 +1940,12 @@ format AgentListSubscriptionsRequest:
 format AgentSubscriptionSummary:
     pattern_len :u16
     pattern :[pattern_len]u8
+    # joined: the caller is a member of this topic (board join), not only
+    # subscribed — the same bit SubscriptionPattern.joined carries on the
+    # operator's board subscribers. It is about the caller itself, so it needs
+    # no capability.
+    joined :u1
+    reserved :u7
 
 # stream_id: see BoardTopicsResponse.
 format AgentListSubscriptionsResponse:

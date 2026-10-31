@@ -32,6 +32,10 @@ func TestAgentCLI_E2E_Subscriptions(t *testing.T) {
 		}
 	}
 
+	if err := board.Join(tid, "beta/y"); err != nil {
+		t.Fatalf("Join: %v", err)
+	}
+
 	var out bytes.Buffer
 	if err := agent.Subscriptions(ctx, nil, &out); err != nil {
 		t.Fatalf("Subscriptions: %v", err)
@@ -41,6 +45,14 @@ func TestAgentCLI_E2E_Subscriptions(t *testing.T) {
 		if !strings.Contains(got, `"pattern":"`+topic+`"`) {
 			t.Errorf("output missing pattern %s: %s", topic, got)
 		}
+	}
+	// The member's topic says so; a plain subscription says false rather
+	// than leaving the field out.
+	if !strings.Contains(got, `{"joined":true,"pattern":"beta/y"}`) {
+		t.Errorf("beta/y is joined but not reported so: %s", got)
+	}
+	if !strings.Contains(got, `{"joined":false,"pattern":"alpha/x"}`) {
+		t.Errorf("alpha/x is a plain subscription but not reported joined:false: %s", got)
 	}
 }
 

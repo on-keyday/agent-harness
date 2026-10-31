@@ -50,7 +50,7 @@ func SubscriptionsWith(ctx context.Context, a verb.AgentAction, stdout io.Writer
 		return fmt.Errorf("subscriptions: %w", err)
 	}
 	for _, s := range body.Subscriptions {
-		rec := map[string]any{"pattern": string(s.Pattern)}
+		rec := map[string]any{"pattern": string(s.Pattern), "joined": s.Joined()}
 		line, _ := json.Marshal(rec)
 		fmt.Fprintln(stdout, string(line))
 	}

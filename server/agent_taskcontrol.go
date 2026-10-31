@@ -509,9 +509,11 @@ func boardContacts(topics []string) []protocol.BoardContact {
 func (h *TaskHandler) handleAgentListSubscriptions(conn ConnHandle, requestID uint32) {
 	var subs []protocol.AgentSubscriptionSummary
 	if st := h.boardState(conn); st != nil && h.Board != nil {
+		_, self, _, _ := st.Identity()
 		for _, p := range h.Board.ListSubscriptions(st) {
 			ss := protocol.AgentSubscriptionSummary{}
 			ss.SetPattern([]byte(p))
+			ss.SetJoined(h.Board.IsMember(self, p))
 			subs = append(subs, ss)
 		}
 	}
