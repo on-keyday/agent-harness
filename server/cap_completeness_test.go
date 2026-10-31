@@ -142,12 +142,13 @@ var kindCapClass = map[protocol.TaskControlKind]capClass{
 	protocol.TaskControlKind_AgentInboxAdvance:      capNone,
 	protocol.TaskControlKind_AgentListRetained:      capNone,
 	protocol.TaskControlKind_AgentReadSeq:           capNone,
+	protocol.TaskControlKind_AgentReadPage:          capNone,
 	protocol.TaskControlKind_AgentRetract:           capNone,
 	protocol.TaskControlKind_AgentListContacts:      capNone,
 }
 
 func TestEveryTaskControlKindHasACapVerdict(t *testing.T) {
-	for i := 0; i <= int(protocol.TaskControlKind_BoardMembership); i++ {
+	for i := 0; i <= int(protocol.TaskControlKind_AgentReadPage); i++ {
 		k := protocol.TaskControlKind(i)
 		if k.String() == fmt.Sprintf("TaskControlKind(%d)", i) {
 			continue // gap in the enum, not a real kind

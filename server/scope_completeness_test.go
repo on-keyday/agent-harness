@@ -148,12 +148,13 @@ var kindTargetClass = map[protocol.TaskControlKind]targetClass{
 	protocol.TaskControlKind_AgentInboxAdvance:      noTarget,
 	protocol.TaskControlKind_AgentListRetained:      noTarget,
 	protocol.TaskControlKind_AgentReadSeq:           noTarget,
+	protocol.TaskControlKind_AgentReadPage:          noTarget,
 	protocol.TaskControlKind_AgentRetract:           noTarget,
 	protocol.TaskControlKind_AgentListContacts:      noTarget,
 }
 
 func TestEveryTaskControlKindIsClassified(t *testing.T) {
-	for i := 0; i <= int(protocol.TaskControlKind_BoardMembership); i++ {
+	for i := 0; i <= int(protocol.TaskControlKind_AgentReadPage); i++ {
 		k := protocol.TaskControlKind(i)
 		if k.String() == fmt.Sprintf("TaskControlKind(%d)", i) {
 			continue // gap in the enum, not a real kind
@@ -176,11 +177,11 @@ func TestEveryTaskControlKindIsClassified(t *testing.T) {
 // await_idle_* kinds; board_send / board_wake; open_exec_tap;
 // agent_list_contacts; board_contacts_clear; progress_set / await_progress;
 // progress_clear; runner_enroll / runner_unenroll / runner_keys;
-// lifecycle_set; board_retain; and board_membership.
-func TestBoardMembershipIsStillTheLastKind(t *testing.T) {
-	next := protocol.TaskControlKind(int(protocol.TaskControlKind_BoardMembership) + 1)
+// lifecycle_set; board_retain; board_membership; and agent_read_page.
+func TestAgentReadPageIsStillTheLastKind(t *testing.T) {
+	next := protocol.TaskControlKind(int(protocol.TaskControlKind_AgentReadPage) + 1)
 	if next.String() != fmt.Sprintf("TaskControlKind(%d)", int(next)) {
-		t.Fatalf("a kind was appended after board_membership (%v) — raise the loop bound in "+
+		t.Fatalf("a kind was appended after agent_read_page (%v) — raise the loop bound in "+
 			"TestEveryTaskControlKindIsClassified and in TestEveryTaskControlKindHasACapVerdict, "+
 			"which otherwise stop before it", next)
 	}

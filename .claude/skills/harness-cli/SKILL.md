@@ -208,6 +208,25 @@ Reading is limited to topics you subscribe to. A seq outside them reports
 the same "not readable" as one that has rotated out of its ring, so it is
 not a way to browse topics you have not joined.
 
+`agent read <seq>` sees only the ring. **"Rotated out" is not "gone" on a
+retained topic** (see "Keeping a topic"): its older messages are on the
+server's disk, and you page them with the topic form instead:
+
+```bash
+harness-cli agent read --topic beta.sns                  # the 20 newest, newest first
+harness-cli agent read --topic beta.sns --before <seq>   # the 20 before that seq
+harness-cli agent read --topic beta.sns --limit 100      # a bigger page (max 65535)
+```
+
+Same record shape, one line per message, withdrawn messages left out; the
+next page is `--before` the last seq printed, and an empty page is the start
+of the history. It needs no capability and covers only topics you subscribe
+to — including what was posted before you subscribed. You cannot see whether
+a topic is retained (`board topics` needs `board_observe`), but this can tell
+you: rows coming back from `--before <oldest seq in the ring>` exist only on
+disk. No rows proves nothing — a retained topic with fewer than 64 messages
+has nothing older either.
+
 ### Seeing the whole exchange — `agent thread`
 
 `agent read <seq>` gives you one parent. This gives you the chain.
@@ -1192,9 +1211,10 @@ harness-cli board retain tree.<your-full-task-id>.design --clear      # back to 
   restart, every message included. Your subscription to it does not: after a
   restart, subscribe again — unless you are a member, whose subscription
   comes back with it.
-- The ring you read through `inbox` / `read` / `retained` is still the last 64
-  messages. The operator pages further back with `board read <topic> --limit
-  N --before SEQ`.
+- The ring you read through `inbox` / `read <seq>` / `retained` is still the
+  last 64 messages. Further back, page it with `agent read --topic <topic>
+  --before SEQ` on a topic you subscribe to (see "Reading one message
+  whole"); the operator uses `board read <topic> --limit N --before SEQ`.
 - Retention does not change who can read or write the topic: a retained
   `tree.<id>.*` is still your lineage's only.
 - `board topics` (operator view) shows `retain=<period> by=<who set it>

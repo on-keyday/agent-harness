@@ -3172,13 +3172,30 @@ var Verbs = []VerbSpec{
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"fetch one retained message, whole; the hooks name it when they decline to inline a large body.",
+			"With --topic/--self instead of <seq>: one page of that topic, newest first; on a retained topic",
+			"it reaches past the 64-message ring into the disk log. The next page is --before <last seq printed>.",
 			"Limited to topics this task subscribes to.",
 		},
-		Action:   "AgentAction",
-		Const:    map[string]string{"Sub": "read"},
-		Args:     []Arg{{Name: "seq", Type: ArgUint, Field: "Seq"}},
-		Flags:    agentCommonFlags(),
-		Examples: []string{"agent read 42"},
+		Action:     "AgentAction",
+		Const:      map[string]string{"Sub": "read"},
+		Args:       []Arg{{Name: "seq", Type: ArgUint, Optional: true, Field: "Seq"}},
+		ExactlyOne: []Rule{{Flags: []string{"seq", "topic", "self"}}},
+		Validate: func(b Bound) error {
+			if len(b.Args) > 0 && (b.Set["before"] || b.Set["limit"]) {
+				return fmt.Errorf("agent read: --before and --limit page a topic; use them with --topic or --self, not with <seq>")
+			}
+			if l := uint64Of(b.Flags["limit"]); b.Set["limit"] && (l == 0 || l > 65535) {
+				return fmt.Errorf("agent read: --limit must be 1..65535")
+			}
+			return nil
+		},
+		Flags: append(append(agentCommonFlags(), agentTopicSelfFlags()...),
+			Flag{Name: "before", Type: FlagUint64, Default: uint64(0), Field: "Before",
+				Help: "page: only messages with a seq below this one (0 = from the newest)"},
+			Flag{Name: "limit", Type: FlagUint64, Default: uint64(20), Field: "Limit",
+				Help: "page: at most this many messages (max 65535)"},
+		),
+		Examples: []string{"agent read 42", "agent read --topic beta.sns --limit 20", "agent read --topic beta.sns --before 42"},
 	},
 	{
 		Path: []string{"agent", "retract"}, CmdlineSurfaces: CLI,

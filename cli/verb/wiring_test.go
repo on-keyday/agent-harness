@@ -337,9 +337,29 @@ func positionalsFor(v VerbSpec) []string {
 			}
 			continue
 		}
+		// An optional one that a choice rule names is left to satisfying:
+		// `agent read` takes <seq> OR --topic, and adding <seq> here as well
+		// put it on the line beside the alternative the rule picked.
+		if a.Optional && inChoiceRule(v, a.Name) {
+			continue
+		}
 		out = append(out, valueFor(a))
 	}
 	return out
+}
+
+// inChoiceRule reports whether an ExactlyOne or AtLeastOne group names name.
+func inChoiceRule(v VerbSpec, name string) bool {
+	for _, rs := range [][]Rule{v.ExactlyOne, v.AtLeastOne} {
+		for _, r := range rs {
+			for _, n := range r.Flags {
+				if n == name {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 func valueFor(a Arg) string {

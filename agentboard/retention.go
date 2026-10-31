@@ -217,6 +217,29 @@ func (b *Board) Page(topic string, beforeSeq uint64, limit int) ([]RetainedMessa
 	return out, nil
 }
 
+// PageLive is Page for an agent path: withdrawn messages are left out, and
+// older rows are read until the page holds limit live ones or the history
+// ends, so a run of withdrawals does not shorten it.
+func (b *Board) PageLive(topic string, beforeSeq uint64, limit int) ([]RetainedMessage, error) {
+	out := make([]RetainedMessage, 0, limit)
+	for len(out) < limit {
+		page, err := b.Page(topic, beforeSeq, limit)
+		if err != nil {
+			return nil, err
+		}
+		for _, m := range page {
+			if m.RetractedAt.IsZero() && len(out) < limit {
+				out = append(out, m)
+			}
+		}
+		if len(page) < limit {
+			break
+		}
+		beforeSeq = page[len(page)-1].Seq
+	}
+	return out, nil
+}
+
 // storeLog reports a store error. A failed mirror never fails the board
 // operation that caused it: the message is on the board either way.
 func storeLog(op, topic string, err error) {

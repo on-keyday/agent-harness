@@ -350,6 +350,41 @@ func (h *TaskHandler) handleAgentReadSeq(conn ConnHandle, requestID uint32, r *p
 	respond(0)
 }
 
+// handleAgentReadPage answers one page of a topic the caller subscribes to,
+// newest first, withdrawn messages left out. Unlike read_seq it reaches past
+// the ring into a retained topic's disk log (Board.Page). The subscription
+// check scopes it, and a topic outside it answers the same not_found as one
+// that does not exist.
+func (h *TaskHandler) handleAgentReadPage(conn ConnHandle, requestID uint32, r *protocol.AgentReadPageRequest) {
+	out := protocol.AgentReadPageResponse{RequestId: requestID, Status: protocol.AgentReadPageStatus_NotFound}
+	respond := func(streamID uint64) {
+		out.StreamId = streamID
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_AgentReadPage, RequestId: requestID}
+		resp.SetAgentReadPage(out)
+		respondAgent(conn, resp)
+	}
+
+	topic := string(r.Topic)
+	st := h.boardState(conn)
+	if st == nil || h.Board == nil || r.Limit == 0 || !h.Board.Subscribes(st, topic) {
+		respond(0)
+		return
+	}
+	if _, found := h.Board.ListRetained(topic); !found {
+		respond(0)
+		return
+	}
+	page, err := h.Board.PageLive(topic, r.BeforeSeq, int(r.Limit))
+	if err != nil {
+		slog.Error("agent_read_page: page", "topic", topic, "err", err)
+		out.Status = protocol.AgentReadPageStatus_StoreError
+		respond(0)
+		return
+	}
+	out.Status = protocol.AgentReadPageStatus_Ok
+	respondWithBody(conn, "read_page", deliveredBody(h.Board, st, page), respond)
+}
+
 // handleAgentListRetained returns a topic's retained ring as METADATA ONLY.
 //
 // No capability gate: it is a KEYED read of a topic the caller must already

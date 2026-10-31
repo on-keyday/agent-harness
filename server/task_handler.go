@@ -1019,6 +1019,14 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		}
 		h.handleAgentReadSeq(conn, req.RequestId, ars)
 
+	case protocol.TaskControlKind_AgentReadPage:
+		arp := req.AgentReadPage()
+		if arp == nil {
+			slog.Error("TaskHandler: AgentReadPage variant is nil")
+			return
+		}
+		h.handleAgentReadPage(conn, req.RequestId, arp)
+
 	case protocol.TaskControlKind_AgentRetract:
 		art := req.AgentRetract()
 		if art == nil {

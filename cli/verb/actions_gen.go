@@ -46,6 +46,10 @@ type AgentAction struct {
 	HeadersOnly bool
 	// print the body bytes unescaped even on a terminal
 	Raw bool
+	// page: only messages with a seq below this one (0 = from the newest)
+	Before uint64
+	// page: at most this many messages (max 65535)
+	Limit uint64
 }
 
 // AgentSendAction is built by: agent dispatch, agent send.
@@ -3757,6 +3761,10 @@ func init() {
 			a := AgentAction{}
 			a.Sub = "read"
 			a.ServerCID = b.Str("server-cid")
+			a.Topic = b.Str("topic")
+			a.Self = b.Bool("self")
+			a.Before = uint64Of(b.Flags["before"])
+			a.Limit = uint64Of(b.Flags["limit"])
 			if len(b.Args) > 0 {
 				n, err := strconv.ParseUint(b.Args[0], 10, 64)
 				if err != nil {

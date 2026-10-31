@@ -635,6 +635,11 @@ enum TaskControlKind:
                             # either. Gated on board_member and target-gated on
                             # that bit's scope, because it names a task.
                             # See docs/superpowers/specs/2026-10-31-board-membership-design.md
+    agent_read_page         # appended: page one topic I subscribe to, newest
+                            # first; on a retained topic past the ring into its
+                            # disk log. No cap: a keyed read inside my
+                            # subscriptions, like agent_read_seq.
+                            # See docs/superpowers/specs/2026-10-31-agent-read-history-design.md
 
 # ClientKind tags the kind of caller that opened a TaskControl session.
 # `agent` is an in-task harness-cli that proves its identity via agent_info;
@@ -2043,6 +2048,33 @@ format AgentReadSeqResponse:
     # wait and inbox return, so one reader serves all four.
     stream_id :u64
 
+# AgentReadPageRequest pages one topic the caller subscribes to: up to limit
+# live messages with seq below before_seq (0 = from the newest), newest first.
+# On a retained topic it reaches past the ring into the disk log, which
+# agent_read_seq deliberately does not (retention spec D9); withdrawn messages
+# are left out, as on every agent path.
+format AgentReadPageRequest:
+    request_id :u32
+    topic_len :u16
+    topic :[topic_len]u8
+    before_seq :u64
+    limit :u16
+
+enum AgentReadPageStatus:
+    :u8
+    ok
+    # not_found merges "no such topic" with "not a topic this task subscribes
+    # to", for the reason AgentReadSeqStatus.not_found gives.
+    not_found
+    store_error
+
+format AgentReadPageResponse:
+    request_id :u32
+    status :AgentReadPageStatus
+    # stream_id: see BoardTopicsResponse. 0 unless status is ok; then the
+    # stream carries a DeliveredBody holding the page, newest first.
+    stream_id :u64
+
 # AgentRetractRequest withdraws ONE message the CALLER published, named by its
 # board-global seq. Withdrawal is a LOGICAL delete: the message leaves every
 # agent-facing path (deliver / inbox / wait / read_seq / list_retained) but
@@ -2591,6 +2623,7 @@ format TaskControlRequest:
         TaskControlKind.lifecycle_set            => lifecycle_set            :LifecycleSetRequest
         TaskControlKind.board_retain             => board_retain             :BoardRetainRequest
         TaskControlKind.board_membership         => board_membership         :BoardMembershipRequest
+        TaskControlKind.agent_read_page          => agent_read_page          :AgentReadPageRequest
         .. => error("Unexpected task")
 
 # CancelResult replaces a bare u8 that every reply wrote as 0. ok stays 0, so
@@ -2676,6 +2709,7 @@ format TaskControlResponse:
         TaskControlKind.lifecycle_set            => lifecycle_set            :LifecycleSetResponse
         TaskControlKind.board_retain             => board_retain             :BoardRetainResponse
         TaskControlKind.board_membership         => board_membership         :BoardMembershipResponse
+        TaskControlKind.agent_read_page          => agent_read_page          :AgentReadPageResponse
 
 # --- runner enrollment (2026-10-27-runner-enrollment-design.md) --------------
 # The server lets a runner register under AuthRole.runner only when it signs
