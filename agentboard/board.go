@@ -573,10 +573,7 @@ func (b *Board) evictExpiredTopics() {
 	var dropped []string
 	b.mu.Lock()
 	for name, t := range b.topics {
-		// NOTE: t.lastPublishedAt is read here without t.mu held (b.mu is held instead).
-		// topic.append writes lastPublishedAt under t.mu. This is a known approximate-read
-		// v1 race: a torn timestamp read at worst delays eviction by one tick. Not a
-		// correctness issue; acceptable for v1.
+		last := t.lastPublished()
 		if t.retention != nil {
 			// A retained topic runs on its own period. When it runs out the
 			// topic stops being retained — its disk copy goes — and its
@@ -584,13 +581,13 @@ func (b *Board) evictExpiredTopics() {
 			// them itself: a retention may only add to a topic's life, or a
 			// board_persist holder could destroy any topic it may publish to
 			// by setting a 1ms period.
-			if at := t.retention.ExpiresAt(t.lastPublishedAt); !at.IsZero() && at.Before(now) {
+			if at := t.retention.ExpiresAt(last); !at.IsZero() && at.Before(now) {
 				t.retention = nil
 				dropped = append(dropped, name)
 			}
 			continue
 		}
-		if t.lastPublishedAt.Before(cutoff) {
+		if last.Before(cutoff) {
 			delete(b.topics, name)
 		}
 	}
@@ -615,9 +612,8 @@ func (b *Board) evictOldestTopicLocked() {
 		if t.retention != nil {
 			continue
 		}
-		// Same approximate-read caveat as evictExpiredTopics above.
-		if oldestName == "" || t.lastPublishedAt.Before(oldestT) {
-			oldestName, oldestT = n, t.lastPublishedAt
+		if last := t.lastPublished(); oldestName == "" || last.Before(oldestT) {
+			oldestName, oldestT = n, last
 		}
 	}
 	if oldestName != "" {

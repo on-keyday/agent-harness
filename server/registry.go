@@ -3,6 +3,7 @@ package server
 import (
 	"crypto/ed25519"
 	"errors"
+	"maps"
 	"sort"
 	"sync"
 	"time"
@@ -83,6 +84,16 @@ type RunnerEntry struct {
 	// For chained relay setup, this is the addr each upstream hop uses for its
 	// SetProxy.allocate when forwarding traffic to this runner.
 	ViaDialAddr objproto.ConnectionID
+}
+
+// snapshot copies e for a caller outside r.mu. ActiveTasks is cloned: a plain
+// *e copies the map header, so the "snapshot" kept reading — and a range over
+// it kept iterating — the live set BindTask/UnbindTask write under r.mu.
+// Every value copy of a registry entry goes through here. Caller holds r.mu.
+func (e *RunnerEntry) snapshot() RunnerEntry {
+	c := *e
+	c.ActiveTasks = maps.Clone(e.ActiveTasks)
+	return c
 }
 
 // Status derives the wire-visible status from connection + slot occupancy.
@@ -192,7 +203,7 @@ func (r *Registry) Add(e *RunnerEntry) (displaced objproto.ConnectionID, err err
 		}
 		r.byIdentity[e.Identity] = e.ID
 	}
-	snapshot := *e
+	snapshot := e.snapshot()
 	onAdd := r.OnAdd
 	r.mu.Unlock()
 	if onAdd != nil {
@@ -209,7 +220,7 @@ func (r *Registry) Remove(id objproto.ConnectionID) {
 	e, existed := r.runners[id]
 	var snap RunnerEntry
 	if existed {
-		snap = *e
+		snap = e.snapshot()
 	}
 	delete(r.runners, id)
 	// Only release the identity if it still points at THIS connection. A
@@ -240,7 +251,7 @@ func (r *Registry) GetByIdentity(rid protocol.RunnerID) (RunnerEntry, bool) {
 	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return *e, true
+	return e.snapshot(), true
 }
 
 // GetLiveByIdentity returns the LIVE entry for an identity. Same caveat as
@@ -270,7 +281,7 @@ func (r *Registry) Get(id objproto.ConnectionID) (RunnerEntry, bool) {
 	if !ok {
 		return RunnerEntry{}, false
 	}
-	return *e, true
+	return e.snapshot(), true
 }
 
 // ownsTask checks the assignment reservation, not just a caller-supplied task
@@ -383,7 +394,7 @@ func (r *Registry) Candidates(repo string, sel protocol.RunnerSelector) []Runner
 		if score > maxScore {
 			maxScore = score
 		}
-		matches = append(matches, scored{entry: *e, score: score})
+		matches = append(matches, scored{entry: e.snapshot(), score: score})
 	}
 	var out []RunnerEntry
 	for _, m := range matches {
@@ -511,7 +522,7 @@ func (r *Registry) List() []RunnerEntry {
 	defer r.mu.RUnlock()
 	result := make([]RunnerEntry, 0, len(r.runners))
 	for _, e := range r.runners {
-		result = append(result, *e)
+		result = append(result, e.snapshot())
 	}
 	return result
 }

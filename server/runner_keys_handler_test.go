@@ -6,7 +6,6 @@ import (
 	"strconv"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -65,36 +64,20 @@ func (f *keyVerbFixture) unenroll(t *testing.T, conn *fakeConn, prefix string, f
 	r.SetPrefix([]byte(prefix))
 	r.SetForce(force)
 	req.SetRunnerUnenroll(r)
-	before := len(conn.sendStreams)
 	f.h.Handle(conn, encodeTaskControlRequest(t, req))
 	resp := lastTaskControlResponse(t, conn)
 	u := resp.RunnerUnenroll()
 	if u == nil {
 		t.Fatalf("no runner_unenroll answer: %+v", resp.Kind)
 	}
-	if len(conn.sendStreams) == before {
+	if u.StreamId == 0 {
 		return u.Status, nil
 	}
 	var body protocol.RunnerUnenrollBody
-	waitStreamBytes(t, conn, before)
-	if err := body.DecodeExact(conn.sendStreams[before].bytes); err != nil {
+	if err := body.DecodeExact(conn.sendStreamBytes(t, u.StreamId)); err != nil {
 		t.Fatal(err)
 	}
 	return u.Status, &body
-}
-
-func waitStreamBytes(t *testing.T, conn *fakeConn, i int) {
-	t.Helper()
-	for n := 0; n < 100; n++ {
-		conn.sentMu.Lock()
-		ok := len(conn.sendStreams[i].bytes) > 0
-		conn.sentMu.Unlock()
-		if ok {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatal("the body was never written")
 }
 
 func TestRunnerVerbsNeedRunnerEnroll(t *testing.T) {
@@ -214,12 +197,12 @@ func TestRunnerKeysListsUsers(t *testing.T) {
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_RunnerKeys, RequestId: 3}
 	req.SetRunnerKeys(protocol.RunnerKeysRequest{})
 	f.h.Handle(op, encodeTaskControlRequest(t, req))
-	if resp := lastTaskControlResponse(t, op); resp.RunnerKeys() == nil || resp.RunnerKeys().StreamId == 0 {
+	resp := lastTaskControlResponse(t, op)
+	if resp.RunnerKeys() == nil || resp.RunnerKeys().StreamId == 0 {
 		t.Fatalf("runner_keys answer: %+v", resp.Kind)
 	}
-	waitStreamBytes(t, op, len(op.sendStreams)-1)
 	var body protocol.RunnerKeysBody
-	if err := body.DecodeExact(op.sendStreams[len(op.sendStreams)-1].bytes); err != nil {
+	if err := body.DecodeExact(op.sendStreamBytes(t, resp.RunnerKeys().StreamId)); err != nil {
 		t.Fatal(err)
 	}
 	if len(body.Keys) != 1 || string(body.Keys[0].Label) != "gmk" || len(body.Keys[0].Runners) != 1 || string(body.Keys[0].Runners[0].Hostname) != "gmkhost" {

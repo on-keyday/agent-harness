@@ -364,6 +364,15 @@ func (t *topic) since(sinceSeq uint64) []RetainedMessage {
 	return out
 }
 
+// lastPublished reads lastPublishedAt under t.mu, where append writes it. The
+// eviction sweeps call it while holding the Board's mu: no topic method takes
+// the Board's mu, so that order cannot invert.
+func (t *topic) lastPublished() time.Time {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.lastPublishedAt
+}
+
 // summary returns a snapshot of the topic's stats for ListTopics.
 func (t *topic) summary() (lastSeq uint64, lastPublishedAt time.Time, msgCount int) {
 	t.mu.Lock()
