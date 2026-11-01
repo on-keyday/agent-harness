@@ -5100,7 +5100,9 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   //     registers exactly one pane under the fixed key "preview"; the
   //     session grid registers one pane per cell under "grid:<taskId>".
   //     Record shape: { taskId, live, epoch, term, bodyEl, scaleBox, spacer,
-  //     noteEl, onResize, onClosed }.
+  //     noteEl, onResize, onClosed, key, capReplay, typed?, cropped, follow,
+  //     followRaf, cropAt, paintFollow } — the last five are crop mode's
+  //     (cropPane, wireCropBody).
   const sessionPreviewModal    = document.getElementById("session-preview-modal");
   const sessionPreviewTitle    = document.getElementById("session-preview-title");
   const sessionPreviewBody     = document.getElementById("session-preview-body");
@@ -5140,14 +5142,40 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     return el;
   }
 
-  // setPreviewPauseLabel reflects the "preview" pane's live flag onto the
-  // single-preview modal's ⏸/▶ toggle. Grid panes have no such per-pane
-  // control (dismiss (✕) is the only lifecycle action there), so this stays
-  // specific to the "preview" key rather than becoming a per-pane callback.
+  // paintPauseBtn reflects a pane's live flag onto its ⏸/▶ toggle: the single
+  // preview's header button, or a grid cell's.
+  function paintPauseBtn(btn, p) {
+    const live = !!(p && p.live);
+    btn.textContent = live ? "⏸" : "▶";
+    btn.title = live ? "一時停止" : "再開";
+  }
+
   function setPreviewPauseLabel() {
-    const live = !!previewPanes.get("preview")?.live;
-    sessionPreviewPause.textContent = live ? "⏸" : "▶";
-    sessionPreviewPause.title = live ? "一時停止" : "再開";
+    paintPauseBtn(sessionPreviewPause, previewPanes.get("preview"));
+  }
+
+  // togglePaneLive is ⏸/▶: pause closes the stream and leaves the frame;
+  // resume re-attaches, and the replay jumps to the current screen, so a
+  // cropped pane follows again from the bottom-left (an offset panned in the
+  // old frame means nothing in the new one).
+  function togglePaneLive(key, p) {
+    if (p.live) { stopPane(key); return; }
+    p.follow = true;
+    if (p.paintFollow) p.paintFollow();
+    resetPaneScroll(p);
+    startPane(key, p);
+  }
+
+  // resetPaneScroll puts a pane body at its top-left and records that as our
+  // own position. Without the record, the scroll event the reset raises — or
+  // the browser's clamp when startPane empties the body under a panned offset
+  // — would read as the operator's pan and stop the pane following
+  // (wireCropBody).
+  function resetPaneScroll(p) {
+    if (!p.bodyEl) return;
+    p.cropAt = { top: 0, left: 0 };
+    p.bodyEl.scrollTop = 0;
+    p.bodyEl.scrollLeft = 0;
   }
 
   // startPane (re)opens the live stream for paneKey/p.taskId, generalizing
@@ -5258,8 +5286,8 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     // preview does; grid cells do not). A paused pane leaves an armed Ctrl
     // armed: the keystroke is not sent, so it has not used the modifier.
     p.term.onData((data) => paneInput(p, p.live && p.typed ? p.typed(data) : data));
-    // p.cropped is set only by a grid cell (openSessionGrid); the single
-    // preview always fits.
+    // p.cropped is the grid's or the single preview's display mode
+    // (cropDefault and the 表示 toggle of each modal).
     p.onResize = () => (p.cropped && p.cropped() ? cropPane(p) : fitPaneScale(p));
     p.term.onWriteParsed(() => scheduleCropFollow(p));
     p.onResize();
@@ -5321,18 +5349,19 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     p.spacer.style.height = "";
   }
 
-  // cropPane is the grid cell's other display mode, the TUI grid's: the
-  // terminal stays at PANE_FONT_BASE and the cell shows the part of it that
-  // fits, scrolled to the bottom-left of what the session has drawn
+  // cropPane is a pane's other display mode, the TUI grid's: the terminal
+  // stays at PANE_FONT_BASE and the pane shows the part of it that fits,
+  // scrolled to the bottom-left of what the session has drawn
   // (cropBottomRow). fitPaneScale on a phone shrinks a 120-column session to
   // ~6px glyphs; this keeps them readable and gives up the right-hand columns.
   //
-  // The cell body is the scroll container and the xterm inside it takes no
-  // pointer events (style.css, .grid-crop): xterm 6 claims touch for its own
-  // scrollback gesture and turns a wheel over an alternate-screen app into
-  // arrow keys sent to the session, so a pan that reached it would either
-  // not pan or type into the agent. A tap on the body focuses the terminal
-  // instead (openSessionGrid), which is the only thing the pointer did there.
+  // The pane body is the scroll container and the xterm inside it takes no
+  // pointer events (style.css, .grid-crop / .preview-crop): xterm 6 claims
+  // touch for its own scrollback gesture and turns a wheel over an
+  // alternate-screen app into arrow keys sent to the session, so a pan that
+  // reached it would either not pan or type into the agent. A tap on the body
+  // focuses the terminal instead (wireCropBody), which is the only thing the
+  // pointer did there.
   function cropPane(p) {
     if (!p.term) return;
     if (p.term.options.fontSize !== PANE_FONT_BASE) p.term.options.fontSize = PANE_FONT_BASE;
@@ -5378,6 +5407,63 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     p.cropAt = { top: body.scrollTop, left: body.scrollLeft };
   }
 
+  // wireCropBody gives a pane body the crop's pointer behaviour. A scroll the
+  // operator made stops the pane following and shows its ⤓ (p.paintFollow) —
+  // a pane that does not follow and says nothing reads as a session that went
+  // quiet. A tap focuses the terminal, which takes no pointer events while
+  // cropped; a touch that scrolled raises no click. paneOf is looked up per
+  // event because the single preview reuses one body across openings.
+  function wireCropBody(body, paneOf) {
+    body.addEventListener("scroll", () => {
+      const p = paneOf();
+      if (!p || !p.cropped() || !p.follow) return;
+      const at = p.cropAt;
+      // Our own followCrop assignment raises this event too; only a
+      // position it did not set is the operator's pan.
+      if (at && Math.abs(body.scrollTop - at.top) < 1 && Math.abs(body.scrollLeft - at.left) < 1) return;
+      p.follow = false;
+      p.paintFollow();
+    });
+    body.addEventListener("click", () => {
+      const p = paneOf();
+      if (p && p.cropped() && p.term) p.term.focus();
+    });
+  }
+
+  // refollowPane is ⤓: back to the bottom-left, following again.
+  function refollowPane(p) {
+    p.follow = true;
+    p.paintFollow();
+    followCrop(p);
+  }
+
+  // paintCropToggle labels a modal's 表示 button with the mode it is in.
+  function paintCropToggle(btn, crop) {
+    btn.textContent = crop ? "表示: 等倍" : "表示: 縮小";
+    btn.title = crop
+      ? "等倍: 左下を切り出して表示 (スクロールで移動)。押すと全体を縮小表示"
+      : "縮小: 全体を幅に収める。押すと等倍で左下を切り出す";
+    btn.setAttribute("aria-pressed", crop ? "true" : "false");
+  }
+
+  // applyCropMode redraws one open terminal pane in its modal's current mode.
+  // A mode change restarts following: an offset panned in one font size means
+  // nothing in the other.
+  function applyCropMode(p) {
+    p.follow = true;
+    if (p.paintFollow) p.paintFollow();
+    // The fit view starts at the top-left; a cropped offset would linger.
+    if (!p.cropped()) resetPaneScroll(p);
+    if (p.onResize) p.onResize();
+  }
+
+  // How a terminal pane is drawn: crop (cropPane, the TUI's way) or fit
+  // (fitPaneScale). The grid and the single preview each keep their own
+  // toggle; until the operator presses one, each opening picks by the 600px
+  // breakpoint the phone layout uses (cropDefault). A choice lasts until the
+  // page reloads.
+  const paneNarrow = window.matchMedia("(max-width: 600px)");
+
   // wasm→JS hooks, routed by paneKey (cli/preview_wasm.go tags every call
   // with the pane's key; see previewCall there). The wasm pump is
   // generation-gated (stale pumps go silent); p.live additionally closes the
@@ -5411,6 +5497,29 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     if (p.onClosed) p.onClosed();
   };
 
+  const sessionPreviewMode   = document.getElementById("session-preview-mode");
+  const sessionPreviewFollow = document.getElementById("session-preview-follow");
+  let previewCropChoice = null;
+  let previewCrop = false;
+
+  function paintPreviewMode() {
+    sessionPreviewBody.classList.toggle("preview-crop", previewCrop);
+    paintCropToggle(sessionPreviewMode, previewCrop);
+  }
+
+  sessionPreviewMode.addEventListener("click", () => {
+    previewCrop = !previewCrop;
+    previewCropChoice = previewCrop;
+    paintPreviewMode();
+    const p = previewPanes.get("preview");
+    if (p) applyCropMode(p);
+  });
+  sessionPreviewFollow.addEventListener("click", () => {
+    const p = previewPanes.get("preview");
+    if (p) refollowPane(p);
+  });
+  wireCropBody(sessionPreviewBody, () => previewPanes.get("preview"));
+
   // openSessionPreview shows the single-preview modal for `id`, registering
   // its pane under the fixed key "preview".
   function openSessionPreview(id) {
@@ -5426,7 +5535,16 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       onClosed: () => setPreviewPauseLabel(),
       key, capReplay: false, // full-size terminal: keep the whole scrollback
       typed: previewKeys.typed,
+      cropped: () => previewCrop,
+      follow: true, followRaf: 0, cropAt: null,
+      paintFollow: () => { sessionPreviewFollow.hidden = !(previewCrop && !p.follow); },
     };
+    previewCrop = cropDefault(paneNarrow.matches, previewCropChoice);
+    paintPreviewMode();
+    p.paintFollow();
+    // The body is reused across openings: the last session's offset must not
+    // carry over (fit mode never resets it on its own).
+    resetPaneScroll(p);
     previewPanes.set(key, p);
     if (!sessionPreviewModal.open) sessionPreviewModal.showModal();
     startPane(key, p);       // p.live flips true synchronously before the first await
@@ -5450,8 +5568,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   sessionPreviewPause.addEventListener("click", () => {
     const p = previewPanes.get("preview");
     if (!p) return;
-    if (p.live) stopPane("preview");
-    else startPane("preview", p);
+    togglePaneLive("preview", p);
     setPreviewPauseLabel();
   });
   sessionPreviewReattach.addEventListener("click", () => {
@@ -5474,43 +5591,23 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   const gridModeBtn = document.getElementById("session-grid-mode");
   let gridKeys = [];
 
-  // How the grid's terminal cells are drawn: crop (cropPane, the TUI's way)
-  // or fit (fitPaneScale). gridCropChoice is the operator's toggle; until
-  // they press it, each opening picks by the same 600px breakpoint the 1-column
-  // layout uses (gridCropDefault). It lasts until the page reloads.
-  const gridNarrow = window.matchMedia("(max-width: 600px)");
+  // The grid's display mode (see paneNarrow).
   let gridCropChoice = null;
   let gridCrop = false;
 
   function paintGridMode() {
     gridBody.classList.toggle("grid-crop", gridCrop);
-    gridModeBtn.textContent = gridCrop ? "表示: 等倍" : "表示: 縮小";
-    gridModeBtn.title = gridCrop
-      ? "等倍: 左下を切り出して表示 (スクロールで移動)。押すと全体を縮小表示"
-      : "縮小: 全体を幅に収める。押すと等倍で左下を切り出す";
-    gridModeBtn.setAttribute("aria-pressed", gridCrop ? "true" : "false");
-  }
-
-  // applyGridMode redraws every open terminal cell in the current mode. A
-  // mode change restarts following: an offset panned in one font size means
-  // nothing in the other.
-  function applyGridMode() {
-    paintGridMode();
-    for (const key of gridKeys) {
-      const p = previewPanes.get(key);
-      if (!p) continue;
-      p.follow = true;
-      if (p.paintFollow) p.paintFollow();
-      // overflow:hidden keeps a scroll offset; the fit view starts at 0.
-      if (!gridCrop && p.bodyEl) { p.bodyEl.scrollTop = 0; p.bodyEl.scrollLeft = 0; }
-      if (p.onResize) p.onResize();
-    }
+    paintCropToggle(gridModeBtn, gridCrop);
   }
 
   gridModeBtn.addEventListener("click", () => {
     gridCrop = !gridCrop;
     gridCropChoice = gridCrop;
-    applyGridMode();
+    paintGridMode();
+    for (const key of gridKeys) {
+      const p = previewPanes.get(key);
+      if (p) applyCropMode(p);
+    }
   });
 
   // teardownGridPanes stops every current grid pane's stream and clears the
@@ -5616,9 +5713,9 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     }
     teardownGridPanes();
     gridBody.replaceChildren();
-    gridCrop = gridCropDefault(gridNarrow.matches, gridCropChoice);
+    gridCrop = cropDefault(paneNarrow.matches, gridCropChoice);
     paintGridMode();
-    const capped =[...new Set(ids)].slice(0, 9); // dedupe (same id twice must not orphan a cell), then pane cap (v1)
+    const capped = [...new Set(ids)].slice(0, 9); // dedupe (same id twice must not orphan a cell), then pane cap (v1)
     for (const id of capped) {
       const key = "grid:" + id;
       const stream = isStreamKind((lastTasks || []).find((t) => t.id === id));
@@ -5680,9 +5777,8 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
         follow: true, followRaf: 0, cropAt: null, paintFollow: null,
       };
       // ⤓ appears once the operator pans a cropped cell away from the
-      // bottom-left, which also stops it following — the TUI's ↑N/→M marker
-      // and `0` key, as one button. A cell that does not follow and says
-      // nothing reads as a session that went quiet.
+      // bottom-left (wireCropBody) — the TUI's ↑N/→M marker and `0` key, as
+      // one button.
       const follow = document.createElement("button");
       follow.type = "button";
       follow.className = "grid-cell-btn";
@@ -5690,28 +5786,24 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       follow.title = "左下に戻して追従";
       p.paintFollow = () => { follow.hidden = !(gridCrop && !p.follow); };
       p.paintFollow();
-      follow.addEventListener("click", () => {
-        p.follow = true;
-        p.paintFollow();
-        followCrop(p);
+      follow.addEventListener("click", () => refollowPane(p));
+      // ⏸/▶ is the single preview's: pause closes this cell's stream and
+      // keeps its frame, ▶ re-attaches at the current screen. onClosed
+      // repaints it when the stream ends on its own, whose note says ▶.
+      const pause = document.createElement("button");
+      pause.type = "button";
+      pause.className = "grid-cell-btn";
+      p.onClosed = () => paintPauseBtn(pause, p);
+      pause.addEventListener("click", () => {
+        togglePaneLive(key, p);
+        paintPauseBtn(pause, p);
       });
       head.insertBefore(follow, attach);
-      body.addEventListener("scroll", () => {
-        if (!gridCrop || !p.follow) return;
-        const at = p.cropAt;
-        // Our own followCrop assignment raises this event too; only a
-        // position it did not set is the operator's pan.
-        if (at && Math.abs(body.scrollTop - at.top) < 1 && Math.abs(body.scrollLeft - at.left) < 1) return;
-        p.follow = false;
-        p.paintFollow();
-      });
-      // The cropped terminal takes no pointer events (cropPane), so a tap
-      // focuses it from here. A touch that scrolled raises no click.
-      body.addEventListener("click", () => {
-        if (gridCrop && p.term) p.term.focus();
-      });
+      head.insertBefore(pause, attach);
+      wireCropBody(body, () => p);
       previewPanes.set(key, p);
-      startPane(key, p);
+      startPane(key, p);   // p.live flips true synchronously before the first await
+      paintPauseBtn(pause, p);
     }
     if (!gridModal.open) gridModal.showModal();
   }
@@ -9647,11 +9739,12 @@ function cropScrollTop(termTop, bottom, rowPx, viewHeight) {
   return Math.max(0, Math.round(termTop + bottom * rowPx - viewHeight));
 }
 
-// gridCropDefault picks the grid's display mode for one opening: what the
-// operator last toggled to on this page, else crop on a narrow screen (where
+// cropDefault picks a terminal pane's display mode for one opening of the
+// grid or the single preview: what the operator last toggled to in that modal
+// on this page, else crop on a narrow screen (where
 // fitting shrinks text below reading size) and fit on a wide one (where it
 // shows whole screens at once).
-function gridCropDefault(narrow, choice) {
+function cropDefault(narrow, choice) {
   return choice === null || choice === undefined ? !!narrow : !!choice;
 }
 

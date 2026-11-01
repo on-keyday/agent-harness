@@ -256,7 +256,7 @@ The WebUI grid now has both ways, and a header button switches between them.
 | 7 | The operator pans with the cell body's native scrolling. The xterm inside takes no pointer events, and a click on the body focuses the terminal | author |
 | 8 | A pan stops the cell following new output, and a `⤓` button appears in the cell header. Pressing it returns the cell to the bottom-left and turns following back on. This combines the TUI's `↑N`/`→M` markers and its `0` key in one control | author |
 | 9 | Event-stream cells are the same in both modes. They render a chat transcript at 12px and have no terminal to crop | author |
-| 10 | The single preview modal still always fits. It is one session at full modal width, which is a different trade-off from a grid of cells | author |
+| 10 | The single preview modal still always fits. It is one session at full modal width, which is a different trade-off from a grid of cells | author — **reversed** by the operator on 2026-11-02 (amendment below) |
 
 Why #7 avoids xterm's own pointer handling. The bundled xterm (6.x) handles
 touch with its own gesture recognizer and calls `preventDefault`, and it scrolls
@@ -282,3 +282,45 @@ the cell). `⤓` returns the cell to the bottom-left. (n) Tapping a cropped cell
 focuses it, and typed text reaches the session. (o) The header button switches
 to fit and back. At 1280px the grid opens in fit. (p) `node --test` covers
 `cropBottomRow`, `cropScrollTop` and `gridCropDefault`.
+
+## Amendment 2026-11-02 — crop in the single preview, ⏸/▶ in grid cells
+
+Two gaps between the WebUI's two session views. The single preview always
+fitted (#10 above), so on a 390px phone a 160-column session rendered at about
+4.7px (measured: `fitPaneScale` set 4.725px in Playwright). The grid had no ⏸/▶,
+although the Mechanism section above planned "a per-pane reconnect ▶, reusing
+the preview's paused-state pattern", and a cell whose stream ended already said
+`(ストリーム終了 — ▶ で再接続)` with no ▶ to press.
+
+| # | Decision | Decided-by |
+|---|---|---|
+| 11 | The single preview gets the grid's crop mode (#1, #5–#8): the same `表示` toggle in its header, and the same `⤓` in its header. This reverses #10 | operator, 2026-11-02 |
+| 12 | Each grid terminal cell gets the single preview's ⏸/▶: ⏸ closes the cell's stream and keeps its frame, ▶ re-attaches and the replay jumps to the current screen. A stream that ends by itself turns the button to ▶ | operator, 2026-11-02 |
+| 13 | The preview and the grid keep separate toggles. Both use #3's default (crop at ≤600px) and #4's lifetime. `gridCropDefault` is renamed `cropDefault` because both modals call it | author |
+| 14 | ⏸/▶ is per cell, not one button for the whole grid. That is the preview's semantics, and it is what the stream-ended note points at | author |
+| 15 | Event-stream cells get no ⏸/▶. They attach through `streamPaneStart`, not the preview pump, and #9 already keeps them separate | author |
+| 16 | ▶ turns following back on and resets the pane's scroll to the top-left before re-attaching. An offset panned in the old frame means nothing in the new one. Without the reset, the browser clamps the offset when the body is emptied, and that scroll event would be read as the operator's pan | author (the clamp was found in Playwright) |
+
+The single preview's body was already the scroll container (`.preview-body`
+has `overflow: auto`), and the modal already bounds its height. So crop there
+needs no fixed height, unlike a grid cell (#5). Only the spacer's clipping and
+the xterm's pointer events change (`.preview-crop` in `style.css`). The cost is
+#7's cost: in crop mode, the preview has no mouse text selection and the wheel
+does not reach xterm's own scrollback. Fit mode keeps both.
+
+Surfaces: the `preview` command and the task sheet's `🔍 プレビュー` open the
+same modal. The `grid` command and the `▦` buttons open the same grid. TUI: it
+has no single preview, and its grid has no pause. Nobody asked for a TUI pause,
+so none is added. No wire, wasm or server change.
+
+Verification (Playwright against `scripts/dummy-harness.sh`, a 50×160 bash
+session that printed 60 lines of 120+ columns): (q) at 390px the preview opens
+in crop at 13px, scrolled to the prompt at the bottom-left, with no horizontal
+page overflow. A pan shows `⤓`, and `⤓` returns to the bottom-left. A tap
+focuses the terminal, and typed keys reach the session (`echo ZQ9` echoed). (r)
+The toggle switches to fit (4.725px) and back. (s) ⏸ then ▶ in the preview
+follows again, with `⤓` hidden. Before #16's reset it came back at the top
+with `⤓` shown. (t) In the grid, ⏸ on a cell keeps it from showing output
+printed while paused. ▶ shows that output and follows. Killing a session turns
+its cell's button to ▶, next to the stream-ended note. (u) At 1280px the
+preview opens in fit and its toggle switches to crop.

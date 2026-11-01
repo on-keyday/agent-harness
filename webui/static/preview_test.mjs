@@ -118,12 +118,12 @@ test("cropScrollTop puts the anchor row at the view's bottom, never above 0", ()
   assert.equal(page.cropScrollTop(6, 3, 15, 150), 0);
 });
 
-// The operator's decision (2026-11-01): crop by default on a phone, fit on a
-// desktop, and a toggle. Once toggled, the choice holds for later openings
+// The operator's decision (2026-11-01, the grid; 2026-11-02, the single
+// preview too): crop by default on a phone, fit on a desktop, and a toggle. Once toggled, the choice holds for later openings
 // whatever the width.
-test("gridCropDefault follows the width until the operator chooses", () => {
-  assert.equal(page.gridCropDefault(true, null), true);
-  assert.equal(page.gridCropDefault(false, null), false);
-  assert.equal(page.gridCropDefault(true, false), false);
-  assert.equal(page.gridCropDefault(false, true), true);
+test("cropDefault follows the width until the operator chooses", () => {
+  assert.equal(page.cropDefault(true, null), true);
+  assert.equal(page.cropDefault(false, null), false);
+  assert.equal(page.cropDefault(true, false), false);
+  assert.equal(page.cropDefault(false, true), true);
 });

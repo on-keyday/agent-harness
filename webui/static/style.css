@@ -1264,6 +1264,15 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
 .grid-body.grid-crop .grid-cell-body:not(.grid-stream-body) .xterm {
   pointer-events: none;
 }
+/* The single preview's crop mode: the same window over a full-size terminal.
+   .preview-body already scrolls and the modal already bounds its height, so
+   only the spacer and the pointer change. */
+.session-preview-body.preview-crop { cursor: text; }
+.session-preview-body.preview-crop .session-preview-spacer {
+  overflow: visible;
+  width: max-content;
+}
+.session-preview-body.preview-crop .xterm { pointer-events: none; }
 
 @media (max-width: 600px) {
   .grid-modal {
