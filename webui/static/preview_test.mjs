@@ -91,3 +91,39 @@ test("previewShimSource escapes < in the config it splices", () => {
     "a literal </script> in the path must not survive into the shim");
   assert.match(src, /\\u003c/);
 });
+
+// cropBottomRow is the grid's crop anchor, ported from tui/pane_streamer.go
+// Render. Each case below is one the TUI comment names: a short shell at the
+// top of a tall screen, a full screen whose app parked the cursor above its
+// newest output, and a cursor below the last drawn row.
+test("cropBottomRow anchors to the last drawn row or the cursor, whichever is lower", () => {
+  const blank = (n) => Array(n).fill("");
+  // short shell at the top: crop to the prompt, not to 40 blank rows
+  assert.equal(page.cropBottomRow(["$ ls", "a b", "$ ", ...blank(37)], 2), 3);
+  // cursor parked high, output below it: the output wins
+  assert.equal(page.cropBottomRow(["top", ...blank(5), "newest", ""], 1), 7);
+  // cursor on a blank line under the content: the cursor's row is shown
+  assert.equal(page.cropBottomRow(["$ cat", "", "", ""], 3), 4);
+  // whitespace-only rows are blank
+  assert.equal(page.cropBottomRow(["x", "   ", "\t"], 0), 1);
+  // an empty screen still shows one row; a cursor past the end is clamped
+  assert.equal(page.cropBottomRow(blank(5), -1), 1);
+  assert.equal(page.cropBottomRow(blank(5), 9), 5);
+});
+
+test("cropScrollTop puts the anchor row at the view's bottom, never above 0", () => {
+  // 30 rows of 15px under a 6px top inset, 150px view: 6 + 450 - 150
+  assert.equal(page.cropScrollTop(6, 30, 15, 150), 306);
+  // content shorter than the view: stay at the top
+  assert.equal(page.cropScrollTop(6, 3, 15, 150), 0);
+});
+
+// The operator's decision (2026-11-01): crop by default on a phone, fit on a
+// desktop, and a toggle. Once toggled, the choice holds for later openings
+// whatever the width.
+test("gridCropDefault follows the width until the operator chooses", () => {
+  assert.equal(page.gridCropDefault(true, null), true);
+  assert.equal(page.gridCropDefault(false, null), false);
+  assert.equal(page.gridCropDefault(true, false), false);
+  assert.equal(page.gridCropDefault(false, true), true);
+});

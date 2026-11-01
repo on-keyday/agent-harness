@@ -1244,6 +1244,26 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
 }
 .grid-stream-body .chat-approval pre { max-height: 6em; }
 .grid-stream-body .chat-input-row textarea { font-size: 12px; }
+/* Crop mode (main.js cropPane): a terminal cell is a window, at least 40vh
+   tall, that the operator pans with native scrolling over a full-size
+   terminal. The spacer
+   stops clipping to the cell's width, and the terminal takes no pointer
+   events so a pan cannot reach xterm (which would scroll its own scrollback
+   or send arrow keys to the session); a tap on the body focuses it. */
+.grid-body.grid-crop .grid-cell-body:not(.grid-stream-body) {
+  height: 40vh;
+  min-height: 200px;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  cursor: text;
+}
+.grid-body.grid-crop .grid-cell-body:not(.grid-stream-body) .session-preview-spacer {
+  overflow: visible;
+  width: max-content;
+}
+.grid-body.grid-crop .grid-cell-body:not(.grid-stream-body) .xterm {
+  pointer-events: none;
+}
 
 @media (max-width: 600px) {
   .grid-modal {

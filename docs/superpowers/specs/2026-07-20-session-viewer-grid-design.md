@@ -230,3 +230,55 @@ in neither; (i) a task granted `--scope subtree+ids:<unrelated>` shows that
 unrelated session under `z` and says so in the label; (j) the same through the
 WebUI buttons and every `grid` form, desktop and 390px; (k) an anchor with
 nothing watchable under it reports instead of opening.
+
+## Amendment 2026-11-01 — WebUI terminal cells can crop like the TUI's
+
+The two grids shrink a session's screen in different ways. The TUI keeps the
+glyph size and shows the bottom-left part of the screen that fits the pane
+(`tui/pane_streamer.go` `PaneStreamer.Render`), panned with ⇧↑↓←→ and reset
+with `0`. The WebUI lowers the xterm font size until all the session's columns
+fit the cell (`fitPaneScale`, floor `PANE_FONT_MIN = 1`). On a 390px phone a
+cell body is about 340px wide, so a 120-column session renders at about 5.7px
+and a 200-column one at about 3.4px. That is not readable. The figures are
+computed from `fitPaneScale`'s own measurement (13px font = 6.5px per column),
+not measured on a device.
+
+The WebUI grid now has both ways, and a header button switches between them.
+
+| # | Decision | Decided-by |
+|---|---|---|
+| 1 | The WebUI grid's terminal cells get a crop mode with the TUI's semantics: the glyph size is unchanged, the cell shows the bottom-left of the screen, and the operator pans | operator, 2026-11-01 (author's proposal) |
+| 2 | One button in the grid header switches every terminal cell between crop (`表示: 等倍`) and fit (`表示: 縮小`) | operator, 2026-11-01 |
+| 3 | Before the operator presses it, each opening uses crop at ≤600px (the breakpoint where the grid becomes one column) and fit above that | operator, 2026-11-01 |
+| 4 | After the operator presses it, that choice is used for every later opening until the page reloads. It is not stored in `localStorage` | author |
+| 5 | Crop uses the font size the single preview starts at (`PANE_FONT_BASE`, 13px), about 52 columns on a 390px phone. The cell body is at least `40vh` (and at least 200px) tall and scrolls. It grows when the grid row is taller: on a desktop with one row of cells, the row stretches to the modal's height | author |
+| 6 | The crop's bottom edge follows the TUI's rule (`cropBottomRow`): the last row with anything drawn on it, or the cursor's row if that is lower. The left edge is column 0 | author |
+| 7 | The operator pans with the cell body's native scrolling. The xterm inside takes no pointer events, and a click on the body focuses the terminal | author |
+| 8 | A pan stops the cell following new output, and a `⤓` button appears in the cell header. Pressing it returns the cell to the bottom-left and turns following back on. This combines the TUI's `↑N`/`→M` markers and its `0` key in one control | author |
+| 9 | Event-stream cells are the same in both modes. They render a chat transcript at 12px and have no terminal to crop | author |
+| 10 | The single preview modal still always fits. It is one session at full modal width, which is a different trade-off from a grid of cells | author |
+
+Why #7 avoids xterm's own pointer handling. The bundled xterm (6.x) handles
+touch with its own gesture recognizer and calls `preventDefault`, and it scrolls
+its own scrollback. With no scrollback (an alternate-screen app such as claude),
+it turns a wheel event into arrow keys sent to the session. A pan that reached
+the xterm would therefore either fail to move the cell or type into the agent.
+The cost is that crop mode has no mouse text selection in a cell. Fit mode keeps
+it.
+
+What the TUI already has and the WebUI now matches: the "Per-pane scrolling is
+a later upgrade" line under Window-size model was done in the TUI by its
+shift-arrow pan. This amendment gives the WebUI the same thing.
+
+Surfaces: TUI — already crops, no change. CLI — has no grid (Non-goals). WebUI
+`grid` command and `▦` task-sheet buttons — they open the same modal, so they
+get the same mode and button. No wire, wasm or server change.
+
+Verification: (l) at 390px the grid opens in crop. A 160-column session that
+printed 60 lines shows its last line at the cell's bottom with readable text.
+A line ending past column 52 is cut on the right and can be reached by
+scrolling. (m) A pan shows `⤓` and stops following (new output does not move
+the cell). `⤓` returns the cell to the bottom-left. (n) Tapping a cropped cell
+focuses it, and typed text reaches the session. (o) The header button switches
+to fit and back. At 1280px the grid opens in fit. (p) `node --test` covers
+`cropBottomRow`, `cropScrollTop` and `gridCropDefault`.
