@@ -139,6 +139,18 @@ func TestBoardArchiveCLI(t *testing.T) {
 	if _, err := run("read", "grp", "--archive", id); err == nil {
 		t.Error("read with both a topic and --archive was accepted")
 	}
+	// --before alone pages an archive: its page size defaults to 64 (spec
+	// §5.1). On a topic it still needs --limit, which selects paging there.
+	out, err = run("read", "--archive", id, "--before", strconv.FormatUint(seqs[2], 10))
+	if err != nil {
+		t.Fatalf("read --archive --before without --limit: %v", err)
+	}
+	if rows := rowHeader.FindAllStringSubmatch(out, -1); len(rows) != 2 {
+		t.Errorf("read --archive --before seq#2 = %d rows, want 2", len(rows))
+	}
+	if _, err := run("read", "grp", "--before", "5"); err == nil {
+		t.Error("read <topic> --before without --limit was accepted")
+	}
 
 	out, err = run("purge", "--archive", id, "--seq", strconv.FormatUint(seqs[0], 10))
 	if err != nil || !strings.Contains(out, `"purged":1`) {

@@ -130,3 +130,20 @@ func TestBoardRetainCell_ShowsFlushed(t *testing.T) {
 		t.Errorf("cell = %q", got)
 	}
 }
+
+// A chat.* topic can never be archived, so A there says why instead of
+// sending a request the server always refuses — the rule retain follows.
+func TestBoardArchiveKey_RefusedOnChat(t *testing.T) {
+	a := boardApp(t)
+	a.boardModal.ApplyTopics([]cli.BoardTopicRow{{Name: "chat.0123abcd", MsgCount: 1, LastSeq: 1, LastPublishedAtMs: 1}}, nil)
+	if _, cmd := a.updateKey(key(modalKeys.BoardArchive)); cmd != nil {
+		t.Fatal("A on a chat topic produced a request")
+	}
+	if !strings.Contains(a.boardModal.View(), "cannot be archived") {
+		t.Error("A on a chat topic did not say why")
+	}
+	a.boardModal.ApplyMessages("chat.0123abcd", nil, nil, true)
+	if _, cmd := a.updateKey(key(modalKeys.BoardArchive)); cmd != nil {
+		t.Fatal("A in a chat topic's message view produced a request")
+	}
+}

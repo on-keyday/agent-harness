@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/cli"
 )
 
@@ -124,6 +125,20 @@ func (m *BoardModal) Flushable(topic string) bool {
 	}
 	if m.retentionOf(topic) == nil {
 		m.status = "flush: " + topic + " is not retained — only a retained topic keeps its messages on disk"
+		return false
+	}
+	return true
+}
+
+// Archivable reports whether A should archive topic. A chat.* topic never
+// can (direct messages stay temporary), so A says so instead of sending a
+// request the server always refuses — the rule retain follows.
+func (m *BoardModal) Archivable(topic string) bool {
+	if topic == "" {
+		return false
+	}
+	if !agentboard.Retainable(topic) {
+		m.status = "archive: " + topic + " cannot be archived — chat.* topics stay temporary"
 		return false
 	}
 	return true

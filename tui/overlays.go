@@ -377,7 +377,7 @@ func (a *App) inBoardModal(msg tea.KeyMsg) tea.Cmd {
 			}
 			return nil
 		case modalKeys.BoardArchive:
-			if topic := a.boardModal.SelectedTopicName(); topic != "" {
+			if topic := a.boardModal.SelectedTopicName(); a.boardModal.Archivable(topic) {
 				return DoBoardArchive(a.client, topic)
 			}
 			return nil
@@ -508,7 +508,10 @@ func (a *App) inBoardModal(msg tea.KeyMsg) tea.Cmd {
 			}
 			return nil
 		case modalKeys.BoardArchive:
-			return DoBoardArchive(a.client, a.boardModal.CurTopic())
+			if topic := a.boardModal.CurTopic(); a.boardModal.Archivable(topic) {
+				return DoBoardArchive(a.client, topic)
+			}
+			return nil
 		case modalKeys.BoardArchives:
 			return DoBoardArchives(a.client, a.boardModal.CurTopic())
 		case modalKeys.BoardCompose:

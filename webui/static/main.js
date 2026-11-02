@@ -6519,6 +6519,15 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     // Offered only where the server would accept it: chat.* topics stay
     // temporary, and a button that only ever answers "refused" reads as if
     // the topic could be kept.
+    // Archive follows the same rule: a chat.* topic is never archived.
+    const archiveBtn = document.getElementById("board-archive-btn");
+    if (archiveBtn) {
+      const ok = !!(window.harness && window.harness.boardRetainable(topic));
+      archiveBtn.disabled = !ok;
+      archiveBtn.title = ok
+        ? "ここまでの履歴を追記されないアーカイブに固定する。topic は変わらない (board archive)"
+        : "chat.* topics stay temporary and cannot be archived";
+    }
     const retainBtn = document.getElementById("board-retain-btn");
     if (retainBtn) {
       const ok = !!(window.harness && window.harness.boardRetainable(topic));

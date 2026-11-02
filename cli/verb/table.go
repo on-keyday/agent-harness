@@ -1228,6 +1228,12 @@ var Verbs = []VerbSpec{
 			if b.Set["archive"] && b.Set["in-reply-to"] {
 				return fmt.Errorf("board read: --in-reply-to filters a topic's ring; page an archive with --before / --limit")
 			}
+			// On a topic, --limit is what selects paging, so --before alone
+			// would be read against the ring and ignored. An archive always
+			// pages (64 unless --limit says otherwise).
+			if b.Set["before"] && !b.Set["limit"] && !b.Set["archive"] {
+				return fmt.Errorf("board read: --before needs --limit (--before pages, and a page has a size)")
+			}
 			return nil
 		},
 		Flags: []Flag{
@@ -1243,7 +1249,6 @@ var Verbs = []VerbSpec{
 			{Name: "before", Type: FlagUint64, Default: uint64(0), Field: "Before",
 				Help: "with --limit: only messages with a seq below this one"},
 		},
-		Requires: []Requirement{{Flags: []string{"before"}, Needs: "limit", Reason: "--before pages, and a page has a size"}},
 		Examples: []string{"board read chat.abcd1234", "board read chat.abcd1234 --json", "board read tree.<task-id>.design --limit 100 --before 4242", "board read --archive 0a1b2c3d4e5f"},
 	},
 	{
