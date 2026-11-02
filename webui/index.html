@@ -351,6 +351,9 @@
         <button type="button" id="board-view-topics" class="board-view-btn is-active">Topics</button>
         <button type="button" id="board-view-chains" class="board-view-btn">Chains</button>
         <button id="board-refresh-btn">↻ Refresh</button>
+        <!-- Every archive, of any topic: one whose topic is gone included
+             (board archives). -->
+        <button type="button" id="board-archives-btn" title="アーカイブの一覧 (board archives)">🗄 Archives</button>
         <!-- Chains only: the export is the CONVERSATIONS as one sheet, which is
              what this view assembles. Hidden in the Topics view rather than
              disabled — there it would answer a question nobody asked. -->
@@ -382,9 +385,19 @@
             <button id="board-retain-btn" type="button" title="Keep this topic past the TTL and a server restart (board retain)">⏳ Retain</button>
             <button id="board-unretain-btn" type="button" hidden
                     title="保持をやめる: disk の写しを消し、最後の投稿から 30 分で消える通常の topic に戻す">保持を解除</button>
+            <!-- Flush shows only on a retained topic: elsewhere there is no disk
+                 copy, and emptying the ring would destroy the messages. -->
+            <button id="board-flush-btn" type="button" hidden
+                    title="メモリ上の ring を空にする。disk の log には全部残り、再起動でも ring に戻らない (board flush)">⇣ Flush</button>
+            <button id="board-archive-btn" type="button"
+                    title="ここまでの履歴を追記されないアーカイブに固定する。topic は変わらない (board archive)">🗄 Archive</button>
+            <button id="board-topic-archives-btn" type="button" title="この topic のアーカイブ">アーカイブ一覧</button>
             <button id="board-wake-btn" type="button" title="Wake this topic's subscribers without publishing">⏰ Wake</button>
             <button id="board-purge-topic-btn" class="btn-danger">Purge topic</button>
           </div>
+          <!-- The result of the last flush / archive on this topic: the
+               command output is on another tab. -->
+          <div id="board-detail-status" class="board-detail-status"></div>
           <div id="board-subscribers"></div>
           <div id="board-messages"></div>
           <!-- Operator composer: a message on this topic, or a reply when ↩
@@ -407,6 +420,16 @@
             </div>
           </div>
         </div>
+      </div>
+      <!-- Archives: the list (of one topic, or all), then one archive's
+           messages. Read-only but for purge. -->
+      <div id="board-archives-view" hidden>
+        <div class="board-detail-header">
+          <button type="button" id="board-archives-back-btn" class="board-back-btn">← Back</button>
+          <span id="board-archives-title" class="board-detail-title"></span>
+          <button type="button" id="board-archive-delete-btn" class="btn-danger" hidden>アーカイブを削除</button>
+        </div>
+        <div id="board-archives-list"></div>
       </div>
       <div id="board-chains-view" hidden>
         <div id="board-chains-window" class="board-chains-window"></div>

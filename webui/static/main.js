@@ -6503,8 +6503,12 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     // A different topic starts a fresh composer; re-reading the same one (a
     // refresh after a send) leaves what is being written alone.
     if (topic !== currentBoardTopic && typeof resetBoardCompose === "function") resetBoardCompose();
-    // A membership result belongs to the topic it changed.
-    if (topic !== currentBoardTopic) boardMemberStatus = "";
+    // A membership result belongs to the topic it changed, and so does a
+    // flush / archive result.
+    if (topic !== currentBoardTopic) {
+      boardMemberStatus = "";
+      boardDetailSay("", false);
+    }
     currentBoardTopic = topic;
     boardTopicsEl.hidden = true;
     boardDetailEl.hidden = false;
@@ -6541,9 +6545,14 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
         boardMessagesEl.textContent = "(nothing published to this topic)";
         return;
       }
+      // No early return on an empty ring: a flushed topic holds nothing in
+      // memory and everything on disk, which the older button reaches.
       if (!r.msgs || r.msgs.length === 0) {
-        boardMessagesEl.textContent = "(no messages)";
-        return;
+        const note = document.createElement("div");
+        note.className = "board-empty-note";
+        note.textContent = "(no messages in the ring)";
+        boardMessagesEl.appendChild(note);
+        r.msgs = [];
       }
       const renderCard = (m) => {
         const card = document.createElement("div");
@@ -6704,7 +6713,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       older.type = "button";
       older.className = "board-older-btn";
       older.textContent = "さらに古いメッセージを読み込む";
-      let oldest = boardMinSeq(r.msgs.map((m) => m.seq));
+      let oldest = boardOlderCursor(r.msgs.map((m) => m.seq));
       older.addEventListener("click", async () => {
         older.disabled = true;
         try {
@@ -7066,6 +7075,8 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     // Hidden until the server says the topic is retained: offered only where
     // it acts.
     if (unretainBtn) unretainBtn.hidden = true;
+    const flushBtnReset = document.getElementById("board-flush-btn");
+    if (flushBtnReset) flushBtnReset.hidden = true;
     if (retainBtn) retainBtn.textContent = boardRetainButtonLabel(false);
     if (!window.harness) return;
     try {
@@ -7075,6 +7086,8 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       const retained = !!(t && t.retain);
       boardRetainBadge.textContent = boardRetainMeta(t).trim();
       if (unretainBtn) unretainBtn.hidden = !retained;
+      const flushBtn = document.getElementById("board-flush-btn");
+      if (flushBtn) flushBtn.hidden = !retained;
       if (retainBtn) retainBtn.textContent = boardRetainButtonLabel(retained);
     } catch (_) {
       // The badge is a nicety; the topic view itself must still render.
@@ -7125,6 +7138,207 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     });
   }
 
+  // ── Flush and archives ──
+  // See docs/superpowers/specs/2026-11-02-agentboard-flush-archive-design.md.
+  const boardDetailStatus = document.getElementById("board-detail-status");
+  const boardArchivesViewEl = document.getElementById("board-archives-view");
+  const boardArchivesListEl = document.getElementById("board-archives-list");
+  const boardArchivesTitle = document.getElementById("board-archives-title");
+  const boardArchiveDeleteBtn = document.getElementById("board-archive-delete-btn");
+  // archivesFilter is the topic the archive list was opened for ("" = all);
+  // currentArchive the archive row being read, null on the list.
+  let archivesFilter = "";
+  let currentArchive = null;
+
+  function boardDetailSay(text, isError) {
+    if (!boardDetailStatus) return;
+    boardDetailStatus.textContent = text;
+    boardDetailStatus.classList.toggle("error", !!isError);
+  }
+
+  const boardFlushBtn = document.getElementById("board-flush-btn");
+  if (boardFlushBtn) {
+    boardFlushBtn.addEventListener("click", async () => {
+      if (!currentBoardTopic || !window.harness) return;
+      const topic = currentBoardTopic;
+      if (!window.confirm(`${topic} の ring を空にしますか？\n（disk の log には全部残ります。「さらに古いメッセージ」で読めます）`)) return;
+      try {
+        const r = await window.harness.boardFlush(topic);
+        const line = boardFlushResultLine(topic, r);
+        appendCmdOutput(line);
+        await openBoardTopic(topic);
+        boardDetailSay(line, false);
+      } catch (err) {
+        appendCmdOutput(`board flush error: ${err.message}`);
+        boardDetailSay(`flush error: ${err.message}`, true);
+      }
+    });
+  }
+
+  const boardArchiveBtn = document.getElementById("board-archive-btn");
+  if (boardArchiveBtn) {
+    boardArchiveBtn.addEventListener("click", async () => {
+      if (!currentBoardTopic || !window.harness) return;
+      const topic = currentBoardTopic;
+      try {
+        const r = await window.harness.boardArchive(topic);
+        const line = boardArchiveResultLine(topic, r);
+        appendCmdOutput(line);
+        boardDetailSay(line, false);
+      } catch (err) {
+        appendCmdOutput(`board archive error: ${err.message}`);
+        boardDetailSay(`archive error: ${err.message}`, true);
+      }
+    });
+  }
+
+  // renderBoardArchives lists archives of topic, or every archive for "".
+  async function renderBoardArchives(topic) {
+    archivesFilter = topic || "";
+    currentArchive = null;
+    if (boardTopicsViewEl) boardTopicsViewEl.hidden = true;
+    if (boardChainsViewEl) boardChainsViewEl.hidden = true;
+    boardArchivesViewEl.hidden = false;
+    boardArchiveDeleteBtn.hidden = true;
+    boardArchivesTitle.textContent = `archives of ${archivesFilter || "all topics"}`;
+    boardArchivesListEl.innerHTML = "";
+    if (!window.harness) {
+      boardArchivesListEl.textContent = "(not connected)";
+      return;
+    }
+    try {
+      const rows = await window.harness.boardArchives(archivesFilter);
+      if (!rows || rows.length === 0) {
+        boardArchivesListEl.textContent = "(no archives — 🗄 Archive on a topic makes one)";
+        return;
+      }
+      for (const row of rows) {
+        const el = document.createElement("div");
+        el.className = "board-topic-row board-archive-row";
+        // The CLI's line, rendered in Go: one spelling on every surface.
+        el.textContent = row.summary;
+        el.addEventListener("click", () => openBoardArchive(row));
+        boardArchivesListEl.appendChild(el);
+      }
+    } catch (err) {
+      boardArchivesListEl.textContent = `error: ${err.message}`;
+    }
+  }
+
+  // openBoardArchive reads one archive: newest page first, an older button
+  // above, purge per message. Nothing else changes an archive.
+  async function openBoardArchive(row) {
+    currentArchive = row;
+    boardArchivesTitle.textContent = `archive ${row.id} of ${row.topic}`;
+    boardArchiveDeleteBtn.hidden = false;
+    boardArchivesListEl.innerHTML = "";
+    const card = (m) => {
+      const el = document.createElement("div");
+      el.className = "board-msg";
+      if (m.retracted) el.classList.add("board-msg-retracted");
+      const hdr = document.createElement("div");
+      hdr.className = "board-msg-header";
+      const parts = [`#${m.seq}`];
+      if (m.inReplyTo && m.inReplyTo !== "0") parts.push(`re=${m.inReplyTo}`);
+      parts.push(`from=${m.senderParty || "-"}`, `agent=${m.agentProfile || "-"}`, boardTimeLabel(m.receivedAtMs));
+      if (m.retracted) parts.push(`RETRACTED by=${m.retractedBy || "unknown"}`);
+      const label = document.createElement("span");
+      label.textContent = parts.join("  ");
+      const purgeBtn = document.createElement("button");
+      purgeBtn.className = "board-msg-purge";
+      purgeBtn.textContent = "✕";
+      purgeBtn.title = `Purge message #${m.seq} from archive ${row.id}`;
+      purgeBtn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        if (!window.confirm(`Purge message #${m.seq} from archive ${row.id}?`)) return;
+        try {
+          await window.harness.boardArchivePurge(row.id, m.seq);
+          openBoardArchive(row);
+        } catch (err) {
+          appendCmdOutput(`board purge --archive error: ${err.message}`);
+        }
+      });
+      hdr.appendChild(label);
+      hdr.appendChild(purgeBtn);
+      const pre = document.createElement("pre");
+      pre.textContent = prettyPayload(m.payload || "");
+      el.appendChild(hdr);
+      el.appendChild(pre);
+      return el;
+    };
+    try {
+      const r = await window.harness.boardArchiveRead(row.id, "0", 64);
+      if (currentArchive !== row) return;
+      if (!r.found) {
+        boardArchivesListEl.textContent = "(this archive no longer exists)";
+        return;
+      }
+      const older = document.createElement("button");
+      older.type = "button";
+      older.className = "board-older-btn";
+      older.textContent = "さらに古いメッセージを読み込む";
+      let oldest = boardOlderCursor(r.msgs.map((m) => m.seq));
+      older.addEventListener("click", async () => {
+        older.disabled = true;
+        try {
+          const p = await window.harness.boardArchiveRead(row.id, oldest, 64);
+          if (currentArchive !== row) return;
+          if (!p.msgs || p.msgs.length === 0) {
+            older.textContent = "これより古いメッセージはありません";
+            return;
+          }
+          const first = older.nextSibling;
+          for (const m of p.msgs) boardArchivesListEl.insertBefore(card(m), first);
+          oldest = boardOlderCursor(p.msgs.map((m) => m.seq));
+          older.disabled = false;
+        } catch (err) {
+          appendCmdOutput(`board read --archive (older) error: ${err.message}`);
+          older.disabled = false;
+        }
+      });
+      boardArchivesListEl.appendChild(older);
+      for (const m of r.msgs) boardArchivesListEl.appendChild(card(m));
+    } catch (err) {
+      boardArchivesListEl.textContent = `error: ${err.message}`;
+    }
+  }
+
+  const boardArchivesBtn = document.getElementById("board-archives-btn");
+  if (boardArchivesBtn) boardArchivesBtn.addEventListener("click", () => renderBoardArchives(""));
+  const boardTopicArchivesBtn = document.getElementById("board-topic-archives-btn");
+  if (boardTopicArchivesBtn) {
+    boardTopicArchivesBtn.addEventListener("click", () => {
+      if (currentBoardTopic) renderBoardArchives(currentBoardTopic);
+    });
+  }
+  const boardArchivesBackBtn = document.getElementById("board-archives-back-btn");
+  if (boardArchivesBackBtn) {
+    boardArchivesBackBtn.addEventListener("click", () => {
+      if (currentArchive) {
+        renderBoardArchives(archivesFilter);
+        return;
+      }
+      boardArchivesViewEl.hidden = true;
+      if (boardTopicsViewEl) boardTopicsViewEl.hidden = false;
+      if (archivesFilter) openBoardTopic(archivesFilter);
+      else renderBoardTopics();
+    });
+  }
+  if (boardArchiveDeleteBtn) {
+    boardArchiveDeleteBtn.addEventListener("click", async () => {
+      const row = currentArchive;
+      if (!row || !window.harness) return;
+      if (!window.confirm(`アーカイブ ${row.id}（${row.topic}、${row.count} 件）を削除しますか？\n（ファイルごと消え、元に戻せません）`)) return;
+      try {
+        const r = await window.harness.boardArchivePurge(row.id, "0");
+        appendCmdOutput(`board purge --archive ${row.id}: purged=${r.purged}`);
+        renderBoardArchives(archivesFilter);
+      } catch (err) {
+        appendCmdOutput(`board purge --archive error: ${err.message}`);
+      }
+    });
+  }
+
   const boardWakeBtn = document.getElementById("board-wake-btn");
   if (boardWakeBtn) {
     boardWakeBtn.addEventListener("click", async () => {
@@ -7166,6 +7380,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   function setBoardView(name) {
     boardView = name;
     if (boardTopicsViewEl) boardTopicsViewEl.hidden = name !== "topics";
+    if (boardArchivesViewEl) boardArchivesViewEl.hidden = true;
     if (boardChainsViewEl) boardChainsViewEl.hidden = name !== "chains";
     if (boardViewTopicsBtn) boardViewTopicsBtn.classList.toggle("is-active", name === "topics");
     if (boardViewChainsBtn) boardViewChainsBtn.classList.toggle("is-active", name === "chains");
@@ -7471,6 +7686,9 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     boardRefreshBtn.addEventListener("click", () => {
       if (boardView === "chains") {
         renderBoardChains();
+      } else if (boardArchivesViewEl && !boardArchivesViewEl.hidden) {
+        if (currentArchive) openBoardArchive(currentArchive);
+        else renderBoardArchives(archivesFilter);
       } else if (boardDetailEl && !boardDetailEl.hidden && currentBoardTopic) {
         openBoardTopic(currentBoardTopic);
       } else {
@@ -8196,7 +8414,25 @@ function boardRetainMeta(t) {
   // until= says when it runs out: the period counts from the later of the
   // last publish and the retain call, so the period alone does not.
   const until = t.retainUntilMs ? ` until=${boardTimeLabel(t.retainUntilMs)}` : "";
-  return `  retain=${t.retain}${until} by=${t.retainBy} disk=${t.diskBytes}`;
+  // flushed≤ says where the ring starts: older messages are on disk only.
+  const flushed = t.retainFlushed ? ` flushed≤${t.retainFlushed}` : "";
+  return `  retain=${t.retain}${until} by=${t.retainBy} disk=${t.diskBytes}${flushed}`;
+}
+
+// boardOlderCursor is where "older" pages from: below the oldest seq shown, or
+// "0" (the newest on disk) when nothing is shown — a flushed topic's ring is
+// empty, and everything it held is on disk.
+function boardOlderCursor(seqs) {
+  return boardMinSeq(seqs) || "0";
+}
+
+// boardFlushResultLine and boardArchiveResultLine name the target and the
+// result, in the CLI's words.
+function boardFlushResultLine(topic, r) {
+  return `board flush: ${topic} through=${r.through} dropped=${r.dropped}`;
+}
+function boardArchiveResultLine(topic, r) {
+  return `board archive: ${topic} → ${r.id} (${r.count} msgs through ${r.through})`;
 }
 
 // boardTimeLabel renders a board timestamp (Unix ms) as ISO, or "-" when

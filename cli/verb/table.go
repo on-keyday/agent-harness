@@ -1412,6 +1412,7 @@ var Verbs = []VerbSpec{
 		ModalSurfaces: []ModalSurface{
 			// F on a retained topic inside the board modal.
 			{Surface: TUI, At: "tui/board.go:BoardModal"},
+			{Surface: WebUI, At: "webui/index.html#board-flush-btn"},
 		},
 		Notes: []string{
 			"empty a retained topic's in-memory ring; its disk log keeps every message and a restart does not load them back.",
@@ -1429,6 +1430,7 @@ var Verbs = []VerbSpec{
 		ModalSurfaces: []ModalSurface{
 			// A on a topic inside the board modal.
 			{Surface: TUI, At: "tui/board.go:BoardModal"},
+			{Surface: WebUI, At: "webui/index.html#board-archive-btn"},
 		},
 		Notes: []string{
 			"freeze <topic>'s history up to now into an archive nothing appends to, kept until purged:",
@@ -1446,6 +1448,7 @@ var Verbs = []VerbSpec{
 		ModalSurfaces: []ModalSurface{
 			// v inside the board modal.
 			{Surface: TUI, At: "tui/board.go:BoardModal"},
+			{Surface: WebUI, At: "webui/index.html#board-archives-btn"},
 		},
 		Notes: []string{
 			"list archives: id, source topic, the seq it runs through, messages, who made it, bytes on disk (cap: board_observe).",

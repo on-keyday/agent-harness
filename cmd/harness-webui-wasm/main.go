@@ -174,10 +174,16 @@ func main() {
 		"boardJoinable": js.FuncOf(func(this js.Value, args []js.Value) any {
 			return len(args) > 0 && agentboard.JoinableName(args[0].String())
 		}),
-		"boardSend":     js.FuncOf(harnessBoardSend),
-		"boardWake":     js.FuncOf(harnessBoardWake),
-		"boardRetain":   js.FuncOf(harnessBoardRetain),
-		"boardUnretain": js.FuncOf(harnessBoardUnretain),
+		"boardSend":   js.FuncOf(harnessBoardSend),
+		"boardWake":   js.FuncOf(harnessBoardWake),
+		"boardRetain": js.FuncOf(harnessBoardRetain),
+		// Flush and archives; defined at the end of this file.
+		"boardFlush":        js.FuncOf(harnessBoardFlush),
+		"boardArchive":      js.FuncOf(harnessBoardArchive),
+		"boardArchives":     js.FuncOf(harnessBoardArchives),
+		"boardArchiveRead":  js.FuncOf(harnessBoardArchiveRead),
+		"boardArchivePurge": js.FuncOf(harnessBoardArchivePurge),
+		"boardUnretain":     js.FuncOf(harnessBoardUnretain),
 		// Synchronous: the server's own rule, so the page offers Retain only
 		// where the server would accept it.
 		"boardRetainable": js.FuncOf(func(this js.Value, args []js.Value) any {
@@ -2092,6 +2098,12 @@ func harnessBoardTopics(this js.Value, args []js.Value) any {
 					if !rt.ExpiresAt.IsZero() {
 						row["retainUntilMs"] = float64(rt.ExpiresAt.UnixMilli())
 					}
+					// The seq board flush emptied the ring through, a decimal
+					// string like every seq; "" when never flushed.
+					row["retainFlushed"] = ""
+					if rt.RingFloor != 0 {
+						row["retainFlushed"] = strconv.FormatUint(rt.RingFloor, 10)
+					}
 				}
 				out = append(out, row)
 			}
@@ -2221,47 +2233,7 @@ func harnessBoardRead(this js.Value, args []js.Value) any {
 			msgsOut := make([]any, 0, len(msgs))
 			for _, m := range msgs {
 				shownN, shownTotal := cli.ShownTo(subs, topic, m.Seq)
-				msgsOut = append(msgsOut, map[string]any{
-					// Decimal string, not float64: board seq exceeds JS's
-					// 2^53 safe-integer range and would round, so a purge
-					// keyed on the rounded seq never matches server-side.
-					"seq": strconv.FormatUint(m.Seq, 10),
-					// Also a seq, so also a decimal string — "0" when the
-					// message is not a reply.
-					"inReplyTo":    strconv.FormatUint(m.InReplyTo, 10),
-					"replyToTopic": m.ReplyToTopic,
-					"fromTask":     m.FromTaskHex,
-					"fromHostname": m.FromHostname,
-					"agentProfile": m.FromAgentProfile,
-					// Who published, and the short name the row shows: the
-					// kind for the operator and the server, whose task id
-					// may be all zeros, else the 8-hex prefix.
-					"senderKind":   m.SenderKind,
-					"senderParty":  cli.SenderParty(m.SenderKind, m.FromTaskHex),
-					"receivedAtMs": float64(m.ReceivedAtMs),
-					"payload":      string(m.Payload),
-					// A withdrawn message. It reaches no agent any more and
-					// exists only on this operator surface, so the flag has to
-					// cross the bridge or the WebUI would show a withdrawn
-					// message as if it were still live.
-					"retracted":     m.Retracted,
-					"retractedAtMs": float64(m.RetractedAtMs),
-					// WHO withdrew it, rendered on the Go side so the browser
-					// never has to re-derive "author vs purge_cap, and which
-					// task" from two fields. Empty string when the message is
-					// live — the badge is gated on `retracted`, never on this.
-					"retractedBy": func() string {
-						if !m.Retracted {
-							return ""
-						}
-						return cli.RetractedByLabel(m)
-					}(),
-					// How many of the topic's subscribers have been handed this
-					// message, out of how many subscribe at all. Small counts,
-					// so float64 is safe here — unlike seq.
-					"shownTo":      float64(shownN),
-					"shownToTotal": float64(shownTotal),
-				})
+				msgsOut = append(msgsOut, boardMessageJS(m, shownN, shownTotal))
 			}
 			resolve.Invoke(js.ValueOf(map[string]any{
 				"found": found,
@@ -5758,4 +5730,188 @@ func harnessDispatch(this js.Value, args []js.Value) any {
 		out[path] = e
 	}
 	return js.ValueOf(out)
+}
+
+// boardMessageJS is one board message as the page reads it, for a topic and an
+// archive alike. shownN / shownTotal are cli.ShownTo's answer (0/0 on an
+// archive, which has no readers).
+func boardMessageJS(m cli.BoardMessage, shownN, shownTotal int) map[string]any {
+	return map[string]any{
+		// Decimal string, not float64: board seq exceeds JS's
+		// 2^53 safe-integer range and would round, so a purge
+		// keyed on the rounded seq never matches server-side.
+		"seq": strconv.FormatUint(m.Seq, 10),
+		// Also a seq, so also a decimal string — "0" when the
+		// message is not a reply.
+		"inReplyTo":    strconv.FormatUint(m.InReplyTo, 10),
+		"replyToTopic": m.ReplyToTopic,
+		"fromTask":     m.FromTaskHex,
+		"fromHostname": m.FromHostname,
+		"agentProfile": m.FromAgentProfile,
+		// Who published, and the short name the row shows: the
+		// kind for the operator and the server, whose task id
+		// may be all zeros, else the 8-hex prefix.
+		"senderKind":   m.SenderKind,
+		"senderParty":  cli.SenderParty(m.SenderKind, m.FromTaskHex),
+		"receivedAtMs": float64(m.ReceivedAtMs),
+		"payload":      string(m.Payload),
+		// A withdrawn message. It reaches no agent any more and
+		// exists only on this operator surface, so the flag has to
+		// cross the bridge or the WebUI would show a withdrawn
+		// message as if it were still live.
+		"retracted":     m.Retracted,
+		"retractedAtMs": float64(m.RetractedAtMs),
+		// WHO withdrew it, rendered on the Go side so the browser
+		// never has to re-derive "author vs purge_cap, and which
+		// task" from two fields. Empty string when the message is
+		// live — the badge is gated on `retracted`, never on this.
+		"retractedBy": func() string {
+			if !m.Retracted {
+				return ""
+			}
+			return cli.RetractedByLabel(m)
+		}(),
+		// How many of the topic's subscribers have been handed this
+		// message, out of how many subscribe at all. Small counts,
+		// so float64 is safe here — unlike seq.
+		"shownTo":      float64(shownN),
+		"shownToTotal": float64(shownTotal),
+	}
+}
+
+// boardPromise runs do off the JS thread with the live client and resolves
+// with what it returns.
+func boardPromise(name string, do func(c *cli.Client) (any, error)) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve, reject := promiseArgs[0], promiseArgs[1]
+		go func() {
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			v, err := do(c)
+			if err != nil {
+				rejectErr(reject, fmt.Errorf("%s: %w", name, err))
+				return
+			}
+			resolve.Invoke(js.ValueOf(v))
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
+// argString is args[i] as a string, "" when absent.
+func argString(args []js.Value, i int) string {
+	if len(args) <= i || args[i].Type() != js.TypeString {
+		return ""
+	}
+	return args[i].String()
+}
+
+// harnessBoardFlush empties a retained topic's ring.
+//
+//	harness.boardFlush(topic) -> Promise<{through, dropped}>
+func harnessBoardFlush(this js.Value, args []js.Value) any {
+	topic := argString(args, 0)
+	return boardPromise("boardFlush", func(c *cli.Client) (any, error) {
+		if topic == "" {
+			return nil, errors.New("missing topic")
+		}
+		through, dropped, err := c.BoardFlush(rootCtx, topic)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"through": strconv.FormatUint(through, 10), "dropped": float64(dropped)}, nil
+	})
+}
+
+// harnessBoardArchive freezes a topic's history into an archive.
+//
+//	harness.boardArchive(topic) -> Promise<{id, through, count}>
+func harnessBoardArchive(this js.Value, args []js.Value) any {
+	topic := argString(args, 0)
+	return boardPromise("boardArchive", func(c *cli.Client) (any, error) {
+		if topic == "" {
+			return nil, errors.New("missing topic")
+		}
+		r, err := c.BoardArchive(rootCtx, topic)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"id": r.ID, "through": strconv.FormatUint(r.Through, 10), "count": float64(r.Count)}, nil
+	})
+}
+
+// harnessBoardArchives lists archives, of one topic or ("") all.
+//
+//	harness.boardArchives(topic?) -> Promise<[{id, topic, through, count, by, diskBytes, atMs, summary}]>
+func harnessBoardArchives(this js.Value, args []js.Value) any {
+	topic := argString(args, 0)
+	return boardPromise("boardArchives", func(c *cli.Client) (any, error) {
+		rows, err := c.BoardArchives(rootCtx, topic)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]any, 0, len(rows))
+		for _, r := range rows {
+			out = append(out, map[string]any{
+				"id": r.ID, "topic": r.Topic, "through": strconv.FormatUint(r.Through, 10),
+				"count": float64(r.Count), "by": r.ByLabel(), "diskBytes": float64(r.Bytes),
+				"atMs": float64(r.CreatedAt.UnixMilli()),
+				// The CLI's line, so the page holds no second spelling.
+				"summary": r.Summary(),
+			})
+		}
+		return out, nil
+	})
+}
+
+// harnessBoardArchiveRead reads one page of an archive below beforeSeq (a
+// decimal string, "0" = from the newest), oldest first like boardRead.
+//
+//	harness.boardArchiveRead(id, beforeSeq, limit) -> Promise<{found, msgs}>
+func harnessBoardArchiveRead(this js.Value, args []js.Value) any {
+	id, before := argString(args, 0), argString(args, 1)
+	limit := 64
+	if len(args) > 2 && args[2].Type() == js.TypeNumber && args[2].Int() > 0 {
+		limit = min(args[2].Int(), math.MaxUint16)
+	}
+	return boardPromise("boardArchiveRead", func(c *cli.Client) (any, error) {
+		beforeSeq, perr := strconv.ParseUint(before, 10, 64)
+		if perr != nil {
+			return nil, fmt.Errorf("beforeSeq %q is not a seq", before)
+		}
+		msgs, found, err := c.BoardArchiveRead(rootCtx, id, beforeSeq, uint16(limit))
+		if err != nil {
+			return nil, err
+		}
+		sort.Slice(msgs, func(i, j int) bool { return msgs[i].Seq < msgs[j].Seq })
+		out := make([]any, 0, len(msgs))
+		for _, m := range msgs {
+			out = append(out, boardMessageJS(m, 0, 0))
+		}
+		return map[string]any{"found": found, "msgs": out}, nil
+	})
+}
+
+// harnessBoardArchivePurge deletes one message of an archive (seq, a decimal
+// string), or the whole archive for "0".
+//
+//	harness.boardArchivePurge(id, seq) -> Promise<{purged, found}>
+func harnessBoardArchivePurge(this js.Value, args []js.Value) any {
+	id, seqStr := argString(args, 0), argString(args, 1)
+	return boardPromise("boardArchivePurge", func(c *cli.Client) (any, error) {
+		seq, perr := strconv.ParseUint(seqStr, 10, 64)
+		if perr != nil {
+			return nil, fmt.Errorf("seq %q is not a seq", seqStr)
+		}
+		purged, found, err := c.BoardArchivePurge(rootCtx, id, seq)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"purged": float64(purged), "found": found}, nil
+	})
 }
