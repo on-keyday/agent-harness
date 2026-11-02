@@ -570,7 +570,13 @@ func (b *Board) evictLoop() {
 func (b *Board) evictExpiredTopics() {
 	now := time.Now()
 	cutoff := now.Add(-b.cfg.TopicTTL)
-	var dropped []string
+	type ended struct {
+		name  string
+		t     *topic
+		floor uint64
+		r     *Retention
+	}
+	var dropped []ended
 	b.mu.Lock()
 	for name, t := range b.topics {
 		last := t.lastPublished()
@@ -582,8 +588,8 @@ func (b *Board) evictExpiredTopics() {
 			// board_persist holder could destroy any topic it may publish to
 			// by setting a 1ms period.
 			if at := t.retention.ExpiresAt(last); !at.IsZero() && at.Before(now) {
-				t.retention = nil
-				dropped = append(dropped, name)
+				dropped = append(dropped, ended{name, t, t.ringFloor, t.retention})
+				t.retention, t.ringFloor = nil, 0
 			}
 			continue
 		}
@@ -593,8 +599,20 @@ func (b *Board) evictExpiredTopics() {
 	}
 	store := b.store
 	b.mu.Unlock()
-	for _, name := range dropped {
-		storeLog("drop", name, store.Drop(name))
+	for _, e := range dropped {
+		// A flushed ring is refilled from the log before the log goes, for
+		// the rule above. A log that cannot be read keeps its retention, so
+		// the next sweep tries again rather than deleting the only copy.
+		if e.floor != 0 {
+			if err := b.refillFromLog(e.name, e.t, store); err != nil {
+				storeLog("refill", e.name, err)
+				b.mu.Lock()
+				e.t.retention, e.t.ringFloor = e.r, e.floor
+				b.mu.Unlock()
+				continue
+			}
+		}
+		storeLog("drop", e.name, store.Drop(e.name))
 	}
 }
 

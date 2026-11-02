@@ -66,6 +66,7 @@ func (b *Board) AttachStore(s Store) error {
 			t.shown[tid] = seq
 		}
 		t.lastPublishedAt = st.LastPublishedAt
+		t.ringFloor = st.RingFloor
 		for _, tid := range st.Members {
 			b.addMemberLocked(st.Name, tid)
 		}
@@ -74,6 +75,16 @@ func (b *Board) AttachStore(s Store) error {
 		b.topics[st.Name] = t
 		if st.MaxSeq > high {
 			high = st.MaxSeq
+		}
+	}
+	// Archives hold seqs too, and outlive the topics they came from.
+	archives, err := s.Archives()
+	if err != nil {
+		return err
+	}
+	for _, a := range archives {
+		if a.Through > high {
+			high = a.Through
 		}
 	}
 	if high > b.seq.Load() {
@@ -159,8 +170,17 @@ func (b *Board) ClearRetain(topic string) error {
 		b.mu.Unlock()
 		return nil
 	}
+	flushed, store := t.ringFloor != 0, b.store
+	b.mu.Unlock()
+	// After a flush the log is the only copy of what the ring held.
+	if flushed {
+		if err := b.refillFromLog(topic, t, store); err != nil {
+			return err
+		}
+	}
+	b.mu.Lock()
 	t.retention = nil
-	store := b.store
+	t.ringFloor = 0
 	// The board TTL counts from the last publish; a topic retained without one
 	// starts its ordinary countdown now rather than being evicted at once.
 	// Under t.mu, where topic.append writes it.
@@ -185,6 +205,28 @@ func (b *Board) RetentionOf(topic string) (r Retention, diskBytes int64, ok bool
 	store := b.store
 	b.mu.Unlock()
 	return r, store.Bytes(topic), true
+}
+
+// pageLive reads pages through page until it holds limit live messages or the
+// history ends, so a run of withdrawals does not shorten it.
+func pageLive(page func(beforeSeq uint64) ([]RetainedMessage, error), beforeSeq uint64, limit int) ([]RetainedMessage, error) {
+	out := make([]RetainedMessage, 0, limit)
+	for len(out) < limit {
+		p, err := page(beforeSeq)
+		if err != nil {
+			return nil, err
+		}
+		for _, m := range p {
+			if m.RetractedAt.IsZero() && len(out) < limit {
+				out = append(out, m)
+			}
+		}
+		if len(p) < limit {
+			break
+		}
+		beforeSeq = p[len(p)-1].Seq
+	}
+	return out, nil
 }
 
 // Page returns up to limit messages of topic, live and withdrawn, with seq
@@ -221,23 +263,9 @@ func (b *Board) Page(topic string, beforeSeq uint64, limit int) ([]RetainedMessa
 // older rows are read until the page holds limit live ones or the history
 // ends, so a run of withdrawals does not shorten it.
 func (b *Board) PageLive(topic string, beforeSeq uint64, limit int) ([]RetainedMessage, error) {
-	out := make([]RetainedMessage, 0, limit)
-	for len(out) < limit {
-		page, err := b.Page(topic, beforeSeq, limit)
-		if err != nil {
-			return nil, err
-		}
-		for _, m := range page {
-			if m.RetractedAt.IsZero() && len(out) < limit {
-				out = append(out, m)
-			}
-		}
-		if len(page) < limit {
-			break
-		}
-		beforeSeq = page[len(page)-1].Seq
-	}
-	return out, nil
+	return pageLive(func(before uint64) ([]RetainedMessage, error) {
+		return b.Page(topic, before, limit)
+	}, beforeSeq, limit)
 }
 
 // storeLog reports a store error. A failed mirror never fails the board

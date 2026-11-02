@@ -109,6 +109,10 @@ type topic struct {
 	// past the board TTL and mirrored into the board's Store. Guarded by the
 	// Board's mu, not t.mu — the board decides eviction and mirroring.
 	retention *Retention
+	// ringFloor is the seq Board.Flush last emptied the ring through; 0 when
+	// it was never flushed or its retention has ended since. Guarded by the
+	// Board's mu, like retention.
+	ringFloor uint64
 }
 
 func newTopic(name string, cap int) *topic {
@@ -323,6 +327,44 @@ func (t *topic) takeUnshown(task protocol.TaskID) []RetainedMessage {
 		}
 	}
 	return kept
+}
+
+// newestSeq is the highest seq in the ring and the withdrawn list, 0 when both
+// are empty.
+func (t *topic) newestSeq() uint64 {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	var n uint64
+	for _, l := range [][]RetainedMessage{t.ring, t.retracted} {
+		for _, m := range l {
+			if m.Seq > n {
+				n = m.Seq
+			}
+		}
+	}
+	return n
+}
+
+// dropThrough removes every entry with seq at or below through from the ring
+// and the withdrawn list, and reports how many went.
+func (t *topic) dropThrough(through uint64) int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	n := 0
+	keep := func(l []RetainedMessage) []RetainedMessage {
+		out := l[:0]
+		for _, m := range l {
+			if m.Seq > through {
+				out = append(out, m)
+			} else {
+				n++
+			}
+		}
+		return out
+	}
+	t.ring = keep(t.ring)
+	t.retracted = keep(t.retracted)
+	return n
 }
 
 // snapshotShown copies every task's delivery mark on this topic.
