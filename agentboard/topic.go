@@ -122,6 +122,11 @@ func newTopic(name string, cap int) *topic {
 func (t *topic) append(seq uint64, payload []byte, fromRid protocol.RunnerID, fromTid protocol.TaskID, fromHost, fromProfile string, inReplyTo uint64, cfg sendConfig) RetainedMessage {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	return t.appendLocked(seq, payload, fromRid, fromTid, fromHost, fromProfile, inReplyTo, cfg)
+}
+
+// appendLocked is append for a caller holding t.mu.
+func (t *topic) appendLocked(seq uint64, payload []byte, fromRid protocol.RunnerID, fromTid protocol.TaskID, fromHost, fromProfile string, inReplyTo uint64, cfg sendConfig) RetainedMessage {
 	now := time.Now()
 	t.lastPublishedAt = now
 	if len(t.ring) == t.cap {

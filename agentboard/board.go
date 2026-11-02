@@ -58,6 +58,13 @@ type Board struct {
 	store Store
 	// members is topic → the tasks that joined it (membership.go).
 	members map[string]map[protocol.TaskID]struct{}
+	// retainMu serialises the operations that change a topic's retention or
+	// its ring floor — Retain, ClearRetain, Flush, PurgeTopic and the expiry
+	// sweep. Each reads that state under mu, does store I/O with mu
+	// released, and writes it back; two of them interleaving lost a flushed
+	// ring (a flush emptying the ring a --clear had just refilled). Taken
+	// before mu, never while holding it.
+	retainMu sync.Mutex
 }
 
 func New(cfg Config) *Board {
@@ -350,11 +357,17 @@ func (b *Board) Send(topicName string, payload []byte, fromRid protocol.RunnerID
 	b.mu.Unlock()
 	targets = b.readableTargets(targets, topicName)
 
+	// The seq, the ring and the log entry under one hold of t.mu, so a
+	// topic's ring and log hold its messages in seq order. Taking the seq
+	// outside let a later seq reach the log first, and an archive cut
+	// between the two missed the earlier one for good.
+	t.mu.Lock()
 	seq := b.seq.Add(1)
-	m := t.append(seq, payload, fromRid, fromTid, fromHost, fromProfile, inReplyTo, cfg)
+	m := t.appendLocked(seq, payload, fromRid, fromTid, fromHost, fromProfile, inReplyTo, cfg)
 	if retained {
 		storeLog("append", topicName, store.Append(topicName, m))
 	}
+	t.mu.Unlock()
 
 	b.deliver(targets, topicName, !cfg.noWake)
 	return seq, len(targets), nil
@@ -568,6 +581,8 @@ func (b *Board) evictLoop() {
 }
 
 func (b *Board) evictExpiredTopics() {
+	b.retainMu.Lock()
+	defer b.retainMu.Unlock()
 	now := time.Now()
 	cutoff := now.Add(-b.cfg.TopicTTL)
 	type ended struct {
@@ -647,6 +662,8 @@ func (b *Board) evictOldestTopicLocked() {
 // board-global (b.seq), so it is unaffected by deletion and consumer cursors
 // stay valid across a purge (a post-purge message gets a strictly higher seq).
 func (b *Board) PurgeTopic(name string) (purged int, found bool) {
+	b.retainMu.Lock()
+	defer b.retainMu.Unlock()
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	t, ok := b.topics[name]

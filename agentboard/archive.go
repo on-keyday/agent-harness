@@ -26,6 +26,11 @@ func (b *Board) Archive(topic string, by protocol.TaskID) (ArchiveInfo, error) {
 	case !ok:
 		return ArchiveInfo{}, ErrNoTopic
 	case retained:
+		// Publishes append to the ring and the log under t.mu in seq order
+		// (Board.Send); holding it across the copy means every seq up to the
+		// newest in the log is in the log.
+		t.mu.Lock()
+		defer t.mu.Unlock()
 		return store.ArchiveLog(topic, by, time.Now())
 	}
 	msgs := append(t.snapshot(), t.snapshotRetracted()...)

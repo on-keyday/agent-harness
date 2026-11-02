@@ -19,6 +19,10 @@ var (
 // fills the ring as usual. through is that seq — the current floor when the
 // ring already held nothing — and dropped how many entries left memory.
 func (b *Board) Flush(topic string) (through uint64, dropped int, err error) {
+	// Held to the end: a --clear or an expiry between the check below and the
+	// cut would refill and drop the log while this empties the ring.
+	b.retainMu.Lock()
+	defer b.retainMu.Unlock()
 	b.mu.Lock()
 	t, ok := b.topics[topic]
 	if !ok {

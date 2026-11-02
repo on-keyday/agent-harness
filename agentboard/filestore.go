@@ -334,7 +334,9 @@ func (s *FileStore) FlushRing(topic string, through uint64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, ok := s.ret[topic]; !ok {
-		return nil
+		// No log to keep the messages: answering ok would let the caller
+		// empty the only copy.
+		return ErrNotRetained
 	}
 	l, err := s.logLocked(topic)
 	if err != nil {
@@ -708,7 +710,10 @@ func scanMeta(path, topic string) (logMeta, error) {
 				m.lastAt = at
 			}
 		case "ring_floor":
-			m.ringFloor = rec.Seq
+			// The highest, not the last: a floor never moves down.
+			if rec.Seq > m.ringFloor {
+				m.ringFloor = rec.Seq
+			}
 		case "hdr":
 			m.hdr = rec
 		}

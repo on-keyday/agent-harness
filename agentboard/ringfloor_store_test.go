@@ -134,3 +134,33 @@ func TestFileStore_RingFloorAddsNoMessage(t *testing.T) {
 		t.Errorf("msgs=%d maxSeq=%d, want 1/1", len(meta.msgs), meta.maxSeq)
 	}
 }
+
+// A lower ring_floor written after a higher one does not lower the floor:
+// the messages the first flush took out stay on disk across a restart.
+func TestFileStore_RingFloorNeverGoesDown(t *testing.T) {
+	dir := t.TempDir()
+	s := retainedStore(t, dir, "g", time.Hour)
+	for seq := uint64(1); seq <= 12; seq++ {
+		if err := s.Append("g", storeMsg(seq, "m")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.FlushRing("g", 11); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.FlushRing("g", 10); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s2 := openTestStore(t, dir, time.Hour)
+	defer s2.Close()
+	got, err := s2.Load(64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0].RingFloor != 11 || len(got[0].Ring) != 1 || got[0].Ring[0].Seq != 12 {
+		t.Errorf("floor %d ring %v, want 11 and [12]", got[0].RingFloor, seqsOf(got[0].Ring))
+	}
+}

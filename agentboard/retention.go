@@ -100,6 +100,8 @@ func (b *Board) Retain(topic string, r Retention) error {
 	if !Retainable(topic) {
 		return ErrNotRetainable
 	}
+	b.retainMu.Lock()
+	defer b.retainMu.Unlock()
 	b.mu.Lock()
 	if b.store == nil {
 		b.mu.Unlock()
@@ -164,6 +166,8 @@ func (b *Board) Retain(topic string, r Retention) error {
 // in-memory ring stays and ages out like any topic's. Clearing a topic that
 // is not retained is a no-op.
 func (b *Board) ClearRetain(topic string) error {
+	b.retainMu.Lock()
+	defer b.retainMu.Unlock()
 	b.mu.Lock()
 	t, ok := b.topics[topic]
 	if !ok || t.retention == nil {
