@@ -192,3 +192,20 @@ func TestFlush_RestartThenClear(t *testing.T) {
 	}
 	assertRefilled(t, b2, dir, "g", seqs)
 }
+
+// An emptied ring is not an unpublished topic: the listing's last seq stays
+// the newest message the topic has had, which the flush moved to disk.
+func TestFlush_ListTopicsKeepsLastSeq(t *testing.T) {
+	b, s := newRetainBoard(t, Config{}, t.TempDir())
+	defer b.Close()
+	defer s.Close()
+	seqs := retainedWith100(t, b, "g", Retention{Forever: true})
+	if _, _, err := b.Flush("g"); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range b.ListTopics() {
+		if r.Name == "g" && (r.LastSeq != seqs[99] || r.LastPublishedAt.IsZero()) {
+			t.Errorf("row after flush = %+v, want LastSeq %d", r, seqs[99])
+		}
+	}
+}

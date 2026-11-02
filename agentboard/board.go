@@ -1129,15 +1129,22 @@ func (b *Board) ListTopics() []BoardTopicSummary {
 	b.mu.Lock()
 	names := make([]string, 0, len(b.topics))
 	tps := make([]*topic, 0, len(b.topics))
+	floors := make([]uint64, 0, len(b.topics))
 	for n, t := range b.topics {
 		names = append(names, n)
 		tps = append(tps, t)
+		floors = append(floors, t.ringFloor)
 	}
 	b.mu.Unlock()
 
 	out := make([]BoardTopicSummary, 0, len(names))
 	for i, n := range names {
 		ls, lp, c := tps[i].summary()
+		// A flushed ring is empty, not unpublished: the newest message the
+		// topic has had is the floor, on disk.
+		if floors[i] > ls {
+			ls = floors[i]
+		}
 		out = append(out, BoardTopicSummary{
 			Name:            n,
 			LastSeq:         ls,
