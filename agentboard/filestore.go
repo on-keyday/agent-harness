@@ -62,7 +62,8 @@ func storeFileName(topic string) string {
 // published message; "retract" withdraws one; "shown" moves a task's delivery
 // mark; "member" records a task joining (on) or leaving the topic; "floor" is
 // written by a purge rewrite and carries the highest seq and the last publish
-// time the removed records held, so a purge lowers neither.
+// time the removed records held, so a purge lowers neither; "ring_floor" is
+// written by a flush: no seq at or below it is loaded back into the ring.
 // Fields not used by a type are omitted.
 type storeRecord struct {
 	T     string `json:"t"`
@@ -89,6 +90,10 @@ type storeRecord struct {
 
 	Task string `json:"task,omitempty"`
 	On   bool   `json:"on,omitempty"`
+
+	// An archive's header carries its id and message count (archive_store.go).
+	Archive string `json:"archive,omitempty"`
+	Count   int    `json:"count,omitempty"`
 }
 
 type retentionFile struct {
@@ -311,11 +316,96 @@ func (s *FileStore) Append(topic string, m RetainedMessage) error {
 func (s *FileStore) Retract(topic string, m RetainedMessage) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.appendLocked(topic, retractRecord(m))
+}
+
+func retractRecord(m RetainedMessage) storeRecord {
 	rec := storeRecord{T: "retract", Seq: m.Seq, AtMs: m.RetractedAt.UnixMilli(), By: uint8(m.RetractedBy)}
 	if m.RetractedByTask != (protocol.TaskID{}) {
 		rec.ByTask = hex.EncodeToString(m.RetractedByTask.Id[:])
 	}
-	return s.appendLocked(topic, rec)
+	return rec
+}
+
+// FlushRing records that the ring was emptied through seq: Load leaves every
+// seq at or below it on disk. What was buffered is written and synced first,
+// so the messages the ring no longer holds are on disk when this returns.
+func (s *FileStore) FlushRing(topic string, through uint64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.ret[topic]; !ok {
+		return nil
+	}
+	l, err := s.logLocked(topic)
+	if err != nil {
+		return err
+	}
+	if err := syncLog(l); err != nil {
+		return err
+	}
+	if err := s.appendLocked(topic, storeRecord{T: "ring_floor", Seq: through}); err != nil {
+		return err
+	}
+	return syncLog(l)
+}
+
+func syncLog(l *topicLog) error {
+	if err := l.w.Flush(); err != nil {
+		return err
+	}
+	return l.f.Sync()
+}
+
+// Tail returns the newest ringN live and ringN withdrawn messages of topic's
+// log, ascending, ignoring any ring floor: what the ring held before a flush.
+func (s *FileStore) Tail(topic string, ringN int) (live, withdrawn []RetainedMessage, err error) {
+	path, err := s.flushed(topic)
+	if err != nil {
+		return nil, nil, err
+	}
+	meta, err := scanMeta(path, topic)
+	if err != nil {
+		return nil, nil, err
+	}
+	msgs, err := fetchMessages(path, topic, tailSeqs(meta, ringN, 0), meta)
+	if err != nil {
+		return nil, nil, err
+	}
+	sort.Slice(msgs, func(i, j int) bool { return msgs[i].Seq < msgs[j].Seq })
+	for _, m := range msgs {
+		if m.RetractedAt.IsZero() {
+			live = append(live, m)
+		} else {
+			withdrawn = append(withdrawn, m)
+		}
+	}
+	return live, withdrawn, nil
+}
+
+// tailSeqs picks the newest ringN live and ringN withdrawn seqs above floor.
+func tailSeqs(meta logMeta, ringN int, floor uint64) map[uint64]bool {
+	var live, withdrawn []uint64
+	for _, seq := range meta.seqs() {
+		if seq <= floor {
+			continue
+		}
+		if _, ok := meta.retracts[seq]; ok {
+			withdrawn = append(withdrawn, seq)
+		} else {
+			live = append(live, seq)
+		}
+	}
+	want := map[uint64]bool{}
+	for _, seqs := range [][]uint64{live, withdrawn} {
+		sort.Slice(seqs, func(i, j int) bool { return seqs[i] < seqs[j] })
+		if len(seqs) > ringN {
+			seqs = seqs[len(seqs)-ringN:]
+		}
+		for _, seq := range seqs {
+			want[seq] = true
+		}
+	}
+	return want
 }
 
 func (s *FileStore) SetShown(topic string, task protocol.TaskID, seq uint64) error {
@@ -383,6 +473,11 @@ func (s *FileStore) Page(topic string, beforeSeq uint64, limit int) ([]RetainedM
 	if err != nil {
 		return nil, err
 	}
+	return pageFile(path, topic, beforeSeq, limit)
+}
+
+// pageFile is Page over one log file, a topic's or an archive's.
+func pageFile(path, topic string, beforeSeq uint64, limit int) ([]RetainedMessage, error) {
 	meta, err := scanMeta(path, topic)
 	if err != nil {
 		return nil, err
@@ -441,31 +536,14 @@ func (s *FileStore) Load(ringN int) ([]StoredTopic, error) {
 			return nil, err
 		}
 		// Payloads only for what the ring will hold: the log itself can be
-		// far larger than the server's memory.
-		var live, withdrawn []uint64
-		for _, seq := range meta.seqs() {
-			if _, ok := meta.retracts[seq]; ok {
-				withdrawn = append(withdrawn, seq)
-			} else {
-				live = append(live, seq)
-			}
-		}
-		want := map[uint64]bool{}
-		for _, seqs := range [][]uint64{live, withdrawn} {
-			sort.Slice(seqs, func(i, j int) bool { return seqs[i] < seqs[j] })
-			if len(seqs) > ringN {
-				seqs = seqs[len(seqs)-ringN:]
-			}
-			for _, seq := range seqs {
-				want[seq] = true
-			}
-		}
-		msgs, err := fetchMessages(path, name, want, meta)
+		// far larger than the server's memory. A flush keeps its messages
+		// out of the ring across the restart.
+		msgs, err := fetchMessages(path, name, tailSeqs(meta, ringN, meta.ringFloor), meta)
 		if err != nil {
 			return nil, err
 		}
 		sort.Slice(msgs, func(i, j int) bool { return msgs[i].Seq < msgs[j].Seq })
-		st := StoredTopic{Name: name, Shown: meta.shown, Members: meta.memberList(), MaxSeq: meta.maxSeq, LastPublishedAt: meta.lastAt}
+		st := StoredTopic{Name: name, Shown: meta.shown, Members: meta.memberList(), MaxSeq: meta.maxSeq, LastPublishedAt: meta.lastAt, RingFloor: meta.ringFloor}
 		for _, m := range msgs {
 			if m.RetractedAt.IsZero() {
 				st.Ring = append(st.Ring, m)
@@ -532,6 +610,10 @@ type logMeta struct {
 	members  map[protocol.TaskID]bool // the last member record per task
 	maxSeq   uint64
 	lastAt   time.Time
+	// ringFloor is the newest ring_floor record's seq, 0 when none.
+	ringFloor uint64
+	// hdr is the log's header record (an archive's carries its metadata).
+	hdr metaRecord
 }
 
 // memberList is the tasks whose last member record joined, sorted so a
@@ -568,6 +650,9 @@ type metaRecord struct {
 	ByTask       string `json:"by_task"`
 	Task         string `json:"task"`
 	On           bool   `json:"on"`
+	Topic        string `json:"topic"`
+	Archive      string `json:"archive"`
+	Count        int    `json:"count"`
 }
 
 // flushed writes topic's buffered records out and returns its log path.
@@ -622,6 +707,10 @@ func scanMeta(path, topic string) (logMeta, error) {
 			if at := time.UnixMilli(rec.AtMs); at.After(m.lastAt) {
 				m.lastAt = at
 			}
+		case "ring_floor":
+			m.ringFloor = rec.Seq
+		case "hdr":
+			m.hdr = rec
 		}
 	})
 	return m, err

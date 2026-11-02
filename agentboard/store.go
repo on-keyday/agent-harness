@@ -33,6 +33,9 @@ type StoredTopic struct {
 	// messages included, or the time of a whole-topic purge: what the
 	// topic's period counts from after a restart.
 	LastPublishedAt time.Time
+	// RingFloor is the seq a flush emptied the ring through, 0 when the
+	// topic was never flushed. Ring and Retracted hold only seqs above it.
+	RingFloor uint64
 }
 
 // Store persists retained topics. The board mirrors into it only the topics
@@ -66,6 +69,26 @@ type Store interface {
 	Page(topic string, beforeSeq uint64, limit int) ([]RetainedMessage, error)
 	// Bytes is the size of topic's log, buffered records included.
 	Bytes(topic string) int64
+	// FlushRing writes and syncs what is buffered for topic, then records
+	// that its ring was emptied through seq, so Load leaves those on disk.
+	FlushRing(topic string, through uint64) error
+	// Tail is the newest ringN live and withdrawn messages of topic's log,
+	// ascending, ignoring the ring floor.
+	Tail(topic string, ringN int) (live, withdrawn []RetainedMessage, err error)
+
+	// Archives: frozen copies of a topic's history, never appended to
+	// (archive_store.go). Each returns ErrArchiveEmpty when there is
+	// nothing to copy.
+	ArchiveLog(topic string, by protocol.TaskID, at time.Time) (ArchiveInfo, error)
+	ArchiveMessages(topic string, msgs []RetainedMessage, by protocol.TaskID, at time.Time) (ArchiveInfo, error)
+	Archives() ([]ArchiveInfo, error)
+	// ArchiveOf reports one archive; ok is false for an unknown or malformed id.
+	ArchiveOf(id string) (info ArchiveInfo, ok bool, err error)
+	// ArchivePage is Page over an archive: live and withdrawn, newest first.
+	ArchivePage(id string, beforeSeq uint64, limit int) ([]RetainedMessage, error)
+	// ArchiveRemove deletes seq from an archive, or the whole archive for
+	// seq 0, rewriting the file so the bytes are gone.
+	ArchiveRemove(id string, seq uint64) (removed bool, err error)
 	// Close flushes and closes every log.
 	Close() error
 }
