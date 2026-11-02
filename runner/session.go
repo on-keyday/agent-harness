@@ -76,8 +76,8 @@ const wakeDebounceWindow = 1500 * time.Millisecond
 // docs/superpowers/specs/2026-10-24-pty-wake-bracketed-paste-design.md). An
 // agent that never sets it still gets the split write.
 //
-// Except on Windows, where every wake is the split write, with a longer gap;
-// see wakeInputFor.
+// Except on Windows, where the Enter always goes in a write of its own after a
+// longer gap, pasted marker or not; see wakeInputFor.
 //
 // Bracketing is safe HERE because wakeMarker is a fixed constant with no
 // ESC[201~ in it, which would end the paste early and turn the rest into
@@ -100,39 +100,44 @@ const wakeSubmitDelay = 100 * time.Millisecond
 // submitted it.
 const windowsWakeSubmitDelay = 300 * time.Millisecond
 
-// wakeInput is how a PTY wake is typed on one OS: whether it may be a
-// bracketed paste, and the gap before the lone Enter when it is not.
+// wakeInput is how a PTY wake is typed on one OS: whether the Enter after a
+// pasted marker may share its write, and the gap before a lone Enter.
 type wakeInput struct {
-	paste       bool
-	submitDelay time.Duration
+	enterWithPaste bool
+	submitDelay    time.Duration
 }
 
 // wakeInputFor is the wakeInput for a runner on goos.
 //
-// Windows never pastes. ConPTY passes the agent's ?2004h through, so the mode
-// tracker sees it, but on the input side the agent reads key events rather
-// than a paste: crossterm-based TUIs get no paste event there. codex then
-// classifies by timing (codex-rs/tui/src/bottom_pane/paste_burst.rs): text
-// arriving faster than typing is a paste, and an Enter within
-// PASTE_ENTER_SUPPRESS_WINDOW (120ms) of it is a newline. Every bracketed wake
-// to a Windows codex was left in its input box with the cursor on a new line
-// (measured 2026-11-02, four of four), and so was the 100ms split write. The
-// longer gap is a writer-side delay, so an agent that reads late can still
+// On Windows the Enter never shares a write with the marker, pasted or not.
+// ConPTY passes the agent's ?2004h through, so the runner sees the mode, but
+// what reaches the agent's input differs per agent. codex reads key events
+// rather than a paste and classifies by timing
+// (codex-rs/tui/src/bottom_pane/paste_burst.rs): an Enter within
+// PASTE_ENTER_SUPPRESS_WINDOW (120ms) of fast-arriving text is a newline. So
+// paste-and-Enter in one write left every wake to a Windows codex in its input
+// box, as did text, 100ms, Enter. claude 2.1.312 is the other way round: it
+// submitted paste-and-Enter, and left text, 300ms, Enter in the box. The
+// paste with its Enter 300ms later submitted on both (measured 2026-11-02,
+// once each). The gap is the writer's, so an agent that reads late can still
 // merge the two writes; on Windows nothing better is available.
 func wakeInputFor(goos string) wakeInput {
 	if goos == "windows" {
-		return wakeInput{paste: false, submitDelay: windowsWakeSubmitDelay}
+		return wakeInput{enterWithPaste: false, submitDelay: windowsWakeSubmitDelay}
 	}
-	return wakeInput{paste: true, submitDelay: wakeSubmitDelay}
+	return wakeInput{enterWithPaste: true, submitDelay: wakeSubmitDelay}
 }
 
 // wakeSubmitByte is the byte sequence treated as Enter when delivered as a
 // standalone PTY write.
 var wakeSubmitByte = []byte{'\r'}
 
+// pastedMarker is the marker as a bracketed paste, without the Enter.
+var pastedMarker = "\x1b[200~" + wakeMarker + "\x1b[201~"
+
 // bracketedWake is the whole wake for an agent with bracketed paste on, written
 // in one call: the marker as a paste, then Enter.
-var bracketedWake = []byte("\x1b[200~" + wakeMarker + "\x1b[201~\r")
+var bracketedWake = []byte(pastedMarker + "\r")
 
 // wakeForm is the shape a wake took on the agent's stdin, logged with
 // `wake written`. An idle agent submits a PTY wake in either PTY form, so the
@@ -140,9 +145,10 @@ var bracketedWake = []byte("\x1b[200~" + wakeMarker + "\x1b[201~\r")
 type wakeForm int
 
 const (
-	wakeSplit wakeForm = iota // text, wakeInput.submitDelay, lone CR
-	wakePaste                 // one bracketed paste and CR
-	wakeTurn                  // one event-stream user turn
+	wakeSplit      wakeForm = iota // text, wakeInput.submitDelay, lone CR
+	wakePaste                      // one bracketed paste and CR
+	wakeTurn                       // one event-stream user turn
+	wakePasteSplit                 // bracketed paste, wakeInput.submitDelay, lone CR
 )
 
 func (f wakeForm) String() string {
@@ -153,6 +159,8 @@ func (f wakeForm) String() string {
 		return "paste"
 	case wakeTurn:
 		return "turn"
+	case wakePasteSplit:
+		return "paste-split"
 	}
 	return "wakeForm(" + strconv.Itoa(int(f)) + ")"
 }
@@ -1318,25 +1326,30 @@ func (s *Session) setWake(taskIDHex string, wake func() (wakeForm, error)) {
 // ptyWake types the marker into a PTY session and submits it. modes is the
 // agent's own, fed from its output by ptyModeTap and read at each wake, since
 // an agent can turn bracketed paste on after it starts. With bracketed paste on
-// and in.paste allowed, the marker goes as a paste and the Enter after it, in
-// one write; otherwise as text, a pause of in.submitDelay, then a lone Enter.
-// See the wakeMarker comment for why.
+// the marker goes as a paste — with the Enter in the same write when
+// in.enterWithPaste, else followed by a pause of in.submitDelay and a lone
+// Enter. Without it, as text, the pause, then a lone Enter. See the wakeMarker
+// comment for why.
 func ptyWake(write func([]byte) (int, error), modes *termmode.Tracker, in wakeInput) func() (wakeForm, error) {
 	return func() (wakeForm, error) {
-		if on, _ := modes.Mode(termmode.BracketedPaste); on && in.paste {
-			if _, err := write(bracketedWake); err != nil {
-				return wakePaste, fmt.Errorf("paste: %w", err)
+		form, text := wakeSplit, []byte(wakeMarker)
+		if on, _ := modes.Mode(termmode.BracketedPaste); on {
+			if in.enterWithPaste {
+				if _, err := write(bracketedWake); err != nil {
+					return wakePaste, fmt.Errorf("paste: %w", err)
+				}
+				return wakePaste, nil
 			}
-			return wakePaste, nil
+			form, text = wakePasteSplit, []byte(pastedMarker)
 		}
-		if _, err := write([]byte(wakeMarker)); err != nil {
-			return wakeSplit, fmt.Errorf("text: %w", err)
+		if _, err := write(text); err != nil {
+			return form, fmt.Errorf("text: %w", err)
 		}
 		time.Sleep(in.submitDelay)
 		if _, err := write(wakeSubmitByte); err != nil {
-			return wakeSplit, fmt.Errorf("submit: %w", err)
+			return form, fmt.Errorf("submit: %w", err)
 		}
-		return wakeSplit, nil
+		return form, nil
 	}
 }
 

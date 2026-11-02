@@ -109,10 +109,19 @@ as a newline (`PASTE_ENTER_SUPPRESS_WINDOW`,
 `codex-rs/tui/src/bottom_pane/paste_burst.rs`). Typed into the same session
 with `session send`, once each: paste and `\r` in one write stayed in the box;
 text, ~100ms, lone `\r` (today's split write) stayed in the box; text, ~300ms,
-lone `\r` submitted. A Windows runner therefore always uses the split write,
-with a 300ms gap (D8, D9). The gap is still the writer's, so the merged-read race
-of Problem 1 remains there. claude on Windows was not measured; it gets the
-same split write.
+lone `\r` submitted. A Windows runner therefore always used the split write,
+with a 300ms gap (D8 as first landed, 0924b8eb). The gap is still the writer's,
+so the merged-read race of Problem 1 remains there.
+
+**Reversed the same day: claude on Windows needs the paste.** The split write
+above reached claude 2.1.312 on the same Windows runner as text, 300ms, `\r`,
+and stayed in its input box with the cursor on a new line — while paste and
+`\r` in one write, sent with `session send`, submitted. What the agent behind
+ConPTY gets from a paste differs per agent, so neither of the two forms works
+for both. A third did, once each on claude and codex: the paste without the
+`\r`, then a lone `\r` 300ms later. That is what a Windows runner now writes
+to an agent with `?2004h` (logged `form=paste-split`); one without it keeps
+text, 300ms, `\r` (D8 as amended).
 
 ### 3. Runner: WakeStdin off the receive loop
 
@@ -147,8 +156,8 @@ A capture written by an older server simply lacks the modes, as today.
 | D5 | The held capture carries the tracker's input modes after the repaint | operator |
 | D6 | The mode tracker moves to a shared package `termmode` used by server and runner | this spec — instead of a second parser in the runner |
 | D7 | The capture carries `Modes()`, not `Preamble()` | this spec |
-| D8 | A Windows runner never sends the paste: every PTY wake is the split write, by OS rather than per agent | operator (2026-11-02) |
-| D9 | The Windows split write waits 300ms before the `\r` | this spec — clears codex's 120ms window; one measurement at ~300ms |
+| D8 | On a Windows runner the `\r` never shares a write with the marker: an agent with `?2004h` gets the paste, then a lone `\r`; one without gets the text, then a lone `\r`. By OS, not per agent. Amends the first D8 (0924b8eb, "never paste"), which left claude's wakes unsubmitted | first version: operator (2026-11-02); the amendment: this spec, after the claude measurement, not separately confirmed |
+| D9 | On Windows the lone `\r` follows 300ms after the marker | this spec — clears codex's 120ms window; one measurement each at ~300ms |
 
 ## Not in this change
 

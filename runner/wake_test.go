@@ -303,53 +303,71 @@ func TestPtyWake_FollowsTheModeAsItChanges(t *testing.T) {
 	}
 }
 
-// On Windows a wake is never a paste, even for an agent that set ?2004h: ConPTY
-// passes the mode through, but the agent reads its input as key events, and
-// codex then takes an Enter right after the text as a newline. See
-// wakeInputFor.
-func TestPtyWake_WindowsNeverPastes(t *testing.T) {
-	modes := termmode.New()
-	modes.Feed([]byte("\x1b[?2004h"))
-	cw := &captureWriter{}
-
-	form, err := ptyWake(cw.write, modes, wakeInputFor("windows"))()
-	if err != nil {
-		t.Fatal(err)
+// On Windows the Enter never shares a write with the marker. An agent with
+// ?2004h still gets the paste — claude on Windows submits it and leaves plain
+// text in the box — but the Enter follows on its own, because codex there
+// takes an Enter in the same burst as a newline. See wakeInputFor.
+func TestPtyWake_WindowsEnterIsAlwaysItsOwnWrite(t *testing.T) {
+	pasting := termmode.New()
+	pasting.Feed([]byte("\x1b[?2004h"))
+	cases := []struct {
+		name     string
+		modes    *termmode.Tracker
+		wantForm wakeForm
+		wantText string
+	}{
+		{"agent with bracketed paste", pasting, wakePasteSplit, "\x1b[200~" + wakeMarker + "\x1b[201~"},
+		{"agent without", termmode.New(), wakeSplit, wakeMarker},
 	}
-
-	if form != wakeSplit {
-		t.Errorf("form = %v, want split", form)
-	}
-	if cw.writeCount() != 2 || cw.writeAt(0) != wakeMarker || cw.writeAt(1) != "\r" {
-		t.Errorf("writes = %d (%q, %q), want the marker then a lone \\r", cw.writeCount(), cw.writeAt(0), cw.writeAt(1))
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cw := &captureWriter{}
+			form, err := ptyWake(cw.write, tc.modes, wakeInputFor("windows"))()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if form != tc.wantForm {
+				t.Errorf("form = %v, want %v", form, tc.wantForm)
+			}
+			if cw.writeCount() != 2 || cw.writeAt(0) != tc.wantText || cw.writeAt(1) != "\r" {
+				t.Errorf("writes = %d (%q, %q), want %q then a lone \\r", cw.writeCount(), cw.writeAt(0), cw.writeAt(1), tc.wantText)
+			}
+		})
 	}
 }
 
 // codex on Windows takes an Enter as a newline while it arrives within 120ms of
 // the text before it (PASTE_ENTER_SUPPRESS_WINDOW in
-// codex-rs/tui/src/bottom_pane/paste_burst.rs), so the gap must clear it.
+// codex-rs/tui/src/bottom_pane/paste_burst.rs), so the gap must clear it —
+// pasted or not, since codex there sees the paste as key events too.
 func TestPtyWake_WindowsGapClearsCodexEnterWindow(t *testing.T) {
 	const codexEnterWindow = 120 * time.Millisecond
-	var mu sync.Mutex
-	var at []time.Time
-	write := func(p []byte) (int, error) {
-		mu.Lock()
-		at = append(at, time.Now())
-		mu.Unlock()
-		return len(p), nil
-	}
+	pasting := termmode.New()
+	pasting.Feed([]byte("\x1b[?2004h"))
+	for name, modes := range map[string]*termmode.Tracker{"paste": pasting, "plain": termmode.New()} {
+		t.Run(name, func(t *testing.T) {
+			var mu sync.Mutex
+			var at []time.Time
+			write := func(p []byte) (int, error) {
+				mu.Lock()
+				at = append(at, time.Now())
+				mu.Unlock()
+				return len(p), nil
+			}
 
-	if _, err := ptyWake(write, termmode.New(), wakeInputFor("windows"))(); err != nil {
-		t.Fatal(err)
-	}
+			if _, err := ptyWake(write, modes, wakeInputFor("windows"))(); err != nil {
+				t.Fatal(err)
+			}
 
-	mu.Lock()
-	defer mu.Unlock()
-	if len(at) != 2 {
-		t.Fatalf("writes = %d, want 2", len(at))
-	}
-	if gap := at[1].Sub(at[0]); gap <= codexEnterWindow {
-		t.Errorf("gap between text and Enter = %v, want more than %v", gap, codexEnterWindow)
+			mu.Lock()
+			defer mu.Unlock()
+			if len(at) != 2 {
+				t.Fatalf("writes = %d, want 2", len(at))
+			}
+			if gap := at[1].Sub(at[0]); gap <= codexEnterWindow {
+				t.Errorf("gap between text and Enter = %v, want more than %v", gap, codexEnterWindow)
+			}
+		})
 	}
 }
 
