@@ -59,8 +59,18 @@ var requiredCap = map[protocol.TaskControlKind]protocol.Capability{
 	protocol.TaskControlKind_BoardPurge:     protocol.Capability_BoardPurge,
 	// A task caller is also checked against the board reach in the handler:
 	// it may retain only a topic it may publish to.
-	protocol.TaskControlKind_BoardRetain:  protocol.Capability_BoardPersist,
-	protocol.TaskControlKind_BoardRetract: protocol.Capability_BoardPurge,
+	protocol.TaskControlKind_BoardRetain: protocol.Capability_BoardPersist,
+	// Flush and archive creation are retain's companions: board_persist, and
+	// the same publish check for a task caller in the handler.
+	protocol.TaskControlKind_BoardFlush:   protocol.Capability_BoardPersist,
+	protocol.TaskControlKind_BoardArchive: protocol.Capability_BoardPersist,
+	// Listing every archive names topics the caller did not, and reading one
+	// on this face includes withdrawn messages: board_topics' and board_read's
+	// bit. The agent face's agent_archives / agent_archive_read need none.
+	protocol.TaskControlKind_BoardArchives:     protocol.Capability_BoardObserve,
+	protocol.TaskControlKind_BoardArchiveRead:  protocol.Capability_BoardObserve,
+	protocol.TaskControlKind_BoardArchivePurge: protocol.Capability_BoardPurge,
+	protocol.TaskControlKind_BoardRetract:      protocol.Capability_BoardPurge,
 	// Forgetting a task's contacts removes another task's board state, the
 	// same class as withdrawing its message; the handler adds the scope gate.
 	protocol.TaskControlKind_BoardContactsClear: protocol.Capability_BoardPurge,

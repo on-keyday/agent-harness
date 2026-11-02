@@ -47,6 +47,7 @@ func (h *TaskHandler) handleBoardTopics(conn ConnHandle, requestID uint32) {
 			if at := ret.ExpiresAt(r.LastPublishedAt); !at.IsZero() {
 				rr.ExpiresAtUnixMs = uint64(at.UnixMilli())
 			}
+			rr.RingFloor = h.Board.RingFloor(r.Name)
 			rr.SetName([]byte(r.Name))
 			if ret.Forever {
 				rr.SetForever(true)
@@ -146,6 +147,14 @@ func (h *TaskHandler) handleBoardRead(conn ConnHandle, requestID uint32, topic s
 		msgs = append(msgs, withdrawn...)
 		sort.Slice(msgs, func(i, j int) bool { return msgs[i].Seq < msgs[j].Seq })
 	}
+	body := &protocol.BoardReadBody{}
+	body.SetMsgs(boardMessageRows(msgs))
+	respondWithBody(conn, "board_read", body, respond(protocol.BoardStatus_Ok))
+}
+
+// boardMessageRows is the operator-face row of each message, withdrawn ones
+// carrying their withdrawal.
+func boardMessageRows(msgs []agentboard.RetainedMessage) []protocol.BoardMessageRow {
 	rows := make([]protocol.BoardMessageRow, 0, len(msgs))
 	for _, m := range msgs {
 		row := protocol.BoardMessageRow{
@@ -170,9 +179,7 @@ func (h *TaskHandler) handleBoardRead(conn ConnHandle, requestID uint32, topic s
 		}
 		rows = append(rows, row)
 	}
-	body := &protocol.BoardReadBody{}
-	body.SetMsgs(rows)
-	respondWithBody(conn, "board_read", body, respond(protocol.BoardStatus_Ok))
+	return rows
 }
 
 // handleBoardRetract withdraws ONE retained message from a topic and leaves it

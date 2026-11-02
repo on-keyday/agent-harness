@@ -863,6 +863,43 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("board_retain variant is nil", "request_id", req.RequestId)
 		}
 
+	case protocol.TaskControlKind_BoardFlush:
+		if r := req.BoardFlush(); r != nil {
+			h.handleBoardFlush(conn, req.RequestId, string(r.Topic), h.lookupPrincipal(cid))
+		} else {
+			slog.Error("board_flush variant is nil", "request_id", req.RequestId)
+		}
+
+	case protocol.TaskControlKind_BoardArchive:
+		if r := req.BoardArchive(); r != nil {
+			// The creator is the connection's principal, never a request
+			// field: board archives shows it as by=.
+			h.handleBoardArchive(conn, req.RequestId, string(r.Topic), h.lookupPrincipal(cid))
+		} else {
+			slog.Error("board_archive variant is nil", "request_id", req.RequestId)
+		}
+
+	case protocol.TaskControlKind_BoardArchives:
+		if r := req.BoardArchives(); r != nil {
+			h.handleBoardArchives(conn, req.RequestId, protocol.TaskControlKind_BoardArchives, string(r.Topic))
+		} else {
+			slog.Error("board_archives variant is nil", "request_id", req.RequestId)
+		}
+
+	case protocol.TaskControlKind_BoardArchiveRead:
+		if r := req.BoardArchiveRead(); r != nil {
+			h.handleBoardArchiveRead(conn, req.RequestId, string(r.Id), r.BeforeSeq, r.Limit)
+		} else {
+			slog.Error("board_archive_read variant is nil", "request_id", req.RequestId)
+		}
+
+	case protocol.TaskControlKind_BoardArchivePurge:
+		if r := req.BoardArchivePurge(); r != nil {
+			h.handleBoardArchivePurge(conn, req.RequestId, string(r.Id), r.Seq)
+		} else {
+			slog.Error("board_archive_purge variant is nil", "request_id", req.RequestId)
+		}
+
 	case protocol.TaskControlKind_BoardMembership:
 		if r := req.BoardMembership(); r != nil {
 			h.handleBoardMembership(conn, req.RequestId, cid, r)
@@ -1018,6 +1055,20 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			return
 		}
 		h.handleAgentReadSeq(conn, req.RequestId, ars)
+
+	case protocol.TaskControlKind_AgentArchives:
+		if r := req.AgentArchives(); r != nil {
+			h.handleAgentArchives(conn, req.RequestId, string(r.Topic))
+		} else {
+			slog.Error("agent_archives variant is nil", "request_id", req.RequestId)
+		}
+
+	case protocol.TaskControlKind_AgentArchiveRead:
+		if r := req.AgentArchiveRead(); r != nil {
+			h.handleAgentArchiveRead(conn, req.RequestId, r)
+		} else {
+			slog.Error("agent_archive_read variant is nil", "request_id", req.RequestId)
+		}
 
 	case protocol.TaskControlKind_AgentReadPage:
 		arp := req.AgentReadPage()

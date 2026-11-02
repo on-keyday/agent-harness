@@ -151,10 +151,18 @@ var kindTargetClass = map[protocol.TaskControlKind]targetClass{
 	protocol.TaskControlKind_AgentReadPage:          noTarget,
 	protocol.TaskControlKind_AgentRetract:           noTarget,
 	protocol.TaskControlKind_AgentListContacts:      noTarget,
+	// Flush and archives name a topic or an archive id, never a task.
+	protocol.TaskControlKind_BoardFlush:        noTarget,
+	protocol.TaskControlKind_BoardArchive:      noTarget,
+	protocol.TaskControlKind_BoardArchives:     noTarget,
+	protocol.TaskControlKind_BoardArchiveRead:  noTarget,
+	protocol.TaskControlKind_BoardArchivePurge: noTarget,
+	protocol.TaskControlKind_AgentArchives:     noTarget,
+	protocol.TaskControlKind_AgentArchiveRead:  noTarget,
 }
 
 func TestEveryTaskControlKindIsClassified(t *testing.T) {
-	for i := 0; i <= int(protocol.TaskControlKind_AgentReadPage); i++ {
+	for i := 0; i <= int(protocol.TaskControlKind_AgentArchiveRead); i++ {
 		k := protocol.TaskControlKind(i)
 		if k.String() == fmt.Sprintf("TaskControlKind(%d)", i) {
 			continue // gap in the enum, not a real kind
@@ -169,7 +177,7 @@ func TestEveryTaskControlKindIsClassified(t *testing.T) {
 	}
 }
 
-// board_membership is the last kind; if the enum grows past it the loops above
+// agent_archive_read is the last kind; if the enum grows past it the loops above
 // stop short and silently cover nothing new. It has caught fourteen appends now:
 // restore_tasks, when the bound was open_forward_tap; trsf_state; the ten
 // agent_* kinds, which arrived together and would otherwise have dispatched
@@ -177,11 +185,12 @@ func TestEveryTaskControlKindIsClassified(t *testing.T) {
 // await_idle_* kinds; board_send / board_wake; open_exec_tap;
 // agent_list_contacts; board_contacts_clear; progress_set / await_progress;
 // progress_clear; runner_enroll / runner_unenroll / runner_keys;
-// lifecycle_set; board_retain; board_membership; and agent_read_page.
-func TestAgentReadPageIsStillTheLastKind(t *testing.T) {
-	next := protocol.TaskControlKind(int(protocol.TaskControlKind_AgentReadPage) + 1)
+// lifecycle_set; board_retain; board_membership; agent_read_page; and the
+// seven flush / archive kinds.
+func TestAgentArchiveReadIsStillTheLastKind(t *testing.T) {
+	next := protocol.TaskControlKind(int(protocol.TaskControlKind_AgentArchiveRead) + 1)
 	if next.String() != fmt.Sprintf("TaskControlKind(%d)", int(next)) {
-		t.Fatalf("a kind was appended after agent_read_page (%v) — raise the loop bound in "+
+		t.Fatalf("a kind was appended after agent_archive_read (%v) — raise the loop bound in "+
 			"TestEveryTaskControlKindIsClassified and in TestEveryTaskControlKindHasACapVerdict, "+
 			"which otherwise stop before it", next)
 	}

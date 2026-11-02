@@ -640,6 +640,27 @@ enum TaskControlKind:
                             # disk log. No cap: a keyed read inside my
                             # subscriptions, like agent_read_seq.
                             # See docs/superpowers/specs/2026-10-31-agent-read-history-design.md
+    board_flush             # appended: empty a retained topic's in-memory
+                            # ring; its disk log keeps everything. Gated on
+                            # board_persist, and a task caller must be able
+                            # to publish to the topic, as board_retain.
+                            # See docs/superpowers/specs/2026-11-02-agentboard-flush-archive-design.md
+    board_archive           # appended: freeze a topic's history into an
+                            # archive nothing appends to. Gated like
+                            # board_flush.
+    board_archives          # appended: list archives, of one topic or all.
+                            # Gated on board_observe: unkeyed, it names
+                            # topics the caller did not name.
+    board_archive_read      # appended: page an archive, withdrawn messages
+                            # included. Gated on board_observe, as board_read.
+    board_archive_purge     # appended: delete an archive or one message in
+                            # it. Gated on board_purge, as board_purge.
+    agent_archives          # appended: list the archives of ONE topic the
+                            # caller names. No cap; refused (not_found) when
+                            # the caller may not read that topic.
+    agent_archive_read      # appended: page an archive, live messages only.
+                            # No cap; not_found unless the caller may read
+                            # the archive's source topic.
 
 # ClientKind tags the kind of caller that opened a TaskControl session.
 # `agent` is an in-task harness-cli that proves its identity via agent_info;
@@ -1382,6 +1403,9 @@ format BoardTopicRetention:
     # publish and the retain call, the same instant the board evicts at. 0
     # when forever. Moves on every publish.
     expires_at_unix_ms :u64
+    # The seq board_flush last emptied the ring through; 0 when never
+    # flushed. Appended: no compat shim, as above.
+    ring_floor :u64
 
 format BoardReadRequest:
     request_id :u32
@@ -1569,6 +1593,102 @@ enum BoardRetainStatus:
 
 format BoardRetainResponse:
     status :BoardRetainStatus
+
+# BoardFlushRequest empties a retained topic's ring (TaskControlKind
+# board_flush). The disk log keeps every message; a restart does not load
+# the flushed ones back.
+format BoardFlushRequest:
+    topic_len :u16
+    topic :[topic_len]u8
+
+enum BoardFlushStatus:
+    :u8
+    ok = 0, "ok"
+    not_found = 1, "not_found"              # no such topic
+    not_retained = 2, "not_retained"        # no disk copy: a flush would destroy its messages
+    not_publishable = 3, "not_publishable"  # a task caller that may not publish to the topic
+    store_error = 4, "store_error"          # the server could not write the store; see its log
+
+# through_seq: the seq the ring was emptied through (the earlier floor when
+# the ring already held nothing). dropped: entries that left memory, live and
+# withdrawn, clamped to 65535.
+format BoardFlushResponse:
+    status :BoardFlushStatus
+    through_seq :u64
+    dropped :u16
+
+# BoardArchiveRequest freezes a topic's history into an archive (TaskControlKind
+# board_archive): a retained topic's whole log, any other topic's ring and
+# withdrawn list. The topic itself is not changed.
+format BoardArchiveRequest:
+    topic_len :u16
+    topic :[topic_len]u8
+
+enum BoardArchiveStatus:
+    :u8
+    ok = 0, "ok"
+    not_found = 1, "not_found"              # no such topic
+    not_archivable = 2, "not_archivable"    # empty name or a chat.* topic: direct messages stay temporary
+    not_publishable = 3, "not_publishable"  # a task caller that may not publish to the topic
+    empty = 4, "empty"                      # the topic holds no message
+    store_error = 5, "store_error"          # the server could not write the store; see its log
+
+format BoardArchiveResponse:
+    status :BoardArchiveStatus
+    id_len :u8
+    id :[id_len]u8
+    through_seq :u64
+    count :u32
+
+# BoardArchivesRequest lists archives (TaskControlKind board_archives). An
+# empty topic lists every archive.
+format BoardArchivesRequest:
+    request_id :u32
+    topic_len :u16
+    topic :[topic_len]u8
+
+# BoardArchiveRow is one archive. created_by is the task that made it; zero is
+# the operator. count is its messages, live and withdrawn.
+format BoardArchiveRow:
+    id_len :u8
+    id :[id_len]u8
+    topic_len :u16
+    topic :[topic_len]u8
+    through_seq :u64
+    count :u32
+    created_at_unix_ms :u64
+    created_by :TaskID
+    disk_bytes :u64
+
+# stream_id: see BoardTopicsResponse; 0 unless status is ok.
+format BoardArchivesResponse:
+    request_id :u32
+    status :BoardStatus
+    stream_id :u64
+
+format BoardArchivesBody:
+    rows_len :u16
+    rows :[rows_len]BoardArchiveRow
+
+# BoardArchiveReadRequest pages an archive (TaskControlKind board_archive_read):
+# up to limit messages, live and withdrawn, with seq below before_seq (0 = from
+# the newest), newest first. limit 0 answers not_found. The answer is a
+# BoardReadResponse whose stream carries a BoardReadBody, as board_read's.
+format BoardArchiveReadRequest:
+    request_id :u32
+    id_len :u8
+    id :[id_len]u8
+    before_seq :u64
+    limit :u16
+
+# BoardArchivePurgeRequest deletes one message of an archive, or the whole
+# archive when seq is 0 (TaskControlKind board_archive_purge). The file is
+# rewritten, so the bytes are gone. Answered with a BoardPurgeResponse.
+format BoardArchivePurgeRequest:
+    request_id :u32
+    id_len :u8
+    id :[id_len]u8
+    seq :u64
 
 # BoardMembershipRequest changes one task's standing on one topic (TaskControlKind
 # board_membership). subscribe touches the subscription only; join records a
@@ -2080,6 +2200,28 @@ format AgentReadPageResponse:
     # stream_id: see BoardTopicsResponse. 0 unless status is ok; then the
     # stream carries a DeliveredBody holding the page, newest first.
     stream_id :u64
+
+# AgentArchivesRequest lists the archives of one topic (TaskControlKind
+# agent_archives). The topic is required: listing without one would name
+# topics the caller did not, which is board_archives and board_observe. A
+# topic the caller may not read answers not_found, as an unknown one does.
+# Answered with a BoardArchivesResponse.
+format AgentArchivesRequest:
+    request_id :u32
+    topic_len :u16
+    topic :[topic_len]u8
+
+# AgentArchiveReadRequest pages an archive the caller may read: one whose
+# source topic it could subscribe to (TaskControlKind agent_archive_read). Live
+# messages only, as on every agent path. Answered with an AgentReadPageResponse
+# whose stream carries a DeliveredBody; not_found merges an unknown id with an
+# archive the caller may not read.
+format AgentArchiveReadRequest:
+    request_id :u32
+    id_len :u8
+    id :[id_len]u8
+    before_seq :u64
+    limit :u16
 
 # AgentRetractRequest withdraws ONE message the CALLER published, named by its
 # board-global seq. Withdrawal is a LOGICAL delete: the message leaves every
@@ -2630,6 +2772,13 @@ format TaskControlRequest:
         TaskControlKind.board_retain             => board_retain             :BoardRetainRequest
         TaskControlKind.board_membership         => board_membership         :BoardMembershipRequest
         TaskControlKind.agent_read_page          => agent_read_page          :AgentReadPageRequest
+        TaskControlKind.board_flush              => board_flush              :BoardFlushRequest
+        TaskControlKind.board_archive            => board_archive            :BoardArchiveRequest
+        TaskControlKind.board_archives           => board_archives           :BoardArchivesRequest
+        TaskControlKind.board_archive_read       => board_archive_read       :BoardArchiveReadRequest
+        TaskControlKind.board_archive_purge      => board_archive_purge      :BoardArchivePurgeRequest
+        TaskControlKind.agent_archives           => agent_archives           :AgentArchivesRequest
+        TaskControlKind.agent_archive_read       => agent_archive_read       :AgentArchiveReadRequest
         .. => error("Unexpected task")
 
 # CancelResult replaces a bare u8 that every reply wrote as 0. ok stays 0, so
@@ -2716,6 +2865,13 @@ format TaskControlResponse:
         TaskControlKind.board_retain             => board_retain             :BoardRetainResponse
         TaskControlKind.board_membership         => board_membership         :BoardMembershipResponse
         TaskControlKind.agent_read_page          => agent_read_page          :AgentReadPageResponse
+        TaskControlKind.board_flush              => board_flush              :BoardFlushResponse
+        TaskControlKind.board_archive            => board_archive            :BoardArchiveResponse
+        TaskControlKind.board_archives           => board_archives           :BoardArchivesResponse
+        TaskControlKind.board_archive_read       => board_archive_read       :BoardReadResponse
+        TaskControlKind.board_archive_purge      => board_archive_purge      :BoardPurgeResponse
+        TaskControlKind.agent_archives           => agent_archives           :BoardArchivesResponse
+        TaskControlKind.agent_archive_read       => agent_archive_read       :AgentReadPageResponse
 
 # --- runner enrollment (2026-10-27-runner-enrollment-design.md) --------------
 # The server lets a runner register under AuthRole.runner only when it signs

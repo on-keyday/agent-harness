@@ -91,9 +91,12 @@ memory), not_found, not_retained (D4), not_permitted (D2), store_error.
 
 ### 4.2 Semantics
 
-- Under `t.mu`, X is the highest seq in `ring` ∪ `retracted`. Entries with
-  seq ≤ X leave both lists. A publish that was assigned a seq below X but
-  appended after the cut stays in the ring; it is in the log either way.
+- X is the highest seq in `ring` ∪ `retracted`. The store syncs the log and
+  records X (D8), and only then do entries with seq ≤ X leave both lists. A
+  publish appended in between has a seq above X and stays in the ring.
+- A flush of a topic whose ring and withdrawn list are both empty changes
+  nothing and answers the current floor: writing a floor of 0 would undo an
+  earlier flush on the next restart.
 - The topic records X as its ring floor (`topic.ringFloor`, guarded like
   `retention` by the Board's `mu`). Nothing below the floor re-enters the ring
   while the topic stays retained.
@@ -141,13 +144,18 @@ downgrade refills the ring on its next start and loses nothing.
 ```
 harness-cli board archive <topic>                                  # create
 harness-cli board archives [--topic <topic>]                       # list
-harness-cli board read --archive <id> [--before <seq>] [--limit <n>]
-harness-cli board purge --archive <id> [--seq <seq>]               # delete
+harness-cli board read --archive <id> [--before <seq>] [--limit <n>]  # in place of <topic>
+harness-cli board purge --archive <id> [--seq <seq>]               # in place of <topic>; delete
 
-harness-cli agent archives [--topic <topic>]                       # D17
+harness-cli agent archives --topic <topic>                         # D17, keyed
 harness-cli agent read --archive <id> [--before <seq>] [--limit <n>]  # D16
 harness-cli agent purge --archive <id> [--seq <seq>]               # D18
 ```
+
+`agent archives` takes a topic always. The unkeyed list (D17's discovery
+half) is `board archives`, which a task holding `board_observe` can call, as
+`agent topics` and `board topics` share a gate. `board read --archive` pages
+64 at a time unless `--limit` says otherwise.
 
 `board archive` and `board flush` are callable from a task that holds
 `board_persist`, as `board retain` is (retention spec D7).
@@ -193,22 +201,27 @@ The archive directory must stay a subdirectory: `sweepOrphans` deletes every
 `*.log` directly under `board/` that `retention.json` does not name, and
 skips directories.
 
-**Builder's call:** the id's form, as long as it is not derived from the topic
-name (which may hold characters a filesystem rejects) and is unique across
-archives of the same topic made with no publish in between.
+The id is 12 lowercase hex characters from `crypto/rand`, drawn again if a
+file by that name exists. Not derived from the topic name, which may hold
+characters a filesystem rejects; checked against that form before any path
+is built from a request.
 
-D17: `AttachStore` raises the seq above the highest seq of every archive too,
+D19: `AttachStore` raises the seq above the highest seq of every archive too,
 so a boot whose clock seed is behind cannot reuse a seq an archive holds.
 
 ## 6. Wire
 
-New `TaskControlKind`s, appended. On the `board_` face: `board_flush`,
-`board_archive`, `board_archives`, and archive variants of read and purge. On
-the `agent_` face: an archive list, an archive read and an archive purge
-(**builder's call** on both faces: new kinds, or an archive id on the
-existing read / purge requests). Every new kind is listed in
-`server/cap_completeness_test.go` with the gate D15–D18 give it. Client→server requests the runner does not decode, so
-no runner-first restart concern; run `scripts/wire-skew-check.sh` anyway.
+Seven `TaskControlKind`s, appended: `board_flush`, `board_archive`,
+`board_archives`, `board_archive_read`, `board_archive_purge`,
+`agent_archives`, `agent_archive_read`. New kinds rather than an archive id
+on `BoardReadRequest` / `AgentReadPageRequest`, so no existing request changes
+shape. The reads answer with the existing `BoardReadResponse` /
+`AgentReadPageResponse` and their bodies; `agent purge --archive` uses
+`board_archive_purge`, as `agent purge` uses `board_purge`.
+`BoardTopicRetention` gains `ring_floor`. Every new kind is listed in
+`server/cap_completeness_test.go` with the gate D15–D18 give it. Client→server
+requests the runner does not decode, so no runner-first restart concern; run
+`scripts/wire-skew-check.sh` anyway.
 
 Walk `.claude/skills/surface-parity-checklist` for every new verb and the
 new `board topics` column.
@@ -262,7 +275,8 @@ Archive:
 - Agent face, from a task with no capabilities: `agent read --archive` and
   `agent archives --topic` succeed for an archive of a topic it may read and
   answer not_found for one of a `tree.<Y>.*` outside its lineage;
-  `agent archives` without `--topic` is refused without `board_observe`;
+  `agent archives` without `--topic` is refused (the unkeyed list is
+  `board archives`, `board_observe`);
   `agent purge --archive` is refused without the purge capability.
 - Restart: archives are listed and readable; the seq seeds above the highest
   archived seq.

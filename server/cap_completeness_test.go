@@ -145,10 +145,20 @@ var kindCapClass = map[protocol.TaskControlKind]capClass{
 	protocol.TaskControlKind_AgentReadPage:          capNone,
 	protocol.TaskControlKind_AgentRetract:           capNone,
 	protocol.TaskControlKind_AgentListContacts:      capNone,
+	protocol.TaskControlKind_BoardFlush:             capInMap,
+	protocol.TaskControlKind_BoardArchive:           capInMap,
+	protocol.TaskControlKind_BoardArchives:          capInMap,
+	protocol.TaskControlKind_BoardArchiveRead:       capInMap,
+	protocol.TaskControlKind_BoardArchivePurge:      capInMap,
+	// Keyed by a topic or an archive the caller names, and refused (merged
+	// not_found) unless the caller may read the topic: the agent_read_page
+	// reasoning, with reach in place of the subscription.
+	protocol.TaskControlKind_AgentArchives:    capNone,
+	protocol.TaskControlKind_AgentArchiveRead: capNone,
 }
 
 func TestEveryTaskControlKindHasACapVerdict(t *testing.T) {
-	for i := 0; i <= int(protocol.TaskControlKind_AgentReadPage); i++ {
+	for i := 0; i <= int(protocol.TaskControlKind_AgentArchiveRead); i++ {
 		k := protocol.TaskControlKind(i)
 		if k.String() == fmt.Sprintf("TaskControlKind(%d)", i) {
 			continue // gap in the enum, not a real kind
