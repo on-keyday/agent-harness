@@ -710,7 +710,7 @@ func (h cliVerbs) CapsReach(a verb.CapsReachAction) error {
 		if err != nil {
 			return err
 		}
-		return cli.WriteReachReport(os.Stdout, r, a.JSON)
+		return cli.WriteReachReport(os.Stdout, r, cli.ReachFormatOf(a.JSON, a.Tree))
 	})
 }
 

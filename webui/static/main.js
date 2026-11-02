@@ -9139,7 +9139,7 @@ async function runVerbCommandDispatch(tokens, ctx) {
         // tree's reach mode draws the same answer.
         const b = parseOrHelp(ctx, tokens, {});
         out = await ctx.harness.capsReachText({
-          taskId: b.args[0], cap: b.flags.cap || "", json: !!b.flags.json,
+          taskId: b.args[0], cap: b.flags.cap || "", json: !!b.flags.json, tree: !!b.flags.tree,
         });
         break;
       }

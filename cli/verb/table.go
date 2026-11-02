@@ -2467,11 +2467,16 @@ var Verbs = []VerbSpec{
 		},
 		Action: "CapsReachAction",
 		Args:   []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
+		// --json carries every id in full and the listing carries created_by,
+		// so a consumer joins the two itself — as `ls --tree` / `ls --json`.
+		Exclusive: []Rule{{Flags: []string{"tree", "json"}}},
 		Flags: []Flag{
 			{Name: "cap", Type: FlagString, Default: "", Field: "Cap", Help: "show one capability's reach only"},
 			{Name: "json", Type: FlagBool, Default: false, Field: "JSON", CmdlineSurfaces: CLI | WebUI,
 				SurfaceReason: "the TUI prints into its command output, which has no JSON form; the WebUI prints the object into its command output as `caps audit --json` does",
 				Help:          "one JSON object, full task ids"},
+			{Name: "tree", Type: FlagBool, Default: false, Field: "Tree",
+				Help: "also draw the reached tasks in the creator tree, each named and marked with what reaches it"},
 		},
 		Validate: func(b Bound) error {
 			name := b.Str("cap")
@@ -2487,7 +2492,7 @@ var Verbs = []VerbSpec{
 			}
 			return nil
 		},
-		Examples: []string{"caps reach aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "caps reach aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --cap cancel"},
+		Examples: []string{"caps reach aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "caps reach aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --cap cancel", "caps reach aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --tree"},
 	},
 	{
 		// What a caps set, a spawn or a set-parent WOULD change, before it is

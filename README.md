@@ -1409,6 +1409,7 @@ capability it exercises, what it sees, and what it may hand down —
 bin/harness-cli caps reach <task-id>               # every bit, then view and delegate
 bin/harness-cli caps reach <task-id> --cap cancel  # one bit
 bin/harness-cli caps reach <task-id> --json        # full ids
+bin/harness-cli caps reach <task-id> --tree        # also: the reached tasks in the creator tree
 ```
 
 ```
@@ -1437,6 +1438,23 @@ It is computed only over an operator's listing: an agent's listing has gaps
 between its parent and its targets, so for an agent the line reads `not
 computed (your listing is partial)`.
 The same command runs from the TUI and WebUI command lines.
+
+`--tree` adds the same answer per task: each listed task a line reaches,
+named as `caps audit` names a holder (id, agent, repo, status, prompt head)
+and placed under its creator, with the bits that act on it, whether it is
+seen, and whether it may be handed down. Creators no line reaches are drawn
+too, marked `act=none see=no delegate=none`, so a reached grandchild is not
+cut loose from its root. It does not combine with `--json`, whose full ids
+join with `ls --json`'s `created_by`.
+
+```
+  reach tree (by creator):
+  11111111 claude repo Running  act=none see=no delegate=none
+  └─ 22222222 claude repo Running  act=all 2 bits above see=yes delegate=act  (this task)
+     ├─ 33333333 codex repo Running  act=cancel see=yes delegate=act
+     └─ 55555555 claude repo Succeeded  act=cancel see=yes delegate=act
+  66666666 claude repo Running  act=cancel see=yes delegate=none
+```
 
 In the WebUI the task sheet's 「🎯 到達範囲を見る」 puts the creator tree into
 **reach mode** for that task: a selector of the same entries replaces

@@ -747,8 +747,11 @@ test("caps reach dispatches its report", async () => {
   const ID = "a".repeat(32);
   const r = await run(`caps reach ${ID} --cap cancel --json`, { capsReachText: "{}" });
   assert.equal(r.err, undefined);
-  eq(r.calls, [["capsReachText", { taskId: ID, cap: "cancel", json: true }]]);
+  eq(r.calls, [["capsReachText", { taskId: ID, cap: "cancel", json: true, tree: false }]]);
   assert.equal(r.out, "{}");
+  const t = await run(`caps reach ${ID} --tree`, { capsReachText: "  reach tree (by creator):\n" });
+  assert.equal(t.err, undefined);
+  eq(t.calls, [["capsReachText", { taskId: ID, cap: "", json: false, tree: true }]]);
 });
 
 // caps what-if: the CLI's report over a fresh listing; nothing is sent.

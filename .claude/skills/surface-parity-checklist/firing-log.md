@@ -3701,3 +3701,24 @@ omitted: 7 (board verbs are CLI-cmdline only, as every board sub-verb);
          `TopicRetention.Summary` (pre-existing), now carrying `flushed≤` too
 n/a:     the rest; no task/runner field, no spawn option, no column-set change
 missed:  —
+
+### 2026-11-03 (pre-landing) — `caps reach --tree`
+
+done:    1 (table.go: `--tree` flag, Exclusive tree|json as on `ls`), 7/8
+         (WebUI `caps reach` case passes `tree`; wasm `capsReachText({tree})`
+         — cmd_test.mjs pins both shapes), 10 (one renderer:
+         `cli.WriteReachReport(…, cli.ReachTree)` on CLI / TUI / wasm), 31
+         (`act=` / `see=` / `delegate=` printed on every row, `none` / `no`
+         included — a creator drawn only to carry the tree reads all-none
+         rather than eliding), 33 (`--tree --json` errors, exit 1), 35
+         (README caps reach section + sample), 37 (authority-visualizer spec:
+         V22 + Amendment, Surfaces row), 39 (that row checked against the
+         three dispatchers); live: dummy harness, 3-level tree via
+         `caps set-parent`, argv spelling from the help line
+omitted: 36 — supervising-workers names `caps reach <own id>` as a pre-spawn
+         check; `--tree` adds identification, not a new step, so the skill
+         is unchanged. Live TUI / WebUI runs: covered by tui
+         `TestCapsReachTree` and cmd_test.mjs at the dispatch layer, not by a
+         PTY or Playwright run
+n/a:     the rest; no task/runner field, no spawn option, no column-set change
+missed:  —

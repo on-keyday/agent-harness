@@ -1027,10 +1027,10 @@ func harnessCapsAuditText(this js.Value, args []js.Value) any {
 // harnessCapsReachText is `caps reach` in the command input: the CLI's report
 // from the same writer, over a fresh listing.
 //
-//	harness.capsReachText({taskId, cap, json}) -> Promise<string>
+//	harness.capsReachText({taskId, cap, json, tree}) -> Promise<string>
 func harnessCapsReachText(this js.Value, args []js.Value) any {
 	var id, name string
-	var asJSON bool
+	var asJSON, tree bool
 	if len(args) > 0 && args[0].Type() == js.TypeObject {
 		if v := args[0].Get("taskId"); v.Type() == js.TypeString {
 			id = v.String()
@@ -1039,6 +1039,7 @@ func harnessCapsReachText(this js.Value, args []js.Value) any {
 			name = v.String()
 		}
 		asJSON = args[0].Get("json").Truthy()
+		tree = args[0].Get("tree").Truthy()
 	}
 	return capsAuditPromise("caps reach", func(tasks []protocol.TaskInfo) (js.Value, error) {
 		var focus protocol.Capability
@@ -1055,7 +1056,7 @@ func harnessCapsReachText(this js.Value, args []js.Value) any {
 			return js.Undefined(), err
 		}
 		var buf strings.Builder
-		if err := cli.WriteReachReport(&buf, r, asJSON); err != nil {
+		if err := cli.WriteReachReport(&buf, r, cli.ReachFormatOf(asJSON, tree)); err != nil {
 			return js.Undefined(), err
 		}
 		return js.ValueOf(buf.String()), nil

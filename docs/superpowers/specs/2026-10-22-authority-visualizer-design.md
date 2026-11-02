@@ -54,6 +54,7 @@ the author chose it while writing; those rows are the ones to check.
 | V18 | `authority_actor` is zeroed in a `TaskInfo` sent to a caller that cannot see the actor, as every other fact about an unseen task is withheld; `authority_actor_hidden` says so, and the label reads `@hidden`. Operators see every actor | this spec (builder check); wording unified with V21 |
 | V21 | Provenance has ONE rendering, `cli.AuthorityLabel` (`<source>@<actor> (<age>)`), on every surface — ls, TUI popup, WebUI row, caps audit, and Phase 3's marks. This replaces the per-surface wording the first draft invented (「見えない task」, Japanese tooltip phrases), which no decision asked for | operator (2026-10-22: 「統一でいいのでは」) |
 | V20 | "This scenario is a catalog case" is decided up to RENAMING: same tree shape, same caps and scope on each task, same change, task ids ignored (§ Matching a scenario to a case) | operator |
+| V22 | `caps reach --tree` draws the reached tasks in the creator tree as text, per task, under a flag rather than by default (the per-bit lines name tasks by id only) | operator (2026-11-03: a flag) |
 | V19 | ~~The delegation bound lands after Phase 5~~ **Overtaken 2026-10-22**: the bound landed before Phase 3, inside `authority`, so Phases 3–5 show it from the start (Phase 3's `delegate` entry). Each feature still makes its own `TaskInfo` change | operator (2026-10-22: delegation first, then the visualizer) |
 
 ## Phases
@@ -232,6 +233,31 @@ as `global`. Plus a `wider than parent: <bits> (<provenance>)` line when non-emp
   everywhere — `caps reach` and the node's tooltip use the one
   `cli.WiderLine`.
 
+### Amendment (2026-11-03) — `caps reach --tree` (V22)
+
+The per-bit lines name their targets by short id, which says neither what a
+task is nor where it sits. `--tree` appends the same answer per task:
+
+- Rows: every listed task some line reaches (a global line reaches them all),
+  the task itself, and the listed creators between those and their roots, in
+  `BuildTaskTree`'s order with `TreePrefix`'s gutter — the `ls --tree` drawing.
+  The creators are there so a reached grandchild is not drawn as an orphan;
+  an orphan marker still means the creator is not in the listing.
+- Each row: `AuditLabel` (as `caps audit` names a holder), then
+  `act=<bits>` (the lines whose act set holds it; `all N bits above` when that
+  is every bit line, `none` when it is none), `see=yes|no` (the view line) and
+  `delegate=act|see|none` (the delegate line). All three are printed on every
+  row, so a creator drawn only to carry the tree reads
+  `act=none see=no delegate=none`.
+- `--cap` narrows the act marks as it narrows the lines.
+- When any line is global, a closing line says the tasks the caller cannot
+  list are reached too and are not drawn.
+- `--tree` and `--json` are exclusive (as on `ls`): the JSON's full ids join
+  with the listing's `created_by`.
+- One renderer, `cli.WriteReachReport` with `cli.ReachTree`; the CLI, the TUI
+  command line and the WebUI command input (`harness.capsReachText({tree})`)
+  all print through it. The WebUI's graphical reach mode is unchanged.
+
 ## Phase 4 — what-if on the live tree
 
 ### `authority.WhatIf`
@@ -387,7 +413,7 @@ the plan, and this table is checked back against the code at the end (item 39).
 | TUI detail popup, WebUI task row | 2 | provenance, the same label (V21) |
 | `caps audit` (CLI, TUI modal, WebUI) | 2 | provenance per holder |
 | WebUI tree, task sheet | 3 | reach mode, wider-than-parent marks |
-| CLI / TUI / WebUI command line | 3 | `caps reach` |
+| CLI / TUI / WebUI command line | 3 | `caps reach`; `--tree` (V22) |
 | WebUI re-grant dialog, task sheet | 4 | what-if mode |
 | CLI / TUI / WebUI command line | 4 | `caps what-if` |
 | WebUI new tab | 5 | practice tree + catalog |

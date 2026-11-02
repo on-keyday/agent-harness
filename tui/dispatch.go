@@ -907,7 +907,7 @@ func (h tuiVerbs) CapsReach(v verb.CapsReachAction) tea.Cmd {
 		return nil
 	}
 	var b strings.Builder
-	_ = cli.WriteReachReport(&b, r, false)
+	_ = cli.WriteReachReport(&b, r, cli.ReachFormatOf(false, v.Tree))
 	for _, l := range strings.Split(strings.TrimRight(b.String(), "\n"), "\n") {
 		a.cmdresult.Append(l)
 	}

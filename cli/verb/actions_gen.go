@@ -180,7 +180,9 @@ type CapsReachAction struct {
 	// show one capability's reach only
 	Cap string
 	// one JSON object, full task ids
-	JSON   bool
+	JSON bool
+	// also draw the reached tasks in the creator tree, each named and marked with what reaches it
+	Tree   bool
 	TaskID string
 }
 
@@ -2931,6 +2933,7 @@ func init() {
 			a := CapsReachAction{}
 			a.Cap = b.Str("cap")
 			a.JSON = b.Bool("json")
+			a.Tree = b.Bool("tree")
 			if len(b.Args) > 0 {
 				a.TaskID = b.Args[0]
 			}
@@ -2939,6 +2942,7 @@ func init() {
 		"caps reach\x00tui": func(b Bound) (Action, error) {
 			a := CapsReachAction{}
 			a.Cap = b.Str("cap")
+			a.Tree = b.Bool("tree")
 			if len(b.Args) > 0 {
 				a.TaskID = b.Args[0]
 			}
@@ -2948,6 +2952,7 @@ func init() {
 			a := CapsReachAction{}
 			a.Cap = b.Str("cap")
 			a.JSON = b.Bool("json")
+			a.Tree = b.Bool("tree")
 			if len(b.Args) > 0 {
 				a.TaskID = b.Args[0]
 			}

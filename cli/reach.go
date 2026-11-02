@@ -59,6 +59,9 @@ type ReachReport struct {
 	// Focus is the --cap name, "" without one; FocusNote says why it produced
 	// no line: "not held", or that the bit names no task.
 	Focus, FocusNote string
+	// listing is the listing the report was read off; --tree names and places
+	// the reached tasks from it.
+	listing []protocol.TaskInfo
 }
 
 // BuildReachReport reads the report for id off the caller's listing. focus,
@@ -88,6 +91,7 @@ func BuildReachReport(tasks []protocol.TaskInfo, id string, focus protocol.Capab
 		Delegate:      ReachLine{Cap: "delegate", ReachResult: authority.DelegableOf(view, id)},
 		DelegateCaps:  info.Capabilities & info.DelegateCaps,
 		WiderComputed: complete,
+		listing:       tasks,
 	}
 	if complete {
 		r.Wider = WiderOf(view, id)
@@ -224,10 +228,34 @@ func lineJSON(l ReachLine) reachLineJSON {
 	return j
 }
 
-// WriteReachReport prints r as text (ids short) or as one JSON object (ids
-// full).
-func WriteReachReport(w io.Writer, r ReachReport, asJSON bool) error {
-	if asJSON {
+// ReachFormat is how WriteReachReport prints a report.
+type ReachFormat int
+
+const (
+	// ReachText is the per-line report, ids short.
+	ReachText ReachFormat = iota
+	// ReachTree is ReachText followed by the reached tasks in the creator
+	// tree (`caps reach --tree`).
+	ReachTree
+	// ReachJSON is one JSON object, ids full.
+	ReachJSON
+)
+
+// ReachFormatOf maps the verb's --json / --tree onto a format. The verb
+// declares the two exclusive, so json wins only over a caller that skipped it.
+func ReachFormatOf(asJSON, tree bool) ReachFormat {
+	switch {
+	case asJSON:
+		return ReachJSON
+	case tree:
+		return ReachTree
+	}
+	return ReachText
+}
+
+// WriteReachReport prints r in format f.
+func WriteReachReport(w io.Writer, r ReachReport, f ReachFormat) error {
+	if f == ReachJSON {
 		bits := make([]reachLineJSON, 0, len(r.Bits))
 		for _, l := range r.Bits {
 			bits = append(bits, lineJSON(l))
@@ -261,6 +289,113 @@ func WriteReachReport(w io.Writer, r ReachReport, asJSON bool) error {
 	} else if l := WiderLine(r.Wider, r.Granter); l != "" {
 		b.WriteString("  " + l + "\n")
 	}
+	if f == ReachTree {
+		writeReachTree(&b, r)
+	}
 	_, err := io.WriteString(w, b.String())
 	return err
+}
+
+// writeReachTree is `--tree`: the listed tasks the report's lines reach, in
+// the creator tree, each named (AuditLabel) and marked with what reaches it —
+// the lines above turned around, per task instead of per bit.
+//
+// The tree holds every listed task some line reaches (a global line reaches
+// them all), the task itself, and the listed creators between those and their
+// roots, which a line may not reach: without them a reached grandchild would
+// read as an orphan. Each row prints all three marks, so such a creator reads
+// `act=none see=no delegate=none` rather than looking reached.
+func writeReachTree(b *strings.Builder, r ReachReport) {
+	has := func(ids []string, id string) bool {
+		for _, x := range ids {
+			if x == id {
+				return true
+			}
+		}
+		return false
+	}
+	type marks struct {
+		act        []string
+		see        bool
+		delegation string
+	}
+	byID := make(map[string]protocol.TaskInfo, len(r.listing))
+	markOf := make(map[string]marks, len(r.listing))
+	keep := map[string]bool{r.TaskID: true}
+	for _, t := range r.listing {
+		id := hex.EncodeToString(t.Id.Id[:])
+		byID[id] = t
+		var m marks
+		for _, l := range r.Bits {
+			if l.ActAll || has(l.Act, id) {
+				m.act = append(m.act, l.Cap)
+			}
+		}
+		m.see = r.View.SeeAll || has(r.View.See, id)
+		switch d := r.Delegate.ReachResult; {
+		case d.ActAll || has(d.Act, id):
+			m.delegation = "act"
+		case d.SeeAll || has(d.See, id):
+			m.delegation = "see"
+		default:
+			m.delegation = "none"
+		}
+		markOf[id] = m
+		if len(m.act) > 0 || m.see || m.delegation != "none" {
+			keep[id] = true
+		}
+	}
+	// The creators up to each kept task's root. A creator already kept ends
+	// the climb: its own chain is (or will be) climbed from it, and a creator
+	// cycle a replayed record could carry cannot loop.
+	var reached []string
+	for id := range keep {
+		reached = append(reached, id)
+	}
+	for _, id := range reached {
+		for t, ok := byID[id]; ok && t.CreatorTaskId != (protocol.TaskID{}); t, ok = byID[hex.EncodeToString(t.CreatorTaskId.Id[:])] {
+			parent := hex.EncodeToString(t.CreatorTaskId.Id[:])
+			if keep[parent] {
+				break
+			}
+			keep[parent] = true
+		}
+	}
+	var drawn []protocol.TaskInfo
+	for _, t := range r.listing {
+		if keep[hex.EncodeToString(t.Id.Id[:])] {
+			drawn = append(drawn, t)
+		}
+	}
+
+	b.WriteString("  reach tree (by creator):\n")
+	for _, row := range BuildTaskTree(drawn) {
+		id := hex.EncodeToString(row.Task.Id.Id[:])
+		m := markOf[id]
+		act := "none"
+		switch {
+		case len(m.act) > 1 && len(m.act) == len(r.Bits):
+			act = fmt.Sprintf("all %d bits above", len(m.act))
+		case len(m.act) > 0:
+			act = strings.Join(m.act, ",")
+		}
+		see := "no"
+		if m.see {
+			see = "yes"
+		}
+		line := fmt.Sprintf("  %s%s  act=%s see=%s delegate=%s", TreePrefix(row.IsLast), AuditLabel(row.Task), act, see, m.delegation)
+		if id == r.TaskID {
+			line += "  (this task)"
+		}
+		if row.Orphan {
+			line += "  " + orphanMarker
+		}
+		b.WriteString(line + "\n")
+	}
+	for _, l := range append(append([]ReachLine{}, r.Bits...), r.View, r.Delegate) {
+		if l.ActAll || l.SeeAll {
+			b.WriteString("  (a global line above also reaches tasks you cannot list; they are not drawn)\n")
+			break
+		}
+	}
 }

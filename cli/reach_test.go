@@ -36,7 +36,7 @@ func reachText(t *testing.T, tasks []protocol.TaskInfo, id string, focus protoco
 		t.Fatal(err)
 	}
 	var b bytes.Buffer
-	if err := WriteReachReport(&b, r, false); err != nil {
+	if err := WriteReachReport(&b, r, ReachText); err != nil {
 		t.Fatal(err)
 	}
 	return strings.Split(strings.TrimRight(b.String(), "\n"), "\n")
@@ -104,7 +104,7 @@ func TestReachReportJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 	var b bytes.Buffer
-	if err := WriteReachReport(&b, r, true); err != nil {
+	if err := WriteReachReport(&b, r, ReachJSON); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(b.String(), "null") {
@@ -183,7 +183,7 @@ func TestReachReportPartialListingOmitsWider(t *testing.T) {
 		t.Fatal(err)
 	}
 	var b bytes.Buffer
-	if err := WriteReachReport(&b, r, false); err != nil {
+	if err := WriteReachReport(&b, r, ReachText); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(b.String(), "  wider than parent: not computed (your listing is partial)") || strings.Contains(b.String(), "cancel +vis") {
@@ -218,5 +218,92 @@ func TestReachReportNamesBitsWithoutPerTaskReach(t *testing.T) {
 	got = strings.Join(reachText(t, tasks, reachHex(0x3f), protocol.Capability_ExecView), "\n")
 	if !strings.Contains(got, line("exec_view", "not held")) {
 		t.Errorf("--cap on a bit it does not hold says nothing:\n%s", got)
+	}
+}
+
+// R (operator) created S, the subject; S created A and then B; A created G.
+// X and Z are other operator tasks; S names X by id. S holds cancel over its
+// subtree and X, and file_read only over itself (an override with base none).
+func reachTreeListing() []protocol.TaskInfo {
+	running := protocol.TaskStatus_Running
+	task := func(id, creator byte, at uint64) protocol.TaskInfo {
+		t := protocol.TaskInfo{Id: reachID(id), Status: running, CreatedAt: at}
+		if creator != 0 {
+			t.CreatorTaskId = reachID(creator)
+		}
+		return t
+	}
+	s := task(0x22, 0x11, 2)
+	s.Capabilities = protocol.Capability_Cancel | protocol.Capability_FileRead
+	s.Scope.SetIds([]protocol.TaskID{reachID(0x66)})
+	s.Overrides = []protocol.ScopeOverride{{Caps: protocol.Capability_FileRead, Base: protocol.ScopeBase_None}}
+	return []protocol.TaskInfo{task(0x11, 0, 1), s, task(0x33, 0x22, 3), task(0x44, 0x33, 4), task(0x55, 0x22, 5), task(0x66, 0, 6), task(0x77, 0, 7)}
+}
+
+func reachTreeText(t *testing.T, tasks []protocol.TaskInfo, id string, focus protocol.Capability) string {
+	t.Helper()
+	r, err := BuildReachReport(tasks, id, focus, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var b bytes.Buffer
+	if err := WriteReachReport(&b, r, ReachTree); err != nil {
+		t.Fatal(err)
+	}
+	return b.String()
+}
+
+// --tree turns the lines around: each reached task, named and placed under
+// its creator, with the bits that act on it. R reaches nothing and is drawn
+// only to carry S; Z is reached by no line and is left out.
+func TestReachTree(t *testing.T) {
+	got := reachTreeText(t, reachTreeListing(), reachHex(0x22), 0)
+	want := `  reach tree (by creator):
+  11111111 Running  act=none see=no delegate=none
+  └─ 22222222 Running  act=all 2 bits above see=yes delegate=act  (this task)
+     ├─ 33333333 Running  act=cancel see=yes delegate=act
+     │  └─ 44444444 Running  act=cancel see=yes delegate=act
+     └─ 55555555 Running  act=cancel see=yes delegate=act
+  66666666 Running  act=cancel see=yes delegate=none
+`
+	if !strings.HasSuffix(got, want) {
+		t.Errorf("tree:\n%s\nwant it to end with:\n%s", got, want)
+	}
+	if strings.Contains(got, "77777777") {
+		t.Errorf("a task no line reaches is drawn:\n%s", got)
+	}
+	// Without --tree the report is unchanged.
+	if strings.Contains(strings.Join(reachText(t, reachTreeListing(), reachHex(0x22), 0), "\n"), "reach tree") {
+		t.Error("the plain report draws the tree")
+	}
+}
+
+// --cap keeps one bit, and the tree's act marks follow it.
+func TestReachTreeFocus(t *testing.T) {
+	got := reachTreeText(t, reachTreeListing(), reachHex(0x22), protocol.Capability_FileRead)
+	for _, want := range []string{
+		"  └─ 22222222 Running  act=file_read see=yes delegate=act  (this task)\n",
+		"     ├─ 33333333 Running  act=none see=yes delegate=act\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("tree lacks %q:\n%s", want, got)
+		}
+	}
+}
+
+// A global line reaches every listed task, so all of them are drawn, and the
+// tree says the tasks the caller cannot list are reached too.
+func TestReachTreeGlobal(t *testing.T) {
+	tasks := reachTreeListing()
+	tasks[1].Scope = protocol.TaskScope{Base: protocol.ScopeBase_Global}
+	tasks[1].Overrides = nil
+	got := reachTreeText(t, tasks, reachHex(0x22), 0)
+	for _, want := range []string{
+		"  77777777 Running  act=all 2 bits above see=yes",
+		"  (a global line above also reaches tasks you cannot list; they are not drawn)\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("tree lacks %q:\n%s", want, got)
+		}
 	}
 }

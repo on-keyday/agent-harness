@@ -159,3 +159,18 @@ func TestCapsReachAgesTheGranter(t *testing.T) {
 		t.Errorf("caps reach granter age not advanced:\n%s", got)
 	}
 }
+
+// caps reach --tree in the TUI prints the tree into the command output.
+func TestCapsReachTree(t *testing.T) {
+	a := New(Config{})
+	var ti protocol.TaskInfo
+	ti.Id.Id[0] = 0x44
+	ti.Status = protocol.TaskStatus_Running
+	ti.Capabilities = protocol.Capability_Cancel
+	a.Update(SnapshotMsg{Tasks: []protocol.TaskInfo{ti}})
+	id := FormatTaskID(ti.Id)
+	tuiVerbs{a: a}.CapsReach(verb.CapsReachAction{TaskID: id, Tree: true})
+	if got := a.cmdresult.View(); !strings.Contains(got, "reach tree (by creator):") || !strings.Contains(got, "act=cancel see=yes") {
+		t.Errorf("caps reach --tree:\n%s", got)
+	}
+}
