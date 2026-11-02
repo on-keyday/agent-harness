@@ -241,17 +241,25 @@ func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.Boar
 		if ba.Limit > 65535 {
 			return fmt.Errorf("board read: --limit %d is over 65535", ba.Limit)
 		}
-		if ba.Archive != "" {
-			return readArchive(ctx, cid, ba, out)
+		// ONE dialed client for every request this verb makes (the messages,
+		// the delivery marks, the flush check). The package-level helpers dial
+		// per call, which turned one board read into a handshake per request.
+		c, derr := Dial(ctx, cid, protocol.ClientKind_Cli)
+		if derr != nil {
+			return derr
 		}
-		msgs, found, err := BoardReadPage(ctx, cid, topic, ba.Before, uint16(ba.Limit))
+		defer c.Close()
+		if ba.Archive != "" {
+			return readArchive(ctx, c, ba, out)
+		}
+		msgs, found, err := c.BoardReadPage(ctx, topic, ba.Before, uint16(ba.Limit))
 		if err != nil {
 			return err
 		}
 		if ba.Limit == 0 {
 			// The ring only. On a flushed topic everything older is on disk,
 			// and nothing on this output would say so.
-			defer flushedHint(ctx, cid, topic)
+			defer flushedHint(ctx, c, topic)
 		}
 		if !found {
 			// Exit 0 per spec, but say which nothing this is: "no such topic"
@@ -271,7 +279,7 @@ func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.Boar
 		// answer, which is the question an operator reading a topic has. A
 		// failure here is not fatal to the listing: the rows still print, with
 		// shown_to=0/0, and the reason goes to stderr.
-		subs, serr := BoardSubscribers(ctx, cid, topic)
+		subs, serr := c.BoardSubscribers(ctx, topic)
 		if serr != nil {
 			fmt.Fprintf(os.Stderr, "board read: delivery marks unavailable: %v\n", serr)
 		}
@@ -805,12 +813,12 @@ func printBoardMessages(out io.Writer, topic string, msgs []BoardMessage, subs [
 
 // readArchive is board read --archive: a page of an archive, 64 unless
 // --limit says otherwise, withdrawn messages marked as on a topic.
-func readArchive(ctx context.Context, cid objproto.ConnectionID, ba verb.BoardAction, out io.Writer) error {
+func readArchive(ctx context.Context, c *Client, ba verb.BoardAction, out io.Writer) error {
 	limit := ba.Limit
 	if limit == 0 {
 		limit = 64
 	}
-	msgs, found, err := BoardArchiveRead(ctx, cid, ba.Archive, ba.Before, uint16(limit))
+	msgs, found, err := c.BoardArchiveRead(ctx, ba.Archive, ba.Before, uint16(limit))
 	if err != nil {
 		return err
 	}
@@ -822,15 +830,25 @@ func readArchive(ctx context.Context, cid objproto.ConnectionID, ba verb.BoardAc
 		fmt.Fprintf(os.Stderr, "board read: archive %q holds nothing below seq %d\n", ba.Archive, ba.Before)
 		return nil
 	}
-	printBoardMessages(out, "archive:"+ba.Archive, msgs, nil, ba, func(BoardMessage) string { return "" })
+	// The rows name the topic the messages were posted to, as board read of
+	// that topic would: --json carries it on every record.
+	topic := ""
+	if rows, err := c.BoardArchives(ctx, ""); err == nil {
+		for _, r := range rows {
+			if r.ID == ba.Archive {
+				topic = r.Topic
+			}
+		}
+	}
+	printBoardMessages(out, topic, msgs, nil, ba, func(BoardMessage) string { return "" })
 	return nil
 }
 
 // flushedHint tells the reader of a flushed topic's ring that what came before
 // it is on disk, and how to page it. On stderr, as board read's other
 // diagnostics, so `board read T | ...` stays clean.
-func flushedHint(ctx context.Context, cid objproto.ConnectionID, topic string) {
-	rows, err := BoardTopics(ctx, cid)
+func flushedHint(ctx context.Context, c *Client, topic string) {
+	rows, err := c.BoardTopics(ctx)
 	if err != nil {
 		return
 	}

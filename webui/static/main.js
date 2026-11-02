@@ -7205,6 +7205,14 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   async function renderBoardArchives(topic) {
     archivesFilter = topic || "";
     currentArchive = null;
+    // Archives belong to the Topics side: opened from Chains, the view
+    // switches, so Refresh re-reads this list and Back lands on Topics with
+    // the Topics button lit.
+    boardView = "topics";
+    if (boardViewTopicsBtn) boardViewTopicsBtn.classList.add("is-active");
+    if (boardViewChainsBtn) boardViewChainsBtn.classList.remove("is-active");
+    if (boardExportBtn) boardExportBtn.hidden = true;
+    if (typeof placeBoardCompose === "function") placeBoardCompose("topics");
     if (boardTopicsViewEl) boardTopicsViewEl.hidden = true;
     if (boardChainsViewEl) boardChainsViewEl.hidden = true;
     boardArchivesViewEl.hidden = false;

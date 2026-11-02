@@ -233,3 +233,29 @@ func TestArchive_UnknownID(t *testing.T) {
 		}
 	}
 }
+
+// Reading an archive never waits on the store's log lock, which every
+// retained publish takes: a large archive read by an agent (no capability)
+// must not stall publishing on every retained topic.
+func TestArchive_ReadsDoNotTakeTheLogLock(t *testing.T) {
+	s := openTestStore(t, t.TempDir(), time.Hour)
+	defer s.Close()
+	info, err := s.ArchiveMessages("plain", []RetainedMessage{storeMsg(1, "a"), storeMsg(2, "b")}, fsTask, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = s.ArchivePage(info.ID, 0, 10)
+		_, _, _ = s.ArchiveOf(info.ID)
+		_, _ = s.Archives()
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("an archive read waited on the log lock")
+	}
+}

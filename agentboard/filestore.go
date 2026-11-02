@@ -26,9 +26,13 @@ import (
 type FileStore struct {
 	dir string
 
-	mu   sync.Mutex
-	ret  map[string]Retention
-	logs map[string]*topicLog
+	mu sync.Mutex
+	// archMu serialises writes to archive files (create, purge). Archive
+	// reads take no lock: every write replaces a file by rename, so an open
+	// file is always a whole archive. Taken after mu, never before it.
+	archMu sync.Mutex
+	ret    map[string]Retention
+	logs   map[string]*topicLog
 	// purged holds the seqs Remove was asked for, so a late Append of one —
 	// the publish's mirror racing the purge — is dropped instead of putting
 	// the bytes back on disk. Process lifetime only: the race is in-process.

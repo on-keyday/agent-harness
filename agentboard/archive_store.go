@@ -144,8 +144,6 @@ func (s *FileStore) ArchiveMessages(topic string, msgs []RetainedMessage, by pro
 			info.Through = m.Seq
 		}
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	return s.writeArchiveLocked(info, func(w io.Writer) error {
 		for _, m := range msgs {
 			if _, err := w.Write(recordLine(msgRecord(m))); err != nil {
@@ -162,7 +160,10 @@ func (s *FileStore) ArchiveMessages(topic string, msgs []RetainedMessage, by pro
 }
 
 // writeArchiveLocked creates a new archive: header, then what body writes.
+// It takes archMu itself; a caller copying a topic log holds mu around it.
 func (s *FileStore) writeArchiveLocked(info ArchiveInfo, body func(io.Writer) error) (ArchiveInfo, error) {
+	s.archMu.Lock()
+	defer s.archMu.Unlock()
 	if err := os.MkdirAll(s.archiveDir(), 0o755); err != nil {
 		return ArchiveInfo{}, err
 	}
@@ -214,8 +215,6 @@ func readArchiveInfo(path string) (ArchiveInfo, bool, error) {
 // Archives lists every archive. One that cannot be read is skipped and
 // logged; it never hides the rest.
 func (s *FileStore) Archives() ([]ArchiveInfo, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	entries, err := os.ReadDir(s.archiveDir())
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
@@ -247,8 +246,6 @@ func (s *FileStore) ArchiveOf(id string) (ArchiveInfo, bool, error) {
 	if !ok {
 		return ArchiveInfo{}, false, nil
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	return readArchiveInfo(path)
 }
 
@@ -257,8 +254,6 @@ func (s *FileStore) ArchivePage(id string, beforeSeq uint64, limit int) ([]Retai
 	if !ok {
 		return nil, nil
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	info, found, err := readArchiveInfo(path)
 	if err != nil || !found {
 		return nil, err
@@ -271,8 +266,8 @@ func (s *FileStore) ArchiveRemove(id string, seq uint64) (bool, error) {
 	if !ok {
 		return false, nil
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.archMu.Lock()
+	defer s.archMu.Unlock()
 	info, found, err := readArchiveInfo(path)
 	if err != nil || !found {
 		return false, err

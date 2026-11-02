@@ -33,9 +33,9 @@ func (b *Board) Archive(topic string, by protocol.TaskID) (ArchiveInfo, error) {
 		defer t.mu.Unlock()
 		return store.ArchiveLog(topic, by, time.Now())
 	}
-	msgs := append(t.snapshot(), t.snapshotRetracted()...)
-	sort.Slice(msgs, func(i, j int) bool { return msgs[i].Seq < msgs[j].Seq })
-	return store.ArchiveMessages(topic, msgs, by, time.Now())
+	// One hold of t.mu for both lists: a retract between two snapshots would
+	// put the same seq in both, archived twice with a count one too high.
+	return store.ArchiveMessages(topic, t.snapshotAll(), by, time.Now())
 }
 
 // Archives lists the archives of topic, or every archive when topic is empty,

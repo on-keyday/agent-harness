@@ -1,6 +1,7 @@
 package agentboard
 
 import (
+	"sort"
 	"sync"
 	"time"
 
@@ -247,6 +248,17 @@ func (t *topic) snapshotRetracted() []RetainedMessage {
 	defer t.mu.Unlock()
 	out := make([]RetainedMessage, len(t.retracted))
 	copy(out, t.retracted)
+	return out
+}
+
+// snapshotAll returns the ring and the withdrawn list together, in ascending
+// seq, taken under one hold of t.mu so no message is in both.
+func (t *topic) snapshotAll() []RetainedMessage {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	out := make([]RetainedMessage, 0, len(t.ring)+len(t.retracted))
+	out = append(append(out, t.ring...), t.retracted...)
+	sort.Slice(out, func(i, j int) bool { return out[i].Seq < out[j].Seq })
 	return out
 }
 

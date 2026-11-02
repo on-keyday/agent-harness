@@ -151,6 +151,19 @@ func TestBoardArchiveCLI(t *testing.T) {
 	if _, err := run("read", "grp", "--before", "5"); err == nil {
 		t.Error("read <topic> --before without --limit was accepted")
 	}
+	// --json rows name the topic the messages were posted to.
+	out, err = run("read", "--archive", id, "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		var rec struct {
+			Topic string `json:"topic"`
+		}
+		if err := json.Unmarshal([]byte(line), &rec); err != nil || rec.Topic != "grp" {
+			t.Fatalf("--json row %q: topic %q (%v), want grp", line, rec.Topic, err)
+		}
+	}
 
 	out, err = run("purge", "--archive", id, "--seq", strconv.FormatUint(seqs[0], 10))
 	if err != nil || !strings.Contains(out, `"purged":1`) {
