@@ -1216,6 +1216,20 @@ harness-cli board retain tree.<your-full-task-id>.design --clear      # back to 
   last 64 messages. Further back, page it with `agent read --topic <topic>
   --before SEQ` on a topic you subscribe to (see "Reading one message
   whole"); the operator uses `board read <topic> --limit N --before SEQ`.
+- That ring can be emptied on purpose: `board flush <topic>` (same
+  `board_persist` bit and publish rule as retain) drops it from memory and
+  keeps the disk log, and a restart does not load it back. On a flushed topic
+  `inbox` and `retained` show only what was posted since; older messages are
+  still there through `agent read --topic`. `agent read <seq>` and
+  `--in-reply-to` do not reach a flushed message.
+- `board archive <topic>` (same bit and rule) copies the topic's history up
+  to now into an archive that nothing appends to and that stays until it is
+  purged. Archives of a topic you may read need no capability:
+  `agent archives --topic <topic>` lists them (JSON Lines, with `id`) and
+  `agent read --archive <id> [--before SEQ] [--limit N]` pages one, withdrawn
+  messages left out. Listing every archive is `board archives`
+  (`board_observe`); deleting one is `agent purge --archive <id> [--seq N]`
+  (`board_purge`).
 - Retention does not change who can read or write the topic: a retained
   `tree.<id>.*` is still your lineage's only.
 - `board topics` (operator view) shows `retain=<period> by=<who set it>
