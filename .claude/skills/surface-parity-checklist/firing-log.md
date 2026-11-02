@@ -3673,3 +3673,31 @@ omitted: no alias for the old name (the two earlier renames kept none);
          carries the old word — a display rename, left for its own change.
 n/a:     the rest; TUI/WebUI pickers enumerate the enum
 missed:  —
+
+### 2026-11-02 (pre-landing) — board flush and archives (7 kinds, `ring_floor`)
+
+done:    1 (table.go: board flush / archive / archives, `--archive` on board
+         read / purge and agent read / purge, agent archives), 2 (ExactlyOne
+         topic|archive, `--in-reply-to` refused with `--archive`), 4/5 (TUI
+         board modal F / A / v, archive list mode, read-only archive view),
+         6 (WebUI ⇣ Flush, 🗄 Archive, アーカイブ一覧, 🗄 Archives, archive
+         view with delete), 15 (CapDescription for board_persist,
+         board_observe, board_purge name the new verbs — caught by this
+         walk, not before), 23 (wasm boardTopics `retainFlushed`, five new
+         bridge calls), 24 (`--limit` defaults 64 with `--archive`, 0 = ring
+         without; `--seq` omitted = whole archive, as for a topic), 29/30
+         (results name topic / archive id and through-seq; WebUI to
+         appendCmdOutput and the detail status line), 31 (`flushed≤` gated
+         on a flush having happened, not on a value), 35 (README agent verb
+         list), 36 (harness-cli skill, both mirrors), 37 (spec §4–§6 record
+         the decided kinds, id form and CLI shapes), 39 (spec §4.4: the TUI
+         table cell lacked `flushed≤` while CLI / WebUI / the TUI selection
+         line had it — caught by this walk); live: dummy harness across a
+         deliberate server restart, caps=none bash task for the agent face,
+         netem-lab UDP (20 archive rows, 64 message rows), harness-tui in a
+         dummy PTY, Playwright 1280/390
+omitted: 7 (board verbs are CLI-cmdline only, as every board sub-verb);
+         32 — `boardRetainMeta` in JS stays a mirror of
+         `TopicRetention.Summary` (pre-existing), now carrying `flushed≤` too
+n/a:     the rest; no task/runner field, no spawn option, no column-set change
+missed:  —

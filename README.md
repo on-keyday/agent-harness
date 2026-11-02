@@ -120,7 +120,7 @@ messaging, WASM transport, PSK auth, etc. are alongside it under
     - Agent runtime (called from inside agent sessions):
       `agent {send | wait | inbox | read | thread | retained | retract
       | purge | dispatch | subscribe | unsubscribe | topics
-      | subscriptions | contacts}`. See `runner/agentskills/harness-cli/SKILL.md`
+      | subscriptions | contacts | archives}`. See `runner/agentskills/harness-cli/SKILL.md`
       for conventions.
     - Workspace config: `workspace {save,ls,show,rm}` and `workspace forward
       {add,rm}` read and write `.harness/config`, and the global `--config` /

@@ -135,7 +135,7 @@ func CapDescription(c protocol.Capability) string {
 		return "decide which runner keys may register: runner enroll, runner keys, runner unenroll; " +
 			"NOT implied by runner_admin"
 	case protocol.Capability_BoardObserve:
-		return "list board topics, read a topic's retained messages, list its subscribers; " +
+		return "list board topics, read a topic's retained messages, list its subscribers, list and read archives (board archives, board read --archive); " +
 			"and read another task's direct messages (its chat.<id>, chat.operator, a tree.<id> you are not in) by any agent verb. " +
 			"NOT required to send, to read your own inbox, or to read a group topic"
 	case protocol.Capability_BoardPurge:
@@ -143,7 +143,8 @@ func CapDescription(c protocol.Capability) string {
 			"or every message of one conversation, across each topic it spans (board purge-thread); " +
 			"or withdraw messages from every agent path while leaving them readable to the operator " +
 			"(board retract, board retract-thread); or forget a task's contacts, one or all, " +
-			"within the bit's scope (board clear-contacts)"
+			"within the bit's scope (board clear-contacts); or delete an archive or one message in it " +
+			"(board purge --archive / agent purge --archive)"
 	case protocol.Capability_BoardSend:
 		return "publish to the agentboard in the operator's name (board send, board wake); " +
 			"NOT required for agent send"
@@ -153,6 +154,7 @@ func CapDescription(c protocol.Capability) string {
 			"NOT required for its own lineage, chat.operator, or replying to a message addressed to it (board subscribers shows each task's contacts); never opens a tree.<id> it is not in"
 	case protocol.Capability_BoardPersist:
 		return "keep an agentboard topic past its TTL and a server restart (board retain --ttl <d>|forever, --clear), " +
+			"empty a retained topic's in-memory ring (board flush), or freeze a topic's history into an archive (board archive), " +
 			"on topics the task may publish to; never a chat.<id> topic. NOT board_purge, and NOT implied by it"
 	case protocol.Capability_BoardMember:
 		return "subscribe another task to a topic, or make it a member (board subscribe / unsubscribe / join / leave), " +

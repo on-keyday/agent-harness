@@ -121,3 +121,12 @@ func TestBoardArchivesView_EnterReadsAndXDeletes(t *testing.T) {
 		t.Errorf("Esc from the archive list went to mode %v", a.boardModal.Mode())
 	}
 }
+
+// The table's Retain cell carries flushed≤ as every other surface's
+// retention text does.
+func TestBoardRetainCell_ShowsFlushed(t *testing.T) {
+	got := retainCell(&cli.BoardTopicRow{Retention: &cli.TopicRetention{Forever: true, DiskBytes: 3, RingFloor: 41}})
+	if got != "forever by=operator disk=3 flushed≤41" {
+		t.Errorf("cell = %q", got)
+	}
+}
