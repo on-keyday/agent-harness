@@ -61,7 +61,7 @@ func TestSession_WakeStdin_SplitWrite(t *testing.T) {
 	s := &Session{Now: time.Now}
 	cw := &captureWriter{}
 	s.reg = NewTaskRegistry()
-	s.reg.put("abc", &taskEntry{wake: ptyWake(cw.write, termmode.New())})
+	s.reg.put("abc", &taskEntry{wake: ptyWake(cw.write, termmode.New(), wakeInputFor("linux"))})
 
 	s.WakeStdin("abc")
 
@@ -80,7 +80,7 @@ func TestSession_WakeStdin_Debounce(t *testing.T) {
 	s := &Session{Now: time.Now}
 	cw := &captureWriter{}
 	s.reg = NewTaskRegistry()
-	s.reg.put("abc", &taskEntry{wake: ptyWake(cw.write, termmode.New())})
+	s.reg.put("abc", &taskEntry{wake: ptyWake(cw.write, termmode.New(), wakeInputFor("linux"))})
 
 	s.WakeStdin("abc")
 	s.WakeStdin("abc")
@@ -98,7 +98,7 @@ func TestSession_WakeStdin_AfterWindow(t *testing.T) {
 	s := &Session{Now: func() time.Time { return cur }}
 	cw := &captureWriter{}
 	s.reg = NewTaskRegistry()
-	s.reg.put("abc", &taskEntry{wake: ptyWake(cw.write, termmode.New())})
+	s.reg.put("abc", &taskEntry{wake: ptyWake(cw.write, termmode.New(), wakeInputFor("linux"))})
 
 	s.WakeStdin("abc")
 	cur = now.Add(wakeDebounceWindow + 100*time.Millisecond)
@@ -124,7 +124,7 @@ func TestSession_WakeStdin_TextWriteError_DoesNotAdvanceCursor(t *testing.T) {
 	s := &Session{Now: time.Now}
 	cw := &captureWriter{failNext: errors.New("pipe closed")}
 	s.reg = NewTaskRegistry()
-	s.reg.put("abc", &taskEntry{wake: ptyWake(cw.write, termmode.New())})
+	s.reg.put("abc", &taskEntry{wake: ptyWake(cw.write, termmode.New(), wakeInputFor("linux"))})
 
 	s.WakeStdin("abc") // text write fails — writeCount stays 0
 	if cw.writeCount() != 0 {
@@ -172,7 +172,7 @@ func TestSession_WakeStdin_LogsWhichGateItTook(t *testing.T) {
 			setup: func(s *Session, cw *captureWriter) {
 				s.reg = NewTaskRegistry()
 				// Inside wakeDebounceWindow, so the second fire is dropped.
-				s.reg.put("abc", &taskEntry{wake: ptyWake(cw.write, termmode.New()), lastWakeAt: s.Now()})
+				s.reg.put("abc", &taskEntry{wake: ptyWake(cw.write, termmode.New(), wakeInputFor("linux")), lastWakeAt: s.Now()})
 			},
 			task: "abc",
 			want: "debounced",
@@ -181,7 +181,7 @@ func TestSession_WakeStdin_LogsWhichGateItTook(t *testing.T) {
 			name: "written",
 			setup: func(s *Session, cw *captureWriter) {
 				s.reg = NewTaskRegistry()
-				s.reg.put("abc", &taskEntry{wake: ptyWake(cw.write, termmode.New())})
+				s.reg.put("abc", &taskEntry{wake: ptyWake(cw.write, termmode.New(), wakeInputFor("linux"))})
 			},
 			task: "abc",
 			want: "wake written",
@@ -223,7 +223,7 @@ func TestSession_WakeStdin_BracketedPasteIsOneWrite(t *testing.T) {
 	s := &Session{Now: time.Now}
 	cw := &captureWriter{}
 	s.reg = NewTaskRegistry()
-	s.reg.put("abc", &taskEntry{wake: ptyWake(cw.write, modes)})
+	s.reg.put("abc", &taskEntry{wake: ptyWake(cw.write, modes, wakeInputFor("linux"))})
 
 	s.WakeStdin("abc")
 
@@ -248,10 +248,10 @@ func TestSession_WakeStdin_LogsTheForm(t *testing.T) {
 		want string
 	}{
 		{"pty without bracketed paste", func(w func([]byte) (int, error)) func() (wakeForm, error) {
-			return ptyWake(w, termmode.New())
+			return ptyWake(w, termmode.New(), wakeInputFor("linux"))
 		}, "form=split"},
 		{"pty with bracketed paste", func(w func([]byte) (int, error)) func() (wakeForm, error) {
-			return ptyWake(w, pasting)
+			return ptyWake(w, pasting, wakeInputFor("linux"))
 		}, "form=paste"},
 		{"event stream", streamWake, "form=turn"},
 	}
@@ -277,7 +277,7 @@ func TestSession_WakeStdin_LogsTheForm(t *testing.T) {
 func TestPtyWake_FollowsTheModeAsItChanges(t *testing.T) {
 	modes := termmode.New()
 	cw := &captureWriter{}
-	wake := ptyWake(cw.write, modes)
+	wake := ptyWake(cw.write, modes, wakeInputFor("linux"))
 
 	if _, err := wake(); err != nil {
 		t.Fatal(err)
@@ -300,6 +300,56 @@ func TestPtyWake_FollowsTheModeAsItChanges(t *testing.T) {
 	}
 	if cw.writeAt(3) != wakeMarker {
 		t.Errorf("the wake after ESC[?2004l was not the plain text: %q", cw.writeAt(3))
+	}
+}
+
+// On Windows a wake is never a paste, even for an agent that set ?2004h: ConPTY
+// passes the mode through, but the agent reads its input as key events, and
+// codex then takes an Enter right after the text as a newline. See
+// wakeInputFor.
+func TestPtyWake_WindowsNeverPastes(t *testing.T) {
+	modes := termmode.New()
+	modes.Feed([]byte("\x1b[?2004h"))
+	cw := &captureWriter{}
+
+	form, err := ptyWake(cw.write, modes, wakeInputFor("windows"))()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if form != wakeSplit {
+		t.Errorf("form = %v, want split", form)
+	}
+	if cw.writeCount() != 2 || cw.writeAt(0) != wakeMarker || cw.writeAt(1) != "\r" {
+		t.Errorf("writes = %d (%q, %q), want the marker then a lone \\r", cw.writeCount(), cw.writeAt(0), cw.writeAt(1))
+	}
+}
+
+// codex on Windows takes an Enter as a newline while it arrives within 120ms of
+// the text before it (PASTE_ENTER_SUPPRESS_WINDOW in
+// codex-rs/tui/src/bottom_pane/paste_burst.rs), so the gap must clear it.
+func TestPtyWake_WindowsGapClearsCodexEnterWindow(t *testing.T) {
+	const codexEnterWindow = 120 * time.Millisecond
+	var mu sync.Mutex
+	var at []time.Time
+	write := func(p []byte) (int, error) {
+		mu.Lock()
+		at = append(at, time.Now())
+		mu.Unlock()
+		return len(p), nil
+	}
+
+	if _, err := ptyWake(write, termmode.New(), wakeInputFor("windows"))(); err != nil {
+		t.Fatal(err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(at) != 2 {
+		t.Fatalf("writes = %d, want 2", len(at))
+	}
+	if gap := at[1].Sub(at[0]); gap <= codexEnterWindow {
+		t.Errorf("gap between text and Enter = %v, want more than %v", gap, codexEnterWindow)
 	}
 }
 

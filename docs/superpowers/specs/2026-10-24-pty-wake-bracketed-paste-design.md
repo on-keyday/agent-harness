@@ -97,6 +97,23 @@ and continued (the merged-read condition): claude 2.1.307, codex 0.163.0,
 agy 1.4.6, opencode 1.18.18 and pi all submitted the text as one prompt. All
 five set `?2004h` at startup.
 
+**Windows, measured 2026-11-02 — the paragraph above it was wrong in the
+direction that matters.** ConPTY does pass `?2004h` through, so the tracker
+sees it and the runner sends the paste, and that is worse than the split
+write, not equal to it. On the input side the agent reads key events, not a
+paste: codex 0.166.0 on a Windows runner left every bracketed wake in its
+input box with the cursor on a new line (four of four in the runner log; the
+two that later went through were submitted by hand). codex classifies
+fast-arriving text as a paste by timing, and takes an Enter within 120ms of it
+as a newline (`PASTE_ENTER_SUPPRESS_WINDOW`,
+`codex-rs/tui/src/bottom_pane/paste_burst.rs`). Typed into the same session
+with `session send`, once each: paste and `\r` in one write stayed in the box;
+text, ~100ms, lone `\r` (today's split write) stayed in the box; text, ~300ms,
+lone `\r` submitted. A Windows runner therefore always uses the split write,
+with a 300ms gap (D8, D9). The gap is still the writer's, so the merged-read race
+of Problem 1 remains there. claude on Windows was not measured; it gets the
+same split write.
+
 ### 3. Runner: WakeStdin off the receive loop
 
 `TaskWake` dispatches `go session.WakeStdin(id)`. `taskEntry` gains
@@ -130,6 +147,8 @@ A capture written by an older server simply lacks the modes, as today.
 | D5 | The held capture carries the tracker's input modes after the repaint | operator |
 | D6 | The mode tracker moves to a shared package `termmode` used by server and runner | this spec — instead of a second parser in the runner |
 | D7 | The capture carries `Modes()`, not `Preamble()` | this spec |
+| D8 | A Windows runner never sends the paste: every PTY wake is the split write, by OS rather than per agent | operator (2026-11-02) |
+| D9 | The Windows split write waits 300ms before the `\r` | this spec — clears codex's 120ms window; one measurement at ~300ms |
 
 ## Not in this change
 
