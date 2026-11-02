@@ -152,7 +152,12 @@ type modalKeyMap struct {
 	BoardUnsubscribeTask string
 	BoardLeaveTask       string
 	// BoardOlder loads the page of messages before the oldest one shown.
-	BoardOlder      string
+	BoardOlder string
+	// BoardFlush empties a retained topic's ring; BoardArchive freezes a
+	// topic's history into an archive; BoardArchives lists the archives.
+	BoardFlush      string
+	BoardArchive    string
+	BoardArchives   string
 	GitSetBase      string
 	GitStatus       string
 	GitNextFile     string
@@ -224,14 +229,21 @@ var modalKeys = modalKeyMap{
 	BoardLeaveTask:       "L",
 	// O (older) pages back past the 64-message ring on a retained topic. Not
 	// b, which pages the content viewport.
-	BoardOlder:   "O",
-	GitSetBase:   "B",
-	GitStatus:    "s",
-	GitNextFile:  "n",
-	GitPrevFile:  "N",
-	GitSubmodule: "m",
-	GitUp:        "backspace",
-	GitOpenFile:  "o",
+	BoardOlder: "O",
+	// F (flush) empties the ring of a retained topic. Not f, a scroll key.
+	BoardFlush: "F",
+	// A (archive) freezes the topic's history; a is reply.
+	BoardArchive: "A",
+	// v (vault) lists archives: of the open topic, or all of them from the
+	// topic list. Not a scroll key, and no other board view binds it.
+	BoardArchives: "v",
+	GitSetBase:    "B",
+	GitStatus:     "s",
+	GitNextFile:   "n",
+	GitPrevFile:   "N",
+	GitSubmodule:  "m",
+	GitUp:         "backspace",
+	GitOpenFile:   "o",
 	// Same letter and the same reasoning as ForwardTap: the trsf columns are a
 	// READING of the rows already on screen, not a stronger form of anything
 	// beside it.

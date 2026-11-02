@@ -954,6 +954,65 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.boardModal.SetStatusAfterRefresh(fmt.Sprintf("retain %s: %s", msg.Topic, msg.Label))
 		return a, DoBoardTopics(a.client)
 
+	case BoardFlushMsg:
+		if msg.Err != nil {
+			a.boardModal.SetStatus(msg.Err.Error())
+			return a, nil
+		}
+		a.boardModal.SetStatusAfterRefresh(fmt.Sprintf("flushed %s through seq %d (%d left memory; O pages them from disk)",
+			msg.Topic, msg.Through, msg.Dropped))
+		if a.boardModal.Mode() == boardMessages {
+			return a, tea.Batch(DoBoardTopics(a.client), DoBoardRead(a.client, msg.Topic))
+		}
+		return a, DoBoardTopics(a.client)
+
+	case BoardArchiveMsg:
+		if msg.Err != nil {
+			a.boardModal.SetStatus(msg.Err.Error())
+			return a, nil
+		}
+		a.boardModal.SetStatus(fmt.Sprintf("archived %s → %s (%d msgs through seq %d; %s lists archives)",
+			msg.Topic, msg.Row.ID, msg.Row.Count, msg.Row.Through, modalKeys.BoardArchives))
+		return a, nil
+
+	case BoardArchivesMsg:
+		if msg.Err != nil {
+			a.boardModal.SetStatus("archives: " + msg.Err.Error())
+			return a, nil
+		}
+		a.boardModal.ApplyArchives(msg.Topic, msg.Rows)
+		return a, nil
+
+	case BoardArchiveReadMsg:
+		switch {
+		case msg.Err != nil:
+			a.boardModal.SetStatus("archive " + msg.ID + ": " + msg.Err.Error())
+		case !msg.Found:
+			a.boardModal.SetStatus("archive " + msg.ID + " no longer exists")
+		case msg.Older:
+			a.boardModal.PrependArchiveOlder(msg.ID, msg.Msgs)
+		default:
+			a.boardModal.ApplyArchiveMessages(msg.ID, msg.Topic, msg.Msgs)
+		}
+		return a, nil
+
+	case BoardArchivePurgeMsg:
+		if msg.Err != nil {
+			a.boardModal.SetStatus(msg.Err.Error())
+			return a, nil
+		}
+		if !msg.Found {
+			a.boardModal.SetStatus("archive " + msg.ID + ": nothing to purge")
+			return a, nil
+		}
+		a.boardModal.SetStatusAfterRefresh(fmt.Sprintf("purged %d message(s) from archive %s", msg.Purged, msg.ID))
+		if msg.Seq != 0 && a.boardModal.CurArchive() == msg.ID {
+			// The status rides on the re-read, which ApplyMessages clears.
+			a.boardModal.SetStatus(fmt.Sprintf("purged seq %d from archive %s", msg.Seq, msg.ID))
+			return a, DoBoardArchiveRead(a.client, msg.ID, a.boardModal.CurTopic(), 0)
+		}
+		return a, DoBoardArchives(a.client, a.boardModal.ArchivesTopic())
+
 	case BoardWakeMsg:
 		if msg.Err != nil {
 			a.boardModal.SetStatus("wake: " + msg.Err.Error())

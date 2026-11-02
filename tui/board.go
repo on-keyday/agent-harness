@@ -259,6 +259,9 @@ const (
 	// boardChains shows the chains of ONE conversation, the detail half of
 	// boardChainList.
 	boardChains
+	// boardArchives lists archives (board archives); Enter reads one in the
+	// message view, read-only (board_archive.go).
+	boardArchives
 )
 
 // boardConv is one conversation in the chain list: the key rows are grouped by,
@@ -327,6 +330,14 @@ type BoardModal struct {
 	opening *boardOpenEdit
 	// member is the task-id editor S / J open, nil when none is.
 	member *boardMemberEdit
+	// archives is the archive list (boardArchives mode), archCursor its
+	// cursor and archTopic the topic it was read for ("" = all).
+	archives   []cli.BoardArchiveRow
+	archCursor int
+	archTopic  string
+	// curArchive is the archive the message view shows; "" when it shows a
+	// topic.
+	curArchive string
 }
 
 // subItem is one selectable line of the subscribers view: a task line
@@ -398,6 +409,7 @@ func (m *BoardModal) Mode() boardMode { return m.mode }
 // Used by the App's Esc handler when mode==boardMessages.
 func (m *BoardModal) PopToTopics() {
 	m.mode = boardTopics
+	m.curArchive = ""
 	m.msgs = nil
 	m.msgCursor = 0
 	m.status = ""
@@ -504,6 +516,7 @@ func (m *BoardModal) PrependOlder(topic string, older []cli.BoardMessage) {
 // completes.
 func (m *BoardModal) ApplyMessages(topic string, msgs []cli.BoardMessage, subs []cli.BoardSubscriberRow, found bool) {
 	m.curTopic = topic
+	m.curArchive = ""
 	m.curFound = found
 	m.msgSubs = subs
 	m.msgs = make([]cli.BoardMessage, len(msgs))
@@ -858,6 +871,21 @@ func (m BoardModal) Update(msg tea.Msg) (BoardModal, tea.Cmd) {
 		m.content, cmd = m.content.Update(msg)
 		return m, cmd
 
+	case boardArchives:
+		if k, ok := msg.(tea.KeyMsg); ok {
+			switch k.Type {
+			case tea.KeyUp:
+				if m.archCursor > 0 {
+					m.archCursor--
+				}
+			case tea.KeyDown:
+				if m.archCursor < len(m.archives)-1 {
+					m.archCursor++
+				}
+			}
+		}
+		return m, nil
+
 	case boardSubscribers:
 		if k, ok := msg.(tea.KeyMsg); ok {
 			switch k.Type {
@@ -889,9 +917,17 @@ func (m BoardModal) View() string {
 	switch m.mode {
 	case boardTopics:
 		header := HeaderStyle.Render(fmt.Sprintf("agentboard topics (%d)", len(m.rowTopics)))
-		footer := FooterStyle.Render("Enter: read  " + modalKeys.BoardOpenTopic + ": open by name  c: chains  s: subscribers  " +
-			modalKeys.BoardWake + ": wake  " + modalKeys.BoardRetain + ": retain" + m.unretainHint(m.SelectedTopicName()) +
-			"  r: refresh  x: purge topic  Esc: close")
+		items := []string{"Enter: read", modalKeys.BoardOpenTopic + ": open by name", "c: chains", "s: subscribers",
+			modalKeys.BoardWake + ": wake", modalKeys.BoardRetain + ": retain"}
+		if h := strings.TrimSpace(m.unretainHint(m.SelectedTopicName())); h != "" {
+			items = append(items, h)
+		}
+		if h := m.flushHint(m.SelectedTopicName()); h != "" {
+			items = append(items, h)
+		}
+		items = append(items, modalKeys.BoardArchive+": archive", modalKeys.BoardArchives+": archives",
+			"r: refresh", "x: purge topic", "Esc: close")
+		footer := FooterStyle.Render(packItems(items, m.content.Width))
 		if m.retain != nil {
 			footer = m.retainView()
 		}
@@ -918,8 +954,18 @@ func (m BoardModal) View() string {
 		if h := strings.TrimSpace(m.unretainHint(m.curTopic)); h != "" {
 			items = append(items, h)
 		}
-		items = append(items, modalKeys.BoardOlder+": older", modalKeys.BoardRetractMsg+": retract msg",
+		if h := m.flushHint(m.curTopic); h != "" {
+			items = append(items, h)
+		}
+		items = append(items, modalKeys.BoardArchive+": archive", modalKeys.BoardArchives+": archives",
+			modalKeys.BoardOlder+": older", modalKeys.BoardRetractMsg+": retract msg",
 			"X: purge msg", "r: re-read", "Esc: back")
+		if m.curArchive != "" {
+			// An archive changes only by purge: no send, reply, wake,
+			// retain, retract or flush here.
+			items = []string{"↑/↓ select", scrollHint, modalKeys.BoardOlder + ": older",
+				"X: purge msg from the archive", "r: re-read", "Esc: back"}
+		}
 		footer := FooterStyle.Render(packItems(items, m.content.Width))
 		if m.compose != nil {
 			footer = m.composeView()
@@ -950,9 +996,12 @@ func (m BoardModal) View() string {
 			at := time.UnixMilli(int64(msg.ReceivedAtMs)).UTC().Format("15:04:05Z")
 			// One spelling of the delivery mark, shared with the CLI: the
 			// comparison is cli.ShownTo's, not a second copy here.
-			line := fmt.Sprintf("%s[%d] seq=%-5d  from=%s  agent=%s  %s  %s",
-				cursor, i+1, msg.Seq, fromShort, agentName, at,
-				cli.ShownToLabel(m.msgSubs, m.curTopic, msg.Seq))
+			line := fmt.Sprintf("%s[%d] seq=%-5d  from=%s  agent=%s  %s",
+				cursor, i+1, msg.Seq, fromShort, agentName, at)
+			// Delivery marks describe a live topic's readers; an archive has none.
+			if m.curArchive == "" {
+				line += "  " + cli.ShownToLabel(m.msgSubs, m.curTopic, msg.Seq)
+			}
 			// A withdrawn message reaches no agent any more; this view is the
 			// only place it still exists. Marked and muted rather than hidden —
 			// hiding it here would hand the operator the same blank the agents
@@ -966,7 +1015,13 @@ func (m BoardModal) View() string {
 			msgList.WriteString("  " + boardEmptyReason(m.curFound) + "\n")
 		}
 		header := HeaderStyle.Render(fmt.Sprintf("topic: %s  (%d msgs)", m.curTopic, len(m.msgs)))
+		if m.curArchive != "" {
+			header = HeaderStyle.Render(fmt.Sprintf("archive %s of %s  (%d msgs shown)", m.curArchive, m.curTopic, len(m.msgs)))
+		}
 		return box.Render(header + "\n" + msgList.String() + "\n" + m.content.View() + statusLine + "\n" + footer)
+
+	case boardArchives:
+		return m.archivesView()
 
 	case boardSubscribers:
 		// One line per selectable item, plus a "contacts=-" line for a task with

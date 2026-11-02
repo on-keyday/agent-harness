@@ -316,7 +316,11 @@ func (a *App) inBoardModal(msg tea.KeyMsg) tea.Cmd {
 			a.boardModal.PopToChainList()
 			return nil
 		}
-		if m := a.boardModal.Mode(); m == boardMessages || m == boardSubscribers || m == boardChainList {
+		if a.boardModal.Mode() == boardMessages && a.boardModal.CurArchive() != "" {
+			a.boardModal.PopToArchives()
+			return nil
+		}
+		if m := a.boardModal.Mode(); m == boardMessages || m == boardSubscribers || m == boardChainList || m == boardArchives {
 			a.boardModal.PopToTopics()
 			return nil
 		}
@@ -366,6 +370,57 @@ func (a *App) inBoardModal(msg tea.KeyMsg) tea.Cmd {
 			if topic := a.boardModal.SelectedTopicName(); topic != "" {
 				return DoBoardWake(a.client, topic)
 			}
+			return nil
+		case modalKeys.BoardFlush:
+			if topic := a.boardModal.SelectedTopicName(); a.boardModal.Flushable(topic) {
+				return DoBoardFlush(a.client, topic)
+			}
+			return nil
+		case modalKeys.BoardArchive:
+			if topic := a.boardModal.SelectedTopicName(); topic != "" {
+				return DoBoardArchive(a.client, topic)
+			}
+			return nil
+		case modalKeys.BoardArchives:
+			// From the list, every archive: the topic an archive came from may
+			// be gone from the board.
+			return DoBoardArchives(a.client, "")
+		}
+	} else if a.boardModal.Mode() == boardArchives {
+		if msg.Type == tea.KeyEnter {
+			if r, ok := a.boardModal.SelectedArchive(); ok {
+				return DoBoardArchiveRead(a.client, r.ID, r.Topic, 0)
+			}
+			return nil
+		}
+		switch msg.String() {
+		case modalKeys.BoardRefresh, modalKeys.BoardArchives:
+			return DoBoardArchives(a.client, a.boardModal.ArchivesTopic())
+		case modalKeys.BoardForgetContact:
+			if r, ok := a.boardModal.SelectedArchive(); ok {
+				return DoBoardArchivePurge(a.client, r.ID, 0)
+			}
+			return nil
+		}
+	} else if a.boardModal.Mode() == boardMessages && a.boardModal.CurArchive() != "" {
+		// An archive's messages: read-only but for purge.
+		id := a.boardModal.CurArchive()
+		switch msg.String() {
+		case modalKeys.BoardPurgeMsg:
+			if seq := a.boardModal.SelectedMsgSeq(); seq != 0 {
+				return DoBoardArchivePurge(a.client, id, seq)
+			}
+			return nil
+		case modalKeys.BoardRefresh:
+			return DoBoardArchiveRead(a.client, id, a.boardModal.CurTopic(), 0)
+		case modalKeys.BoardOlder:
+			if seq := a.boardModal.OldestSeq(); seq != 0 {
+				return DoBoardArchiveRead(a.client, id, a.boardModal.CurTopic(), seq)
+			}
+			return nil
+		case modalKeys.BoardCompose, modalKeys.BoardReply, modalKeys.BoardWake, modalKeys.BoardRetain,
+			modalKeys.BoardUnretain, modalKeys.BoardRetractMsg, modalKeys.BoardFlush, modalKeys.BoardArchive:
+			a.boardModal.SetStatus("archive " + id + " is read-only: purge (X) is the one change it takes")
 			return nil
 		}
 	} else if a.boardModal.Mode() == boardSubscribers {
@@ -441,10 +496,21 @@ func (a *App) inBoardModal(msg tea.KeyMsg) tea.Cmd {
 		case modalKeys.BoardRefresh:
 			return DoBoardRead(a.client, a.boardModal.CurTopic())
 		case modalKeys.BoardOlder:
-			if seq := a.boardModal.OldestSeq(); seq != 0 {
+			// An empty view pages from the newest on disk: a flushed topic's
+			// ring holds nothing, and everything it held is there.
+			if seq := a.boardModal.OldestSeq(); seq != 0 || a.boardModal.MsgCount() == 0 {
 				return DoBoardReadOlder(a.client, a.boardModal.CurTopic(), seq)
 			}
 			return nil
+		case modalKeys.BoardFlush:
+			if topic := a.boardModal.CurTopic(); a.boardModal.Flushable(topic) {
+				return DoBoardFlush(a.client, topic)
+			}
+			return nil
+		case modalKeys.BoardArchive:
+			return DoBoardArchive(a.client, a.boardModal.CurTopic())
+		case modalKeys.BoardArchives:
+			return DoBoardArchives(a.client, a.boardModal.CurTopic())
 		case modalKeys.BoardCompose:
 			a.boardModal.BeginCompose()
 			return nil
