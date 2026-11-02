@@ -1222,8 +1222,17 @@ var Verbs = []VerbSpec{
 		CmdlineSurfaces: CLI,
 		Action:          "BoardAction",
 		Const:           map[string]string{"Sub": "read"},
-		Args:            []Arg{{Name: "topic", Type: ArgTopic, Field: "Topic"}},
+		Args:            []Arg{{Name: "topic", Type: ArgTopic, Optional: true, Field: "Topic"}},
+		ExactlyOne:      []Rule{{Flags: []string{"topic", "archive"}}},
+		Validate: func(b Bound) error {
+			if b.Set["archive"] && b.Set["in-reply-to"] {
+				return fmt.Errorf("board read: --in-reply-to filters a topic's ring; page an archive with --before / --limit")
+			}
+			return nil
+		},
 		Flags: []Flag{
+			{Name: "archive", Type: FlagString, Default: "", Field: "Archive",
+				Help: "read this archive (board archives lists them) instead of a topic; pages 64 at a time unless --limit"},
 			{Name: "in-reply-to", Type: FlagUint64, Default: uint64(0), Field: "InReplyTo",
 				Help: "only messages replying to this seq"},
 			{Name: "json", Type: FlagBool, Default: false, Field: "JSON", Help: "JSON Lines instead of text"},
@@ -1235,7 +1244,7 @@ var Verbs = []VerbSpec{
 				Help: "with --limit: only messages with a seq below this one"},
 		},
 		Requires: []Requirement{{Flags: []string{"before"}, Needs: "limit", Reason: "--before pages, and a page has a size"}},
-		Examples: []string{"board read chat.abcd1234", "board read chat.abcd1234 --json", "board read tree.<task-id>.design --limit 100 --before 4242"},
+		Examples: []string{"board read chat.abcd1234", "board read chat.abcd1234 --json", "board read tree.<task-id>.design --limit 100 --before 4242", "board read --archive 0a1b2c3d4e5f"},
 	},
 	{
 		Path: []string{"board", "thread"},
@@ -1355,8 +1364,11 @@ var Verbs = []VerbSpec{
 		CmdlineSurfaces: CLI,
 		Action:          "BoardAction",
 		Const:           map[string]string{"Sub": "purge"},
-		Args:            []Arg{{Name: "topic", Type: ArgTopic, Field: "Topic"}},
+		Args:            []Arg{{Name: "topic", Type: ArgTopic, Optional: true, Field: "Topic"}},
+		ExactlyOne:      []Rule{{Flags: []string{"topic", "archive"}}},
 		Flags: []Flag{
+			{Name: "archive", Type: FlagString, Default: "", Field: "Archive",
+				Help: "purge from this archive instead of a topic: --seq one message, omitted the whole archive"},
 			// THE flag this whole design is named after. `board purge <topic>
 			// --seq N` -- the exact line the help text printed -- left --seq at
 			// its zero value under stdlib parsing, which is the WHOLE-TOPIC
@@ -1364,7 +1376,7 @@ var Verbs = []VerbSpec{
 			{Name: "seq", Type: FlagUint64, Default: uint64(0), WidensIfUnset: true, Field: "Seq",
 				Help: "drop one message by seq; omitted drops the whole topic ring"},
 		},
-		Examples: []string{"board purge chat.abcd1234", "board purge chat.abcd1234 --seq 42"},
+		Examples: []string{"board purge chat.abcd1234", "board purge chat.abcd1234 --seq 42", "board purge --archive 0a1b2c3d4e5f --seq 42"},
 	},
 	{
 		Path: []string{"board", "retain"},
@@ -1392,6 +1404,61 @@ var Verbs = []VerbSpec{
 				Help: "stop retaining: back to the default TTL, disk copy deleted"},
 		},
 		Examples: []string{"board retain tree.<task-id>.design --ttl 168h", "board retain sns.timeline --ttl forever", "board retain tree.<task-id>.design --clear"},
+	},
+	// --- board, a topic's history: flush and archives ---
+	// See docs/superpowers/specs/2026-11-02-agentboard-flush-archive-design.md.
+	{
+		Path: []string{"board", "flush"},
+		ModalSurfaces: []ModalSurface{
+			// F on a retained topic inside the board modal.
+			{Surface: TUI, At: "tui/board.go:BoardModal"},
+		},
+		Notes: []string{
+			"empty a retained topic's in-memory ring; its disk log keeps every message and a restart does not load them back.",
+			"Later publishes fill the ring again. Older messages: board read <topic> --limit N, agent read --topic.",
+			"cap: board_persist; a task may flush only a topic it may publish to. board topics shows flushed≤<seq>",
+		},
+		CmdlineSurfaces: CLI,
+		Action:          "BoardAction",
+		Const:           map[string]string{"Sub": "flush"},
+		Args:            []Arg{{Name: "topic", Type: ArgTopic, Field: "Topic"}},
+		Examples:        []string{"board flush sns.timeline"},
+	},
+	{
+		Path: []string{"board", "archive"},
+		ModalSurfaces: []ModalSurface{
+			// A on a topic inside the board modal.
+			{Surface: TUI, At: "tui/board.go:BoardModal"},
+		},
+		Notes: []string{
+			"freeze <topic>'s history up to now into an archive nothing appends to, kept until purged:",
+			"a retained topic's whole disk log, any other topic's ring. The topic is not changed. chat.* topics cannot be archived.",
+			"cap: board_persist; a task may archive only a topic it may publish to",
+		},
+		CmdlineSurfaces: CLI,
+		Action:          "BoardAction",
+		Const:           map[string]string{"Sub": "archive"},
+		Args:            []Arg{{Name: "topic", Type: ArgTopic, Field: "Topic"}},
+		Examples:        []string{"board archive tree.<task-id>.design"},
+	},
+	{
+		Path: []string{"board", "archives"},
+		ModalSurfaces: []ModalSurface{
+			// v inside the board modal.
+			{Surface: TUI, At: "tui/board.go:BoardModal"},
+		},
+		Notes: []string{
+			"list archives: id, source topic, the seq it runs through, messages, who made it, bytes on disk (cap: board_observe).",
+			"Read one with board read --archive <id>, delete with board purge --archive <id>",
+		},
+		CmdlineSurfaces: CLI,
+		Action:          "BoardAction",
+		Const:           map[string]string{"Sub": "archives"},
+		Flags: []Flag{
+			{Name: "topic", Type: FlagString, Default: "", Field: "Topic", Help: "only the archives of this topic"},
+			{Name: "json", Type: FlagBool, Default: false, Field: "JSON", Help: "JSON Lines instead of text"},
+		},
+		Examples: []string{"board archives", "board archives --topic sns.timeline --json"},
 	},
 	// --- board, a task's standing on a topic ---
 	//
@@ -3090,6 +3157,19 @@ var Verbs = []VerbSpec{
 		Examples: []string{"agent topics"},
 	},
 	{
+		Path: []string{"agent", "archives"}, CmdlineSurfaces: CLI,
+		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the operator's board archives is the modal path",
+		Notes: []string{
+			"list the archives of one topic this task may read (JSON Lines; no cap). Read one with agent read --archive <id>.",
+			"Every archive, of any topic: board archives (cap: board_observe)",
+		},
+		Action: "AgentAction",
+		Const:  map[string]string{"Sub": "archives"},
+		Flags: append(agentCommonFlags(),
+			Flag{Name: "topic", Type: FlagString, Default: "", Field: "Topic", Required: true, Help: "agentboard topic"}),
+		Examples: []string{"agent archives --topic beta.sns"},
+	},
+	{
 		Path: []string{"agent", "subscriptions"}, CmdlineSurfaces: CLI,
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
@@ -3160,12 +3240,14 @@ var Verbs = []VerbSpec{
 		Const:  map[string]string{"Sub": "purge"},
 		// --self names the agent's own id-directed topic, so pairing it with
 		// --topic asks for two destinations at once.
-		Exclusive: []Rule{{Flags: []string{"self", "topic"}}},
+		Exclusive: []Rule{{Flags: []string{"self", "topic", "archive"}}},
 		Flags: append(append(agentCommonFlags(), agentTopicSelfFlags()...),
+			Flag{Name: "archive", Type: FlagString, Default: "", Field: "Archive",
+				Help: "purge from this archive: --seq one message, omitted the whole archive"},
 			Flag{Name: "seq", Type: FlagUint64, Default: uint64(0), Field: "Seq", WidensIfUnset: true,
 				Help: "drop one message by seq; omitted drops the topic's retained buffer"},
 		),
-		Examples: []string{"agent purge --self", "agent purge --topic chat.abcd1234 --seq 42"},
+		Examples: []string{"agent purge --self", "agent purge --topic chat.abcd1234 --seq 42", "agent purge --archive 0a1b2c3d4e5f --seq 42"},
 	},
 	{
 		Path: []string{"agent", "read"}, CmdlineSurfaces: CLI,
@@ -3179,10 +3261,10 @@ var Verbs = []VerbSpec{
 		Action:     "AgentAction",
 		Const:      map[string]string{"Sub": "read"},
 		Args:       []Arg{{Name: "seq", Type: ArgUint, Optional: true, Field: "Seq"}},
-		ExactlyOne: []Rule{{Flags: []string{"seq", "topic", "self"}}},
+		ExactlyOne: []Rule{{Flags: []string{"seq", "topic", "self", "archive"}}},
 		Validate: func(b Bound) error {
 			if len(b.Args) > 0 && (b.Set["before"] || b.Set["limit"]) {
-				return fmt.Errorf("agent read: --before and --limit page a topic; use them with --topic or --self, not with <seq>")
+				return fmt.Errorf("agent read: --before and --limit page a topic or an archive; use them with --topic, --self or --archive, not with <seq>")
 			}
 			if l := uint64Of(b.Flags["limit"]); b.Set["limit"] && (l == 0 || l > 65535) {
 				return fmt.Errorf("agent read: --limit must be 1..65535")
@@ -3190,12 +3272,14 @@ var Verbs = []VerbSpec{
 			return nil
 		},
 		Flags: append(append(agentCommonFlags(), agentTopicSelfFlags()...),
+			Flag{Name: "archive", Type: FlagString, Default: "", Field: "Archive",
+				Help: "page this archive (agent archives --topic lists them); only archives of topics this task may read"},
 			Flag{Name: "before", Type: FlagUint64, Default: uint64(0), Field: "Before",
 				Help: "page: only messages with a seq below this one (0 = from the newest)"},
 			Flag{Name: "limit", Type: FlagUint64, Default: uint64(20), Field: "Limit",
 				Help: "page: at most this many messages (max 65535)"},
 		),
-		Examples: []string{"agent read 42", "agent read --topic beta.sns --limit 20", "agent read --topic beta.sns --before 42"},
+		Examples: []string{"agent read 42", "agent read --topic beta.sns --limit 20", "agent read --topic beta.sns --before 42", "agent read --archive 0a1b2c3d4e5f"},
 	},
 	{
 		Path: []string{"agent", "retract"}, CmdlineSurfaces: CLI,

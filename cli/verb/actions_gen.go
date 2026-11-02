@@ -18,7 +18,7 @@ import (
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
-// AgentAction is built by: agent contacts, agent inbox, agent purge, agent read, agent retained, agent retract, agent subscribe, agent subscriptions, agent thread, agent topics, agent unsubscribe, agent wait.
+// AgentAction is built by: agent archives, agent contacts, agent inbox, agent purge, agent read, agent retained, agent retract, agent subscribe, agent subscriptions, agent thread, agent topics, agent unsubscribe, agent wait.
 type AgentAction struct {
 	ActionMarker
 	// server ConnectionID (env: HARNESS_SERVER_CID)
@@ -46,6 +46,8 @@ type AgentAction struct {
 	HeadersOnly bool
 	// print the body bytes unescaped even on a terminal
 	Raw bool
+	// purge from this archive: --seq one message, omitted the whole archive
+	Archive string
 	// page: only messages with a seq below this one (0 = from the newest)
 	Before uint64
 	// page: at most this many messages (max 65535)
@@ -98,12 +100,14 @@ type AwaitProgressAction struct {
 	WatcherIDs []uint64
 }
 
-// BoardAction is built by: board clear-contacts, board join, board leave, board purge, board purge-thread, board read, board retain, board retract, board retract-thread, board subscribe, board subscribers, board thread, board topics, board unsubscribe, board wake.
+// BoardAction is built by: board archive, board archives, board clear-contacts, board flush, board join, board leave, board purge, board purge-thread, board read, board retain, board retract, board retract-thread, board subscribe, board subscribers, board thread, board topics, board unsubscribe, board wake.
 type BoardAction struct {
 	ActionMarker
 	// JSON Lines instead of text
 	JSON bool
 	Sub  string
+	// read this archive (board archives lists them) instead of a topic; pages 64 at a time unless --limit
+	Archive string
 	// only messages replying to this seq
 	InReplyTo uint64
 	// print the body bytes unescaped even on a terminal
@@ -1968,6 +1972,7 @@ func init() {
 		"board read\x00cli": func(b Bound) (Action, error) {
 			a := BoardAction{}
 			a.Sub = "read"
+			a.Archive = b.Str("archive")
 			a.InReplyTo = uint64Of(b.Flags["in-reply-to"])
 			a.JSON = b.Bool("json")
 			a.Raw = b.Bool("raw")
@@ -2020,6 +2025,7 @@ func init() {
 		"board purge\x00cli": func(b Bound) (Action, error) {
 			a := BoardAction{}
 			a.Sub = "purge"
+			a.Archive = b.Str("archive")
 			a.Seq = uint64Of(b.Flags["seq"])
 			if len(b.Args) > 0 {
 				a.Topic = b.Args[0]
@@ -2034,6 +2040,29 @@ func init() {
 			if len(b.Args) > 0 {
 				a.Topic = b.Args[0]
 			}
+			return a, nil
+		},
+		"board flush\x00cli": func(b Bound) (Action, error) {
+			a := BoardAction{}
+			a.Sub = "flush"
+			if len(b.Args) > 0 {
+				a.Topic = b.Args[0]
+			}
+			return a, nil
+		},
+		"board archive\x00cli": func(b Bound) (Action, error) {
+			a := BoardAction{}
+			a.Sub = "archive"
+			if len(b.Args) > 0 {
+				a.Topic = b.Args[0]
+			}
+			return a, nil
+		},
+		"board archives\x00cli": func(b Bound) (Action, error) {
+			a := BoardAction{}
+			a.Sub = "archives"
+			a.Topic = b.Str("topic")
+			a.JSON = b.Bool("json")
 			return a, nil
 		},
 		"board subscribe\x00cli": func(b Bound) (Action, error) {
@@ -3717,6 +3746,13 @@ func init() {
 			a.ServerCID = b.Str("server-cid")
 			return a, nil
 		},
+		"agent archives\x00cli": func(b Bound) (Action, error) {
+			a := AgentAction{}
+			a.Sub = "archives"
+			a.ServerCID = b.Str("server-cid")
+			a.Topic = b.Str("topic")
+			return a, nil
+		},
 		"agent subscriptions\x00cli": func(b Bound) (Action, error) {
 			a := AgentAction{}
 			a.Sub = "subscriptions"
@@ -3754,6 +3790,7 @@ func init() {
 			a.ServerCID = b.Str("server-cid")
 			a.Topic = b.Str("topic")
 			a.Self = b.Bool("self")
+			a.Archive = b.Str("archive")
 			a.Seq = uint64Of(b.Flags["seq"])
 			return a, nil
 		},
@@ -3763,6 +3800,7 @@ func init() {
 			a.ServerCID = b.Str("server-cid")
 			a.Topic = b.Str("topic")
 			a.Self = b.Bool("self")
+			a.Archive = b.Str("archive")
 			a.Before = uint64Of(b.Flags["before"])
 			a.Limit = uint64Of(b.Flags["limit"])
 			if len(b.Args) > 0 {
@@ -3840,6 +3878,9 @@ const (
 	CmdBoardClearContacts     = "board clear-contacts"
 	CmdBoardPurge             = "board purge"
 	CmdBoardRetain            = "board retain"
+	CmdBoardFlush             = "board flush"
+	CmdBoardArchive           = "board archive"
+	CmdBoardArchives          = "board archives"
 	CmdBoardSubscribe         = "board subscribe"
 	CmdBoardUnsubscribe       = "board unsubscribe"
 	CmdBoardJoin              = "board join"
@@ -3911,6 +3952,7 @@ const (
 	CmdAgentSubscribe         = "agent subscribe"
 	CmdAgentUnsubscribe       = "agent unsubscribe"
 	CmdAgentTopics            = "agent topics"
+	CmdAgentArchives          = "agent archives"
 	CmdAgentSubscriptions     = "agent subscriptions"
 	CmdAgentContacts          = "agent contacts"
 	CmdAgentRetained          = "agent retained"
@@ -3929,6 +3971,8 @@ const (
 	KindSessionNew     = "session-new"
 	KindSubmit         = "submit"
 	SubApply           = "apply"
+	SubArchive         = "archive"
+	SubArchives        = "archives"
 	SubArm             = "arm"
 	SubAttach          = "attach"
 	SubAwaitIdle       = "await-idle"
@@ -3942,6 +3986,7 @@ const (
 	SubDiag            = "diag"
 	SubDiff            = "diff"
 	SubFile            = "file"
+	SubFlush           = "flush"
 	SubForwardAdd      = "forward-add"
 	SubForwardRm       = "forward-rm"
 	SubHelp            = "help"
@@ -4953,6 +4998,69 @@ func ParseCmdBoardRetain(sf Surface, args []string, ctx map[string]string) (Boar
 	sp, ok := Lookup("board", "retain")
 	if !ok {
 		return zero, fmt.Errorf("board retain: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(BoardAction)
+	return a, nil
+}
+
+func ParseCmdBoardFlush(sf Surface, args []string, ctx map[string]string) (BoardAction, error) {
+	var zero BoardAction
+	sp, ok := Lookup("board", "flush")
+	if !ok {
+		return zero, fmt.Errorf("board flush: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(BoardAction)
+	return a, nil
+}
+
+func ParseCmdBoardArchive(sf Surface, args []string, ctx map[string]string) (BoardAction, error) {
+	var zero BoardAction
+	sp, ok := Lookup("board", "archive")
+	if !ok {
+		return zero, fmt.Errorf("board archive: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(BoardAction)
+	return a, nil
+}
+
+func ParseCmdBoardArchives(sf Surface, args []string, ctx map[string]string) (BoardAction, error) {
+	var zero BoardAction
+	sp, ok := Lookup("board", "archives")
+	if !ok {
+		return zero, fmt.Errorf("board archives: not in the verb table")
 	}
 	sp = sp.For(sf)
 	fs := sp.NewFlagSet(flag.ContinueOnError)
@@ -6484,6 +6592,30 @@ func ParseCmdAgentTopics(sf Surface, args []string, ctx map[string]string) (Agen
 	return a, nil
 }
 
+func ParseCmdAgentArchives(sf Surface, args []string, ctx map[string]string) (AgentAction, error) {
+	var zero AgentAction
+	sp, ok := Lookup("agent", "archives")
+	if !ok {
+		return zero, fmt.Errorf("agent archives: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(AgentAction)
+	if r := sp.Resolve(b, "server-cid", EnvLookup, WorkspaceLookup, ctx); r != "" {
+		a.ServerCID = r
+	}
+	return a, nil
+}
+
 func ParseCmdAgentSubscriptions(sf Surface, args []string, ctx map[string]string) (AgentAction, error) {
 	var zero AgentAction
 	sp, ok := Lookup("agent", "subscriptions")
@@ -6743,6 +6875,12 @@ type CLIDispatch[R any] interface {
 	BoardPurge(BoardAction) R
 	// board retain
 	BoardRetain(BoardAction) R
+	// board flush
+	BoardFlush(BoardAction) R
+	// board archive
+	BoardArchive(BoardAction) R
+	// board archives
+	BoardArchives(BoardAction) R
 	// board subscribe
 	BoardSubscribe(BoardAction) R
 	// board unsubscribe
@@ -6857,6 +6995,8 @@ type CLIDispatch[R any] interface {
 	AgentUnsubscribe(AgentAction) R
 	// agent topics
 	AgentTopics(AgentAction) R
+	// agent archives
+	AgentArchives(AgentAction) R
 	// agent subscriptions
 	AgentSubscriptions(AgentAction) R
 	// agent contacts
@@ -7128,6 +7268,24 @@ func DispatchCLI[R any](h CLIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.BoardRetain(a), true, nil
+	case CmdBoardFlush:
+		a, perr := ParseCmdBoardFlush(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.BoardFlush(a), true, nil
+	case CmdBoardArchive:
+		a, perr := ParseCmdBoardArchive(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.BoardArchive(a), true, nil
+	case CmdBoardArchives:
+		a, perr := ParseCmdBoardArchives(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.BoardArchives(a), true, nil
 	case CmdBoardSubscribe:
 		a, perr := ParseCmdBoardSubscribe(CLI, args, ctx)
 		if perr != nil {
@@ -7470,6 +7628,12 @@ func DispatchCLI[R any](h CLIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.AgentTopics(a), true, nil
+	case CmdAgentArchives:
+		a, perr := ParseCmdAgentArchives(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.AgentArchives(a), true, nil
 	case CmdAgentSubscriptions:
 		a, perr := ParseCmdAgentSubscriptions(CLI, args, ctx)
 		if perr != nil {
@@ -7633,6 +7797,12 @@ func DispatchCLIAction[R any](h CLIDispatch[R], act Action) (r R, handled bool) 
 			return h.BoardPurge(a), true
 		case "retain":
 			return h.BoardRetain(a), true
+		case "flush":
+			return h.BoardFlush(a), true
+		case "archive":
+			return h.BoardArchive(a), true
+		case "archives":
+			return h.BoardArchives(a), true
 		case "subscribe":
 			return h.BoardSubscribe(a), true
 		case "unsubscribe":
@@ -7765,6 +7935,8 @@ func DispatchCLIAction[R any](h CLIDispatch[R], act Action) (r R, handled bool) 
 			return h.AgentUnsubscribe(a), true
 		case "topics":
 			return h.AgentTopics(a), true
+		case "archives":
+			return h.AgentArchives(a), true
 		case "subscriptions":
 			return h.AgentSubscriptions(a), true
 		case "contacts":
@@ -8044,6 +8216,24 @@ func ParseCLICommand(tokens []string, ctx map[string]string) (act Action, handle
 			return a, true, nil
 		case CmdBoardRetain:
 			a, perr := ParseCmdBoardRetain(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdBoardFlush:
+			a, perr := ParseCmdBoardFlush(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdBoardArchive:
+			a, perr := ParseCmdBoardArchive(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdBoardArchives:
+			a, perr := ParseCmdBoardArchives(CLI, tokens[n:], ctx)
 			if perr != nil {
 				return nil, true, perr
 			}
@@ -8386,6 +8576,12 @@ func ParseCLICommand(tokens []string, ctx map[string]string) (act Action, handle
 			return a, true, nil
 		case CmdAgentTopics:
 			a, perr := ParseCmdAgentTopics(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdAgentArchives:
+			a, perr := ParseCmdAgentArchives(CLI, tokens[n:], ctx)
 			if perr != nil {
 				return nil, true, perr
 			}

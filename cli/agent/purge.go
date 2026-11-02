@@ -34,6 +34,9 @@ func PurgeWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) error 
 	if *self && *topic != "" {
 		return errors.New("--self and --topic are mutually exclusive")
 	}
+	if a.Archive != "" {
+		return purgeArchive(ctx, a, stdout)
+	}
 	if *self {
 		tid, err := cliopts.ResolveTaskID("")
 		if err != nil {

@@ -577,6 +577,9 @@ func (h cliVerbs) BoardSubscribers(a verb.BoardAction) error   { return h.board(
 func (h cliVerbs) BoardRetract(a verb.BoardAction) error       { return h.board(a) }
 func (h cliVerbs) BoardPurge(a verb.BoardAction) error         { return h.board(a) }
 func (h cliVerbs) BoardRetain(a verb.BoardAction) error        { return h.board(a) }
+func (h cliVerbs) BoardFlush(a verb.BoardAction) error         { return h.board(a) }
+func (h cliVerbs) BoardArchive(a verb.BoardAction) error       { return h.board(a) }
+func (h cliVerbs) BoardArchives(a verb.BoardAction) error      { return h.board(a) }
 func (h cliVerbs) BoardClearContacts(a verb.BoardAction) error { return h.board(a) }
 func (h cliVerbs) BoardSubscribe(a verb.BoardAction) error     { return h.board(a) }
 func (h cliVerbs) BoardUnsubscribe(a verb.BoardAction) error   { return h.board(a) }
@@ -633,6 +636,9 @@ func (h cliVerbs) AgentRetained(a verb.AgentAction) error {
 }
 func (h cliVerbs) AgentPurge(a verb.AgentAction) error {
 	return agent.PurgeWith(h.ctx, a, os.Stdout)
+}
+func (h cliVerbs) AgentArchives(a verb.AgentAction) error {
+	return agent.ArchivesWith(h.ctx, a, os.Stdout)
 }
 func (h cliVerbs) AgentRead(a verb.AgentAction) error {
 	return agent.ReadWith(h.ctx, a, os.Stdout)

@@ -198,6 +198,9 @@ func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.Boar
 					}
 					rec["retain_by"] = rt.SetByLabel()
 					rec["disk_bytes"] = rt.DiskBytes
+					if rt.RingFloor != 0 {
+						rec["flushed_through"] = rt.RingFloor
+					}
 				}
 				if err := enc.Encode(rec); err != nil {
 					return err
@@ -233,14 +236,22 @@ func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.Boar
 		}
 
 	case verb.SubRead:
-		inReplyTo, asJSON := &ba.InReplyTo, &ba.JSON
+		inReplyTo := &ba.InReplyTo
 		topic := ba.Topic
 		if ba.Limit > 65535 {
 			return fmt.Errorf("board read: --limit %d is over 65535", ba.Limit)
 		}
+		if ba.Archive != "" {
+			return readArchive(ctx, cid, ba, out)
+		}
 		msgs, found, err := BoardReadPage(ctx, cid, topic, ba.Before, uint16(ba.Limit))
 		if err != nil {
 			return err
+		}
+		if ba.Limit == 0 {
+			// The ring only. On a flushed topic everything older is on disk,
+			// and nothing on this output would say so.
+			defer flushedHint(ctx, cid, topic)
 		}
 		if !found {
 			// Exit 0 per spec, but say which nothing this is: "no such topic"
@@ -264,59 +275,9 @@ func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.Boar
 		if serr != nil {
 			fmt.Fprintf(os.Stderr, "board read: delivery marks unavailable: %v\n", serr)
 		}
-		shown := 0
-		// The body mode is judged ONCE, from the real destination, before the
-		// loop: stdout is os.Stdout in the generated dispatch, and a test's
-		// bytes.Buffer is not an *os.File at all. Both fail toward BodyExact —
-		// the mode nobody set yields the published bytes, which is obligation
-		// 2: escaping a redirect would corrupt extraction invisibly.
-		destFile, _ := out.(*os.File)
-		mode := BodyModeFor(destFile, ba.Raw)
-		for _, m := range msgs {
-			if *inReplyTo != 0 && m.InReplyTo != *inReplyTo {
-				continue
-			}
-			shown++
-			if *asJSON {
-				emitBoardMessageJSON(out, topic, m, subs)
-				continue
-			}
-			// re= is printed only on replies: on a board where nothing replies
-			// yet, a re=0 on every line is noise.
-			re := ""
-			if m.InReplyTo != 0 {
-				re = fmt.Sprintf(" re=%d", m.InReplyTo)
-			}
-			// Same rule as re= above: the marker prints only when it applies.
-			// A retracted= on every live line would be noise, and this row is
-			// the only place a withdrawn message is visible at all — the agent
-			// paths dropped it the moment its author called retract.
-			retracted := ""
-			if m.Retracted {
-				// by= is part of the marker, not an extra: with two verbs able
-				// to withdraw a message, "RETRACTED" alone would read as the
-				// author having done it whoever actually did.
-				retracted = fmt.Sprintf(" RETRACTED at=%s by=%s",
-					boardMsToRFC3339(m.RetractedAtMs), RetractedByLabel(m))
-			}
-			// Same rule again: only senders that declared a destination get
-			// this. It answers "where did the answer to #N go", which nothing
-			// else on the board can -- the routing is resolved server-side off
-			// this row and appears in no message's text.
-			replyTo := ""
-			if m.ReplyToTopic != "" {
-				replyTo = fmt.Sprintf(" reply-to=%s", m.ReplyToTopic)
-			}
-			fmt.Fprintf(out, "#%d%s%s from=%s sender=%s host=%s agent=%s size=%d at=%s %s%s\n",
-				m.Seq, re, replyTo, SenderLabel(m.SenderKind, m.FromTaskHex), boardSenderOrDash(m.SenderKind),
-				m.FromHostname, boardAgentOrDash(m.FromAgentProfile),
-				len(m.Payload), boardMsToRFC3339(m.ReceivedAtMs),
-				ShownToLabel(subs, topic, m.Seq), retracted)
-			// JSON-indent behaviour lives in writeBoardBody now, along with the
-			// escape gate; json escapes C0 but leaves C1 raw, so the escaped
-			// mode still needs its pass there.
-			writeBoardBody(out, m.Payload, mode)
-		}
+		shown := printBoardMessages(out, topic, msgs, subs, ba, func(m BoardMessage) string {
+			return " " + ShownToLabel(subs, topic, m.Seq)
+		})
 		if shown == 0 {
 			// Third way to print nothing: the topic has messages, none of them
 			// a reply to the requested seq.
@@ -324,6 +285,39 @@ func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.Boar
 				topic, len(msgs), *inReplyTo)
 		}
 
+	case verb.SubFlush:
+		through, dropped, err := BoardFlush(ctx, cid, ba.Topic)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "{\"status\":\"ok\",\"topic\":%q,\"through\":%d,\"dropped\":%d}\n", ba.Topic, through, dropped)
+
+	case verb.SubArchive:
+		a, err := BoardArchive(ctx, cid, ba.Topic)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "{\"status\":\"ok\",\"topic\":%q,\"archive\":%q,\"through\":%d,\"count\":%d}\n", ba.Topic, a.ID, a.Through, a.Count)
+
+	case verb.SubArchives:
+		rows, err := BoardArchives(ctx, cid, ba.Topic)
+		if err != nil {
+			return err
+		}
+		enc := json.NewEncoder(out)
+		for _, r := range rows {
+			if ba.JSON {
+				if err := enc.Encode(r.JSON()); err != nil {
+					return err
+				}
+				continue
+			}
+			fmt.Fprintln(out, r.Summary())
+		}
+		if len(rows) == 0 && !ba.JSON {
+			fmt.Fprintln(os.Stderr, "board archives: none")
+		}
+		return nil
 	case verb.SubThread:
 		// The chain view. It collects EVERY topic the operator can see —
 		// a conversation spans topics by construction (each agent receives
@@ -434,6 +428,18 @@ func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.Boar
 		// named, both destroyed. The declaration marks --seq WidensIfUnset and
 		// an invariant test refuses to let this verb stop permuting.
 		topic, seq := ba.Topic, &ba.Seq
+		if ba.Archive != "" {
+			purged, found, err := BoardArchivePurge(ctx, cid, ba.Archive, *seq)
+			if err != nil {
+				return err
+			}
+			status := "ok"
+			if !found {
+				status = "not_found"
+			}
+			fmt.Fprintf(out, "{\"status\":%q,\"archive\":%q,\"purged\":%d}\n", status, ba.Archive, purged)
+			return nil
+		}
 		purged, found, err := BoardPurge(ctx, cid, topic, *seq)
 		if err != nil {
 			return err
@@ -733,4 +739,105 @@ func renderSubscriberRows(out io.Writer, rows []BoardSubscriberRow, asJSON bool)
 			r.TaskHex, boardHostOrDash(r.Hostname), boardAgentOrDash(r.AgentProfile), pats, ContactsLabel(r.Contacts))
 	}
 	return nil
+}
+
+// printBoardMessages prints board read's rows, honouring --in-reply-to,
+// --json and --raw, and returns how many it printed. shownTo renders the
+// delivery column (" shown_to=n/m") or "" where it means nothing, as on an
+// archive.
+func printBoardMessages(out io.Writer, topic string, msgs []BoardMessage, subs []BoardSubscriberRow, ba verb.BoardAction, shownTo func(BoardMessage) string) int {
+	inReplyTo, asJSON := &ba.InReplyTo, &ba.JSON
+	shown := 0
+	// The body mode is judged ONCE, from the real destination, before the
+	// loop: stdout is os.Stdout in the generated dispatch, and a test's
+	// bytes.Buffer is not an *os.File at all. Both fail toward BodyExact —
+	// the mode nobody set yields the published bytes, which is obligation
+	// 2: escaping a redirect would corrupt extraction invisibly.
+	destFile, _ := out.(*os.File)
+	mode := BodyModeFor(destFile, ba.Raw)
+	for _, m := range msgs {
+		if *inReplyTo != 0 && m.InReplyTo != *inReplyTo {
+			continue
+		}
+		shown++
+		if *asJSON {
+			emitBoardMessageJSON(out, topic, m, subs)
+			continue
+		}
+		// re= is printed only on replies: on a board where nothing replies
+		// yet, a re=0 on every line is noise.
+		re := ""
+		if m.InReplyTo != 0 {
+			re = fmt.Sprintf(" re=%d", m.InReplyTo)
+		}
+		// Same rule as re= above: the marker prints only when it applies.
+		// A retracted= on every live line would be noise, and this row is
+		// the only place a withdrawn message is visible at all — the agent
+		// paths dropped it the moment its author called retract.
+		retracted := ""
+		if m.Retracted {
+			// by= is part of the marker, not an extra: with two verbs able
+			// to withdraw a message, "RETRACTED" alone would read as the
+			// author having done it whoever actually did.
+			retracted = fmt.Sprintf(" RETRACTED at=%s by=%s",
+				boardMsToRFC3339(m.RetractedAtMs), RetractedByLabel(m))
+		}
+		// Same rule again: only senders that declared a destination get
+		// this. It answers "where did the answer to #N go", which nothing
+		// else on the board can -- the routing is resolved server-side off
+		// this row and appears in no message's text.
+		replyTo := ""
+		if m.ReplyToTopic != "" {
+			replyTo = fmt.Sprintf(" reply-to=%s", m.ReplyToTopic)
+		}
+		fmt.Fprintf(out, "#%d%s%s from=%s sender=%s host=%s agent=%s size=%d at=%s%s%s\n",
+			m.Seq, re, replyTo, SenderLabel(m.SenderKind, m.FromTaskHex), boardSenderOrDash(m.SenderKind),
+			m.FromHostname, boardAgentOrDash(m.FromAgentProfile),
+			len(m.Payload), boardMsToRFC3339(m.ReceivedAtMs),
+			shownTo(m), retracted)
+		// JSON-indent behaviour lives in writeBoardBody now, along with the
+		// escape gate; json escapes C0 but leaves C1 raw, so the escaped
+		// mode still needs its pass there.
+		writeBoardBody(out, m.Payload, mode)
+	}
+	return shown
+}
+
+// readArchive is board read --archive: a page of an archive, 64 unless
+// --limit says otherwise, withdrawn messages marked as on a topic.
+func readArchive(ctx context.Context, cid objproto.ConnectionID, ba verb.BoardAction, out io.Writer) error {
+	limit := ba.Limit
+	if limit == 0 {
+		limit = 64
+	}
+	msgs, found, err := BoardArchiveRead(ctx, cid, ba.Archive, ba.Before, uint16(limit))
+	if err != nil {
+		return err
+	}
+	if !found {
+		fmt.Fprintf(os.Stderr, "board read: no archive %q (board archives lists them)\n", ba.Archive)
+		return nil
+	}
+	if len(msgs) == 0 {
+		fmt.Fprintf(os.Stderr, "board read: archive %q holds nothing below seq %d\n", ba.Archive, ba.Before)
+		return nil
+	}
+	printBoardMessages(out, "archive:"+ba.Archive, msgs, nil, ba, func(BoardMessage) string { return "" })
+	return nil
+}
+
+// flushedHint tells the reader of a flushed topic's ring that what came before
+// it is on disk, and how to page it. On stderr, as board read's other
+// diagnostics, so `board read T | ...` stays clean.
+func flushedHint(ctx context.Context, cid objproto.ConnectionID, topic string) {
+	rows, err := BoardTopics(ctx, cid)
+	if err != nil {
+		return
+	}
+	for _, r := range rows {
+		if r.Name == topic && r.Retention != nil && r.Retention.RingFloor != 0 {
+			fmt.Fprintf(os.Stderr, "board read: %s was flushed through seq %d; older messages are on disk: board read %s --limit 64\n",
+				topic, r.Retention.RingFloor, topic)
+		}
+	}
 }

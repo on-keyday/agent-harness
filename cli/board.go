@@ -39,6 +39,9 @@ type TopicRetention struct {
 	// from the later of the last publish and the retain call, so TTL alone
 	// does not say when.
 	ExpiresAt time.Time
+	// RingFloor is the seq board flush last emptied the ring through; 0 when
+	// the topic was never flushed.
+	RingFloor uint64
 }
 
 // Label renders the period the way `board retain --ttl` takes it.
@@ -72,10 +75,19 @@ func (r TopicRetention) UntilLabel() string {
 }
 
 // Summary is the retention in board topics' words —
-// "retain=<period>[ until=<time>] by=<setter> disk=<bytes>" — the one
-// spelling the CLI line, the TUI and the WebUI print.
+// "retain=<period>[ until=<time>] by=<setter> disk=<bytes>[ flushed≤<seq>]" —
+// the one spelling the CLI line, the TUI and the WebUI print.
 func (r TopicRetention) Summary() string {
-	return fmt.Sprintf("retain=%s%s by=%s disk=%d", r.Label(), r.UntilLabel(), r.SetByLabel(), r.DiskBytes)
+	return fmt.Sprintf("retain=%s%s by=%s disk=%d%s", r.Label(), r.UntilLabel(), r.SetByLabel(), r.DiskBytes, r.FlushedLabel())
+}
+
+// FlushedLabel is " flushed≤<seq>" on a flushed topic, "" otherwise: older
+// messages are on disk only, and the seq says where the ring starts.
+func (r TopicRetention) FlushedLabel() string {
+	if r.RingFloor == 0 {
+		return ""
+	}
+	return fmt.Sprintf(" flushed≤%d", r.RingFloor)
 }
 
 // SetByLabel is the setter's short id, or "operator".
@@ -299,7 +311,7 @@ func (c *Client) BoardTopics(ctx context.Context) ([]BoardTopicRow, error) {
 	}
 	retained := map[string]*TopicRetention{}
 	for _, r := range body.Retention {
-		tr := &TopicRetention{Forever: r.Forever(), DiskBytes: r.DiskBytes}
+		tr := &TopicRetention{Forever: r.Forever(), DiskBytes: r.DiskBytes, RingFloor: r.RingFloor}
 		if !tr.Forever {
 			tr.TTL = time.Duration(r.TtlMs) * time.Millisecond
 		}
@@ -414,9 +426,13 @@ func (c *Client) BoardReadPage(ctx context.Context, topic string, beforeSeq uint
 	if err := ReadResponseBody(ctx, c.Transport(), br.StreamId, &body); err != nil {
 		return nil, true, fmt.Errorf("BoardRead: %w", err)
 	}
+	return boardMessages(body.Msgs), true, nil
+}
 
-	rows := make([]BoardMessage, len(body.Msgs))
-	for i, m := range body.Msgs {
+// boardMessages converts operator-face rows, withdrawn ones included.
+func boardMessages(msgs []protocol.BoardMessageRow) []BoardMessage {
+	rows := make([]BoardMessage, len(msgs))
+	for i, m := range msgs {
 		rows[i] = BoardMessage{
 			Seq:              m.Seq,
 			InReplyTo:        m.InReplyTo,
@@ -438,7 +454,7 @@ func (c *Client) BoardReadPage(ctx context.Context, topic string, beforeSeq uint
 			rows[i].RetractedByTaskHex = hex.EncodeToString(m.RetractedByTask.Id[:])
 		}
 	}
-	return rows, true, nil
+	return rows
 }
 
 // BoardPurge drops one retained message (seq != 0) or the entire topic ring

@@ -31,6 +31,9 @@ func Read(ctx context.Context, args []string, stdout io.Writer) error {
 // the generated CLI dispatch, which parses from the declaration itself.
 func ReadWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) error {
 	serverCID := &a.ServerCID
+	if a.Archive != "" {
+		return readArchive(ctx, a, stdout)
+	}
 	if a.Topic != "" || a.Self {
 		return readPage(ctx, a, stdout)
 	}
