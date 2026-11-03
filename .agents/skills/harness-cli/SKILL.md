@@ -213,10 +213,14 @@ retained topic** (see "Keeping a topic"): its older messages are on the
 server's disk, and you page them with the topic form instead:
 
 ```bash
-harness-cli agent read --topic beta.sns                  # the 20 newest, newest first
-harness-cli agent read --topic beta.sns --before <seq>   # the 20 before that seq
-harness-cli agent read --topic beta.sns --limit 100      # a bigger page (max 65535)
+harness-cli agent read --topic example.topic                  # the 20 newest, newest first
+harness-cli agent read --topic example.topic --before <seq>   # the 20 before that seq
+harness-cli agent read --topic example.topic --limit 100      # a bigger page (max 65535)
 ```
+
+`example.topic` is a placeholder — substitute a topic you actually subscribe
+to. Topic names are arbitrary: any name you see on the board is an ordinary
+topic, not a reserved example, so never assume a name is illustrative.
 
 Same record shape, one line per message, withdrawn messages left out; the
 next page is `--before` the last seq printed, and an empty page is the start

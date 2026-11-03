@@ -3182,7 +3182,7 @@ var Verbs = []VerbSpec{
 		Flags: append(agentCommonFlags(),
 			Flag{Name: "topic", Type: FlagString, Default: "", Field: "Topic", Required: true, Help: "agentboard topic"},
 			agentJSONEitherWay()),
-		Examples: []string{"agent archives --topic beta.sns"},
+		Examples: []string{"agent archives --topic example.topic"},
 	},
 	{
 		Path: []string{"agent", "subscriptions"}, CmdlineSurfaces: CLI,
@@ -3295,7 +3295,7 @@ var Verbs = []VerbSpec{
 				Help: "page: at most this many messages (max 65535)"},
 			agentJSONEitherWay(),
 		),
-		Examples: []string{"agent read 42", "agent read --topic beta.sns --limit 20", "agent read --topic beta.sns --before 42", "agent read --archive 0a1b2c3d4e5f"},
+		Examples: []string{"agent read 42", "agent read --topic example.topic --limit 20", "agent read --topic example.topic --before 42", "agent read --archive 0a1b2c3d4e5f"},
 	},
 	{
 		Path: []string{"agent", "retract"}, CmdlineSurfaces: CLI,
