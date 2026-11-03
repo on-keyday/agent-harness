@@ -3104,7 +3104,7 @@ var Verbs = []VerbSpec{
 		Const:  map[string]string{"Sub": "inbox"},
 		Flags: append(agentCommonFlags(),
 			Flag{Name: "since", Type: FlagUint64, Default: uint64(0), Field: "Since", Help: "start from this seq (0 = whole ring)"},
-			Flag{Name: "json", Type: FlagBool, Default: false, Field: "JSON", Help: "JSON Lines instead of text"},
+			agentJSONEitherWay(),
 			Flag{Name: "user-prompt-submit-hook", Type: FlagBool, Default: false, Field: "UserPromptSubmitHook",
 				Help: "hook mode: ask for what has not been injected, and mark it injected in the same operation"},
 			Flag{Name: "in-reply-to", Type: FlagUint64, Default: uint64(0), Field: "InReplyTo", Help: "only messages replying to this seq"},
@@ -3127,6 +3127,7 @@ var Verbs = []VerbSpec{
 			Flag{Name: "in-reply-to", Type: FlagUint64, Default: uint64(0), Field: "InReplyTo", Help: "only messages replying to this seq"},
 			Flag{Name: "timeout", Type: FlagDuration, Default: 5 * time.Minute, Field: "Timeout",
 				Help: "max block duration"},
+			agentJSONEitherWay(),
 		),
 		Examples: []string{"agent wait --topic chat.abcd1234"},
 	},
@@ -3166,7 +3167,7 @@ var Verbs = []VerbSpec{
 		},
 		Action:   "AgentAction",
 		Const:    map[string]string{"Sub": "topics"},
-		Flags:    agentCommonFlags(),
+		Flags:    append(agentCommonFlags(), agentJSONEitherWay()),
 		Examples: []string{"agent topics"},
 	},
 	{
@@ -3179,7 +3180,8 @@ var Verbs = []VerbSpec{
 		Action: "AgentAction",
 		Const:  map[string]string{"Sub": "archives"},
 		Flags: append(agentCommonFlags(),
-			Flag{Name: "topic", Type: FlagString, Default: "", Field: "Topic", Required: true, Help: "agentboard topic"}),
+			Flag{Name: "topic", Type: FlagString, Default: "", Field: "Topic", Required: true, Help: "agentboard topic"},
+			agentJSONEitherWay()),
 		Examples: []string{"agent archives --topic beta.sns"},
 	},
 	{
@@ -3190,7 +3192,7 @@ var Verbs = []VerbSpec{
 		},
 		Action:   "AgentAction",
 		Const:    map[string]string{"Sub": "subscriptions"},
-		Flags:    agentCommonFlags(),
+		Flags:    append(agentCommonFlags(), agentJSONEitherWay()),
 		Examples: []string{"agent subscriptions"},
 	},
 	{
@@ -3201,7 +3203,7 @@ var Verbs = []VerbSpec{
 		},
 		Action:   "AgentAction",
 		Const:    map[string]string{"Sub": "contacts"},
-		Flags:    agentCommonFlags(),
+		Flags:    append(agentCommonFlags(), agentJSONEitherWay()),
 		Examples: []string{"agent contacts"},
 	},
 	{
@@ -3215,7 +3217,7 @@ var Verbs = []VerbSpec{
 		// --self names the agent's own id-directed topic, so pairing it with
 		// --topic asks for two destinations at once.
 		Exclusive: []Rule{{Flags: []string{"self", "topic"}}},
-		Flags:     append(agentCommonFlags(), agentTopicSelfFlags()...),
+		Flags:     append(append(agentCommonFlags(), agentTopicSelfFlags()...), agentJSONEitherWay()),
 		Examples:  []string{"agent retained --self"},
 	},
 	{
@@ -3291,6 +3293,7 @@ var Verbs = []VerbSpec{
 				Help: "page: only messages with a seq below this one (0 = from the newest)"},
 			Flag{Name: "limit", Type: FlagUint64, Default: uint64(20), Field: "Limit",
 				Help: "page: at most this many messages (max 65535)"},
+			agentJSONEitherWay(),
 		),
 		Examples: []string{"agent read 42", "agent read --topic beta.sns --limit 20", "agent read --topic beta.sns --before 42", "agent read --archive 0a1b2c3d4e5f"},
 	},
@@ -3424,6 +3427,17 @@ func agentCommonFlags() []Flag {
 		Help:    "server ConnectionID (env: HARNESS_SERVER_CID)",
 		Resolve: []Tier{{Env: "HARNESS_SERVER_CID"}},
 	}}
+}
+
+// agentJSONEitherWay is the --json of an agent verb that has no text form.
+// Every agent read verb but `thread` emits JSON Lines unconditionally, while
+// the skill teaches `agent inbox --json`; a hand that carries that habit to
+// `agent subscriptions` got `flag provided but not defined: -json` (seen on
+// the live board, 2026-11-03). Same answer as `session ls`: accept it, and
+// let the Help say it changes nothing.
+func agentJSONEitherWay() Flag {
+	return Flag{Name: "json", Type: FlagBool, Default: false, Field: "JSON",
+		Help: "accepted for symmetry with the other listings; this one is JSON Lines either way"}
 }
 
 // agentTopicSelfFlags is the --topic / --self pair: name a topic, or the

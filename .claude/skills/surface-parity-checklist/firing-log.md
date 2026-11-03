@@ -3722,3 +3722,18 @@ omitted: 36 — supervising-workers names `caps reach <own id>` as a pre-spawn
          PTY or Playwright run
 n/a:     the rest; no task/runner field, no spawn option, no column-set change
 missed:  —
+
+### 2026-11-03 (pre-landing) — `--json` on the JSON-only agent verbs
+
+done:    1 (table.go: `agentJSONEitherWay()` on inbox / wait / topics /
+         archives / subscriptions / contacts / retained / read; inbox's old
+         Help "JSON Lines instead of text" was false — `inbox.go` discards
+         it), 24 (one meaning on every path: no-op, said in the Help), 33
+         (accepted-and-ignored is stated, not silent — `session ls`
+         precedent; `TestAgentJSONOnlyVerbsAcceptJSONAndSaySo` pins Help +
+         parse + build); live: worktree `bin/harness-cli` against the real
+         board, `agent subscriptions|contacts|inbox|read … --json` exit 0
+omitted: 36 — the skill already says these emit JSON Lines; accepting a
+         flag that changes nothing adds no step to teach
+n/a:     the rest; CLI-only verbs (NoModalSurface), no field, no output change
+missed:  —

@@ -1,6 +1,8 @@
 package verb
 
 import (
+	"flag"
+	"io"
 	"strings"
 	"testing"
 )
@@ -17,8 +19,7 @@ import (
 //	board topics                          <- text only, while board read had it
 //	board subscribers                     <- likewise
 //
-// The agent family is deliberately absent: those verbs run inside a task's
-// shell and emit JSON Lines by construction, with no text form to opt out of.
+// The agent family has its own test below.
 func TestEveryOperatorListingTakesJSON(t *testing.T) {
 	for _, path := range []string{
 		"ls", "conns", "exec ls", "forward ls", "session ls",
@@ -65,6 +66,55 @@ func TestSessionLsSaysItsJSONFlagChangesNothing(t *testing.T) {
 		return
 	}
 	t.Fatal("session ls has no --json")
+}
+
+// The agent read verbs emit JSON Lines with no text form, so they were once
+// left without --json on the grounds that there was nothing to opt out of.
+// But the skill teaches `agent inbox --json` (inbox already took the flag),
+// and an agent carrying that to `agent subscriptions` was refused with
+// `flag provided but not defined: -json` (2026-11-03). Each one accepts it,
+// says it changes nothing, and parses with it. `agent thread` is not here:
+// its --json does switch the output from text.
+func TestAgentJSONOnlyVerbsAcceptJSONAndSaySo(t *testing.T) {
+	for _, tc := range []struct {
+		sub  string
+		args []string // the least line the verb's rules accept
+	}{
+		{"inbox", nil},
+		{"wait", nil},
+		{"topics", nil},
+		{"archives", []string{"--topic", "t"}},
+		{"subscriptions", nil},
+		{"contacts", nil},
+		{"retained", nil},
+		{"read", []string{"--topic", "t"}},
+	} {
+		v, ok := Lookup("agent", tc.sub)
+		if !ok {
+			t.Errorf("agent %s: not in the table", tc.sub)
+			continue
+		}
+		var help string
+		for _, f := range v.Flags {
+			if f.Name == "json" {
+				help = f.Help
+			}
+		}
+		if !strings.Contains(help, "either way") {
+			t.Errorf("agent %s --json: help %q does not say the output is unchanged", tc.sub, help)
+		}
+		sp := v.For(CLI)
+		fs := sp.NewFlagSet(flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		b, err := sp.Parse(fs, append(append([]string{}, tc.args...), "--json"))
+		if err != nil {
+			t.Errorf("`agent %s --json`: %v", tc.sub, err)
+			continue
+		}
+		if _, err := sp.BuildFunc()(b); err != nil {
+			t.Errorf("`agent %s --json`: build: %v", tc.sub, err)
+		}
+	}
 }
 
 // And it must actually parse, on both surfaces that declare the verb.

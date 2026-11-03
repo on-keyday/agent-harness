@@ -25,7 +25,7 @@ type AgentAction struct {
 	ServerCID string
 	// start from this seq (0 = whole ring)
 	Since uint64
-	// JSON Lines instead of text
+	// accepted for symmetry with the other listings; this one is JSON Lines either way
 	JSON bool
 	// hook mode: ask for what has not been injected, and mark it injected in the same operation
 	UserPromptSubmitHook bool
@@ -3727,6 +3727,7 @@ func init() {
 			a.Since = uint64Of(b.Flags["since"])
 			a.InReplyTo = uint64Of(b.Flags["in-reply-to"])
 			a.Timeout = durationOf(b.Flags["timeout"])
+			a.JSON = b.Bool("json")
 			return a, nil
 		},
 		"agent subscribe\x00cli": func(b Bound) (Action, error) {
@@ -3749,6 +3750,7 @@ func init() {
 			a := AgentAction{}
 			a.Sub = "topics"
 			a.ServerCID = b.Str("server-cid")
+			a.JSON = b.Bool("json")
 			return a, nil
 		},
 		"agent archives\x00cli": func(b Bound) (Action, error) {
@@ -3756,18 +3758,21 @@ func init() {
 			a.Sub = "archives"
 			a.ServerCID = b.Str("server-cid")
 			a.Topic = b.Str("topic")
+			a.JSON = b.Bool("json")
 			return a, nil
 		},
 		"agent subscriptions\x00cli": func(b Bound) (Action, error) {
 			a := AgentAction{}
 			a.Sub = "subscriptions"
 			a.ServerCID = b.Str("server-cid")
+			a.JSON = b.Bool("json")
 			return a, nil
 		},
 		"agent contacts\x00cli": func(b Bound) (Action, error) {
 			a := AgentAction{}
 			a.Sub = "contacts"
 			a.ServerCID = b.Str("server-cid")
+			a.JSON = b.Bool("json")
 			return a, nil
 		},
 		"agent retained\x00cli": func(b Bound) (Action, error) {
@@ -3776,6 +3781,7 @@ func init() {
 			a.ServerCID = b.Str("server-cid")
 			a.Topic = b.Str("topic")
 			a.Self = b.Bool("self")
+			a.JSON = b.Bool("json")
 			return a, nil
 		},
 		"agent thread\x00cli": func(b Bound) (Action, error) {
@@ -3808,6 +3814,7 @@ func init() {
 			a.Archive = b.Str("archive")
 			a.Before = uint64Of(b.Flags["before"])
 			a.Limit = uint64Of(b.Flags["limit"])
+			a.JSON = b.Bool("json")
 			if len(b.Args) > 0 {
 				n, err := strconv.ParseUint(b.Args[0], 10, 64)
 				if err != nil {
