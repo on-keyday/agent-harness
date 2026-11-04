@@ -57,6 +57,9 @@ enum RunnerRequestType:
                           # runs the old build; free to reuse after.
     hold_tasks            # keep your children alive, I am going down on purpose
     rebind_session        # attach a held task's live PTY to a new stream
+    leave                 # end your tasks and exit; you were kicked (runner kick).
+                          # A runner too old to know this logs a decode error
+                          # and the server closes the connection after 10 s.
 
 # AllowedRoot is a single repository root path the runner is willing to accept tasks for.
 format AllowedRoot:
@@ -430,6 +433,14 @@ format RunnerRequest:
         RunnerRequestType.trsf_state => trsf_state :RunnerTrsfStateRequest
         RunnerRequestType.hold_tasks => hold_tasks :HoldTasksRequest
         RunnerRequestType.rebind_session => rebind_session :RebindSessionRequest
+        RunnerRequestType.leave => leave :LeaveRequest
+
+# Server -> runner, RunnerRequestType.leave: `runner kick` asked this runner to
+# go. It ends its tasks and the process exits 0. by names who kicked it, as the
+# enrollment store records who enrolled a key: "operator" or "task:<32 hex>".
+format LeaveRequest:
+    by_len :u8
+    by :[by_len]u8   # at most 64 bytes
 
 enum TaskControlKind:
     :u8
@@ -661,6 +672,16 @@ enum TaskControlKind:
     agent_archive_read      # appended: page an archive, live messages only.
                             # No cap; not_found unless the caller may read
                             # the archive's source topic.
+    runner_dial_add         # appended: store a reverse-dial record the server
+                            # keeps dialing. Gated on runner_admin, as are the
+                            # next two: a record is the server's network reach,
+                            # made durable. See
+                            # docs/superpowers/specs/2026-11-04-persistent-reverse-dial-and-runner-kick-design.md
+    runner_dial_list        # appended: list dial records and their state
+    runner_dial_remove      # appended: stop and delete one dial record; its
+                            # live connection stays
+    runner_kick             # appended: make one runner leave (it exits).
+                            # Gated on runner_enroll: registry hygiene
 
 # ClientKind tags the kind of caller that opened a TaskControl session.
 # `agent` is an in-task harness-cli that proves its identity via agent_info;
@@ -948,6 +969,18 @@ format RunnerInfo:
     key :[32]u8
     key_label_len :u8
     key_label :[key_label_len]u8
+    # How this runner is connected: which side dialed, and through what. Known
+    # when the connection is made; nothing else on a runner row says it.
+    link :RunnerLink
+    link_record :u32     # dial_record: the record's id; else 0
+    link_via :RunnerID   # via: the relay runner's identity; else zero
+
+enum RunnerLink:
+    :u8
+    dialed_in   = "dialed_in"     # the runner dialed the server
+    dialed_out  = "dialed_out"    # one-shot server dial-runner
+    dial_record = "dial_record"   # a dial record the server keeps dialing
+    via         = "via"           # server dial-runner --via, through a relay runner
 
 # AuthoritySource is who last wrote a task's authority — its caps, its scope,
 # or the parent link its subtree scopes are measured from. Carried on TaskInfo
@@ -2779,6 +2812,10 @@ format TaskControlRequest:
         TaskControlKind.board_archive_purge      => board_archive_purge      :BoardArchivePurgeRequest
         TaskControlKind.agent_archives           => agent_archives           :AgentArchivesRequest
         TaskControlKind.agent_archive_read       => agent_archive_read       :AgentArchiveReadRequest
+        TaskControlKind.runner_dial_add          => runner_dial_add          :RunnerDialAddRequest
+        TaskControlKind.runner_dial_list         => runner_dial_list         :RunnerDialListRequest
+        TaskControlKind.runner_dial_remove       => runner_dial_remove       :RunnerDialRemoveRequest
+        TaskControlKind.runner_kick              => runner_kick              :RunnerKickRequest
         .. => error("Unexpected task")
 
 # CancelResult replaces a bare u8 that every reply wrote as 0. ok stays 0, so
@@ -2872,6 +2909,10 @@ format TaskControlResponse:
         TaskControlKind.board_archive_purge      => board_archive_purge      :BoardPurgeResponse
         TaskControlKind.agent_archives           => agent_archives           :BoardArchivesResponse
         TaskControlKind.agent_archive_read       => agent_archive_read       :AgentReadPageResponse
+        TaskControlKind.runner_dial_add          => runner_dial_add          :RunnerDialAddResponse
+        TaskControlKind.runner_dial_list         => runner_dial_list         :RunnerDialListResponse
+        TaskControlKind.runner_dial_remove       => runner_dial_remove       :RunnerDialRemoveResponse
+        TaskControlKind.runner_kick              => runner_kick              :RunnerKickResponse
 
 # --- runner enrollment (2026-10-27-runner-enrollment-design.md) --------------
 # The server lets a runner register under AuthRole.runner only when it signs
@@ -2915,6 +2956,9 @@ format RunnerUnenrollBody:
     label :[label_len]u8
     runners_len :u16
     runners :[runners_len]RunnerKeyUser
+    # The dial records bound to the key, removed with it (on ok only).
+    removed_dials_len :u8
+    removed_dials :[removed_dials_len]u32
 
 format RunnerKeysRequest:
     reserved :u8
@@ -2941,6 +2985,105 @@ format RunnerKeyUser:
     id :RunnerID
     hostname_len :u8
     hostname :[hostname_len]u8
+
+# --- persistent reverse dial and runner kick ---------------------------------
+# (2026-11-04-persistent-reverse-dial-and-runner-kick-design.md)
+# A dial record is a runner the server keeps dialing: an ordered list of
+# candidate addresses, kept as TEXT so every attempt re-resolves them, bound to
+# one enrolled key.
+
+enum RunnerDialStatus:
+    :u8
+    ok                  = "ok"
+    invalid_candidates  = "invalid_candidates"   # add: none given, over a limit, unparsable, or a transport the server has no leg for
+    key_not_found       = "key_not_found"        # add: no enrolled key has the prefix
+    ambiguous_key       = "ambiguous_key"        # add: more than one enrolled key has the prefix
+    not_found           = "not_found"            # remove: no record has the id
+    duplicate_candidate = "duplicate_candidate"  # add: a candidate's text is already another record's
+
+enum RunnerDialState:
+    :u8
+    dialing   = "dialing"
+    connected = "connected"
+    waiting   = "waiting"     # backing off; next_attempt and last_error say when and why
+    duplicate = "duplicate"   # another record's connection displaced this one's; no longer dialing
+
+format RunnerDialCandidate:
+    text_len :u8
+    text :[text_len]u8   # e.g. "ws:runner.example:8540-*"
+
+format RunnerDialAddRequest:
+    key_prefix_len :u8
+    key_prefix :[key_prefix_len]u8   # hex text, 8 to 64 characters
+    label_len :u8
+    label :[label_len]u8             # at most 64 bytes
+    candidates_len :u8
+    candidates :[candidates_len]RunnerDialCandidate   # 1 to 8, at most 512 bytes of text in total
+
+format RunnerDialAddResponse:
+    status :RunnerDialStatus
+    id :u32   # the new record's id on ok
+
+format RunnerDialListRequest:
+    reserved :u8
+
+format RunnerDialListResponse:
+    request_id :u32
+    stream_id :u64   # the rows travel on this stream (RunnerDialListBody)
+
+format RunnerDialListBody:
+    rows_len :u16
+    rows :[rows_len]RunnerDialRow
+
+format RunnerDialRow:
+    id :u32
+    label_len :u8
+    label :[label_len]u8
+    key :[32]u8
+    candidates_len :u8
+    candidates :[candidates_len]RunnerDialCandidate
+    dial_state :RunnerDialState   # `state` is a bgn keyword
+    runner :RunnerID          # connected: the runner on the record's connection; else the last one, or zero
+    answered :u8              # connected: index of the candidate that answered; 0xff = none
+    next_attempt_unix_ms :u64 # waiting: when the next attempt starts; else 0
+    last_error_len :u16
+    last_error :[last_error_len]u8
+    added_at_unix_ms :u64
+    added_by_len :u8
+    added_by :[added_by_len]u8
+    duplicate_of :u32         # duplicate: the record whose connection displaced this one's; else 0
+
+format RunnerDialRemoveRequest:
+    id :u32
+
+format RunnerDialRemoveResponse:
+    status :RunnerDialStatus
+
+enum RunnerKickStatus:
+    :u8
+    left                   = "left"                    # the runner ended its connection itself
+    closed_without_leaving = "closed_without_leaving"  # it did not within 10 s; the server closed it
+    not_found              = "not_found"
+    ambiguous_prefix       = "ambiguous_prefix"
+    in_use                 = "in_use"                  # it has live tasks and force is unset
+
+format RunnerKickRequest:
+    prefix_len :u8
+    prefix :[prefix_len]u8   # hex text of the runner identity, 8 to 32 characters
+    force :u1
+    reserved :u7
+
+format RunnerKickResponse:
+    request_id :u32
+    status :RunnerKickStatus
+    stream_id :u64   # RunnerKickBody; 0 for not_found / ambiguous_prefix
+
+format RunnerKickBody:
+    runner :RunnerKeyUser
+    tasks_len :u16
+    tasks :[tasks_len]TaskID        # in_use: the live tasks in the way; else the tasks the kick ended
+    removed_dials_len :u8
+    removed_dials :[removed_dials_len]u32
 
 enum SetCapsStatus:
     :u8
