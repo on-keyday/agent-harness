@@ -182,7 +182,7 @@ func renderList(lr *protocol.ListResultBody, out io.Writer) {
 		for i, ar := range r.AllowedRoots {
 			roots[i] = string(ar.Path)
 		}
-		fmt.Fprintf(out, "  %s  host=%s  os=%s  tasks=%d/%d  %s  roots=%s  key=%s  id=%s  cid=%s\n",
+		fmt.Fprintf(out, "  %s  host=%s  os=%s  tasks=%d/%d  %s  roots=%s  key=%s  link=%s  id=%s  cid=%s\n",
 			runnerStatusStr(r.Status),
 			string(r.Hostname),
 			RunnerGOOSStr(r.Goos),
@@ -191,6 +191,7 @@ func renderList(lr *protocol.ListResultBody, out io.Writer) {
 			agentProfilesStr(r.AgentProfiles, string(r.AgentBin), r.SkillsInjected()),
 			strings.Join(roots, ","),
 			RunnerKeyStr(r),
+			RunnerLinkStr(r),
 			r.Id.Hex(),
 			RunnerCIDStr(r.Cid),
 		)
@@ -344,7 +345,7 @@ func renderListTree(lr *protocol.ListResultBody, out io.Writer) {
 		for i, ar := range r.AllowedRoots {
 			roots[i] = string(ar.Path)
 		}
-		fmt.Fprintf(out, "  %s  host=%s  os=%s  tasks=%d/%d  %s  roots=%s  key=%s  id=%s  cid=%s\n",
+		fmt.Fprintf(out, "  %s  host=%s  os=%s  tasks=%d/%d  %s  roots=%s  key=%s  link=%s  id=%s  cid=%s\n",
 			runnerStatusStr(r.Status),
 			string(r.Hostname),
 			RunnerGOOSStr(r.Goos),
@@ -353,6 +354,7 @@ func renderListTree(lr *protocol.ListResultBody, out io.Writer) {
 			agentProfilesStr(r.AgentProfiles, string(r.AgentBin), r.SkillsInjected()),
 			strings.Join(roots, ","),
 			RunnerKeyStr(r),
+			RunnerLinkStr(r),
 			r.Id.Hex(),
 			RunnerCIDStr(r.Cid),
 		)
@@ -409,6 +411,12 @@ type runnerJSON struct {
 	// enrollment store.
 	Key      string `json:"key"`
 	KeyLabel string `json:"key_label"`
+	// Link is how the runner is connected (dialed_in / dialed_out /
+	// dial_record / via); LinkRecord the dial record's 8-hex id and LinkVia
+	// the relay runner's identity, "" when the link has none.
+	Link       string `json:"link"`
+	LinkRecord string `json:"link_record"`
+	LinkVia    string `json:"link_via"`
 }
 
 // RunnerKeyStr is what a runner row shows for the key it authenticated with:
@@ -570,6 +578,9 @@ func renderListJSON(lr *protocol.ListResultBody, out io.Writer) {
 			Roots:          roots,
 			Key:            hex.EncodeToString(r.Key[:]),
 			KeyLabel:       string(r.KeyLabel),
+			Link:           r.Link.String(),
+			LinkRecord:     runnerLinkRecordJSON(r),
+			LinkVia:        runnerLinkViaJSON(r),
 		})
 	}
 

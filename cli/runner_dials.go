@@ -73,6 +73,20 @@ func RunnerLinkStr(r protocol.RunnerInfo) string {
 	return r.Link.String()
 }
 
+func runnerLinkRecordJSON(r protocol.RunnerInfo) string {
+	if r.Link != protocol.RunnerLink_DialRecord {
+		return ""
+	}
+	return FormatDialID(r.LinkRecord)
+}
+
+func runnerLinkViaJSON(r protocol.RunnerInfo) string {
+	if r.Link != protocol.RunnerLink_Via {
+		return ""
+	}
+	return r.LinkVia.Hex()
+}
+
 func RunnerDialAddWith(ctx context.Context, c taskControlClient, candidates []string, keyPrefix, label string) (protocol.RunnerDialStatus, uint32, error) {
 	r := protocol.RunnerDialAddRequest{}
 	if !r.SetKeyPrefix([]byte(keyPrefix)) {

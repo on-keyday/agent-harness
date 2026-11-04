@@ -46,6 +46,12 @@ const idColumnMinWidth = 72
 // keeps absorbing the slack. Below it the key is in the detail popup.
 const keyColumnMinWidth = 100
 
+// linkColumnMinWidth is where the Link column joins: how the runner is
+// connected (cli.RunnerLinkStr — in / out / dial:<id> / via:<id>). Before
+// Roots, like Key, so Roots keeps absorbing the slack. Below it the link is in
+// the detail popup.
+const linkColumnMinWidth = 120
+
 // runnerColsFor is the column set for a panel of the given width. One function
 // so NewRunners, SetSize and the row builder cannot disagree about how many
 // cells a row has: bubbles indexes row[i] per COLUMN and panics on a mismatch,
@@ -61,6 +67,10 @@ func runnerColsFor(width int) []table.Column {
 	}
 	if width >= keyColumnMinWidth {
 		cols = append(cols[:4:4], table.Column{Title: "Key", Width: 12}, cols[4])
+	}
+	if width >= linkColumnMinWidth {
+		roots := cols[len(cols)-1]
+		cols = append(cols[:len(cols)-1:len(cols)-1], table.Column{Title: "Link", Width: 12}, roots)
 	}
 	if width < idColumnMinWidth {
 		return cols
@@ -80,6 +90,9 @@ func (m *RunnersModel) showsID() bool { return m.width >= idColumnMinWidth }
 
 // showsKey reports whether the current column set includes Key.
 func (m *RunnersModel) showsKey() bool { return m.width >= keyColumnMinWidth }
+
+// showsLink reports whether the current column set includes Link.
+func (m *RunnersModel) showsLink() bool { return m.width >= linkColumnMinWidth }
 
 func NewRunners() RunnersModel {
 	cols := runnerColsFor(0)
@@ -155,6 +168,9 @@ func (m *RunnersModel) rebuild() {
 		)
 		if m.showsKey() {
 			row = append(row, cli.RunnerKeyStr(r))
+		}
+		if m.showsLink() {
+			row = append(row, cli.RunnerLinkStr(r))
 		}
 		row = append(row, runnerRootsCell(r))
 		rows = append(rows, row)

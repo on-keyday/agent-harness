@@ -1730,6 +1730,12 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					// (label, or key prefix); key is raw.
 					"keyLabel": cli.RunnerKeyStr(r),
 					"key":      hex.EncodeToString(r.Key[:]),
+					// link is the display string ls prints as link=; the
+					// raw kind, record id and relay identity ride beside it.
+					"link":       cli.RunnerLinkStr(r),
+					"linkKind":   r.Link.String(),
+					"linkRecord": float64(r.LinkRecord),
+					"linkVia":    r.LinkVia.Hex(),
 				})
 			}
 			tasks := make([]any, 0, len(lr.Tasks))

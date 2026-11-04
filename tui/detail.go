@@ -127,6 +127,13 @@ func formatRunnerDetail(r protocol.RunnerInfo) string {
 	// paths its roots are spelled in.
 	fmt.Fprintf(&sb, "os:            %s\n", cli.RunnerGOOSStr(r.Goos))
 	fmt.Fprintf(&sb, "key:           %s (%s)\n", string(r.KeyLabel), cli.KeyPrefix16(r.Key[:]))
+	// How it is connected, at every width (the table shows it from 120 cells).
+	switch r.Link {
+	case protocol.RunnerLink_Via:
+		fmt.Fprintf(&sb, "link:          %s (relay %s)\n", cli.RunnerLinkStr(r), r.LinkVia.Hex())
+	default:
+		fmt.Fprintf(&sb, "link:          %s\n", cli.RunnerLinkStr(r))
+	}
 	fmt.Fprintf(&sb, "agent:         %s\n", agentProfilesDescriptor(r.AgentProfiles, string(r.AgentBin), r.SkillsInjected()))
 	fmt.Fprintf(&sb, "tasks:         %d active / %d max\n", r.ActiveTasksLen, r.MaxTasks)
 	for i, root := range r.AllowedRoots {

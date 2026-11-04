@@ -3767,3 +3767,25 @@ omitted: 3/4/5/6 — no key, button or picker (spec D19: administrative verbs,
 n/a:     the rest; no task field, no spawn option. The runner-row `link`
          field is the next commit's walk.
 missed:  —
+
+### 2026-11-04 (pre-landing, continuation) — `RunnerInfo.link` on runner rows
+
+done:    11 (`ls` rows, BOTH renderers — renderList and renderListTree carry
+         the same format string; `link=` after `key=`), 12 (`ls --json`:
+         `link` enum name, `link_record` 8 hex / "", `link_via` 32 hex / ""),
+         18 (`formatRunnerDetail`: `link:` at every width, the relay's full
+         identity for via), 18a (`Link` column from 120 cells before Roots;
+         `TestRunnerTableLinkColumnFrom120` walks 200→119→120→60→200 with
+         the cell count checked against the columns), 23 (wasm runner map:
+         `link` display string + `linkKind` / `linkRecord` / `linkVia` raw),
+         31 (link is printed for every runner — it always has one; the two
+         id fields are "" when the link kind has none, absence not value),
+         32 (`cli.RunnerLinkStr` is the only formatter: ls, TUI, wasm), 34
+         (the column set varies with width: goes through
+         `swapColumnsAndRebuild`, as Key does); WebUI runner row meta
+         `link=` (cmd_test.mjs runnerRowModel cases)
+omitted: 16/17/19/20/21 — task surfaces; a link is a runner's, and a task
+         row joins its runner by id already
+n/a:     13 (whoami describes the caller), 14 (session ls lists sessions),
+         22 (no dialog edits it), the rest
+missed:  —
