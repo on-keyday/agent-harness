@@ -46,9 +46,16 @@ server dials it. Today that works once and then stops working.
   min). When that GC fires, it cancels the tasks the new server has just
   assigned.
 
+- **P6 — no surface says how a runner is connected.** `RunnerInfo` has no
+  field for the direction of a runner's connection, or for a relay
+  (`runner/protocol/message.bgn:901-950`; `RunnerEntry.Via` is server-side
+  only). An operator can only guess from the port in `cid=`. With records
+  added by this spec, that guess would also be the only way to tell whether
+  kicking a runner removes a record.
+
 ## Scope
 
-This spec covers all of P1–P5. Persistence and kick are in one document
+This spec covers all of P1–P6. Persistence and kick are in one document
 because both append to `message.bgn` and both decide what happens to a dial
 registration. A kick of a reverse-dialed runner must remove its registration,
 or the server dials the runner straight back.
@@ -80,6 +87,8 @@ worth a second look.
 | D17 | `runner dial rm` stops re-dialing and does **not** close a live connection. To disconnect now, use `runner kick`, which also removes the registration (D9) | this spec |
 | D18 | `server dial-runner` (one dial) and `--via` stay as they are. A persistent registration through a relay runner is out of scope | this spec |
 | D19 | Kick and dial-registration verbs are reached from the command line on all three surfaces (CLI, TUI cmdline, WebUI command input). No buttons or keybindings: like `runner enroll` and `server dial-runner`, these are administrative verbs run a handful of times (`NoModalSurface` with that reason) | this spec |
+| D21 | Runner rows show how the runner is connected, as a new `RunnerInfo.link`: `dialed_in` (the runner dialed the server), `dialed_out` (one-shot `server dial-runner`), `dial_record` with the record id, or `via` with the relay runner's identity. Today nothing on any surface says which direction a runner's connection runs: `RunnerInfo` has no such field (`runner/protocol/message.bgn:901-950`), and `RunnerEntry.Via` never leaves the server. The only clue is the port in `cid=`. This field also answers "will kicking this runner remove a record" before the kick | operator (2026-11-04) |
+| D22 | The TUI runner table shows `Link` as a width-conditional column from 120 columns up, placed before Roots (the flex column), 12 cells wide. Below 120 it appears in the detail popup only, like Key below 100 (`tui/runners.go:42-47`). Values in the cell: `in`, `out`, `dial:<8 hex>`, `via:<8 hex>` | this spec (operator delegated it) |
 | D20 | One runner, one connection, whoever dialed it. A second registration of the same identity on the same key displaces the first (`server/registry.go:185-213`, `displaced`), so two dialers aimed at one runner would replace each other forever, killing tasks on every switch. Three rules prevent that. **Adopt:** before an attempt, if the registry already holds a runner on the bound key whose ConnectionID has the transport and address of one of the record's resolved candidates, the record takes that connection as its live one and does not dial. Only transport and address are compared; the ID part is random per dial, as with `ViaDialAddr`. This covers moving a runner from a one-shot `server dial-runner` to a record without touching its tasks. **Exact duplicate:** `runner dial add` refuses a candidate whose text equals a candidate of an existing record (`duplicate_candidate`). **Runtime duplicate:** if a record's connection displaces another record's live connection, the displaced record goes to state `duplicate` (naming the other record's id) and stops dialing until it is removed. The tasks on the displaced connection end once; there is no loop. A one-shot `server dial-runner` that displaces a record's connection ends it once as well; the record then adopts the new connection by the adopt rule | this spec (builder check, 2026-11-04) |
 
 ## Non-goals
@@ -254,6 +263,22 @@ All values are appended, so existing ordinals stay stable.
   travels on the stream.
 - `RunnerUnenrollBody` gains the list of removed dial records.
 - `RunnerRequestType.leave` → `LeaveRequest { by (u8 len, ≤64) }`.
+- `RunnerInfo` gains, appended at its end (D21): `link :RunnerLink`, then
+  `link_record :u32` (zero unless `dial_record`) and `link_via :RunnerID`
+  (zero unless `via`). `enum RunnerLink :u8 { dialed_in, dialed_out,
+  dial_record, via }`. Clients (CLI / TUI / WebUI) decode `RunnerInfo`, not
+  runners, so the restart order of the fleet is unaffected. Whether an old
+  client can still decode a snapshot that carries the new fields has not been
+  checked. `wire-skew-check.sh` exercises runner × server only, so the plan
+  rebuilds clients together with the server and does not promise skew
+  tolerance (no compat shims: Pitfall 10).
+  Server side: the origin is known at the moment the connection is made. A
+  connection from the accept loop is `dialed_in`. A connection from
+  `OnDialed` carries its origin to the runner-hello handler in the same
+  per-ConnectionID map as D12's record (`pendingViaInfo`'s pattern):
+  one-shot, record id, or via. `RunnerEntry` stores it. When a record
+  adopts a connection (D20), the entry's link becomes `dial_record` with
+  that record's id.
 - Status enums: `RunnerDialStatus { ok, invalid_candidates, key_not_found,
   ambiguous_key, not_found, duplicate_candidate }`; `RunnerKickStatus { left,
   closed_without_leaving, not_found, ambiguous_prefix, in_use }`.
@@ -274,7 +299,11 @@ format: an old runner logs a decode error, and kick falls back to D15.
 | WASM bridge | One function per verb, beside `runnerEnroll` / `runnerKeys` |
 | TUI / WebUI buttons, keys | omitted (D19) |
 | `runner dial ls` | Human rows and `--json`. Every field is printed, a zero value is not hidden (checklist 31) |
-| `ls` runner rows, TUI runner table and detail | omitted: `runner dial ls` names the runner identity of each live record, which is the join an operator needs. A dial-id field on `RunnerInfo` would be a snapshot wire change for the same information |
+| `ls` runner rows and `ls --json` (`cli/list.go`) | `link=in` / `link=out` / `link=dial:<8 hex>` / `link=via:<8 hex>` on every row; JSON carries `link`, `link_record`, `link_via` (D21). The value is always printed, never elided (checklist 31) |
+| TUI runner table (`tui/runners.go` `runnerColsFor`) | `Link` column at ≥120 columns (D22). It goes through `applyColumns`, because the column set varies with width (checklist 34). `TestViewFitsTerminalWidth` covers 120 |
+| TUI runner detail (`tui/detail.go` `formatRunnerDetail`) | A `link:` line at every width, with the full record id or relay identity |
+| WebUI runner rows | `link` in the row meta, beside the key label |
+| wasm snapshot (`cmd/harness-webui-wasm/main.go`) | `link`, `linkRecord`, `linkVia` in the runner conversion |
 | `caps` catalog (`cli/verb/caps.go`) | `runner_admin`: "+ runner dial add / ls / rm". `runner_enroll`: "+ runner kick" |
 | `runner unenroll` output | Lists removed dial records |
 | README | Reverse-dial section: persistence, listen mode needs a server key, `runner kick` |
@@ -305,6 +334,10 @@ Unit:
   Also check the order the test relies on: the server sends
   `RunnerHelloResponse` before any `AssignTask` on that connection.
 - D10 flag check.
+- D21: each origin yields its link (accept loop, one-shot dial, record,
+  via), and adoption rewrites it to `dial_record`. Rendering in `ls`, `ls
+  --json`, the TUI detail, the TUI table at 119 and 120 columns, and the
+  WebUI row.
 - Datagram-size test.
 
 Dummy-harness E2E, run as the operator would type the commands:
