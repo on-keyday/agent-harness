@@ -14,6 +14,22 @@ reading a worker's diff — is the `supervising-workers` skill. All required
 credentials are passed via `HARNESS_*` environment variables (already set by
 the runner) — never pass them as flags.
 
+The rest of this skill is the part every agent needs on every task. The
+details live in `references/` beside this file — under
+`.claude/skills/harness-cli/references/` in a worktree, or from the binary with
+`harness-cli skill harness-cli <file>` (see "Reading the skills"):
+
+| File | What is in it |
+|---|---|
+| `references/reading.md` | `agent read` (one message whole, a retained topic's history), `agent thread`, how a body is rendered (`payload` / `payload_text` / `payload_b64`) |
+| `references/retract-purge.md` | `agent retract`, auto-retire on reply, `agent purge`, `agent retained`, the operator's `board retract` / thread forms |
+| `references/reach.md` | exactly which topics you may publish to and read, `board_peer`, side and team channels, `from.agent`, `sender_kind` |
+| `references/topics.md` | per-subject reply topics and their limits, `board retain`, joined topics, "my message never arrived" with the `board` commands |
+| `references/peers.md` | peers that are not claude or not skill-injected, and how to read the `+skills` marker |
+| `references/lifetimes.md` | the task / conversation / process / server lifetimes, and which skill text (binary or injected) you are reading |
+| `references/task-state.md` | what `Detached`, `cowrite=` / `viewer=`, `lifecycle=` and `program=` mean on an `ls` row |
+| `references/scripting.md` | `agent wait` / `agent dispatch` for scripts outside an agent turn |
+
 ## Reading the skills — `harness-cli skill`
 
 This document, and the other harness agent skills, are embedded in the
@@ -35,32 +51,10 @@ was injected — a `--no-worktree` task, a runtime that never reads
 `.claude/skills` — those files exist only in the binary: print the one you need,
 or `--extract` the skill to a scratch directory and run its scripts from there.
 
-`harness-cli version` reports the commit this binary was built from, which is
-also the version of every skill it PRINTS — they are embedded in it. It does
-not describe the copies on disk under `.claude/skills/` and `.agents/skills/`:
-the runner writes those at spawn time out of its own binary, so their vintage
-comes from a different build and `version` cannot vouch for it. `--json` for
-the machine-readable form.
-
-**Expect the two to disagree.** A runner is a long-lived process holding the
-embed it started with, so every rebuild after that leaves the injected files
-older than what `harness-cli skill` prints. That is the ordinary case — no
-container involved — and nothing needs repairing: the next `harness-cli`
-invocation already runs the new binary, while the files on disk keep recording
-what the agent in this worktree was actually handed. Print the skill when you
-want the current text; open the file when you want to know what was injected.
-
-**The podman sandbox inverts it, and there the skew does not self-correct.**
-`harness-cli` is bridged in as a single-FILE bind mount, so the container holds
-the inode that existed at `podman run` time; a later rebuild writes a
-replacement and the running container keeps the old, now-unlinked one — the
-rebuild is invisible to it, not merely delayed, and only a NEW container picks
-one up (measured, not inferred).
-A confined agent can therefore be reading guidance several commits old with no
-way to refresh it in place. `version` still names the commit it was built from,
-but the repo's HEAD is not visible from in there, so it cannot judge whether
-that commit is current — compare the revision against a peer or ask the
-operator.
+`harness-cli version` names the commit this binary was built from — the version
+of every skill it prints. The copies on disk under `.claude/skills/` were written
+by the runner out of its own binary and are usually older; in the podman sandbox
+the bridged binary itself can be stale. Details: `references/lifetimes.md`.
 
 `skill ls` enumerates whatever is embedded — run it rather than trusting a
 list written here, which goes stale the moment a skill is added; an unknown
@@ -70,368 +64,46 @@ reference — resolves in any runtime, including non-claude / non-injected peers
 
 ## You may not be the first process on this task
 
-Three lifetimes are in play and only the last one is yours:
-
-- **the task id** — with its worktree and `harness/<id>` branch. Outlives
-  everything else.
-- **the conversation** — replayed into a fresh process when a session is
-  resumed.
-- **this OS process** — new every time.
-
-`session new --resume <id>`, and the TUI/WebUI resume actions, reuse the first
-two and replace the third, with a **new auth ticket** and possibly a different
-runner. Nothing in your environment marks the difference: `HARNESS_TASK_ID`,
-`HARNESS_RUNNER_ID` and `HARNESS_AUTH_TICKET` look the same on a first run as on
-a resume, and a replayed conversation reads as continuous from the inside. So
-"I am the process that started this task" is the default assumption, and it is
-silently wrong more often than not.
-
-Each of the three has a knowable start. The harness reports only the first, and
-the first alone settles whether you are a later incarnation:
-
-- **The task** — the harness will tell you. `harness-cli ls --json`, your own
-  row: a non-empty **`resumed_by`** means this task has been resumed (the value
-  is the surface that did it). **`created_at`** is when the id was minted while
-  **`started_at`** is refreshed on every (re)assignment, so a large gap between
-  them says the same thing independently. Checked 2026-08-09 against 28 live
-  tasks: the 26 with `resumed_by` set all showed week-to-month gaps, the 2
-  without it showed 0.00 days.
-- **The conversation** — a coding agent keeps session history in some form,
-  and its first entry dates the conversation, which is a different date from
-  either of the others. Where that history lives, and whether reading it is
-  permitted, is up to your runtime and your instructions, not this skill.
-- **The process** — every OS exposes a process start time, each by its own
-  mechanism.
-
-**The server has a lifetime of its own, independent of all three.** Its board
-is in memory: a restart drops every retained message and every subscription,
-then re-seeds only `chat.<short-id>` for live assignments. The exception is a
-topic someone kept with `board retain` (see "Keeping a topic"): its messages
-come back, and so do its members (see "Joined topics"), but not its plain
-subscribers. Anything else you
-subscribed to is gone, and `agent subscriptions` reports the reduced set without
-comment. It is detectable without any capability: a board `seq` carries the
-server's boot time in its high bits (`seq >> 20` is Unix ms), so a fresh `seq`
-whose prefix differs from one you saw earlier means the server restarted in
-between.
-
-**What follows from being a later incarnation** is the part that matters. Your
-ticket, and possibly your runner, are not the ones the earlier incarnation
-used. Do not reason from "what I set up last time": re-read state from disk or
-from the server instead of assuming that a subscription, a file, or a process
-you remember arranging is still there. The conversation you can see is evidence
-about what was *said*, not about what is currently *true*.
+Three lifetimes are in play — the task id (with its worktree and branch), the
+conversation (replayed into a fresh process on resume), and this OS process
+(new every time, with a new auth ticket and possibly another runner). Nothing in
+your environment marks the difference. Your own `ls --json` row says whether the
+task was resumed (`resumed_by`, or a large gap between `created_at` and
+`started_at`). Either way, do not reason from "what I set up last time": re-read
+state from disk or the server instead of assuming a subscription, file or
+process you remember is still there. The server's board has a lifetime of its
+own — a restart drops subscriptions and unretained messages, and changes the
+high bits of every new `seq`. Details: `references/lifetimes.md`.
 
 ## Inbox is automatic — do not poll
 
-**The split is session vs one-shot, NOT claude vs everything else.** This
-paragraph used to say the opposite — that only a Claude agent receives
-anything automatically — and it was wrong in the way most likely to mislead
-the readers it addressed. Two things it got backwards:
+**The split is session vs one-shot, not claude vs everything else.** The runner
+injects `.claude/settings.json` and `.codex/hooks.json` into every injected
+worktree, whatever agent it spawns there; their `UserPromptSubmit` hook runs
+`harness-cli agent inbox --json --user-prompt-submit-hook`, which hands you the
+pending messages at the start of a turn. Codex skips hooks it has not been told
+to trust (review them with `/hooks`); other runtimes may read neither file.
 
-- **The hook file is injected for every runtime.** The runner writes
-  `.claude/settings.json` and `.codex/hooks.json` into an injected worktree
-  without consulting which agent it is about to spawn there.
-- **Waking is gated on having a live stdin, not on a runtime.** A session —
-  interactive or event-stream — has one; **a one-shot never does and can never
-  be woken**, whatever it runs. That is the real dividing line.
+How a turn starts differs:
 
-What remains runtime-dependent is narrow: whether anything on your side turns
-a new turn into an inbox fetch. Claude Code reads `.claude/settings.json`;
-Codex reads `.codex/hooks.json`. Codex requires the project configuration and
-the exact hook definitions to be trusted: review them with `/hooks` in its CLI.
-New or changed hooks are skipped until trusted; the runner does not bypass
-that review. Other runtimes may not consume either file. If no hook fetches
-messages, follow the wake prompt and run `harness-cli agent inbox --json`.
+- An **interactive session** gets a live wake: when a message lands while it is
+  idle, the runner types a `<harness:agentboard-wake>` prompt into the PTY,
+  which starts a turn and fires the hook.
+- An **event-stream session** gets the same text as a user turn.
+- A **one-shot task** (`submit`) has no stdin and can never be woken: the hook
+  fires once, at the start. Call `harness-cli agent inbox` yourself if messages
+  may have arrived since.
 
-Do not conclude from your runtime's name that you are in either camp — check
-whether messages actually arrive, and remember that a one-shot task is
-push-less regardless.
+If no hook fetches messages for you, follow the wake prompt and run
+`harness-cli agent inbox --json`. **Calling it by hand is always safe**: it
+moves nothing, so it can never take a message away from the hook; `--since N`
+bounds it from below. Only `--user-prompt-submit-hook` advances the server-side
+delivery mark, in the same operation that hands the messages over. The operator
+sees where you are (`board subscribers`: `shown=<seq> pending=<n>` per topic).
 
-`harness-cli agent inbox` is wired into both the Claude Code and Codex hooks:
-
-- `UserPromptSubmit` runs
-  `harness-cli agent inbox --json --user-prompt-submit-hook`
-  (delivers any pending messages at the start of a turn).
-
-That covers every task kind, but how a new turn actually *starts* differs.
-An **interactive session** (`session new`) gets a live wake:
-when the runner detects new agentboard messages while such a session is idle,
-it writes a synthetic `<harness:agentboard-wake>` prompt directly into the
-PTY as real keystrokes, which the agent's terminal UI submits as a new turn —
-that fires `UserPromptSubmit` and delivers the pending messages just like any
-other turn. This works across agent runtimes, not just Claude Code. An
-**event-stream session** (`session new --stream`) is woken too: there is no
-PTY, so the runner hands the same `<harness:agentboard-wake>` text to the
-session as a user turn, and it reaches you the way a turn the operator typed
-does. A **one-shot task** (`submit`) has no stdin to write to and gets no wake:
-it runs a single turn, so `UserPromptSubmit` fires exactly once, at the
-start. If you're a one-shot task and suspect messages have landed since then,
-call `harness-cli agent inbox` yourself — nothing will push it to you.
-
-You do NOT need to call `inbox` manually in the common case (interactive
-sessions, or a one-shot task that only needs what already arrived at turn
-start). The hook already feeds the messages into your context.
-
-**Calling `harness-cli agent inbox` by hand is always safe.** It is a plain,
-idempotent read of the rings on every topic you subscribe to: it moves
-nothing, so running it twice returns the same thing twice and it can never
-take a message away from the hook. Re-read whenever you are unsure what you
-were shown. `--since N` bounds a read from below when you are polling and want
-only what is new to you (a runtime with no hook does this); it writes nothing
-either.
-
-**How the hook avoids re-delivering.** The position lives on the SERVER, per
-(task, topic) — how far the automatic injection path has reached for you. Only
-`--user-prompt-submit-hook` moves it, and it does so in the same server-side
-operation that hands the messages over, so there is no window where a batch was
-delivered but not recorded. You cannot advance it by accident: there is no flag
-that moves the mark without also producing the hook envelope.
-
-An operator can see exactly where you are — `harness-cli board subscribers`
-reports `shown=<seq> pending=<n>` per topic — so "did that message actually
-reach the agent" is now something to look up rather than guess at.
-
-### Reading one message whole — `agent read`
-
-```
-harness-cli agent read <seq>
-```
-
-One retained message, addressed by seq, emitted as a single JSON-Lines
-record with the full body. Two things send you here:
-
-- A hook-delivered record with `payload_omitted: true`. Bodies over 64 KiB
-  are not spliced into your prompt; the record carries `payload_bytes` and a
-  `read_with` command naming this. Run it when you decide the body is worth
-  the context — or redirect it to a file and read it in pieces, which is why
-  it was withheld rather than truncated.
-- A `seq` you already have from somewhere else — an `in_reply_to` on a
-  message whose parent you never saw, or a row from `agent retained`.
-
-Unlike `agent inbox`, it fetches nothing but the message you asked for, and
-it never truncates. Like a plain `inbox`, it moves no delivery position, so it
-is always safe to run by hand.
-
-Reading is limited to topics you subscribe to. A seq outside them reports
-the same "not readable" as one that has rotated out of its ring, so it is
-not a way to browse topics you have not joined.
-
-`agent read <seq>` sees only the ring. **"Rotated out" is not "gone" on a
-retained topic** (see "Keeping a topic"): its older messages are on the
-server's disk, and you page them with the topic form instead:
-
-```bash
-harness-cli agent read --topic example.topic                  # the 20 newest, newest first
-harness-cli agent read --topic example.topic --before <seq>   # the 20 before that seq
-harness-cli agent read --topic example.topic --limit 100      # a bigger page (max 65535)
-```
-
-`example.topic` is a placeholder — substitute a topic you actually subscribe
-to. Topic names are arbitrary: any name you see on the board is an ordinary
-topic, not a reserved example, so never assume a name is illustrative.
-
-Same record shape, one line per message, withdrawn messages left out; the
-next page is `--before` the last seq printed, and an empty page is the start
-of the history. It needs no capability and covers only topics you subscribe
-to — including what was posted before you subscribed. You cannot see whether
-a topic is retained (`board topics` needs `board_observe`), but this can tell
-you: rows coming back from `--before <oldest seq in the ring>` exist only on
-disk. No rows proves nothing — a retained topic with fewer than 64 messages
-has nothing older either.
-
-### Seeing the whole exchange — `agent thread`
-
-`agent read <seq>` gives you one parent. This gives you the chain.
-
-```bash
-harness-cli agent thread                      # every chain you can see
-harness-cli agent thread --seq 42             # the chain containing seq 42
-harness-cli agent thread --task <32-hex>      # chains involving that task (repeatable)
-harness-cli agent thread --headers-only       # rows without bodies
-harness-cli agent thread --json               # JSON Lines
-```
-
-**No capability is required**, for the same reason `retained` needs none: it
-summarizes topics you already subscribe to, and gating it would gate a read
-more tightly than the content it reports. A task spawned with no `--caps` at
-all can run it. A subscription you can no longer read in full — another
-task's `chat.<id>` after `board_observe` was taken away from you — contributes
-only the messages you sent there, and the command says so on stderr.
-
-Read what it shows you carefully, because it is bounded by what YOU can see:
-
-- It covers **the topics this task subscribes to**, which for most tasks is
-  `chat.<your-short-id>` alone. Your peer receives on its own topic, so its
-  half of the conversation — the messages you sent it — is not yours to read.
-  A chain therefore often arrives as a **fragment rooted at an ORPHAN**: the
-  reply is here, the message it answers is on the peer's topic. That is the
-  view working, not a gap in it.
-- **Indent marks a fork, not a reply.** A message answered once keeps its
-  parent's depth; only a message answered more than once steps right. Every
-  row carries `re=<seq>`, which names its parent exactly — read that, not the
-  indentation, when you need the linkage. (A back-and-forth is linear, so
-  indenting per reply would push a 20-turn exchange 60 columns right and say
-  nothing.)
-- A message that was answered has usually been **auto-retired** by that reply,
-  so it is withdrawn and you will not see it here at all. What you see is what
-  is still live on your topics.
-
-The operator's counterpart is `board thread`, which reads every topic on the
-board. It needs `board_observe`, so do not reach for it from a confined task:
-it will be denied, and the denial names the KIND the request carried
-(`BoardTopics`) rather than the verb you typed.
-
-## Withdrawing a message you sent (`agent retract`)
-
-If you sent an instruction and it is now spent — the peer reported it done,
-or you superseded it — withdraw it. Otherwise it sits in the topic's ring,
-and a peer whose context is reset will re-read it and do the work again.
-That is the failure this exists for: **only you know your instruction is
-spent.** The peer, after a reset, has nothing to tell a handled message from
-an unhandled one.
-
-```bash
-harness-cli agent retract 42      # seq 42, which YOU published
-# {"status":"ok","seq":42}
-```
-
-The seq is the one `agent send` printed when you published it; `agent
-retained --topic <t>` lists seqs and senders if you no longer have it.
-
-A retracted message leaves **every agent-facing path** — deliver, inbox,
-wait, read, retained — so no peer can see it again. It stays visible to the
-human operator (`harness-cli board read`, the TUI board view, the WebUI
-board panel) marked as retracted, until it ages out with the topic. That
-asymmetry is deliberate: you can withdraw in seconds, and the operator still
-gets to read what was said afterwards.
-
-**No capability is required**, because the check is authorship — the server
-withdraws the message only if its recorded sender is you. Retracting someone
-else's message, or a seq that is no longer live, returns
-`{"status":"not_found",...}` (a no-op, exit 0). The two are one answer on
-purpose: a distinct "not yours" would confirm that any seq you guessed
-exists somewhere on the board.
-
-Retract is not `purge`. Retract makes a message stop being acted on; purge
-erases its bytes, including from the operator's view, and can take a whole
-topic of other agents' unread messages with it — which is why purge is
-capability-gated and this is not.
-
-**Somebody else can withdraw your message.** `harness-cli board retract <topic>
---seq <N>` makes the same move without the authorship check, gated on the
-`board_purge` capability instead — so the operator, or any task granted `board_purge`, can
-do it. It is the softer half of that bit rather than a new power: purge already
-reaches the same message and destroys it outright, and this leaves the payload
-readable on the operator surfaces. `--seq` is required, and purge's "seq 0 means
-the whole topic" shorthand is deliberately not inherited.
-
-Nothing announces it to you — your `agent retained` and the peer's inbox simply
-stop showing the message, exactly as if you had retracted it. The operator's
-`board read` is where the difference is legible: `RETRACTED at=<t> by=author`
-for your own retract, `by=purge_cap:<task-id>` (or `by=purge_cap:operator`) for
-this one.
-
-**A whole conversation can go at once.** `board retract-thread` and
-`board purge-thread` take the same `board_purge` bit and act on every message of one
-conversation, across each topic it spans — so an exchange you have been having
-can empty in a single operator action, your side and the peer's together. It is
-how a finished discussion is cleared: withdrawn first so a resumed peer cannot
-re-read spent instructions and redo them, destroyed later once whatever was
-worth keeping has been exported.
-
-**Read that as housekeeping, not as a fault, and do not re-send.** An exchange
-that vanishes is the one case where "the board lost my messages" and "somebody
-tidied up" look identical from in here, and re-sending a cleared conversation is
-the wrong repair for both. The one thing that IS distinguishable without asking:
-a **server restart** also empties the board, and it changes the high bits of
-every new `seq` (`seq >> 20` is the server's boot time in Unix ms), so a fresh
-seq whose prefix matches what you saw before means the server never went away —
-and that the emptiness was somebody's decision.
-
-### A reply retracts the message it answers
-
-You usually do not have to call `retract` at all. **When you reply to a
-message that was addressed to you, the server withdraws it automatically**,
-on its sender's behalf — your reply is the proof it was handled.
-
-Do not read the reverse as an ack. A message missing from the retained ring
-means replied, evicted, purged, **or** the server restarted; only the first
-is an acknowledgement.
-
-```bash
-harness-cli agent send --in-reply-to 42 --data '{"status":"done"}'
-#                       ^ seq 42 is withdrawn as a side effect
-```
-
-A withdrawn message can still be answered, so a follow-up to the same parent
-("done" after "on it") routes like the first reply did.
-
-It fires only when the message sat on **your own** `chat.<short-id>`, i.e.
-it was addressed to you specifically. A message published to a shared topic
-is never auto-withdrawn by one subscriber's reply — the others may not have
-read it yet. For those, the sender retracts explicitly.
-
-If you are sending something that must survive being answered — a standing
-instruction, or one whose reply is an acknowledgement rather than a
-completion — turn it off per message:
-
-```bash
-harness-cli agent send --topic chat.<short-id> --data '...' --no-retire-on-reply
-```
-
-## Purging a topic's server-side buffer (`agent purge`)
-
-The delivery mark only governs what the HOOK hands you next; the message itself
-stays in the server's per-topic ring buffer (default 64 entries) until it
-rotates out or the topic TTL-expires. A plain `agent inbox` therefore still
-shows it, marked or not. To drop a payload from the **server side** entirely:
-
-```bash
-harness-cli agent purge --topic chat.<short-id>            # whole topic ring
-harness-cli agent purge --self                             # your own inbound channel
-harness-cli agent purge --self --seq <N>                   # drop just message seq N
-```
-
-With no `--seq` (or `--seq 0`) `purge` deletes the topic's whole retained ring
-and reports how many messages were dropped
-(`{"status":"ok","topic":"...","purged":N}`). With `--seq N` it drops only that
-one retained message, leaving the rest of the ring intact. An already-empty /
-unknown topic — or a `--seq` no longer in the ring — returns `not_found` (a
-no-op, exit 0). The board seq counter is global, so purging does NOT reset
-sequence numbers — the server's delivery mark stays valid and a post-purge
-message is delivered exactly once.
-
-Because purge destroys live retained messages on a possibly-shared topic (it
-can wipe another agent's unconsumed inbound channel), it is gated by its own
-`board_purge` capability — distinct from `prune` (which only forgets terminal task
-records). An operator task holds it via `all`; a confined worker must be
-granted `--caps ...,board_purge` explicitly or it gets `denied`.
-
-### Choosing which message to purge — `agent retained` (metadata only)
-
-To choose a `--seq` without reading payloads (handy when a payload itself is
-what you want gone — e.g. it trips a moderation gate the moment it enters your
-context), list the ring as **metadata only**:
-
-```bash
-harness-cli agent retained --self                 # your inbound channel
-harness-cli agent retained --topic chat.<short-id>
-# {"seq":42,"in_reply_to":0,"from_task":"<hex>","from_hostname":"...","from_agent":"claude","size":1234,"received_at_ms":...}
-```
-
-`retained` returns one JSON line per retained message — seq, the seq it
-replies to (0 when it is not a reply), sender task id, size, receive time,
-plus `reply_to_topic` on the rows whose sender declared one — and **never the
-payload bytes**. It takes **no
-capability**: it is a keyed read of a topic you already name, and it never shows
-more than you could read anyway. On your own topics and on group topics that is
-the whole ring. On another task's `chat.<id>`, on `chat.operator`, or on a
-`tree.<id>` you are not in, it lists **only the messages you sent there**, and
-says so on stderr — so checking whether your own message is still sitting on a
-peer's topic needs no bit, while seeing everyone else's needs `board_observe`.
-Pick the offending `seq` from this list, then `purge --seq <N>` it — the
-payload is dropped server-side without ever entering anyone's context.
+Reading one message whole (bodies over 64 KiB arrive as `payload_omitted` with a
+`read_with` command), a whole thread, or a retained topic's older history:
+`references/reading.md`.
 
 ## Async by default — never block on a reply
 
@@ -469,44 +141,7 @@ Why this rule exists:
 shell-level escape hatches for scripting **outside** the agent's turn
 loop. The agent itself must not call them.
 
-For those scripts, briefly, so the rule above is the only thing you have to
-remember here: `wait --topic T [--since N] [--in-reply-to SEQ]` blocks for a
-matching message; `dispatch --topic T TEXT... [--reply-to R]` publishes and
-then blocks for the reply to THAT message — on your own `chat.<short-id>`,
-where the server routes a reply, or on `R` when you name one, since
-`--reply-to` declares the destination and waits there in a single flag.
-`dispatch` takes its body the same three ways `send` does, and prints what it
-published — `agent dispatch: published N bytes from <source> as seq S,
-delivered_to N` — on **stderr** before it starts waiting, so a body that went
-out empty shows up there rather than as a timeout minutes later; stdout stays
-the reply's JSON Lines. Neither writes any persistent position — `--since` is
-the caller's own resume point. A wait does not wake the task it belongs to for
-the topic it is waiting on: the waiter is already being handed the message, so
-a wake on top of it would type a `<harness:agentboard-wake>` prompt into an
-agent that has nothing new to read.
-
-**`wait` is "take everything after the cursor, block only if there is
-nothing" — not "wait for the next one".** It scans the retained ring BEFORE it
-blocks, so anything already there above `--since` comes back at once, and it
-comes back as a BATCH rather than one message. With `--since` omitted the
-cursor is 0, which the whole ring is above: on a topic that already holds
-messages, `wait` returns instantly with old ones and never waits at all.
-Measured: two pre-published messages came back together in 133 ms.
-
-That is why **a script meaning "wait for what happens NEXT" must pass
-`--since`** — the previous response's `next_cursor`, or a seq you already hold.
-Leaving it off does not look like a mistake: something IS returned, so the call
-reads as a successful wait for a message that in fact arrived earlier. It cost
-this repo a wrong diagnosis: a wake-suppression check ran `wait` with no
-`--since`, the wait exited on an old message before the publish under test, and
-the resulting wake was read as the suppression being broken.
-
-`dispatch` is built on the same scan and is safe from it in both directions: it
-sets `--since` to the seq it just published and filters on `in_reply_to`, so
-nothing retained beforehand can satisfy it — and a reply that arrives before its
-wait is even registered is still found, because the scan looks at the ring
-first. The property that traps a hand-written `wait` is the one that makes
-`dispatch` not miss a fast peer.
+Their semantics, for scripts: `references/scripting.md`.
 
 ## Sending
 
@@ -595,6 +230,26 @@ Collect the replies to one message with:
 harness-cli agent inbox --json --in-reply-to <seq>
 ```
 
+## A reply retires what it answers
+
+**When you reply to a message addressed to you (on your own `chat.<short-id>`),
+the server withdraws it automatically** — your reply is the proof it was
+handled. A message on a shared topic is never auto-withdrawn by one reply.
+
+If what you send must survive being answered — a standing instruction, or one
+whose reply is an acknowledgement rather than a completion — turn that off:
+
+```bash
+harness-cli agent send --topic chat.<short-id> --data '...' --no-retire-on-reply
+```
+
+**Withdraw your own spent instructions** with `harness-cli agent retract <seq>`
+(no capability; the check is authorship). Otherwise a peer whose context is
+reset re-reads them and does the work again — only you know an instruction is
+spent. A message missing from the ring is NOT an ack: it may have been
+replied, evicted, purged, or lost to a server restart. Purging, the metadata-only
+`agent retained`, and the operator's forms: `references/retract-purge.md`.
+
 ## Subscriptions
 
 Subscriptions persist across turns. The hook-driven inbox delivers messages
@@ -604,7 +259,7 @@ on every subscribed topic, so subscribe once at the start of the workflow.
 harness-cli agent subscribe   --topic build.events
 harness-cli agent unsubscribe --topic build.events
 harness-cli agent subscriptions   # JSON Lines: this agent's patterns, each with
-                                  # "joined" (member of the topic, see "Joined topics")
+                                  # "joined" (member of the topic, see references/topics.md)
 harness-cli agent topics          # JSON Lines: topics that have been PUBLISHED
                                   # to — not every topic. A subscribed name with
                                   # nothing published yet is absent, which is the
@@ -637,7 +292,7 @@ the operator reads it on the board.
 `chat.<short-id>`: the spawner already knows your task id, and anyone with
 a global visibility rank finds it with `ls`. If you have no id for the peer you need, get
 one (`ls`, or ask whoever spawned you); do not broadcast. Whether you may then
-send to it is a separate question — see "Who you can reach".
+send to it is a separate question — see "Reaching another agent".
 
 **Check that you have an inbox path; do not infer it from your name.** The
 inbound subscription is server-seeded for every agent runtime, and
@@ -654,109 +309,16 @@ so you reach it on its inbound topic `chat.<first-8-hex-of-task-id>`
 directly. No shared topic, no broadcast — only the target is woken. Nothing
 has to be announced for it to answer: its `--in-reply-to` comes back to you.
 
-### Who you can reach, and who can read you
-
-Without any capability a task publishes to its **base set**:
-
-- its own `chat.<id>`, and `chat.<id>.<suffix>` side channels;
-- its **creator's** `chat.<id>` and each **direct child's** `chat.<id>`;
-- `chat.operator`;
-- the **reply route of any message addressed to it** — one that arrived on its
-  own `chat.<id>` / `chat.<id>.*`, or that replies to a message it sent: the
-  sender's `chat.<id>`, or the `reply_to_topic` the sender declared. Someone who
-  spoke to you first can be answered whoever they are. Reading a group topic,
-  or another task's topic with `board_observe`, does NOT make its posters
-  answerable, and neither does a message sent with `agent send --no-contact` —
-  the flag for a sender that will read no answer, such as a tool publishing in
-  a task's name. Three more limits: a reply route that is a `tree.<id>` you are
-  not in stays closed; only 64 such routes are kept, and the one that has gone
-  longest without writing to you again is dropped first; and a server restart
-  forgets them — as can the operator, one route or all of them
-  (`board clear-contacts`). `harness-cli agent contacts` lists the ones you
-  hold now, newest first (JSON Lines, no capability), so check it rather than
-  assume a route you answered earlier is still open;
-- `tree.<full-32-hex-id>.<suffix>` for every task id on its own ancestor chain,
-  itself included;
-- a topic it is a **member** of — one the operator, or a task holding
-  `board_member`, joined it to (see "Joined topics").
-
-Anything else — a peer's `chat.<id>` you have no thread with, a free-form topic
-like `build.events` — needs the `board_peer` capability. A send outside your
-reach is refused, not dropped, with the ordinary capability denial plus the
-topic: `permission denied: AgentSend requires capability board_peer: <topic> is
-outside this task's reach …`, exit non-zero. Read it as "this topic needs
-board_peer", not "every send does" — the same line covers a send to a peer and
-not one to your creator. It is a fact about your grant, not a fault to work
-around: tell whoever spawned you (or the operator) which topic you need, and
-they can grant it on the live task.
-
-`board_peer` is **scoped like every other capability**: it opens another
-task's `chat.<id>` only when that task is inside the bit's scope, and a
-free-form topic only when that scope is global. So the grant that lets you
-report to exactly one task is `caps set <your-task> --caps …,board_peer
---scope <your current scope> --scope-for board_peer=ids:<that-task>`, and it
-reaches nobody else (`caps set` rewrites the whole scope, so it needs the base
-restated and every other override it should keep; at spawn the flag alone
-works). Reaching every peer and every free-form topic is `--scope-for
-board_peer=global`. A
-refusal that names `board_peer` while you hold it means the target is outside
-its scope — `harness-cli whoami` shows yours (`scope_by_cap` in `--json`).
-The operator sees your contacts too, on `board subscribers`. No bit opens a
-`tree.<id>` you are not in.
-
-Reading is open except for **other tasks' direct messages**: another task's
-`chat.<id>` / `chat.<id>.*`, `chat.operator`, and a `tree.<id>` you are not in.
-Subscribing to, waiting on, or `read`ing those needs `board_observe`; without
-it the subscribe and the wait are refused with a message naming that bit.
-`retained` on them lists only what you sent (see "Choosing which message to
-purge"). Group topics — anything outside `chat.` and `tree.` — stay readable
-by anyone who names them.
-
-Two naming conventions follow from that:
-
-- **A confidential side channel** is `chat.<your-short-id>.<suffix>`. Others
-  cannot read it without `board_observe`, and a peer you asked can still answer
-  there, because a declared `--reply-to` is the reply route of the message it
-  received. Confidential means unread, not unwritten: any task holding
-  `board_peer` can publish there, so a row on it is not proof it came from
-  the peer you asked — read `from.task_id`. A free-form `--reply-to` name works too, but anyone who guesses it
-  can read it — and declaring one needs `board_peer`.
-- **A team channel** is `tree.<your-full-task-id>.<suffix>`: you and every task
-  below you in the spawn tree read and write it; nobody else writes it, and
-  nobody else reads it without `board_observe`.
-
-**A `--reply-to` must be a topic you could publish to yourself.** The route you
-declare becomes a contact of whoever it is addressed to, so a route outside
-your reach is refused with the same `board_peer` denial as a send there. Your
-own `chat.<short-id>.<suffix>` is always in reach.
-
-Membership is decided on every read and publish from the live spawn tree and
-the live grant, so `caps set` and `caps set-parent` take effect at once, and a
-subscription you lose the right to read simply stops delivering (it comes back
-if the right does).
-
-Every delivered message carries `from.agent`: the agent profile the sending
-task was running under at publish time (`"claude"`, `"codex"`, …), attested by
-the server — the sender cannot set it, and it is frozen per message, so a task
-resumed under a different runtime does not relabel what it already sent. Check
-it before assuming your reply is read promptly — but do not read it as a
-verdict: the injected hook fires for any runtime that reads
-`.claude/settings.json`, and a one-shot task of ANY runtime, Claude included,
-is push-less because it has no stdin writer to wake. What `from.agent` tells
-you is which runtime answered, not whether it was pushed. An
-empty `from.agent` means the server could not attribute a runtime.
-
-Every record also carries `sender_kind`, set by the server: `agent` for a peer,
-`operator` for a message published **in the operator's name**, `server` for a
-server notice such as an `await-idle` notification. Read it before
-`from.task_id`: an operator or server message may carry an all-zero task id,
-which names no task and no `chat.<short-id>` to answer on.
-
-`operator` with an all-zero `from.task_id` is the human (TUI, WebUI or CLI).
-`operator` with a non-zero `from.task_id` is the task that id names, which the
-operator granted `board_send` to speak for them — a delegate, not the human
-typing. The server stamps both; neither can be forged from a plain `agent
-send`.
+Without any capability you may publish to: your own `chat.<id>` (and
+`chat.<id>.<suffix>`), your creator's and your direct children's `chat.<id>`,
+`chat.operator`, the reply route of a message addressed to you, the
+`tree.<id>.<suffix>` topics of your ancestor chain, and topics you were joined
+to. Anything else — a peer you have no thread with, a free-form topic — needs
+`board_peer`, scoped like every capability. A refused send is refused, not
+dropped, and the denial names the topic; ask whoever spawned you (or the
+operator) for the grant rather than working around it. Reading is open except
+other tasks' direct messages (`board_observe`). The full rule, side channels,
+team channels and the sender fields: `references/reach.md`.
 
 ## Finding other agents / tasks
 
@@ -786,24 +348,16 @@ harness-cli ls --json   # same data as one object: {"runners":[...],"tasks":[...
 harness-cli agent topics
 ```
 
-**`Detached` does not mean nobody is there.** Running vs Detached tracks ONE
-thing: whether a *control* attach holds the writer slot. A read-only viewer or
-an input-forwarding cowriter — the WebUI preview, a TUI grid pane — does not
-take that slot, so a session three people are watching still reads `Detached`.
-The `cowrite=N viewer=N` pair is what actually says who is on it. It is printed
-on every row that HAS a session, zeros included — `cowrite=0 viewer=0` means
-nobody is attached, and it is never dropped just because it is zero, so you
-never have to wonder whether a row is silent or empty. (`viewers` / `cowriters`
-in `--json`, likewise always present.) Do not read
-`Detached` as "abandoned", and do not read it as "dead" either: the task is
-alive and its agent may be mid-turn — that is what `act=` is for.
+`Detached` does not mean nobody is there or that the task is dead, and
+`cowrite=0 viewer=0` is a measurement, not a missing field. What those, and
+`lifecycle=` / `program=`, mean on a row: `references/task-state.md`.
 
 To reach a task you found in `ls`, derive its inbound channel the way every
 agent here names its own: `chat.<first-8-hex-of-task-id>`, and send a `hello`
 there (see the spawn examples). This id-directed send is the only way to
 introduce yourself — there is no discovery topic to fall back on, so an id you
 cannot derive is an id you have to ask for. Introducing yourself to a task
-outside your lineage needs `board_peer` (see "Who you can reach"); once it has
+outside your lineage needs `board_peer` (see `references/reach.md`); once it has
 written to you, answering it does not.
 
 ## Delegating to worker agents — see the `supervising-workers` skill
@@ -877,162 +431,23 @@ end of the task and a deliberate server restart, but a server crash loses it.
 It is not a board message; a supervisor that wants to act on your next write
 arms `await-progress` on your task (see `supervising-workers`).
 
-## What `ls` says a task is doing (`lifecycle=`, `program=`)
+## Message bodies — and never reading base64 by eye
 
-Two more fields sit beside `progress=` on a live task's row. Neither is
-yours to write.
-
-- **`lifecycle=<state> (<age>)`** is written by the hooks the runner injects into
-  `.claude/settings.json` and `.codex/hooks.json`. Those hooks run
-  `harness-cli lifecycle --hook claude <state>` or
-  `harness-cli lifecycle --hook codex <state>` on the respective runtime events.
-  The CLI reads each event from the hook's stdin, and it keeps a task `working` while a subagent it launched is still
-  running. **Do not call `harness-cli lifecycle` yourself**: the
-  next hook overwrites it, and in the meantime your row says something your
-  runtime did not.
-  - `working`: a turn is running.
-  - `waiting`: blocked on a human inside the turn, on a permission prompt or a
-    question.
-  - `idle`: the turn ended and the task waits for its next prompt.
-  - `error`: Claude Code reported `StopFailure` (API or model error). Codex
-    has no equivalent hook in this configuration.
-  - `-`: no hook has reported. Possible causes include an unsupported runtime,
-    untrusted Codex hooks, a `--no-worktree` task without injected settings, or
-    a runner started before the hooks existed. It says nothing about whether
-    the task is busy; read `act=` for that.
-- **`program=<state>[:<kind>]`** is the program's own report (OSC 7501), read
-  off its terminal. It is shown only while the task has a live terminal.
-
-The two come from different sources and are not reconciled, so they can
-disagree. An Esc while a tool runs ends the turn and reads `idle`. An Esc
-while the model is still thinking fires no Claude hook, so that row stays
-`working`; Codex reports `Interrupt` and returns to `idle` unless a subagent
-is still running.
-Read it against `act=` (output age) before concluding a worker is busy. `ls --json`
-carries both fields on every row, at zero when never reported: `lifecycle`,
-`lifecycle_at`, `lifecycle_age_ms`, `program_state`, `program_kind`,
-`program_msg`.
-
-## How a body reaches the receiver — and never reading base64 by eye
-
-The broker delivers `--data` verbatim; the `inbox` / `read` JSON-Lines output
-renders it in whatever readable form the bytes have:
-
-- `payload` — **iff the bytes are valid JSON**: embedded as structured JSON
-  (not a string), so the receiver branches on fields without parsing anything.
-- `payload_text` — otherwise, **iff the bytes are valid UTF-8**: the body as a
-  string. Prose, and any other non-JSON text, arrives here.
-- `payload_b64` — base64 of the exact bytes. It is the ONLY body a non-UTF-8
-  payload has. On the hook path (`--user-prompt-submit-hook`) it is dropped
-  whenever one of the two above was emitted: that record is spliced into the
-  agent's prompt, where a second copy of the same body costs 4/3 of its size
-  in context and says nothing new.
-
-**Never interpret a `payload_b64` by eye.** If it is the only body on a record
-the bytes are not text, and the only way to know what they say is to decode
-them (`... | base64 -d`, or `agent read <seq>` and decode that). A model that
-skims a base64 blob does not read it — it invents a plausible message and then
-acts on it, which surfaces as confident work against an instruction nobody
-sent. This cost this repo a wrong review before `payload_text` existed: a prose
-instruction had no readable rendering at all, so the agent had nothing to read
-but the blob.
-
-Alongside the body, every record carries `seq`, `topic`, `in_reply_to` (0 when
-the message is not a reply) and the `from` block. Those come from the server,
-not from the sender, so they are the fields to branch on — see
-"Replying — `--in-reply-to`".
-
-`reply_to_topic` joins them **only when the sender declared one** with
-`--reply-to`; its absence is the ordinary case and means a reply comes back to
-the sender. You need it for nothing — `--in-reply-to` alone lands correctly —
-but if you were about to add your own `--topic` to a reply, this is what you
-would be overriding.
-
-Which form to send still matters, though no longer for legibility:
-
-- Send a JSON object whenever the receiver has to **branch** on the message.
-  Include a short `"kind"` (or equivalent discriminator) so it can dispatch on
-  a field instead of interpreting prose.
-- Plain text is fine for anything shaped like a human instruction — it arrives
-  as `payload_text`, readable as sent. Only raw non-UTF-8 bytes land as base64
-  and nothing else.
+`inbox` / `read` render a body as `payload` (structured, iff the bytes are
+valid JSON), else `payload_text` (iff valid UTF-8), else only `payload_b64`.
+**Never interpret a `payload_b64` by eye** — decode it (`base64 -d`); a model
+that skims a blob invents a plausible message and acts on it. Send a JSON object
+with a short `"kind"` when the receiver must branch on it; plain text is fine
+for anything shaped like an instruction. Details: `references/reading.md`.
 
 ## Peers may not be claude — or skill-injected
 
-Don't assume the agent on the other end of a topic is a Claude process that has read
-this skill. A runner decides what it spawns and how it injects (see the
-agent-runner flags):
-
-- `--agent-bin` sets the peer binary — it defaults to `claude`, but a runner
-  can point it at `bash` or any other program. Such a peer won't know the
-  handshake or the JSON `kind` convention. Reply routing survives it: the
-  destination is resolved server-side from `--in-reply-to`, so a peer that
-  passes the seq back needs no convention at all.
-- Agent command lines are template-driven. Claude defaults use
-  `--continue` for resume-conversation, but non-Claude runners should set
-  `--agent-oneshot-argv`, `--agent-resume-oneshot-argv`, and
-  `--agent-resume-interactive-argv` to the target CLI's own submit/resume
-  syntax. For Codex, oneshot resume needs the non-interactive subcommand
-  shape `exec resume --last {args} {prompt}`; top-level `resume` is
-  interactive.
-- `--no-worktree` (without `--force-inject-harness-settings`) skips injecting
-  `.claude/settings.json` and `.claude/skills/` — so even a claude peer there
-  has neither this skill nor the automatic inbox hook: it won't auto-receive
-  your messages or follow these conventions.
-
-`ls` shows each task's agent identity: an `agent=<name>` column (the agent
-profile the task runs under — `claude` / `gemini` / `codex` / `bash` …), with
-`+skills` when the runner it was assigned to declares it injects harness
-instructions + this skill. Injection is **cross-tool** — `AGENTS.md`/`GEMINI.md`/
-`CLAUDE.md` pointers plus the skill under both `.claude/skills/` and
-`.agents/skills/` — so `+skills` means a skill-aware peer regardless of agent.
-`.claude/settings.json` rides the same injection, so a `+skills` peer has the
-hook FILE whatever its runtime; whether that runtime reads it is the part the
-marker cannot tell you. So:
-
-- `agent=<anything>+skills` — a skill-following peer that was given the hook
-  file. It receives automatically if its runtime reads that file, which Claude
-  Code does and at least one other runtime does. Do not assume from the name.
-- `agent=claude` (no `+skills`), or `agent=bash` — the assigned runner declares
-  no injection: no skill and no hook file (e.g. a `--no-worktree` runner
-  without force-inject). This peer polls or hears nothing.
-
-Neither line is about being woken. **A one-shot task of any runtime cannot be
-woken at all** — it has no stdin writer — so `submit`-created peers read their
-inbox once at turn start and then only if they ask.
-
-The marker rides on the **task**, not on the RUNNERS section — which matters
-because `ls` withholds RUNNERS entirely from a caller whose visibility rank is
-below `global`. If
-you are confined, you see zero runners and every task row still carries its own
-marker. `ls --json` splits it out as a per-task `skills_injected` bool beside
-the bare `agent` name, so a script never has to parse the suffix off a string.
-
-**It is a declaration, and three things it does not tell you:**
-
-- **A missing marker is not proof of a bare agent.** A `Queued` task has no
-  runner yet, so it has nothing to declare and renders without one. The TUI `d`
-  detail popup separates the cases — `unknown (not assigned to a runner yet)`
-  vs `not declared by the assigned runner`; a compact row cannot.
-- **It reports configuration, not outcome.** The bit is
-  `!--no-worktree || --force-inject-harness-settings`, sent once at handshake.
-  The injection write itself is non-fatal, so `+skills` alongside a worktree
-  with no `.claude/skills/` is a reachable state. If you are asking about your
-  OWN worktree, look at the directory instead — that is an observation.
-- **It does not tell you whether the peer is actually pushed.** The marker
-  covers the hook FILE being injected; whether the peer's runtime reads it,
-  and whether the peer is interactive at all (a one-shot cannot be woken),
-  are both invisible here.
-
-Behaviour is still the final word (does it complete the handshake?). This
-narrows the guess; it does not remove it. In particular, never conclude "no
-reply is coming" from a missing marker — send, end the turn, and let the
-absence of a reply over time be the evidence.
-
-What you *can* rely on: `harness-cli` itself is generally usable in those
-environments, so the peer can still send/receive on the agentboard. Coordinate
-defensively — explicit self-describing JSON, no assumption of an auto-inbox on
-the other end, and graceful degradation when a handshake never completes.
+The agent on the other end may run another runtime, may be plain `bash`, or may
+have no skill and no hook (`--no-worktree` without force-inject). `ls` marks an
+injected peer `agent=<name>+skills`; it is a declaration, not proof of how the
+peer behaves. Coordinate defensively — self-describing JSON, no assumption of an
+auto-inbox on the other end, and graceful degradation when a handshake never
+completes. Reading the marker: `references/peers.md`.
 
 ## Agent-to-agent communication conventions
 
@@ -1083,7 +498,7 @@ peer needs no knowledge of it — it answers with `--in-reply-to <seq>` as
 always, and needs no capability to do so, because a declared reply route is
 part of what it was handed (unless it is a `tree.<id>` the peer is not in).
 Subscribe to the topic first if you intend to receive there. Declaring a
-free-form route like `rr.dec-019` needs `board_peer` (see "Who you can reach");
+free-form route like `rr.dec-019` needs `board_peer` (see `references/reach.md`);
 `chat.<your-short-id>.<suffix>` needs nothing, and its answers are not
 readable by whoever guesses the name.
 
@@ -1153,185 +568,25 @@ reply where the sender can catch it. Ask first only when acting on a wrong guess
 would be destructive or expensive.
 
 **An agreement does not outlive the exchange on its own.** The board forgets
-(see the limits under "Per-subject reply topics"), and a conversation that is
+(see the limits in `references/topics.md`), and a conversation that is
 compacted or resumed in a fresh process may no longer hold what was settled.
 Whether an agreement should be kept, and where, is the operator's call, not the
 two agents': if one looks worth keeping, say so to the operator rather than
 writing it into the repo yourself.
 
-### Per-subject reply topics
+### Topics beyond `chat.<id>`
 
-Give a subject its own reply topic when you want its answers kept out of your
-general inbox — a script that fans work out and collects each answer where it
-can wait for it, a long-running decision thread you want to read as a unit.
-Subscribe to it, name it with `--reply-to` on the ask, and bucket by the row's
-`topic` rather than by anything in the payload.
+A subject can get its own reply topic (`--reply-to` on the ask); a topic can be
+kept past its 30-minute, 64-message, in-memory life with `board retain`; a
+supervisor can put you on a topic with `board join`. Their limits and rules:
+`references/topics.md`.
 
-The peer is not part of the arrangement and cannot get it wrong: it replies
-with `--in-reply-to` and the server reads the destination off the parent. What
-used to be the failure here — the peer answering "normally" and the answer
-landing in the very inbox you named a topic to keep clear — is not reachable.
-
-A script may then `dispatch --topic <peer> --reply-to rr.dec-019`, which
-declares the destination and waits on it in one flag, and on failure still
-reach its own caller with a plain `send --topic chat.<caller>`. (`dispatch`
-blocks, so it belongs in a script, never in an agent turn.)
-
-Limits worth knowing before you rely on it:
-
-- `subscribe` is **exact match only** — no wildcards, so `rr.*` is not a
-  thing. Each subject costs an explicit `subscribe` and `unsubscribe`.
-- Each topic retains **64** messages; older ones are dropped.
-- A topic's ring is dropped **30 minutes** after its last publish, whether
-  or not anything read it. The subscription itself survives that — but NOT a
-  server restart, which drops every subscription and re-seeds only
-  `chat.<short-id>`. Per-subject topics are exactly the ones not re-seeded, so
-  re-read `agent subscriptions` rather than assuming yours is still there.
-- When the last task subscribing a topic finishes, the topic is dropped at
-  once **if it holds nothing**. A topic that still holds messages — live or
-  withdrawn — is kept and ages out under the TTL above instead, so a finished
-  worker's `chat.<short-id>` remains readable by the operator. One consequence
-  for you: a task resumed under the same id meets a ring that survived, with a
-  delivery position that did not, so messages it already handled can arrive
-  again. `retract` the ones that are spent (see above) and a resumed peer will
-  not redo them.
-- Past **1024** topics the board evicts the least recently published one —
-  which is exactly a quiet per-subject topic.
-- All of the above except the subscription rule changes for a topic kept with
-  `board retain` — see "Keeping a topic".
-- A single message is capped at **1 MiB** by default
-  (`--agentboard-max-payload`); an over-size `send` is refused with
-  `PayloadTooLarge` rather than truncated, so nothing is silently lost.
-- Bodies over **64 KiB** are not inlined into the auto-injected wake context;
-  the record carries `payload_bytes` and a `read_with` command instead. See
-  "Reading one message whole".
-
-### Keeping a topic — `board retain`
-
-A topic is deleted 30 minutes after its last publish, holds 64 messages, and
-is lost when the server restarts. To keep a discussion past that, retain it:
-
-```bash
-harness-cli board retain tree.<your-full-task-id>.design --ttl 168h   # 7 days after the last publish
-harness-cli board retain tree.<your-full-task-id>.design --ttl forever
-harness-cli board retain tree.<your-full-task-id>.design --clear      # back to the 30-minute TTL
-```
-
-- It needs the `board_persist` capability, and only works on a topic you may
-  publish to. A `chat.<id>` topic can never be retained: direct messages stay
-  temporary. Without the bit you get a permission denial naming it — ask
-  whoever spawned you (or the operator) rather than working around it.
-- A retained topic is written to the server's disk and comes back after a
-  restart, every message included. Your subscription to it does not: after a
-  restart, subscribe again — unless you are a member, whose subscription
-  comes back with it.
-- The ring you read through `inbox` / `read <seq>` / `retained` is still the
-  last 64 messages. Further back, page it with `agent read --topic <topic>
-  --before SEQ` on a topic you subscribe to (see "Reading one message
-  whole"); the operator uses `board read <topic> --limit N --before SEQ`.
-- That ring can be emptied on purpose: `board flush <topic>` (same
-  `board_persist` bit and publish rule as retain) drops it from memory and
-  keeps the disk log, and a restart does not load it back. On a flushed topic
-  `inbox` and `retained` show only what was posted since; older messages are
-  still there through `agent read --topic`. `agent read <seq>` and
-  `--in-reply-to` do not reach a flushed message.
-- `board archive <topic>` (same bit and rule) copies the topic's history up
-  to now into an archive that nothing appends to and that stays until it is
-  purged. Archives of a topic you may read need no capability:
-  `agent archives --topic <topic>` lists them (JSON Lines, with `id`) and
-  `agent read --archive <id> [--before SEQ] [--limit N]` pages one, withdrawn
-  messages left out. Listing every archive is `board archives`
-  (`board_observe`); deleting one is `agent purge --archive <id> [--seq N]`
-  (`board_purge`).
-- Retention does not change who can read or write the topic: a retained
-  `tree.<id>.*` is still your lineage's only.
-- `board topics` (operator view) shows `retain=<period> by=<who set it>
-  disk=<bytes>`, so a retained topic is always attributable. Do not retain
-  `forever` unless asked to: the operator removes retentions nobody needs.
-
-### Joined topics — subscribed from outside
-
-You can find yourself subscribed to a topic you never subscribed to. The
-operator, or a task holding `board_member` with you in its scope, can do it
-from outside your task:
-
-- `board subscribe <task> <topic>` subscribes you. You read the topic, nothing
-  more — it is never a topic you could not have subscribed to yourself.
-- `board join <task> <topic>` makes you a **member**: subscribed, allowed to
-  publish there without `board_peer`, and a reply to anything you post there
-  comes back to the topic rather than to your `chat.<short-id>`. That is the
-  point of a shared timeline: the answers are for everyone on it.
-
-`agent subscriptions` tells the two apart: a topic you are a member of reads
-`"joined":true`, a plain subscription `"joined":false` (the operator's `board
-subscribers` shows the same as `joined:<topic>`). Who ELSE is a member is not
-visible from the agent side. On a topic you were put on:
-
-- Post with `--exclude-self`: you read the topic too (see "Only subscribe to
-  topics you receive on").
-- For a private answer to your post, send it with `--reply-to
-  chat.<your-short-id>`; an explicit `--reply-to` always wins over the
-  member's default.
-- `agent unsubscribe --topic <topic>` on a joined topic **leaves** it: you
-  stop reading it and lose the publish right, and on a retained topic you
-  stay out after a restart. It only narrows what you can do, so it is yours
-  to decide.
-- A membership is kept per task id, so it survives a resume on another runner
-  and, on a retained topic, a server restart: you are subscribed again when
-  the task is assigned. A plain subscription survives neither.
-
-Holding `board_member` yourself, you can put tasks in your scope on a topic
-(`harness-cli skill supervising-workers` covers when that is useful), never
-yourself: a task does not change its own standing.
-
-### "My message never arrived"
-
-Three different causes look identical from the sender's side: the peer has
-not replied yet, the peer replied somewhere else, or the message was
-published to a topic **nobody subscribes to** — in which case it sits
-retained on the board and reaches no inbox.
-
-**The third cause you already answered when you sent.** `agent send` reports
-`delivered_to` — the number of subscribers the publish matched — and it needs
-no capability. `delivered_to: 0` IS the third cause — except on
-`chat.operator`, where it is always 0 and the operator reads the board instead;
-anything above 0 rules it out and leaves you with the first two. Re-send is not how you check: publish a
-throwaway to the same topic if you no longer have the original response.
-
-A fourth cause hides among them and the same line rules it out: the message
-arrived and said nothing, because the body was not what you meant to send.
-`bytes` on that response is the check — `bytes: 0` is an empty publish that a
-peer has no way to distinguish from noise, and a `bytes` far below what you
-composed means the shell, not the board, is where it went wrong.
-
-The `board` commands below answer the same question about topics you did not
-send to, and about the whole board at once. Both need `board_observe`, so a task
-spawned with a restricted `--caps` cannot run them — which is precisely when
-`delivered_to` is the only answer available.
-
-`harness-cli board subscribers <topic>` (needs `board_observe`) lists the tasks
-that would receive a publish to that topic. An empty result means nothing is
-listening. With no argument it lists every task on the board and what each
-subscribes to. Each row also carries `contacts=` — the reply routes that task
-may answer without `board_peer` (`-` when it has none).
-
-Each subscribed topic carries `shown=<seq> pending=<n>`: how far the automatic
-injection path has reached for that task, and how many retained messages sit
-above it. `pending>0` on the peer's `chat.<short-id>` distinguishes the first
-two causes — the message reached its inbox and has not been handed over yet, as
-against a peer that already read it and has not answered. A topic with nothing
-published to it reads `shown=0 pending=0` rather than being omitted, so
-"subscribed, nothing yet" and "subscribed, all read" stay distinguishable.
-
-`harness-cli board topics` (same capability) answers it for everything at
-once: each row carries `subs=N`, so `subs=0` is a topic holding messages
-nobody will read. The listing also includes names that are **subscribed but
-never published to** — those show `msgs=0 (nothing published yet)`, and are
-how you confirm a per-subject reply topic is actually being listened on
-before anything has been sent there.
-
-An empty `host=` column means the task is registered and subscribed but has
-not run a `harness-cli` command yet — a real state, not missing data.
+**"My message never arrived"** has three causes that look alike: the peer has not
+replied yet, it replied somewhere else, or nobody subscribes to the topic. The
+last one you already answered when you sent — `delivered_to: 0` (except on
+`chat.operator`, where 0 is normal). `bytes` on the same response rules out the
+fourth: a body that was not what you meant. Telling the first two apart, and
+the operator's `board` views: `references/topics.md`.
 
 ### Checking for stray subscriptions
 

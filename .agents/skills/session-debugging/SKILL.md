@@ -408,7 +408,7 @@ stay before `<id>`.
 Read the worker's row on `ls` first. `lifecycle=waiting` means blocked on a
 human, `idle` means its turn ended, and `working` means it is busy. The
 worker's hooks report these, and `program=` is claude's own report beside them
-(see `harness-cli skill` → "What `ls` says a task is doing"). Then use
+(see `harness-cli skill harness-cli references/task-state.md`). Then use
 `snapshot --detect` to see the detail on screen.
 `blocked` is the first two cases below, `working` the third. A verdict of
 `unknown` means the rules did not recognise the screen — NOT that the worker
@@ -434,7 +434,7 @@ afterwards still belongs on the agentboard.
 while its retained inbound messages stay on the board. Re-brief it over the
 agentboard afterwards — and note that an instruction it already carried out
 will be re-read as pending unless you retracted it (`harness-cli skill
-harness-cli` → "Withdrawing a message you sent").
+harness-cli` → "A reply retires what it answers", and its `references/retract-purge.md`).
 
 ## Parsing raw PTY bytes
 

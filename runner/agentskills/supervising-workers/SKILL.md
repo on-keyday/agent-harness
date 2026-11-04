@@ -475,7 +475,7 @@ and the scope forms (`--json` for the machine-readable form).
   `board_peer` itself must be in your `delegate`, or it is dropped.
   A team channel for you and your workers is
   `tree.<your-full-task-id>.<suffix>`, readable and writable by the whole
-  subtree with no bit. The `harness-cli` skill's "Who you can reach" has the
+  subtree with no bit. The `harness-cli` skill's `references/reach.md` has the
   full rule.
 - **Putting workers on a topic — `board join` / `board subscribe`.** To gather
   workers on one discussion, `harness-cli board join <worker> <topic>` makes
