@@ -117,6 +117,9 @@ func (h *TaskHandler) handleRunnerUnenroll(conn ConnHandle, requestID uint32, r 
 		reply(protocol.RunnerKeyStatus_NotFound, nil)
 		return
 	}
+	// The key's dial records go with it (spec 2026-11-04 D5): a record bound
+	// to a key nothing may register with would dial forever for nothing.
+	body.SetRemovedDials(h.removeDialsOfKey(rec))
 	slog.Warn("runner key unenrolled", "key", keyPrefix(rec.Key), "label", rec.Label,
 		"by", h.enrolledBy(conn.ConnectionID().String()), "closing_runners", len(conns))
 	if h.KickConn != nil {

@@ -222,6 +222,16 @@ func (r *Registry) Add(e *RunnerEntry) (displaced objproto.ConnectionID, err err
 // Remove deletes the entry with the given id. No-op if absent.
 // The snapshot of the entry at removal time is passed to OnRemove so the
 // callback can inspect which tasks were stranded.
+// SetLink records how a connected runner is held: a dial record that adopted
+// an existing connection (spec 2026-11-04 D20) makes it dial_record.
+func (r *Registry) SetLink(id objproto.ConnectionID, link protocol.RunnerLink, record uint32) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if e, ok := r.runners[id]; ok {
+		e.Link, e.LinkRecord = link, record
+	}
+}
+
 func (r *Registry) Remove(id objproto.ConnectionID) {
 	r.mu.Lock()
 	e, existed := r.runners[id]

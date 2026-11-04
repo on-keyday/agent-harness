@@ -124,7 +124,10 @@ type Server struct {
 	runnerHandler *RunnerHandler
 	taskHandler   *TaskHandler
 	dispatcher    *Dispatcher
-	notifyRing    *notifyRing
+	// dials keeps the dial records' runners connected; started by serve
+	// after WAL replay.
+	dials      *dialManager
+	notifyRing *notifyRing
 
 	// Board is the agentboard instance, wired in by the server binary (Task 9).
 	// When nil, agent_message payloads are ignored silently.
@@ -275,8 +278,25 @@ func New(cfg Config) *Server {
 		restoreWALPath = filepath.Join(s.cfg.DataDir, "events.log")
 	}
 	stamp := buildinfo.Read()
+	s.dials = newDialManager(dialManagerConfig{
+		Store: cfg.RunnerDials, Keys: cfg.RunnerKeys, Registry: s.registry,
+		Dial: s.dialWithOrigin, SetLink: s.registry.SetLink, Logger: cfg.Logger,
+	})
 	s.taskHandler = &TaskHandler{
-		RunnerKeys:     cfg.RunnerKeys,
+		RunnerKeys:  cfg.RunnerKeys,
+		RunnerDials: cfg.RunnerDials,
+		Dials:       s.dials,
+		DialLegs: func(transport string) bool {
+			switch transport {
+			case "ws":
+				return cfg.Addr != ""
+			case "udp":
+				return cfg.UDPAddr != ""
+			case objproto.TransportVsock:
+				return cfg.VsockPort != 0
+			}
+			return false
+		},
 		Tasks:          s.tasks,
 		Registry:       s.registry,
 		Sessions:       s.sessions,
@@ -702,6 +722,7 @@ func New(cfg Config) *Server {
 		publishRunnerEvent(entry.Identity, protocol.StatusEventKind_RunnerRegistered, protocol.RunnerStatus_Idle)
 	}
 	s.registry.OnRemove = func(id objproto.ConnectionID, snap RunnerEntry) {
+		s.dials.onConnRemoved(id)
 		s.failAndRevokeTasksOf(id, snap)
 		publishRunnerEvent(snap.Identity, protocol.StatusEventKind_RunnerOffline, protocol.RunnerStatus_Offline)
 	}
@@ -971,6 +992,13 @@ func (s *Server) serve(ctx context.Context, ep objproto.Endpoint, mux *http.Serv
 	// published on a clock, and a per-forward publisher would have to
 	// rediscover the coalescing each time.
 	go s.taskHandler.runStatsSweeper(ctx)
+
+	// Dial records start here, after WAL replay and the held-task watcher
+	// (spec 2026-11-04 §1.2): a dialed connection skips the accept loop, so a
+	// runner registered before replay would be told none of its held
+	// children survive. Every stored record dials at once, which is what
+	// lands a deliberate restart's re-adoption inside --hold-window.
+	s.dials.Start(ctx)
 
 	const shutdownGracePeriod = 2 * time.Second
 
@@ -1753,9 +1781,13 @@ func (s *Server) onDialed(connCtx context.Context, conn objproto.Connection, ori
 }
 
 // dialWithOrigin dials one runner address the way server dial-runner does,
-// with the given origin. Only valid once Run has built the endpoint.
+// with the given origin. Fails until Run has built the endpoint.
 func (s *Server) dialWithOrigin(ctx context.Context, cid objproto.ConnectionID, origin *DialOrigin) error {
-	h := &DialRunnerHandler{Logger: s.cfg.Logger, Endpoint: s.taskHandler.Endpoint, OnDialed: s.onDialed}
+	ep := s.dataPlaneEndpoint.Load() // published by Run once the listener is up
+	if ep == nil {
+		return errors.New("server endpoint not up yet")
+	}
+	h := &DialRunnerHandler{Logger: s.cfg.Logger, Endpoint: *ep, OnDialed: s.onDialed}
 	return h.DialCandidate(ctx, cid, origin)
 }
 

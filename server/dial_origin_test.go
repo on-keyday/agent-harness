@@ -35,12 +35,22 @@ func newOriginFixture(t *testing.T, ctx context.Context, serverPort, runnerPort 
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := New(Config{RunnerKeys: keys, Addr: "127.0.0.1:" + serverPort, DataDir: t.TempDir()})
+	f := newOriginFixtureWith(t, ctx, serverPort, runnerPort, ka, Config{RunnerKeys: keys, DataDir: t.TempDir()})
+	f.keyB = kb
+	return f
+}
+
+// newOriginFixtureWith runs a server with cfg (Addr filled in) and a
+// listen-mode runner signing with runnerKey.
+func newOriginFixtureWith(t *testing.T, ctx context.Context, serverPort, runnerPort string, runnerKey ed25519.PrivateKey, cfg Config) *originFixture {
+	t.Helper()
+	cfg.Addr = "127.0.0.1:" + serverPort
+	s := New(cfg)
 	go func() { _ = s.Run(ctx) }()
 	time.Sleep(300 * time.Millisecond)
 	go func() {
 		_ = runner.ListenAndServe(ctx, runner.ListenConfig{
-			Config: runner.Config{RunnerKey: ka, RunnerID: runner.NewRunnerID(),
+			Config: runner.Config{RunnerKey: runnerKey, RunnerID: runner.NewRunnerID(),
 				AllowedRoots: []string{t.TempDir()}, MaxTasks: 1, Hostname: "origin-runner"},
 			WSListen: "127.0.0.1:" + runnerPort,
 		})
@@ -53,7 +63,7 @@ func newOriginFixture(t *testing.T, ctx context.Context, serverPort, runnerPort 
 		}
 		return cid
 	}
-	return &originFixture{s: s, keyA: ka, keyB: kb,
+	return &originFixture{s: s, keyA: runnerKey,
 		runnerCID: parse("ws:127.0.0.1:" + runnerPort + "-*"),
 		serverCID: parse("ws:127.0.0.1:" + serverPort + "-*")}
 }

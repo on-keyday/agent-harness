@@ -30,6 +30,11 @@ type TaskHandler struct {
 	// RunnerKeys is the enrollment store: the runner key verbs act on it, and
 	// the list handler reads a runner's key label from it.
 	RunnerKeys *RunnerKeyStore
+	// RunnerDials / Dials: the dial records and the loops dialing them;
+	// DialLegs says whether this server can dial a transport at all.
+	RunnerDials *RunnerDialStore
+	Dials       *dialManager
+	DialLegs    func(transport string) bool
 	// KickConn ends one connection from the server side (a wire close, then
 	// the local close), so the peer notices at once instead of at its GC.
 	// runner unenroll --force uses it on the runners of the removed key.
@@ -1134,6 +1139,16 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 
 	case protocol.TaskControlKind_RunnerKeys:
 		h.handleRunnerKeys(conn, req.RequestId)
+	case protocol.TaskControlKind_RunnerDialAdd:
+		if r := req.RunnerDialAdd(); r != nil {
+			h.handleRunnerDialAdd(conn, req.RequestId, r)
+		}
+	case protocol.TaskControlKind_RunnerDialList:
+		h.handleRunnerDialList(conn, req.RequestId)
+	case protocol.TaskControlKind_RunnerDialRemove:
+		if r := req.RunnerDialRemove(); r != nil {
+			h.handleRunnerDialRemove(conn, req.RequestId, r)
+		}
 
 	case protocol.TaskControlKind_DialRunner:
 		dr := req.DialRunner()

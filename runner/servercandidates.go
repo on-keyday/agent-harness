@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/objtrsf/objproto"
 )
 
@@ -40,16 +41,9 @@ type ServerCandidates struct {
 // ConnectionID belongs to objproto, and restating it would be a second copy to
 // keep in step.
 func ParseServerCandidates(spec string) (ServerCandidates, error) {
-	parts := strings.Split(spec, ",")
-	out := make([]string, 0, len(parts))
-	for i, p := range parts {
-		p = strings.TrimSpace(p)
-		if p == "" {
-			return ServerCandidates{}, fmt.Errorf(
-				"--server-cid: candidate %d of %d is empty (stray or trailing comma in %q)",
-				i+1, len(parts), spec)
-		}
-		out = append(out, p)
+	out, err := cli.SplitCandidates(spec)
+	if err != nil {
+		return ServerCandidates{}, fmt.Errorf("--server-cid: %w", err)
 	}
 	return ServerCandidates{specs: out}, nil
 }
@@ -105,16 +99,9 @@ func (c ServerCandidates) Schemes() []string {
 	return out
 }
 
-// ResolveServerCandidate turns one candidate into a dialable ConnectionID. DNS
-// happens here, once per dial attempt.
-//
-// The error names the candidate. With a list, objproto's own "invalid
-// connection ID format" does not say which entry was mistyped.
+// ResolveServerCandidate turns one candidate into a dialable ConnectionID, once
+// per dial attempt. It is cli.ResolveCandidate, which the server's dial records
+// use too, so the two lists agree on what a candidate is.
 func ResolveServerCandidate(spec string) (objproto.ConnectionID, error) {
-	cid, err := objproto.ParseConnectionID(spec,
-		objproto.ParseOption_AllowRandomID|objproto.ParseOption_ResolveAddr)
-	if err != nil {
-		return objproto.ConnectionID{}, fmt.Errorf("server candidate %q: %w", spec, err)
-	}
-	return cid, nil
+	return cli.ResolveCandidate(spec)
 }
