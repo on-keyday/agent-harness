@@ -3000,6 +3000,7 @@ enum RunnerDialStatus:
     ambiguous_key       = "ambiguous_key"        # add: more than one enrolled key has the prefix
     not_found           = "not_found"            # remove: no record has the id
     duplicate_candidate = "duplicate_candidate"  # add: a candidate's text is already another record's
+    store_failed        = "store_failed"         # add / remove: runner-dials.json could not be written; nothing changed
 
 enum RunnerDialState:
     :u8

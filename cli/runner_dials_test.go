@@ -57,6 +57,7 @@ func TestFormatRunnerDialAddAndRemove(t *testing.T) {
 		protocol.RunnerDialStatus_KeyNotFound:        "runner dial add: no enrolled key has that prefix",
 		protocol.RunnerDialStatus_AmbiguousKey:       "runner dial add: more than one enrolled key has that prefix",
 		protocol.RunnerDialStatus_DuplicateCandidate: "runner dial add: a candidate is already another record's",
+		protocol.RunnerDialStatus_StoreFailed:        "runner dial add: the server could not write runner-dials.json; nothing was added",
 	} {
 		if s, ok := FormatRunnerDialAdd(st, 0, nil); ok || !strings.HasPrefix(s, want) {
 			t.Errorf("%v: %q %v, want prefix %q", st, s, ok, want)
@@ -67,6 +68,9 @@ func TestFormatRunnerDialAddAndRemove(t *testing.T) {
 	}
 	if s, ok := FormatRunnerDialRemove(protocol.RunnerDialStatus_NotFound, 7); ok || s != "runner dial rm: no dial record 00000007" {
 		t.Errorf("remove not found: %q", s)
+	}
+	if s, ok := FormatRunnerDialRemove(protocol.RunnerDialStatus_StoreFailed, 7); ok || s != "runner dial rm: the server could not write runner-dials.json; record 00000007 stays" {
+		t.Errorf("remove store failed: %q", s)
 	}
 }
 

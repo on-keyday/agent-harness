@@ -211,6 +211,9 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 			}
 			slog.Warn("runner registration refused", "err", err, "identity", hello.RunnerId.Hex(),
 				"key", keyPrefix(entry.Key), "held_by_key", held)
+			if origin != nil && origin.OnRefused != nil {
+				origin.OnRefused("refused: its identity is held by a runner on key " + held)
+			}
 			if h.KickConn != nil {
 				h.KickConn(conn.ConnectionID())
 			}

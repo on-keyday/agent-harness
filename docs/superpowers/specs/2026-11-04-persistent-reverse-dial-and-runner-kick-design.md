@@ -398,6 +398,22 @@ moved it.
   teardown finishes anyway. `TestListenReturnsAfterServerConnTeardown` asserts
   the ordering the drain exists for, and goes red without it.
 
+- **A8 — final review fixes.** Four findings from the whole-branch review
+  (2026-11-04) were fixed, each with a test that failed first.
+  - A record that ADOPTED a connection kept the re-resolved candidate's random
+    id rather than the registry's, so it never saw the connection drop and
+    never re-dialed (P1 broken on D20's migration path).
+  - The dial manager handed its own loop context to the connection, so
+    `runner dial rm` (and the record removal at the start of a kick) closed the
+    runner's live connection and failed its tasks, breaking D17. Dialed
+    connections now live under the server's context.
+  - §1.2 step 2's "the reason the gate logged" is now recorded:
+    `refused by the server's gate: NotEnrolled` and similar, and the
+    identity-held-by-another-key refusal.
+  - A runner-dials.json write failure no longer leaves memory and disk
+    disagreeing. `RunnerDialStatus` gains `store_failed` (appended), returned
+    by add and remove.
+
 Verified on a dummy harness (2026-11-04), against this branch's binaries:
 - refusal without a key, exit 1;
 - a record retrying while its runner was down, then connecting;

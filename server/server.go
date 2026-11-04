@@ -1484,6 +1484,9 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 		})
 		if isPSKMsg || !gate.Authed() {
 			if shouldClose {
+				if st, ok := gate.Rejected(); ok {
+					s.noteDialRefusal(session.ConnectionID(), "refused by the server's gate: "+st.String())
+				}
 				trsf.SendClose(session) //nolint:errcheck
 				cancel()
 			}
@@ -1789,6 +1792,17 @@ func (s *Server) dialWithOrigin(ctx context.Context, cid objproto.ConnectionID, 
 	}
 	h := &DialRunnerHandler{Logger: s.cfg.Logger, Endpoint: *ep, OnDialed: s.onDialed}
 	return h.DialCandidate(ctx, cid, origin)
+}
+
+// noteDialRefusal tells the dialer that made cid why it was refused before its
+// hello was handled — without consuming the origin, which teardown removes.
+func (s *Server) noteDialRefusal(cid objproto.ConnectionID, reason string) {
+	s.pendingDialOriginMu.Lock()
+	o := s.pendingDialOrigin[cid]
+	s.pendingDialOriginMu.Unlock()
+	if o != nil && o.OnRefused != nil {
+		o.OnRefused(reason)
+	}
 }
 
 // takePendingDialOrigin removes and returns the DialOrigin stashed for the given

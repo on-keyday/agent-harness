@@ -247,6 +247,8 @@ func FormatRunnerDialAdd(st protocol.RunnerDialStatus, id uint32, candidates []s
 		return "runner dial add: more than one enrolled key has that prefix; give more of it", false
 	case protocol.RunnerDialStatus_DuplicateCandidate:
 		return "runner dial add: a candidate is already another record's (see runner dial ls)", false
+	case protocol.RunnerDialStatus_StoreFailed:
+		return "runner dial add: the server could not write runner-dials.json; nothing was added", false
 	}
 	return fmt.Sprintf("runner dial add: %v", st), false
 }
@@ -257,6 +259,9 @@ func FormatRunnerDialRemove(st protocol.RunnerDialStatus, id uint32) (string, bo
 	}
 	if st == protocol.RunnerDialStatus_NotFound {
 		return "runner dial rm: no dial record " + FormatDialID(id), false
+	}
+	if st == protocol.RunnerDialStatus_StoreFailed {
+		return "runner dial rm: the server could not write runner-dials.json; record " + FormatDialID(id) + " stays", false
 	}
 	return fmt.Sprintf("runner dial rm %s: %v", FormatDialID(id), st), false
 }

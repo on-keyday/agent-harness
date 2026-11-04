@@ -280,7 +280,7 @@ func (m *dialManager) run(ctx context.Context, l *dialLoop) {
 
 	backoff := m.cfg.BackoffInitial
 	for m.alive(ctx, l) {
-		connected, errText := m.attempt(sleepCtx, l)
+		connected, errText := m.attempt(ctx, sleepCtx, l)
 		if connected {
 			m.waitGone(sleepCtx, l)
 			backoff = m.cfg.BackoffInitial
@@ -322,7 +322,12 @@ type resolvedCandidate struct {
 // attempt is one pass: adopt the runner if it is already here, else walk the
 // candidates until one completes ECDH and see whether it registers.
 // connected=true leaves l holding a live connection; otherwise errText says why.
-func (m *dialManager) attempt(ctx context.Context, l *dialLoop) (connected bool, errText string) {
+//
+// rootCtx is the SERVER's context and is what a dialed connection lives under;
+// ctx is this loop's, ended by Stop. A connection must not die with the loop:
+// `runner dial rm` stops re-dialing and leaves the runner connected (D17), and
+// runner kick stops the loop before its leave has reached the runner.
+func (m *dialManager) attempt(rootCtx, ctx context.Context, l *dialLoop) (connected bool, errText string) {
 	rec := l.rec
 	if _, ok := m.cfg.Keys.Lookup(rec.Key); !ok {
 		return false, "key not enrolled"
@@ -359,18 +364,22 @@ func (m *dialManager) attempt(ctx context.Context, l *dialLoop) (connected bool,
 				m.onConnRemoved(rc.cid)
 			},
 		}
-		if err := m.cfg.Dial(ctx, rc.cid, origin); err != nil {
+		if err := m.cfg.Dial(rootCtx, rc.cid, origin); err != nil {
 			lastErr = err.Error()
 			continue
 		}
 		// ECDH done: the walk ends here, whatever registration says.
 		select {
 		case id := <-att.regCh:
-			m.connected(l, rc, id)
+			cid := rc.cid
+			if e, ok := m.cfg.Registry.GetByIdentity(id); ok {
+				cid = e.ID // the registry's own id for the connection
+			}
+			m.connected(l, cid, rc.index, id)
 			m.mu.Lock()
 			// It may have ended between registering and here.
-			if _, still := m.cfg.Registry.Get(rc.cid); !still {
-				m.connGoneLocked(rc.cid)
+			if _, still := m.cfg.Registry.Get(cid); !still {
+				m.connGoneLocked(cid)
 			}
 			m.mu.Unlock()
 			m.cfg.Logger.Info("dial record connected", "record", FormatDialRecordID(rec.ID),
@@ -409,7 +418,9 @@ func (m *dialManager) adoptOrYield(l *dialLoop, resolved []resolvedCandidate) (a
 				return false, true
 			}
 			m.mu.Unlock()
-			m.connected(l, rc, e.Identity)
+			// e.ID, not rc.cid: the candidate was just re-resolved with a fresh
+			// random id, and only transport and address matched.
+			m.connected(l, e.ID, rc.index, e.Identity)
 			if m.cfg.SetLink != nil {
 				m.cfg.SetLink(e.ID, protocol.RunnerLink_DialRecord, l.rec.ID)
 			}
@@ -430,13 +441,16 @@ func (m *dialManager) adoptOrYield(l *dialLoop, resolved []resolvedCandidate) (a
 // connected records that l holds rc's connection to runner id, and makes every
 // OTHER record that last held this runner yield: its connection was displaced
 // by this one, and dialing back would take the runner again (D20).
-func (m *dialManager) connected(l *dialLoop, rc resolvedCandidate, id protocol.RunnerID) {
+func (m *dialManager) connected(l *dialLoop, cid objproto.ConnectionID, index int, id protocol.RunnerID) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	l.state = protocol.RunnerDialState_Connected
-	l.conn, l.hasConn, l.gone = rc.cid, true, make(chan struct{})
-	l.runner, l.answered, l.lastErr = id, rc.index, ""
-	m.owner[rc.cid] = l.rec.ID
+	l.conn, l.hasConn, l.gone = cid, true, make(chan struct{})
+	l.runner, l.answered, l.lastErr = id, index, ""
+	if m.loops[l.rec.ID] != l {
+		return // removed meanwhile: it owns nothing
+	}
+	m.owner[cid] = l.rec.ID
 	for oid, o := range m.loops {
 		if oid == l.rec.ID || o.runner != id || o.state == protocol.RunnerDialState_Duplicate {
 			continue

@@ -82,6 +82,10 @@ func pskDispatchIdentity(d *Dispatcher, conn ConnHandle, req *protocol.PskAuthRe
 // authed starts false until Check succeeds.
 type pskGate struct {
 	authed bool
+	// rejected is the status of the last refusal sent, for a dial record to
+	// report as its last error (spec 2026-11-04 §1.2 step 2).
+	rejected    protocol.PskAuthStatus
+	hasRejected bool
 	// role is fixed by the accepted handshake, never by later messages.
 	role protocol.AuthRole
 	// runnerKey is the enrolled key a role=runner connection signed with;
@@ -143,6 +147,9 @@ func (g *pskGate) keyEnrolled(key ed25519.PublicKey) bool {
 // RunnerKey is the enrolled key a role=runner connection proved; nil otherwise.
 func (g *pskGate) RunnerKey() ed25519.PublicKey { return g.runnerKey }
 
+// Rejected reports the status of the refusal this gate sent, if any.
+func (g *pskGate) Rejected() (protocol.PskAuthStatus, bool) { return g.rejected, g.hasRejected }
+
 // AllowsMessage binds application traffic to the role authenticated by Check.
 // Both roles use pubsub (runners publish task logs) and answer telemetry, but
 // only clients issue task control and only runners report task state. Hello
@@ -187,6 +194,9 @@ func (g *pskGate) binderKey(req *protocol.PskAuthRequest) []byte {
 // Rejections are signed too: an unsigned bad_psk is exactly what an impostor
 // would send to stop a runner for good.
 func (g *pskGate) respond(sendFn func([]byte), transcript []byte, status protocol.PskAuthStatus) {
+	if status != protocol.PskAuthStatus_Ok {
+		g.rejected, g.hasRejected = status, true
+	}
 	resp := protocol.PskAuthResponse{Status: status}
 	if g.serverKey != nil {
 		resp.SetServerSig(cli.SignServerAuth(g.serverKey, transcript, status))

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"sort"
 	"sync"
@@ -120,7 +121,11 @@ func (st *RunnerDialStore) Remove(id uint32) (RunnerDialRecord, error) {
 		return RunnerDialRecord{}, ErrDialNotFound
 	}
 	delete(st.recs, id)
-	return r, st.saveLocked()
+	if err := st.saveLocked(); err != nil {
+		st.recs[id] = r // the disk still has it: so must memory
+		return RunnerDialRecord{}, err
+	}
+	return r, nil
 }
 
 // RemoveByKey removes every record bound to key (runner unenroll's cascade)
@@ -136,7 +141,13 @@ func (st *RunnerDialStore) RemoveByKey(key ed25519.PublicKey) []RunnerDialRecord
 		}
 	}
 	if len(out) > 0 {
-		_ = st.saveLocked()
+		if err := st.saveLocked(); err != nil {
+			for _, r := range out { // the disk still has them: so must memory
+				st.recs[r.ID] = r
+			}
+			slog.Error("runner dials: removing a key's records failed; they stay", "err", err)
+			return nil
+		}
 	}
 	sortDialRecords(out)
 	return out

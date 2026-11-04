@@ -65,7 +65,7 @@ func (h *TaskHandler) runnerDialAdd(conn ConnHandle, r *protocol.RunnerDialAddRe
 		Label: string(r.Label), AddedAt: time.Now().UTC(), AddedBy: by})
 	if err != nil {
 		slog.Error("runner dial add: store write failed", "err", err)
-		return protocol.RunnerDialStatus_InvalidCandidates, 0
+		return protocol.RunnerDialStatus_StoreFailed, 0
 	}
 	slog.Info("dial record added", "record", FormatDialRecordID(rec.ID), "candidates", cands,
 		"key", keyPrefix(key.Key), "by", by)
@@ -89,8 +89,11 @@ func (h *TaskHandler) handleRunnerDialRemove(conn ConnHandle, requestID uint32, 
 	status := protocol.RunnerDialStatus_Ok
 	if h.RunnerDials == nil {
 		status = protocol.RunnerDialStatus_NotFound
-	} else if _, err := h.RunnerDials.Remove(r.Id); err != nil {
+	} else if _, err := h.RunnerDials.Remove(r.Id); errors.Is(err, ErrDialNotFound) {
 		status = protocol.RunnerDialStatus_NotFound
+	} else if err != nil {
+		slog.Error("runner dial rm: store write failed; the record stays", "record", FormatDialRecordID(r.Id), "err", err)
+		status = protocol.RunnerDialStatus_StoreFailed
 	} else {
 		// The live connection stays (D17): runner kick is what disconnects.
 		if h.Dials != nil {
