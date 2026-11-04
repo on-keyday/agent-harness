@@ -3789,3 +3789,18 @@ omitted: 16/17/19/20/21 — task surfaces; a link is a runner's, and a task
 n/a:     13 (whoami describes the caller), 14 (session ls lists sessions),
          22 (no dialog edits it), the rest
 missed:  —
+
+### 2026-11-04 (pre-landing, end of feature) — dial records / kick / link: items 37, 39
+
+done:    37 (spec Amendment A1–A7, rows D4/D13/D20/D22 marked, §5 TUI row
+         rewritten), 39 (spec §5 walked row by row against the code: verb
+         rows, wasm bridge, omitted buttons, `runner dial ls`, ls rows+json,
+         TUI table, TUI detail, WebUI rows, wasm snapshot, caps catalog,
+         unenroll output, README, agent skills — all as stated); live:
+         dummy harness, TUI in a PTY at 270 and 200 columns + detail popup +
+         typed `runner dial ls`, WebUI at 1280 and 390 via Playwright
+missed:  18a — the first `Link` column (12 wide, from 120) truncated
+         `dial:2aaa3b9a` to `dial:2aaa…`; caught only by the live TUI run,
+         because the table test asserted the cell VALUE, never the column's
+         width against it. Fixed: 13 wide from a measured 129, and the test
+         now checks the widest value fits

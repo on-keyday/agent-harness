@@ -56,9 +56,9 @@ func TestRunnerDetailShowsKey(t *testing.T) {
 	}
 }
 
-// The Link column joins at 120 cells, before Roots, and swaps with its rows
-// like Key (checklist 34).
-func TestRunnerTableLinkColumnFrom120(t *testing.T) {
+// The Link column joins at linkColumnMinWidth, before Roots, whole, and swaps
+// with its rows like Key (checklist 34).
+func TestRunnerTableLinkColumnAtItsThreshold(t *testing.T) {
 	m := NewRunners()
 	r := protocol.RunnerInfo{Id: protocol.RunnerID{Id: [16]byte{1}}, Link: protocol.RunnerLink_DialRecord, LinkRecord: 0x3fa9c012}
 	r.SetHostname([]byte("cloud"))
@@ -81,6 +81,11 @@ func TestRunnerTableLinkColumnFrom120(t *testing.T) {
 		if at >= 0 {
 			if rows[0][at] != "dial:3fa9c012" {
 				t.Errorf("w=%d: Link cell %q", w, rows[0][at])
+			}
+			// The widest value, dial:<8 hex>, must fit without truncation:
+			// a cut id cannot be typed into runner dial rm (seen live at 12).
+			if cols[at].Width < len("dial:3fa9c012") {
+				t.Errorf("w=%d: Link column %d cells, the widest value needs %d", w, cols[at].Width, len("dial:3fa9c012"))
 			}
 			if cols[at+1].Title != "Roots" {
 				t.Errorf("w=%d: Link sits before %q, want Roots", w, cols[at+1].Title)

@@ -50,7 +50,13 @@ const keyColumnMinWidth = 100
 // connected (cli.RunnerLinkStr — in / out / dial:<id> / via:<id>). Before
 // Roots, like Key, so Roots keeps absorbing the slack. Below it the link is in
 // the detail popup.
-const linkColumnMinWidth = 120
+//
+// 129 is where fitColumns first hands the column its 13 cells — measured, the
+// widest value being dial:<8 hex>. Below that it cut the record id, which then
+// could not be typed into `runner dial rm` (seen live at 12). Pinned by
+// TestRunnerTableLinkColumnAtItsThreshold. The panel is half the terminal, so
+// this is a terminal of about 260 cells.
+const linkColumnMinWidth = 129
 
 // runnerColsFor is the column set for a panel of the given width. One function
 // so NewRunners, SetSize and the row builder cannot disagree about how many
@@ -70,7 +76,7 @@ func runnerColsFor(width int) []table.Column {
 	}
 	if width >= linkColumnMinWidth {
 		roots := cols[len(cols)-1]
-		cols = append(cols[:len(cols)-1:len(cols)-1], table.Column{Title: "Link", Width: 12}, roots)
+		cols = append(cols[:len(cols)-1:len(cols)-1], table.Column{Title: "Link", Width: 13}, roots)
 	}
 	if width < idColumnMinWidth {
 		return cols

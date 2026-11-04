@@ -921,7 +921,8 @@ bin/harness-cli runner kick <8+ hex of id=> [--force]
 - Every runner row says how the runner is connected: `link=in` (it dialed),
   `out` (`server dial-runner`), `dial:<id>` (a record), `via:<id>` (through a
   relay runner) — in `ls` and `ls --json`, the TUI runner detail (and a `Link`
-  column from 120 columns), and the WebUI runner row.
+  column once the runner pane is 129 cells wide, a terminal of about 260), and
+  the WebUI runner row.
 
 `runner dial add/ls/rm` need `runner_admin` (the server's network reach);
 `runner kick` needs `runner_enroll`. All four are on the CLI, the TUI command

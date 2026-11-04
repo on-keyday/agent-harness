@@ -71,7 +71,7 @@ worth a second look.
 | D1 | The server persists reverse-dial registrations and re-dials them, both after a disconnect and after its own restart | operator |
 | D2 | An unplanned disconnect (home link drop, server crash) ends the tasks on that connection, as it does in dial mode today. Only a deliberate server restart preserves tasks, through the existing hold | operator |
 | D3 | Registering a reverse dial is something an agent can do with a capability, with no operator step. The model is `runner enroll` (enrollment spec D2) | operator |
-| D4 | A registration holds an **ordered list of candidate addresses as text**, and every attempt walks the list from the top, re-resolving each entry. These are the rules of `agent-runner --server-cid` (`runner/connect.go` `ConnectWith`, `runner/servercandidates.go` `ResolveServerCandidate`). Because the text is re-resolved, a host name follows a cloud host whose public IP changes on stop/start | this spec (proposed in conversation, not objected to) |
+| D4 | (Limited by A3: host names without `-` only.) A registration holds an **ordered list of candidate addresses as text**, and every attempt walks the list from the top, re-resolving each entry. These are the rules of `agent-runner --server-cid` (`runner/connect.go` `ConnectWith`, `runner/servercandidates.go` `ResolveServerCandidate`). Because the text is re-resolved, a host name follows a cloud host whose public IP changes on stop/start | this spec (proposed in conversation, not objected to) |
 | D5 | Unenrolling a key removes every registration bound to it | operator |
 | D6 | A registration is bound to an enrolled key when it is added: `--key <prefix>` is required, and adding with a key that is not enrolled is refused. A connection made for a registration that authenticates with a different key is closed (D12). The alternative was to learn the key at the first successful connection; that leaves a window in which a registration is bound to no key, so unenroll (D5) would not cascade to it | this spec |
 | D7 | A runner can be kicked by itself, independently of its key | operator |
@@ -80,7 +80,7 @@ worth a second look.
 | D10 | `agent-runner --listen` / `--udp-listen` with no server key (`--server-pubkey`, `--server-pubkey-file`, or their env vars) refuses to start: exit 1, with a message naming the flag. There is no override flag. The server always has a key (`--server-key-file`, generated when absent), so the only cost is copying `server-key.pub` once | operator ("fail closed でいい") |
 | D11 | Capabilities. Adding, listing and removing dial registrations is gated on `runner_admin`. Kicking is gated on `runner_enroll`. Reason: enrollment spec D7 drew the line that `runner_admin` is "using the server's network reach (`dial_runner`)" and `runner_enroll` is "adding to the registry". A persistent dial is the first kind of power, made durable. Kicking a runner is registry hygiene, the reason `runner_enroll` exists (enrollment D4) | this spec |
 | D12 | A registration's connection that authenticates with a key other than the bound one is refused **before `Registry.Add`**. The record travels from the dialer to the runner-hello handler keyed by ConnectionID, the way `pendingViaInfo` already does (`server/server.go:762-776`, `takePendingViaInfo`). On a mismatch the handler sends no `RunnerHelloResponse`, closes the connection with `KickConn`, and records `key mismatch: <prefix16>` as the record's last error. This is the shape of the existing identity-key refusal (`server/runner_handler.go:176-189`: "the gate already said ok, so the runner sees a plain drop and retries"). The check cannot sit at the PSK gate: the gate has already answered `ok` by the time the hello is dispatched (`server/server.go:1458-1470`). No new `PskAuthStatus` is added, because the handshake is the path the harness upgrades itself through (implementation-pitfalls Pitfall 10) | this spec |
-| D13 | A listen-mode runner keeps at most one server connection. The new connection replaces the old one when its **`RunnerHelloResponse`** arrives, i.e. once the server has registered it. Passing the signature check alone is not enough: under D12 a verified server can still refuse the connection, and retiring the good connection for a refused one would cancel every task each time the record retried (builder check, 2026-11-04). The previous connection is closed, and the runner waits for its `OnConnect` to return, so `retireSender` and `cancelTasksUnlessHeld` have run. This happens synchronously inside the handling of that `RunnerHelloResponse`, before any later message on the new connection is dispatched. An `AssignTask` on the new connection therefore lands after the old teardown, given that the server registers a runner before it assigns to it (§6 tests that ordering) | this spec |
+| D13 | (Mechanism amended by A1.) A listen-mode runner keeps at most one server connection. The new connection replaces the old one when its **`RunnerHelloResponse`** arrives, i.e. once the server has registered it. Passing the signature check alone is not enough: under D12 a verified server can still refuse the connection, and retiring the good connection for a refused one would cancel every task each time the record retried (builder check, 2026-11-04). The previous connection is closed, and the runner waits for its `OnConnect` to return, so `retireSender` and `cancelTasksUnlessHeld` have run. This happens synchronously inside the handling of that `RunnerHelloResponse`, before any later message on the new connection is dispatched. An `AssignTask` on the new connection therefore lands after the old teardown, given that the server registers a runner before it assigns to it (§6 tests that ordering) | this spec |
 | D14 | Kick refuses a runner that has live tasks unless `--force` is given, and lists those tasks. This follows `runner unenroll`'s in-use guard and the `runner-down` skill's refusal | this spec |
 | D15 | A runner too old to know the `leave` request decodes it as an error and ignores it (`runner/connect.go` `dispatchRunnerRequest`: `req.Decode` failure is logged and returns). The server therefore waits 10 s for the connection to end. If it has not ended, the server closes it with `kickConn` and reports `closed_without_leaving`. A dial-mode runner treated this way reconnects; the result says so | this spec |
 | D16 | Registrations are stored in `<data-dir>/runner-dials.json`, beside `runner-keys.json` and in the same way (`server/runnerkeys.go`): JSON, written to a temporary file then renamed, mode 0600, and a file that does not parse fails startup. Nothing in a task record refers to a registration, so it does not go in the WAL, and using JSON keeps it off the `.bgn` disk axis | this spec |
@@ -88,8 +88,8 @@ worth a second look.
 | D18 | `server dial-runner` (one dial) and `--via` stay as they are. A persistent registration through a relay runner is out of scope | this spec |
 | D19 | Kick and dial-registration verbs are reached from the command line on all three surfaces (CLI, TUI cmdline, WebUI command input). No buttons or keybindings: like `runner enroll` and `server dial-runner`, these are administrative verbs run a handful of times (`NoModalSurface` with that reason) | this spec |
 | D21 | Runner rows show how the runner is connected, as a new `RunnerInfo.link`: `dialed_in` (the runner dialed the server), `dialed_out` (one-shot `server dial-runner`), `dial_record` with the record id, or `via` with the relay runner's identity. Today nothing on any surface says which direction a runner's connection runs: `RunnerInfo` has no such field (`runner/protocol/message.bgn:901-950`), and `RunnerEntry.Via` never leaves the server. The only clue is the port in `cid=`. This field also answers "will kicking this runner remove a record" before the kick | operator (2026-11-04) |
-| D22 | The TUI runner table shows `Link` as a width-conditional column from 120 columns up, placed before Roots (the flex column), 12 cells wide. Below 120 it appears in the detail popup only, like Key below 100 (`tui/runners.go:42-47`). Values in the cell: `in`, `out`, `dial:<8 hex>`, `via:<8 hex>` | this spec (operator delegated it) |
-| D20 | One runner, one connection, whoever dialed it. A second registration of the same identity on the same key displaces the first (`server/registry.go:185-213`, `displaced`), so two dialers aimed at one runner would replace each other forever, killing tasks on every switch. Three rules prevent that. **Adopt:** before an attempt, if the registry already holds a runner on the bound key whose ConnectionID has the transport and address of one of the record's resolved candidates, the record takes that connection as its live one and does not dial. Only transport and address are compared; the ID part is random per dial, as with `ViaDialAddr`. This covers moving a runner from a one-shot `server dial-runner` to a record without touching its tasks. **Exact duplicate:** `runner dial add` refuses a candidate whose text equals a candidate of an existing record (`duplicate_candidate`). **Runtime duplicate:** if a record's connection displaces another record's live connection, the displaced record goes to state `duplicate` (naming the other record's id) and stops dialing until it is removed. The tasks on the displaced connection end once; there is no loop. A one-shot `server dial-runner` that displaces a record's connection ends it once as well; the record then adopts the new connection by the adopt rule | this spec (builder check, 2026-11-04) |
+| D22 | (Threshold and width amended by A4: 129 and 13.) The TUI runner table shows `Link` as a width-conditional column from 120 columns up, placed before Roots (the flex column), 12 cells wide. Below 120 it appears in the detail popup only, like Key below 100 (`tui/runners.go:42-47`). Values in the cell: `in`, `out`, `dial:<8 hex>`, `via:<8 hex>` | this spec (operator delegated it) |
+| D20 | (Runtime duplicate amended by A2.) One runner, one connection, whoever dialed it. A second registration of the same identity on the same key displaces the first (`server/registry.go:185-213`, `displaced`), so two dialers aimed at one runner would replace each other forever, killing tasks on every switch. Three rules prevent that. **Adopt:** before an attempt, if the registry already holds a runner on the bound key whose ConnectionID has the transport and address of one of the record's resolved candidates, the record takes that connection as its live one and does not dial. Only transport and address are compared; the ID part is random per dial, as with `ViaDialAddr`. This covers moving a runner from a one-shot `server dial-runner` to a record without touching its tasks. **Exact duplicate:** `runner dial add` refuses a candidate whose text equals a candidate of an existing record (`duplicate_candidate`). **Runtime duplicate:** if a record's connection displaces another record's live connection, the displaced record goes to state `duplicate` (naming the other record's id) and stops dialing until it is removed. The tasks on the displaced connection end once; there is no loop. A one-shot `server dial-runner` that displaces a record's connection ends it once as well; the record then adopts the new connection by the adopt rule | this spec (builder check, 2026-11-04) |
 
 ## Non-goals
 
@@ -300,7 +300,7 @@ format: an old runner logs a decode error, and kick falls back to D15.
 | TUI / WebUI buttons, keys | omitted (D19) |
 | `runner dial ls` | Human rows and `--json`. Every field is printed, a zero value is not hidden (checklist 31) |
 | `ls` runner rows and `ls --json` (`cli/list.go`) | `link=in` / `link=out` / `link=dial:<8 hex>` / `link=via:<8 hex>` on every row; JSON carries `link`, `link_record`, `link_via` (D21). The value is always printed, never elided (checklist 31) |
-| TUI runner table (`tui/runners.go` `runnerColsFor`) | `Link` column at ≥120 columns (D22). It goes through `applyColumns`, because the column set varies with width (checklist 34). `TestViewFitsTerminalWidth` covers 120 |
+| TUI runner table (`tui/runners.go` `runnerColsFor`) | `Link` column, 13 wide, from a 129-cell runner pane (D22 as amended by A4). It goes through `swapColumnsAndRebuild`, because the column set varies with width (checklist 34) |
 | TUI runner detail (`tui/detail.go` `formatRunnerDetail`) | A `link:` line at every width, with the full record id or relay identity |
 | WebUI runner rows | `link` in the row meta, beside the key label |
 | wasm snapshot (`cmd/harness-webui-wasm/main.go`) | `link`, `linkRecord`, `linkVia` in the runner conversion |
@@ -349,3 +349,63 @@ Dummy-harness E2E, run as the operator would type the commands:
 3. `runner kick` → the runner process exits 0, `runner dial ls` no longer
    lists the record, and the runner does not return.
 4. A listen-mode runner started without a key → exit 1 with the message.
+
+## Amendment (2026-11-04, while building)
+
+Each entry names the decision it changes, what replaced it, and the fact that
+moved it.
+
+- **A1 — D13's trigger moved out of the dispatcher.** Spec text: retire the
+  previous connection "synchronously inside the handling of that
+  `RunnerHelloResponse`", relying on "the server registers a runner before it
+  assigns to it". Built: `handleServerConn` waits for the new connection's
+  `RunnerHelloResponse` to arrive in the handshake buffer
+  (`RunHandle.helloSeen`), retires the previous connection, and only then
+  calls `OnConnect`, which replays the buffer. Why: the server's scheduler can
+  send `AssignTask` before the hello handler sends `RunnerHelloResponse`, and
+  both sit in the buffer until dispatch is activated. Retiring before
+  activation makes the order irrelevant. The §6 test of the server's send
+  order was therefore dropped.
+- **A2 — D20's runtime duplicate is decided by state, not by the displacement
+  callback.** Built: a record that registers marks every other record whose
+  last runner is the same identity as `duplicate`. A record that finds the
+  runner already connected at its own address, owned by another record, yields
+  without dialing. In that case no task ends at all; the spec's "the tasks on
+  the displaced connection end once" now applies only when the two addresses
+  differ (for example ws and udp of one runner). Why: the order of
+  `OnRunnerDisplaced` against the new record's registration is not fixed.
+- **A3 — D4 holds only for host names without `-`.** `objproto.ParseConnectionID`
+  ends the address at the first `-` (the id separator), so a host name
+  containing one cannot be resolved — by `--server-cid` either. `runner dial
+  add` refuses such a candidate (`cli.ParseCandidate`) rather than store a
+  record that can never dial. Every EC2 public DNS name (`ec2-1-2-3-4…`) is one,
+  so on the motivating host, use an address or a name of your own.
+- **A4 — D22's threshold and width.** Spec: from 120 cells, 12 wide. Built: 13
+  wide (the widest value, `dial:<8 hex>`, is 13), from a 129-cell runner pane,
+  measured as the first width at which `fitColumns` hands the column all 13
+  cells. Why: live, at 12 the record id was cut to `dial:2aaa…`, which cannot
+  be typed into `runner dial rm`. The pane is half the terminal, so this is a
+  terminal of about 260 cells. Pinned by
+  `TestRunnerTableLinkColumnAtItsThreshold`.
+- **A5 — the wasm runner map** carries `link` as the display string (as
+  `keyLabel` is), with `linkKind` / `linkRecord` / `linkVia` raw beside it.
+- **A6 — wire details.** `RunnerDialAddResponse` and `RunnerDialRemoveResponse`
+  carry no `request_id` (their sibling `RunnerEnrollResponse` has none; the
+  envelope carries it). The row field is `dial_state`, because `state` is a
+  `.bgn` keyword.
+- **A7 — the listen-mode drain got its own test.** The UDP kick test stayed
+  green with the drain removed, because a test process does not exit, so the
+  teardown finishes anyway. `TestListenReturnsAfterServerConnTeardown` asserts
+  the ordering the drain exists for, and goes red without it.
+
+Verified on a dummy harness (2026-11-04), against this branch's binaries:
+- refusal without a key, exit 1;
+- a record retrying while its runner was down, then connecting;
+- a deliberate restart re-adopting a running `sleep 3600` in the same second
+  the new server dialed;
+- a crash leaving the task `Failed` and the runner back by itself;
+- `runner kick` → `left`, runner exit status 0, record removed, runner gone;
+- the TUI `Link` column at 270 columns and its absence at 200, the runner
+  detail `link:` line, and `runner dial ls` typed into the TUI command line;
+- the WebUI runner rows at 1280 and 390 px, and `runner dial ls` in its
+  command input.
