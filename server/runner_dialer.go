@@ -49,6 +49,10 @@ type dialManagerConfig struct {
 	Sleep          func(ctx context.Context, d time.Duration) bool
 	BackoffInitial time.Duration
 	BackoffMax     time.Duration
+
+	// OnStart, when set, runs as Start begins. Tests use it to check WHEN the
+	// manager starts (after WAL replay), wherever Start is called from.
+	OnStart func()
 }
 
 type dialLoop struct {
@@ -66,6 +70,10 @@ type dialLoop struct {
 	lastErr     string
 	dupOf       uint32
 	exited      bool
+	// addrs are the candidates as the last attempt resolved them. Kick
+	// matches a record by address against these, so it never resolves a
+	// name itself (a stalled lookup would hold the kicking client's requests).
+	addrs []objproto.ConnectionID
 }
 
 func newDialManager(cfg dialManagerConfig) *dialManager {
@@ -100,6 +108,9 @@ func newDialManager(cfg dialManagerConfig) *dialManager {
 // replay is done: a runner registered before the held tasks are known would be
 // told none of its children survive.
 func (m *dialManager) Start(ctx context.Context) {
+	if m.cfg.OnStart != nil {
+		m.cfg.OnStart()
+	}
 	m.mu.Lock()
 	m.ctx, m.started = ctx, true
 	m.mu.Unlock()
@@ -124,21 +135,38 @@ func (m *dialManager) Add(rec RunnerDialRecord) {
 	go m.run(m.ctx, l)
 }
 
-// Stop ends one record's loop and forgets it. Its live connection stays (D17).
+// Stop ends one record's loop and forgets it. Its live connection stays (D17),
+// and stops naming the record: its link becomes dialed_out, which is what it
+// is now — a connection the server made that no record holds.
 func (m *dialManager) Stop(id uint32) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	l, ok := m.loops[id]
 	if !ok {
+		m.mu.Unlock()
 		return
 	}
 	close(l.stop)
 	delete(m.loops, id)
+	var held []objproto.ConnectionID
 	for cid, owner := range m.owner {
 		if owner == id {
 			delete(m.owner, cid)
+			held = append(held, cid)
 		}
 	}
+	m.mu.Unlock()
+	if m.cfg.SetLink != nil {
+		for _, cid := range held {
+			m.cfg.SetLink(cid, protocol.RunnerLink_DialedOut, 0)
+		}
+	}
+}
+
+// current reports whether l is still the live loop for its record.
+func (m *dialManager) current(l *dialLoop) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.loops[l.rec.ID] == l
 }
 
 func (m *dialManager) running(id uint32) bool {
@@ -182,24 +210,19 @@ func sameAddr(a, b objproto.ConnectionID) bool {
 // of its candidates resolves to e's address.
 func (m *dialManager) RecordsPointingAt(e RunnerEntry) []uint32 {
 	m.mu.Lock()
-	loops := make([]*dialLoop, 0, len(m.loops))
+	defer m.mu.Unlock()
 	var zero protocol.RunnerID
 	var out []uint32
 	for id, l := range m.loops {
-		switch {
-		case l.hasConn && l.conn == e.ID, l.runner != zero && l.runner == e.Identity:
-			out = append(out, id)
-		default:
-			loops = append(loops, l)
-		}
-	}
-	m.mu.Unlock()
-	for _, l := range loops { // resolve outside the lock: it may do DNS
-		for _, c := range l.rec.Candidates {
-			if cid, err := m.cfg.Resolve(c); err == nil && sameAddr(cid, e.ID) {
-				out = append(out, l.rec.ID)
+		hit := l.hasConn && l.conn == e.ID || l.runner != zero && l.runner == e.Identity
+		for _, a := range l.addrs {
+			if hit {
 				break
 			}
+			hit = sameAddr(a, e.ID)
+		}
+		if hit {
+			out = append(out, id)
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
@@ -342,6 +365,11 @@ func (m *dialManager) attempt(rootCtx, ctx context.Context, l *dialLoop) (connec
 		}
 		resolved = append(resolved, resolvedCandidate{i, cid})
 	}
+	addrs := make([]objproto.ConnectionID, len(resolved))
+	for i, rc := range resolved {
+		addrs[i] = rc.cid
+	}
+	m.set(l, func() { l.addrs = addrs })
 	if len(resolved) == 0 {
 		return false, lastErr
 	}
@@ -357,8 +385,17 @@ func (m *dialManager) attempt(rootCtx, ctx context.Context, l *dialLoop) (connec
 		att := newDialAttempt()
 		origin := &DialOrigin{
 			Link: protocol.RunnerLink_DialRecord, RecordID: rec.ID, ExpectKey: rec.Key,
-			OnRegistered: att.registered,
-			OnRefused:    att.refused,
+			OnRegistered: func(id protocol.RunnerID) {
+				if !m.current(l) {
+					// The record was removed while this connection was
+					// still registering: it must not claim the record.
+					if e, ok := m.cfg.Registry.GetByIdentity(id); ok && m.cfg.SetLink != nil {
+						m.cfg.SetLink(e.ID, protocol.RunnerLink_DialedOut, 0)
+					}
+				}
+				att.registered(id)
+			},
+			OnRefused: att.refused,
 			OnClosed: func() {
 				att.closed()
 				m.onConnRemoved(rc.cid)

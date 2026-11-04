@@ -7,9 +7,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
 )
@@ -145,5 +147,129 @@ func TestDialRecordIdentityHeldByOtherKeyShowsReason(t *testing.T) {
 	h.Handle(&fakeConn{id: second}, hello())
 	if len(refused) != 1 || !strings.Contains(refused[0], "held by a runner on key") {
 		t.Fatalf("OnRefused got %q", refused)
+	}
+}
+
+// The dial manager starts only once the WAL is replayed (spec §1.2): a runner a
+// record registers before that is told none of its held tasks survive. A tiny
+// WAL replays faster than any dial completes, so an end-to-end test cannot see
+// the order; this checks it at the moment Start runs, wherever it is called.
+func TestDialManagerStartsAfterWALReplay(t *testing.T) {
+	dir := t.TempDir()
+	ctx1, cancel1 := context.WithCancel(context.Background())
+	s1 := New(Config{Addr: "127.0.0.1:18694", DataDir: dir})
+	done1 := make(chan error, 1)
+	go func() { done1 <- s1.Run(ctx1) }()
+	time.Sleep(300 * time.Millisecond)
+	id := s1.Tasks().Create("/r", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_None}, "")
+	cancel1()
+	<-done1
+
+	s2 := New(Config{Addr: "127.0.0.1:18694", DataDir: dir})
+	seen := make(chan bool, 1)
+	s2.dials.cfg.OnStart = func() {
+		_, ok := s2.Tasks().Get(id)
+		seen <- ok
+	}
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	defer cancel2()
+	go func() { _ = s2.Run(ctx2) }()
+	select {
+	case ok := <-seen:
+		if !ok {
+			t.Fatal("dial records started before the WAL was replayed")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the dial manager never started")
+	}
+}
+
+// M2: once its record is removed, a live connection no longer claims to be
+// that record's — D21's link answers "does kicking this remove a record".
+func TestDialRecordRemoveRelinksRealConnection(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	_, ka, _ := ed25519.GenerateKey(nil)
+	keys, _ := LoadRunnerKeyStore("", []RunnerKeyRecord{{Key: ka.Public().(ed25519.PublicKey)}})
+	dials, _ := LoadRunnerDialStore("")
+	rec, _ := dials.Add(RunnerDialRecord{Candidates: []string{"ws:127.0.0.1:18696-*"}, Key: ka.Public().(ed25519.PublicKey)})
+	f := newOriginFixtureWith(t, ctx, "18695", "18696", ka, Config{RunnerKeys: keys, RunnerDials: dials, DataDir: t.TempDir()})
+	e := f.waitRunner(t, "origin-runner")
+	if e.Link != protocol.RunnerLink_DialRecord || e.LinkRecord != rec.ID {
+		t.Fatalf("before: link %v record %d", e.Link, e.LinkRecord)
+	}
+	dials.Remove(rec.ID)
+	f.s.dials.Stop(rec.ID)
+	after, ok := f.s.registry.Get(e.ID)
+	if !ok || after.Link != protocol.RunnerLink_DialedOut || after.LinkRecord != 0 {
+		t.Fatalf("after removal: link %v record %d (ok=%v), want dialed_out 0", after.Link, after.LinkRecord, ok)
+	}
+}
+
+// M1: a connection whose record was removed while it was still registering
+// does not come up claiming the removed record.
+func TestDialRecordStoppedMidDialRegistersUnlinked(t *testing.T) {
+	key, _, _ := ed25519.GenerateKey(nil)
+	keys, _ := LoadRunnerKeyStore("", []RunnerKeyRecord{{Key: key}})
+	store, _ := LoadRunnerDialStore("")
+	reg := NewRegistry()
+	dialed := make(chan struct{})
+	release := make(chan struct{})
+	var m *dialManager
+	m = newDialManager(dialManagerConfig{Store: store, Keys: keys, Registry: reg, SetLink: reg.SetLink,
+		Dial: func(_ context.Context, cid objproto.ConnectionID, o *DialOrigin) error {
+			go func() { // the hello handler, late
+				<-release
+				reg.Add(&RunnerEntry{ID: cid, Identity: runnerIDOf("late"), Key: key, Conn: &fakeConn{id: cid},
+					ActiveTasks: map[string]struct{}{}, Link: o.Link, LinkRecord: o.RecordID})
+				o.OnRegistered(runnerIDOf("late"))
+			}()
+			close(dialed)
+			return nil
+		}})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m.Start(ctx)
+	rec, _ := store.Add(RunnerDialRecord{Candidates: []string{"ws:127.0.0.1:9640-*"}, Key: key})
+	m.Add(rec)
+	<-dialed
+	store.Remove(rec.ID)
+	m.Stop(rec.ID)
+	close(release)
+	eventually(t, "the late registration is relinked", func() bool {
+		e, ok := reg.GetByIdentity(runnerIDOf("late"))
+		return ok && e.Link == protocol.RunnerLink_DialedOut && e.LinkRecord == 0
+	})
+}
+
+// M4: kick finds a record by address from the addresses the record's own loop
+// last resolved — it does no name resolution of its own.
+func TestRecordsPointingAtDoesNotResolve(t *testing.T) {
+	f := newDialerFixture(t)
+	var mu sync.Mutex
+	resolves := 0
+	f.n.m.cfg.Resolve = func(spec string) (objproto.ConnectionID, error) {
+		mu.Lock()
+		resolves++
+		mu.Unlock()
+		return objproto.ParseConnectionID(spec, objproto.ParseOption_AllowRandomID)
+	}
+	f.n.fail = func(objproto.ConnectionID) error { return errTestRefused }
+	f.n.m.Start(f.ctx)
+	rec := f.add(t, "ws:127.0.0.1:9641-*")
+	eventually(t, "waiting", func() bool { return dialRow(f.n.m, rec.ID).DialState == protocol.RunnerDialState_Waiting })
+	mu.Lock()
+	before := resolves
+	mu.Unlock()
+	got := f.n.m.RecordsPointingAt(RunnerEntry{ID: pcid(t, "ws:127.0.0.1:9641-9"), Identity: runnerIDOf("restarted")})
+	mu.Lock()
+	after := resolves
+	mu.Unlock()
+	if len(got) != 1 || got[0] != rec.ID {
+		t.Fatalf("by address: %v", got)
+	}
+	if after != before {
+		t.Fatalf("RecordsPointingAt resolved %d name(s)", after-before)
 	}
 }

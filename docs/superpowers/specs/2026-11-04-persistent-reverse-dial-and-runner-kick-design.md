@@ -414,6 +414,27 @@ moved it.
     disagreeing. `RunnerDialStatus` gains `store_failed` (appended), returned
     by add and remove.
 
+- **A9 — two deferred minors re-graded and fixed (operator, 2026-11-04).**
+  - Removing a record (`dial rm`, unenroll, kick) relinks its live connection
+    to `dialed_out`. A connection still registering when its record was
+    removed comes up `dialed_out` too. Before this, `link=dial:<id>` kept
+    naming a record that was gone — the one question D21 exists to answer.
+  - P2 has regression guards:
+    - `TestDialRecordReadoptsHeldTaskAcrossDeliberateRestart` (integration:
+      a listen runner, a record, a deliberate restart, the task re-adopted);
+    - `TestDialManagerStartsAfterWALReplay` (the order, checked as `Start`
+      runs). The end-to-end test cannot see the order — a tiny WAL replays
+      before any dial completes — and stays green with the start moved before
+      replay; the order test goes red.
+  - Kick no longer resolves names. §2 step 3's address match uses the
+    addresses the record's own loop last resolved; kick previously resolved
+    every candidate on the requesting client's dispatch path.
+  - Found while writing the integration test, not changed here:
+    `RunHoldSequence` can block forever in `closeListeners` when `serve()` has
+    already consumed the HTTP server's done value (`server.go` `shutdownHTTP`).
+    It predates this branch. harness-server is unaffected in practice, because
+    the hold is persisted first and the process exits when `Run` returns.
+
 Verified on a dummy harness (2026-11-04), against this branch's binaries:
 - refusal without a key, exit 1;
 - a record retrying while its runner was down, then connecting;
