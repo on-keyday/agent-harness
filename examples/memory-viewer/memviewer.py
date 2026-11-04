@@ -2040,8 +2040,13 @@ HOOK_INLINE_LIMIT = 64 * 1024
 def _cli(args: list[str], stdin: str | None = None, timeout: int = 60):
     """Run harness-cli. Returns (ok, stdout, stderr). Never raises."""
     try:
+        # harness-cli speaks UTF-8. Without an explicit encoding, text=True
+        # decodes with the locale codec (cp932 on a Japanese Windows), and a
+        # decode error there happens in subprocess's reader thread: it escapes
+        # the except clauses below and leaves stdout as None.
         r = subprocess.run([CLI, *args], input=stdin, capture_output=True,
-                           text=True, timeout=timeout)
+                           text=True, encoding="utf-8", errors="replace",
+                           timeout=timeout)
         return r.returncode == 0, r.stdout, r.stderr
     except FileNotFoundError:
         return False, "", f"{CLI} が PATH にありません"
@@ -2365,6 +2370,12 @@ def holder_of(port: int) -> str:
 
 
 def main() -> int:
+    # The output is Japanese and uses characters like U+2014. A locale codec
+    # such as cp932 cannot encode them and the print raises, so write UTF-8
+    # whatever the console's locale is.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--serve", action="store_true", help="run a local server that re-reads on each request")
     ap.add_argument("--port", type=int, default=8765)
