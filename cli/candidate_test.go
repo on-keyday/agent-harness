@@ -18,17 +18,28 @@ func TestParseCandidateDoesNotResolve(t *testing.T) {
 	if err := ParseCandidate("ws:nosuchhost.invalid:8540-*"); err != nil {
 		t.Fatalf("an unresolvable host must parse: %v", err)
 	}
-	// objproto cuts the id at the FIRST '-', so a host name containing one can
-	// never be resolved (ResolveCandidate fails on it too). Accepting it here
-	// would store a record that can never dial.
-	if err := ParseCandidate("ws:ec2-1-2-3-4.example:8540-*"); err == nil {
-		t.Fatal("a host name with '-' must be refused: objproto cannot dial it")
+	// The id follows the LAST '-', so a host name holding one (every EC2
+	// public DNS name) is a candidate like any other.
+	if err := ParseCandidate("ws:ec2-1-2-3-4.example:8540-*"); err != nil {
+		t.Fatalf("a host name with '-' must parse: %v", err)
+	}
+	if err := ParseCandidate("ws:ec2-1-2-3-4.example:8540"); err == nil {
+		t.Fatal("a candidate without an id must not parse")
 	}
 	if err := ParseCandidate("ws:127.0.0.1:8540-*"); err != nil {
 		t.Fatalf("literal address: %v", err)
 	}
 	if err := ParseCandidate("not-a-cid"); err == nil {
 		t.Fatal("garbage must not parse")
+	}
+}
+
+// ResolveCandidate looks a hyphenated host name up whole; before the id was
+// cut at the last '-' it failed on the first label, before any lookup.
+func TestResolveCandidateHyphenatedHost(t *testing.T) {
+	_, err := ResolveCandidate("ws:no-such-host.invalid:8540-*")
+	if err == nil || !strings.Contains(err.Error(), "lookup no-such-host.invalid") {
+		t.Fatalf("host not looked up whole: %v", err)
 	}
 }
 

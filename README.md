@@ -901,10 +901,8 @@ bin/harness-cli runner kick <8+ hex of id=> [--force]
   without `--server-pubkey` (or `--server-pubkey-file`) refuses to start:
   without it nothing checks that the dialer is the server.
 - **Candidates are text**, tried in order on every attempt and re-resolved each
-  time, as `--server-cid` is. A host name must not contain `-`: the
-  ConnectionID grammar ends the address at the first `-`, so `runner dial add`
-  refuses one (an EC2 public DNS name, for one — use an address or your own
-  name).
+  time, as `--server-cid` is. A host name may contain `-` (an EC2 public DNS
+  name does): the id is what follows the last `-`.
 - **A record is bound to an enrolled key** (`--key`): a runner on another key
   at that address is refused before it registers, and `runner unenroll`
   removes the key's records. One key may carry several records — two slots on

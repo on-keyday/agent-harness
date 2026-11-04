@@ -71,7 +71,7 @@ worth a second look.
 | D1 | The server persists reverse-dial registrations and re-dials them, both after a disconnect and after its own restart | operator |
 | D2 | An unplanned disconnect (home link drop, server crash) ends the tasks on that connection, as it does in dial mode today. Only a deliberate server restart preserves tasks, through the existing hold | operator |
 | D3 | Registering a reverse dial is something an agent can do with a capability, with no operator step. The model is `runner enroll` (enrollment spec D2) | operator |
-| D4 | (Limited by A3: host names without `-` only.) A registration holds an **ordered list of candidate addresses as text**, and every attempt walks the list from the top, re-resolving each entry. These are the rules of `agent-runner --server-cid` (`runner/connect.go` `ConnectWith`, `runner/servercandidates.go` `ResolveServerCandidate`). Because the text is re-resolved, a host name follows a cloud host whose public IP changes on stop/start | this spec (proposed in conversation, not objected to) |
+| D4 | (A3 limited this to host names without `-`; A10 lifted that.) A registration holds an **ordered list of candidate addresses as text**, and every attempt walks the list from the top, re-resolving each entry. These are the rules of `agent-runner --server-cid` (`runner/connect.go` `ConnectWith`, `runner/servercandidates.go` `ResolveServerCandidate`). Because the text is re-resolved, a host name follows a cloud host whose public IP changes on stop/start | this spec (proposed in conversation, not objected to) |
 | D5 | Unenrolling a key removes every registration bound to it | operator |
 | D6 | A registration is bound to an enrolled key when it is added: `--key <prefix>` is required, and adding with a key that is not enrolled is refused. A connection made for a registration that authenticates with a different key is closed (D12). The alternative was to learn the key at the first successful connection; that leaves a window in which a registration is bound to no key, so unenroll (D5) would not cascade to it | this spec |
 | D7 | A runner can be kicked by itself, independently of its key | operator |
@@ -380,6 +380,7 @@ moved it.
   add` refuses such a candidate (`cli.ParseCandidate`) rather than store a
   record that can never dial. Every EC2 public DNS name (`ec2-1-2-3-4…`) is one,
   so on the motivating host, use an address or a name of your own.
+  (Reversed by A10.)
 - **A4 — D22's threshold and width.** Spec: from 120 cells, 12 wide. Built: 13
   wide (the widest value, `dial:<8 hex>`, is 13), from a 129-cell runner pane,
   measured as the first width at which `fitColumns` hands the column all 13
@@ -439,6 +440,15 @@ moved it.
     `TestCloseListenersReturnsWhileServeAlsoExits` repeats the race ten
     times. harness-server had been unaffected in practice: the hold is
     persisted first, and the process exits when `Run` returns.
+
+- **A10 — A3 reversed: a host name may contain `-` (operator, 2026-11-05).**
+  A3 refused such a candidate because `objproto.ParseConnectionID` cut the id
+  at the first `-`. objtrsf `6d4f453` cuts it at the last `-` instead: an id is
+  decimal or `*` and holds no `-`, and IP literals and vsock `cid:port` hold
+  none, so nothing else changes. `cli.ParseCandidate` mirrors the same cut, and
+  `runner dial add` now accepts `ws:ec2-1-2-3-4…:8540-*`. A binary built before
+  the bump still refuses such a name — runner (`--server-cid`), server (dial
+  records) and CLI each parse it themselves.
 
 Verified on a dummy harness (2026-11-04), against this branch's binaries:
 - refusal without a key, exit 1;

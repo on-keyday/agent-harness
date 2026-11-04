@@ -54,15 +54,17 @@ func ParseCandidate(spec string) error {
 		return nil
 	}
 	bad := fmt.Errorf("candidate %q: want transport:host:port-id, e.g. ws:runner.example:8540-*", spec)
-	// objproto's own first two cuts: transport at the first ':', id after the first '-'.
+	// objproto's own first two cuts: transport at the first ':', id after the
+	// last '-' (a host name may hold '-', an id never does).
 	transport, rest, ok := strings.Cut(spec, ":")
 	if !ok {
 		return bad
 	}
-	addr, id, ok := strings.Cut(rest, "-")
-	if !ok {
+	sep := strings.LastIndexByte(rest, '-')
+	if sep < 0 {
 		return bad
 	}
+	addr, id := rest[:sep], rest[sep+1:]
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil || host == "" {
 		return bad
