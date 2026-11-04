@@ -38,6 +38,8 @@ type RunnerUnenrollResult struct {
 	Key     ed25519.PublicKey
 	Label   string
 	Runners []RunnerKeyUser
+	// RemovedDials are the dial records bound to the key, removed with it.
+	RemovedDials []uint32
 }
 
 func runnerKeyUsers(us []protocol.RunnerKeyUser) []RunnerKeyUser {
@@ -119,9 +121,10 @@ func RunnerUnenrollWith(ctx context.Context, c *Client, prefix string, force boo
 		return u.Status, RunnerUnenrollResult{}, fmt.Errorf("runner unenroll: %w", err)
 	}
 	return u.Status, RunnerUnenrollResult{
-		Key:     append(ed25519.PublicKey(nil), body.Key[:]...),
-		Label:   string(body.Label),
-		Runners: runnerKeyUsers(body.Runners),
+		Key:          append(ed25519.PublicKey(nil), body.Key[:]...),
+		Label:        string(body.Label),
+		Runners:      runnerKeyUsers(body.Runners),
+		RemovedDials: body.RemovedDials,
 	}, nil
 }
 
@@ -241,6 +244,11 @@ func FormatRunnerUnenroll(st protocol.RunnerKeyStatus, res RunnerUnenrollResult)
 	case protocol.RunnerKeyStatus_Ok:
 		fmt.Fprintf(&sb, "unenrolled %s label=%s, closed %d runner(s)\n", KeyPrefix16(res.Key), res.Label, len(res.Runners))
 		runnerUserLines(&sb, res.Runners)
+		fmt.Fprintf(&sb, "removed %d dial record(s)", len(res.RemovedDials))
+		if len(res.RemovedDials) > 0 {
+			sb.WriteString(": " + dialIDList(res.RemovedDials))
+		}
+		sb.WriteString("\n")
 		undo := "undo: harness-cli runner enroll " + hex.EncodeToString(res.Key)
 		if res.Label != "" {
 			undo += " --label " + shellWord(res.Label)
