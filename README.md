@@ -854,11 +854,13 @@ different key.
 
 A runner whose key is not enrolled is refused `not_enrolled`, logs its key and
 the command that enrolls it, and keeps retrying, so a runner started first and
-enrolled afterwards connects by itself. A runner in listen mode is the
-exception: it does not dial, so after enrolling its key (or undoing an
-unenroll) run `server dial-runner` for it again. `server dial-runner` answers
-`ok` once the connection is made, before the runner's key is checked, so `ls`
-is where a refused one shows — it is absent. The three verbs need the
+enrolled afterwards connects by itself. A runner in listen mode does not dial:
+a dial record (`runner dial add`, below) keeps re-dialing it until its key is
+enrolled; one reached by a one-shot `server dial-runner` needs that command run
+again. `server dial-runner` answers `ok` once the connection is made, before
+the runner's key is checked, so `ls` is where a refused one shows — it is
+absent. Unenrolling a key also removes the dial records bound to it, and says
+how many. The three verbs need the
 `runner_enroll` capability (an operator holds it); an agent that brings runners
 up for you needs it granted. `runner_admin` is a different power — `server
 dial-runner`, the server's own network reach — and implies nothing here. The
@@ -875,6 +877,56 @@ role the server has since retired, and it is refused `no_identity`. An old
 runner keeps retrying, so rebuilding its host brings it back. Neither the
 server nor `agent-runner` accepts `--psk` / `--psk-file` any more. Design:
 `docs/superpowers/specs/2026-10-27-runner-enrollment-design.md`.
+
+### Dial records and runner kick
+
+For a runner the server must reach rather than the other way round — a cloud
+host listening on a public port, with nothing opened toward the server — the
+runner listens and the server dials it. A **dial record** makes that durable:
+the server dials the runner now, again whenever the connection ends (backing
+off 0.5 s doubling to 30 s), and from its own startup, so a deliberate server
+restart re-adopts the runner's held tasks inside `--hold-window` as a dialing
+runner's would. An unplanned drop ends the connection's tasks, as it does for
+a dialing runner.
+
+```bash
+bin/agent-runner --listen :8540 --server-pubkey-file server-key.pub --roots /abs/repo
+bin/harness-cli runner dial add 'ws:runner.example:8540-*' --key <8+ hex> --label cloud
+bin/harness-cli runner dial ls [--json]   # connected / dialing / waiting (next attempt, last error) / duplicate
+bin/harness-cli runner dial rm <8-hex id> # stops re-dialing; the live connection stays
+bin/harness-cli runner kick <8+ hex of id=> [--force]
+```
+
+- **A listening runner needs the server's key.** `--listen` / `--udp-listen`
+  without `--server-pubkey` (or `--server-pubkey-file`) refuses to start:
+  without it nothing checks that the dialer is the server.
+- **Candidates are text**, tried in order on every attempt and re-resolved each
+  time, as `--server-cid` is. A host name must not contain `-`: the
+  ConnectionID grammar ends the address at the first `-`, so `runner dial add`
+  refuses one (an EC2 public DNS name, for one — use an address or your own
+  name).
+- **A record is bound to an enrolled key** (`--key`): a runner on another key
+  at that address is refused before it registers, and `runner unenroll`
+  removes the key's records. One key may carry several records — two slots on
+  one host, on two ports.
+- **One runner, one connection.** A record finding the runner already
+  connected at its address adopts that connection instead of dialing, and one
+  that would take a runner another record holds yields as `duplicate`.
+- **`runner kick`** asks one runner to leave: it ends its tasks and the
+  process exits 0, without reconnecting. A record that would bring it back is
+  removed first. Refused while it runs tasks unless `--force`. A runner too old
+  to know the request is closed after 10 s and reported
+  `closed_without_leaving` — a dialing one reconnects. Nothing keeps a kicked
+  runner out after its host restarts; unenroll its key for that.
+- Every runner row says how the runner is connected: `link=in` (it dialed),
+  `out` (`server dial-runner`), `dial:<id>` (a record), `via:<id>` (through a
+  relay runner) — in `ls` and `ls --json`, the TUI runner detail (and a `Link`
+  column from 120 columns), and the WebUI runner row.
+
+`runner dial add/ls/rm` need `runner_admin` (the server's network reach);
+`runner kick` needs `runner_enroll`. All four are on the CLI, the TUI command
+line and the WebUI command input. Design:
+`docs/superpowers/specs/2026-11-04-persistent-reverse-dial-and-runner-kick-design.md`.
 
 ## Operating modes
 
@@ -1634,7 +1686,7 @@ The cmdline accepts `submit / session {new,attach,ls,kill}
 / forward {ls,kill,tap} / conns
 / grid / caps / scope
 / caps set / caps set-parent / caps audit / caps reach / caps what-if / workspace {save,apply,detach,ls,show,rm} / workspace forward {add,rm}
-/ server dial-runner / runner {enroll,keys,unenroll} / ssh-gateway / cancel / prune / repo / clear / help / quit`.
+/ server dial-runner / runner {enroll,keys,unenroll,kick} / runner dial {add,ls,rm} / ssh-gateway / cancel / prune / repo / clear / help / quit`.
 `exec <task-id> [--] <cmd>...` runs a command in that task's worktree and prints
 its output into the cmdresult pane, stdout marked `1|` and stderr `2|`;
 `exec ls` / `exec kill <exec-id>` / `exec tap <exec-id>` list, stop and watch

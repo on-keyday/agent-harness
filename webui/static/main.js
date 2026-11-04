@@ -9291,14 +9291,24 @@ async function runVerbCommandDispatch(tokens, ctx) {
       break;
     }
     case "runner": {
-      // runner enroll / keys / unenroll: the text is rendered by the same Go
-      // function the CLI prints with, so the three surfaces say one thing.
+      // runner enroll / keys / unenroll / kick and runner dial add / ls / rm:
+      // the text is rendered by the same Go function the CLI prints with, so
+      // the three surfaces say one thing.
       const b = parseOrHelp(ctx, tokens, {});
       let r;
       switch (b.path[1]) {
         case "enroll": r = await ctx.harness.runnerEnroll(b.args[0], b.flags.label || ""); break;
         case "keys": r = await ctx.harness.runnerKeys(); break;
         case "unenroll": r = await ctx.harness.runnerUnenroll(b.args[0], !!b.flags.force); break;
+        case "kick": r = await ctx.harness.runnerKick(b.args[0], !!b.flags.force); break;
+        case "dial":
+          switch (b.path[2]) {
+            case "add": r = await ctx.harness.runnerDialAdd(b.args[0], b.flags.key || "", b.flags.label || ""); break;
+            case "ls": r = await ctx.harness.runnerDialList(); break;
+            case "rm": r = await ctx.harness.runnerDialRemove(b.args[0]); break;
+            default: throw new Error(`runner dial: unknown sub-verb ${b.path[2]}`);
+          }
+          break;
         default: throw new Error(`runner: unknown sub-verb ${b.path[1]}`);
       }
       if (!r.ok) throw new Error(r.text.trimEnd());

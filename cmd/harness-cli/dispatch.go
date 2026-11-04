@@ -567,6 +567,68 @@ func (h cliVerbs) RunnerUnenroll(a verb.RunnerUnenrollAction) error {
 	return nil
 }
 
+// --- dial records and kick ------------------------------------------------
+
+func (h cliVerbs) RunnerDialAdd(a verb.RunnerDialAddAction) error {
+	cands, err := cli.SplitCandidates(a.Candidates)
+	if err != nil {
+		return fmt.Errorf("runner dial add: %w", err)
+	}
+	st, id, err := cli.RunnerDialAdd(h.ctx, h.cid(), cands, a.Key, a.Label)
+	if err != nil {
+		return err
+	}
+	out, ok := cli.FormatRunnerDialAdd(st, id, cands)
+	fmt.Println(out)
+	if !ok {
+		os.Exit(1)
+	}
+	return nil
+}
+
+func (h cliVerbs) RunnerDialLs(a verb.RunnerDialListAction) error {
+	rows, err := cli.RunnerDialList(h.ctx, h.cid())
+	if err != nil {
+		return err
+	}
+	if a.JSON {
+		fmt.Print(cli.FormatRunnerDialListJSON(rows))
+		return nil
+	}
+	fmt.Print(cli.FormatRunnerDialList(rows))
+	return nil
+}
+
+func (h cliVerbs) RunnerDialRm(a verb.RunnerDialRemoveAction) error {
+	id, err := cli.ParseDialID(a.ID)
+	if err != nil {
+		return fmt.Errorf("runner dial rm: %w", err)
+	}
+	st, err := cli.RunnerDialRemove(h.ctx, h.cid(), id)
+	if err != nil {
+		return err
+	}
+	out, ok := cli.FormatRunnerDialRemove(st, id)
+	fmt.Println(out)
+	if !ok {
+		os.Exit(1)
+	}
+	return nil
+}
+
+func (h cliVerbs) RunnerKick(a verb.RunnerKickAction) error {
+	st, res, err := cli.RunnerKick(h.ctx, h.cid(), a.RunnerID, a.Force)
+	if err != nil {
+		return err
+	}
+	out, ok := cli.FormatRunnerKick(st, res)
+	fmt.Println(out)
+	if !ok {
+		os.Exit(1)
+	}
+	return nil
+}
+
 // The six board verbs share one body: cli.RunBoardAction switches on the Sub
 // the declaration fixed. Six methods rather than one because the interface is
 // per-VERB -- that is what makes a new board verb a build error here.

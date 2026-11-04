@@ -143,6 +143,10 @@ func main() {
 		"runnerEnroll":       js.FuncOf(harnessRunnerEnroll),
 		"runnerKeys":         js.FuncOf(harnessRunnerKeys),
 		"runnerUnenroll":     js.FuncOf(harnessRunnerUnenroll),
+		"runnerDialAdd":      js.FuncOf(harnessRunnerDialAdd),
+		"runnerDialList":     js.FuncOf(harnessRunnerDialList),
+		"runnerDialRemove":   js.FuncOf(harnessRunnerDialRemove),
+		"runnerKick":         js.FuncOf(harnessRunnerKick),
 		"help":               js.FuncOf(harnessHelp),
 		"dispatch":           js.FuncOf(harnessDispatch),
 		"sendNotification":   js.FuncOf(harnessSendNotification),
@@ -3173,6 +3177,73 @@ func harnessRunnerUnenroll(this js.Value, args []js.Value) any {
 			return "", false, err
 		}
 		text, ok := cli.FormatRunnerUnenroll(st, res)
+		return text, ok, nil
+	})
+}
+
+func jsArgString(args []js.Value, i int) string {
+	if len(args) > i && args[i].Type() == js.TypeString {
+		return args[i].String()
+	}
+	return ""
+}
+
+// harness.runnerDialAdd(candidates, keyPrefix, label) -> Promise<{text, ok}>
+// candidates is the comma-separated list, as typed.
+func harnessRunnerDialAdd(this js.Value, args []js.Value) any {
+	candidates, keyPrefix, label := jsArgString(args, 0), jsArgString(args, 1), jsArgString(args, 2)
+	return runnerKeyPromise(func(c *cli.Client) (string, bool, error) {
+		cands, err := cli.SplitCandidates(candidates)
+		if err != nil {
+			return "", false, fmt.Errorf("runner dial add: %w", err)
+		}
+		st, id, err := cli.RunnerDialAddWith(rootCtx, c, cands, keyPrefix, label)
+		if err != nil {
+			return "", false, err
+		}
+		text, ok := cli.FormatRunnerDialAdd(st, id, cands)
+		return text, ok, nil
+	})
+}
+
+// harness.runnerDialList() -> Promise<{text, ok}>
+func harnessRunnerDialList(this js.Value, args []js.Value) any {
+	return runnerKeyPromise(func(c *cli.Client) (string, bool, error) {
+		rows, err := cli.RunnerDialListWith(rootCtx, c)
+		if err != nil {
+			return "", false, err
+		}
+		return cli.FormatRunnerDialList(rows), true, nil
+	})
+}
+
+// harness.runnerDialRemove(id) -> Promise<{text, ok}>
+func harnessRunnerDialRemove(this js.Value, args []js.Value) any {
+	idText := jsArgString(args, 0)
+	return runnerKeyPromise(func(c *cli.Client) (string, bool, error) {
+		id, err := cli.ParseDialID(idText)
+		if err != nil {
+			return "", false, fmt.Errorf("runner dial rm: %w", err)
+		}
+		st, err := cli.RunnerDialRemoveWith(rootCtx, c, id)
+		if err != nil {
+			return "", false, err
+		}
+		text, ok := cli.FormatRunnerDialRemove(st, id)
+		return text, ok, nil
+	})
+}
+
+// harness.runnerKick(runnerIDPrefix, force) -> Promise<{text, ok}>
+func harnessRunnerKick(this js.Value, args []js.Value) any {
+	prefix := jsArgString(args, 0)
+	force := len(args) > 1 && args[1].Truthy()
+	return runnerKeyPromise(func(c *cli.Client) (string, bool, error) {
+		st, res, err := cli.RunnerKickWith(rootCtx, c, prefix, force)
+		if err != nil {
+			return "", false, err
+		}
+		text, ok := cli.FormatRunnerKick(st, res)
 		return text, ok, nil
 	})
 }

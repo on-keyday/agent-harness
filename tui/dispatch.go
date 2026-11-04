@@ -162,6 +162,38 @@ func (h tuiVerbs) RunnerUnenroll(v verb.RunnerUnenrollAction) tea.Cmd {
 	return DoRunnerUnenroll(h.a.client, v.Prefix, v.Force)
 }
 
+func (h tuiVerbs) RunnerDialAdd(v verb.RunnerDialAddAction) tea.Cmd {
+	if h.a.client == nil {
+		h.a.cmdresult.Append(ErrorStyle.Render("runner dial add: not connected to server"))
+		return nil
+	}
+	return DoRunnerDialAdd(h.a.client, v.Candidates, v.Key, v.Label)
+}
+
+func (h tuiVerbs) RunnerDialLs(verb.RunnerDialListAction) tea.Cmd {
+	if h.a.client == nil {
+		h.a.cmdresult.Append(ErrorStyle.Render("runner dial ls: not connected to server"))
+		return nil
+	}
+	return DoRunnerDialList(h.a.client)
+}
+
+func (h tuiVerbs) RunnerDialRm(v verb.RunnerDialRemoveAction) tea.Cmd {
+	if h.a.client == nil {
+		h.a.cmdresult.Append(ErrorStyle.Render("runner dial rm: not connected to server"))
+		return nil
+	}
+	return DoRunnerDialRemove(h.a.client, v.ID)
+}
+
+func (h tuiVerbs) RunnerKick(v verb.RunnerKickAction) tea.Cmd {
+	if h.a.client == nil {
+		h.a.cmdresult.Append(ErrorStyle.Render("runner kick: not connected to server"))
+		return nil
+	}
+	return DoRunnerKick(h.a.client, v.RunnerID, v.Force)
+}
+
 func (h tuiVerbs) ServerDialRunner(v verb.ServerDialRunnerAction) tea.Cmd {
 	a := h.a
 	if a.client == nil {

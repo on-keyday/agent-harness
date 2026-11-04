@@ -526,6 +526,29 @@ type RestoreAction struct {
 	TaskIDs []string
 }
 
+// RunnerDialAddAction is built by: runner dial add.
+type RunnerDialAddAction struct {
+	ActionMarker
+	// the enrolled key the runner signs with: a unique prefix of at least 8 hex (see runner keys)
+	Key string
+	// a name for the record, shown by runner dial ls (at most 64 bytes)
+	Label      string
+	Candidates string
+}
+
+// RunnerDialListAction is built by: runner dial ls.
+type RunnerDialListAction struct {
+	ActionMarker
+	// one JSON object per record
+	JSON bool
+}
+
+// RunnerDialRemoveAction is built by: runner dial rm.
+type RunnerDialRemoveAction struct {
+	ActionMarker
+	ID string
+}
+
 // RunnerEnrollAction is built by: runner enroll.
 type RunnerEnrollAction struct {
 	ActionMarker
@@ -539,6 +562,14 @@ type RunnerKeysAction struct {
 	ActionMarker
 	// one JSON object per key
 	JSON bool
+}
+
+// RunnerKickAction is built by: runner kick.
+type RunnerKickAction struct {
+	ActionMarker
+	// kick it even though it runs tasks, which end as on any runner death
+	Force    bool
+	RunnerID string
 }
 
 // RunnerUnenrollAction is built by: runner unenroll.
@@ -1807,6 +1838,91 @@ func init() {
 			a.Force = b.Bool("force")
 			if len(b.Args) > 0 {
 				a.Prefix = b.Args[0]
+			}
+			return a, nil
+		},
+		"runner dial add\x00cli": func(b Bound) (Action, error) {
+			a := RunnerDialAddAction{}
+			a.Key = b.Str("key")
+			a.Label = b.Str("label")
+			if len(b.Args) > 0 {
+				a.Candidates = b.Args[0]
+			}
+			return a, nil
+		},
+		"runner dial add\x00tui": func(b Bound) (Action, error) {
+			a := RunnerDialAddAction{}
+			a.Key = b.Str("key")
+			a.Label = b.Str("label")
+			if len(b.Args) > 0 {
+				a.Candidates = b.Args[0]
+			}
+			return a, nil
+		},
+		"runner dial add\x00webui": func(b Bound) (Action, error) {
+			a := RunnerDialAddAction{}
+			a.Key = b.Str("key")
+			a.Label = b.Str("label")
+			if len(b.Args) > 0 {
+				a.Candidates = b.Args[0]
+			}
+			return a, nil
+		},
+		"runner dial ls\x00cli": func(b Bound) (Action, error) {
+			a := RunnerDialListAction{}
+			a.JSON = b.Bool("json")
+			return a, nil
+		},
+		"runner dial ls\x00tui": func(b Bound) (Action, error) {
+			a := RunnerDialListAction{}
+			return a, nil
+		},
+		"runner dial ls\x00webui": func(b Bound) (Action, error) {
+			a := RunnerDialListAction{}
+			return a, nil
+		},
+		"runner dial rm\x00cli": func(b Bound) (Action, error) {
+			a := RunnerDialRemoveAction{}
+			if len(b.Args) > 0 {
+				a.ID = b.Args[0]
+			}
+			return a, nil
+		},
+		"runner dial rm\x00tui": func(b Bound) (Action, error) {
+			a := RunnerDialRemoveAction{}
+			if len(b.Args) > 0 {
+				a.ID = b.Args[0]
+			}
+			return a, nil
+		},
+		"runner dial rm\x00webui": func(b Bound) (Action, error) {
+			a := RunnerDialRemoveAction{}
+			if len(b.Args) > 0 {
+				a.ID = b.Args[0]
+			}
+			return a, nil
+		},
+		"runner kick\x00cli": func(b Bound) (Action, error) {
+			a := RunnerKickAction{}
+			a.Force = b.Bool("force")
+			if len(b.Args) > 0 {
+				a.RunnerID = b.Args[0]
+			}
+			return a, nil
+		},
+		"runner kick\x00tui": func(b Bound) (Action, error) {
+			a := RunnerKickAction{}
+			a.Force = b.Bool("force")
+			if len(b.Args) > 0 {
+				a.RunnerID = b.Args[0]
+			}
+			return a, nil
+		},
+		"runner kick\x00webui": func(b Bound) (Action, error) {
+			a := RunnerKickAction{}
+			a.Force = b.Bool("force")
+			if len(b.Args) > 0 {
+				a.RunnerID = b.Args[0]
 			}
 			return a, nil
 		},
@@ -3870,6 +3986,10 @@ const (
 	CmdRunnerEnroll           = "runner enroll"
 	CmdRunnerKeys             = "runner keys"
 	CmdRunnerUnenroll         = "runner unenroll"
+	CmdRunnerDialAdd          = "runner dial add"
+	CmdRunnerDialLs           = "runner dial ls"
+	CmdRunnerDialRm           = "runner dial rm"
+	CmdRunnerKick             = "runner kick"
 	CmdSshGateway             = "ssh-gateway"
 	CmdSshGatewayStart        = "ssh-gateway start"
 	CmdSshGatewayStatus       = "ssh-gateway status"
@@ -4603,6 +4723,90 @@ func ParseCmdRunnerUnenroll(sf Surface, args []string, ctx map[string]string) (R
 		return zero, err
 	}
 	a := act.(RunnerUnenrollAction)
+	return a, nil
+}
+
+func ParseCmdRunnerDialAdd(sf Surface, args []string, ctx map[string]string) (RunnerDialAddAction, error) {
+	var zero RunnerDialAddAction
+	sp, ok := Lookup("runner", "dial", "add")
+	if !ok {
+		return zero, fmt.Errorf("runner dial add: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(RunnerDialAddAction)
+	return a, nil
+}
+
+func ParseCmdRunnerDialLs(sf Surface, args []string, ctx map[string]string) (RunnerDialListAction, error) {
+	var zero RunnerDialListAction
+	sp, ok := Lookup("runner", "dial", "ls")
+	if !ok {
+		return zero, fmt.Errorf("runner dial ls: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(RunnerDialListAction)
+	return a, nil
+}
+
+func ParseCmdRunnerDialRm(sf Surface, args []string, ctx map[string]string) (RunnerDialRemoveAction, error) {
+	var zero RunnerDialRemoveAction
+	sp, ok := Lookup("runner", "dial", "rm")
+	if !ok {
+		return zero, fmt.Errorf("runner dial rm: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(RunnerDialRemoveAction)
+	return a, nil
+}
+
+func ParseCmdRunnerKick(sf Surface, args []string, ctx map[string]string) (RunnerKickAction, error) {
+	var zero RunnerKickAction
+	sp, ok := Lookup("runner", "kick")
+	if !ok {
+		return zero, fmt.Errorf("runner kick: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(RunnerKickAction)
 	return a, nil
 }
 
@@ -6857,6 +7061,14 @@ type CLIDispatch[R any] interface {
 	RunnerKeys(RunnerKeysAction) R
 	// runner unenroll
 	RunnerUnenroll(RunnerUnenrollAction) R
+	// runner dial add
+	RunnerDialAdd(RunnerDialAddAction) R
+	// runner dial ls
+	RunnerDialLs(RunnerDialListAction) R
+	// runner dial rm
+	RunnerDialRm(RunnerDialRemoveAction) R
+	// runner kick
+	RunnerKick(RunnerKickAction) R
 	// ssh-gateway
 	SshGateway(SSHGatewayAction) R
 	// workspace save
@@ -7190,6 +7402,30 @@ func DispatchCLI[R any](h CLIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.RunnerUnenroll(a), true, nil
+	case CmdRunnerDialAdd:
+		a, perr := ParseCmdRunnerDialAdd(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.RunnerDialAdd(a), true, nil
+	case CmdRunnerDialLs:
+		a, perr := ParseCmdRunnerDialLs(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.RunnerDialLs(a), true, nil
+	case CmdRunnerDialRm:
+		a, perr := ParseCmdRunnerDialRm(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.RunnerDialRm(a), true, nil
+	case CmdRunnerKick:
+		a, perr := ParseCmdRunnerKick(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.RunnerKick(a), true, nil
 	case CmdSshGateway:
 		a, perr := ParseCmdSshGateway(CLI, args, ctx)
 		if perr != nil {
@@ -7774,6 +8010,14 @@ func DispatchCLIAction[R any](h CLIDispatch[R], act Action) (r R, handled bool) 
 		return h.RunnerKeys(a), true
 	case RunnerUnenrollAction:
 		return h.RunnerUnenroll(a), true
+	case RunnerDialAddAction:
+		return h.RunnerDialAdd(a), true
+	case RunnerDialListAction:
+		return h.RunnerDialLs(a), true
+	case RunnerDialRemoveAction:
+		return h.RunnerDialRm(a), true
+	case RunnerKickAction:
+		return h.RunnerKick(a), true
 	case SSHGatewayAction:
 		return h.SshGateway(a), true
 	case WorkspaceAction:
@@ -8138,6 +8382,30 @@ func ParseCLICommand(tokens []string, ctx map[string]string) (act Action, handle
 			return a, true, nil
 		case CmdRunnerUnenroll:
 			a, perr := ParseCmdRunnerUnenroll(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdRunnerDialAdd:
+			a, perr := ParseCmdRunnerDialAdd(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdRunnerDialLs:
+			a, perr := ParseCmdRunnerDialLs(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdRunnerDialRm:
+			a, perr := ParseCmdRunnerDialRm(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdRunnerKick:
+			a, perr := ParseCmdRunnerKick(CLI, tokens[n:], ctx)
 			if perr != nil {
 				return nil, true, perr
 			}
@@ -8704,6 +8972,14 @@ type TUIDispatch[R any] interface {
 	RunnerKeys(RunnerKeysAction) R
 	// runner unenroll
 	RunnerUnenroll(RunnerUnenrollAction) R
+	// runner dial add
+	RunnerDialAdd(RunnerDialAddAction) R
+	// runner dial ls
+	RunnerDialLs(RunnerDialListAction) R
+	// runner dial rm
+	RunnerDialRm(RunnerDialRemoveAction) R
+	// runner kick
+	RunnerKick(RunnerKickAction) R
 	// ssh-gateway start
 	SshGatewayStart(SSHGatewayAction) R
 	// ssh-gateway status
@@ -8961,6 +9237,30 @@ func DispatchTUI[R any](h TUIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.RunnerUnenroll(a), true, nil
+	case CmdRunnerDialAdd:
+		a, perr := ParseCmdRunnerDialAdd(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.RunnerDialAdd(a), true, nil
+	case CmdRunnerDialLs:
+		a, perr := ParseCmdRunnerDialLs(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.RunnerDialLs(a), true, nil
+	case CmdRunnerDialRm:
+		a, perr := ParseCmdRunnerDialRm(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.RunnerDialRm(a), true, nil
+	case CmdRunnerKick:
+		a, perr := ParseCmdRunnerKick(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.RunnerKick(a), true, nil
 	case CmdSshGatewayStart:
 		a, perr := ParseCmdSshGatewayStart(TUI, args, ctx)
 		if perr != nil {
@@ -9351,6 +9651,14 @@ func DispatchTUIAction[R any](h TUIDispatch[R], act Action) (r R, handled bool) 
 		return h.RunnerKeys(a), true
 	case RunnerUnenrollAction:
 		return h.RunnerUnenroll(a), true
+	case RunnerDialAddAction:
+		return h.RunnerDialAdd(a), true
+	case RunnerDialListAction:
+		return h.RunnerDialLs(a), true
+	case RunnerDialRemoveAction:
+		return h.RunnerDialRm(a), true
+	case RunnerKickAction:
+		return h.RunnerKick(a), true
 	case SSHGatewayAction:
 		switch a.Sub {
 		case "start":
@@ -9636,6 +9944,30 @@ func ParseTUICommand(tokens []string, ctx map[string]string) (act Action, handle
 			return a, true, nil
 		case CmdRunnerUnenroll:
 			a, perr := ParseCmdRunnerUnenroll(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdRunnerDialAdd:
+			a, perr := ParseCmdRunnerDialAdd(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdRunnerDialLs:
+			a, perr := ParseCmdRunnerDialLs(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdRunnerDialRm:
+			a, perr := ParseCmdRunnerDialRm(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdRunnerKick:
+			a, perr := ParseCmdRunnerKick(TUI, tokens[n:], ctx)
 			if perr != nil {
 				return nil, true, perr
 			}

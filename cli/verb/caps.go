@@ -130,10 +130,10 @@ func CapDescription(c protocol.Capability) string {
 	case protocol.Capability_Prune:
 		return "prune terminal tasks"
 	case protocol.Capability_RunnerAdmin:
-		return "runner administration (server dial-runner)"
+		return "runner administration: server dial-runner, and the dial records the server keeps dialing (runner dial add, runner dial ls, runner dial rm)"
 	case protocol.Capability_RunnerEnroll:
 		return "decide which runner keys may register: runner enroll, runner keys, runner unenroll; " +
-			"NOT implied by runner_admin"
+			"and make one runner leave (runner kick); NOT implied by runner_admin"
 	case protocol.Capability_BoardObserve:
 		return "list board topics, read a topic's retained messages, list its subscribers, list and read archives (board archives, board read --archive); " +
 			"and read another task's direct messages (its chat.<id>, chat.operator, a tree.<id> you are not in) by any agent verb. " +

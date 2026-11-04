@@ -3737,3 +3737,33 @@ omitted: 36 — the skill already says these emit JSON Lines; accepting a
          flag that changes nothing adds no step to teach
 n/a:     the rest; CLI-only verbs (NoModalSurface), no field, no output change
 missed:  —
+
+### 2026-11-04 (pre-landing) — `runner dial add / ls / rm`, `runner kick`
+
+done:    1 (table.go: four rows, `--key` Required, `--json` CLI-only with
+         the `runner keys` SurfaceReason), 2 (`--key` required in the
+         declaration; candidate and id parsing in shared `cli.SplitCandidates`
+         / `cli.ParseDialID`, called by all three surfaces), 7
+         (WebUIDispatch on all four; main.js `case "runner"` routes `dial` on
+         `b.path[2]`), 10 (every surface prints `cli.FormatRunnerDial*` /
+         `FormatRunnerKick`), 15 (caps.go: runner_admin names the dial verbs,
+         runner_enroll names kick; `TestCapDescriptionNamesDialAndKick`), 24
+         (`--force` means "end its tasks" on kick as on unenroll; `dial rm`
+         deliberately does not disconnect, said in Notes and the result
+         line), 28 (records persist in `runner-dials.json`, not the WAL — no
+         task field), 29 (`dial <id> added: …`, `kicked <id8> <host>: …`), 30
+         (TUI cmdresult via `appendRunnerKeyResult`; WebUI command output),
+         31 (`records=0`, `removed 0 dial record(s)`, runner=- only when there
+         is none), 32 (one `FormatDialID`/`ParseDialID` pair), 33 (missing
+         `--key`, malformed id, bad candidate list all error), 35 (README:
+         new "Dial records and runner kick" section, enrollment paragraph,
+         TUI cmdline verb list)
+omitted: 3/4/5/6 — no key, button or picker (spec D19: administrative verbs,
+         like `runner enroll` / `server dial-runner`; NoModalSurface says so);
+         36 — no agent skill describes runner enrollment or reverse dial
+         today, so there is no text to extend; 37/39 — the spec amendment and
+         the Surfaces-table check are the last step of the feature, not of
+         this commit
+n/a:     the rest; no task field, no spawn option. The runner-row `link`
+         field is the next commit's walk.
+missed:  —

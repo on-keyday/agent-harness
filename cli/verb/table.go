@@ -934,6 +934,90 @@ var Verbs = []VerbSpec{
 		Examples: []string{"runner unenroll 3f9c01ab", "runner unenroll 3f9c01ab --force"},
 	},
 
+	// --- dial records and kick (2026-11-04-persistent-reverse-dial-and-runner-kick-design.md) ---
+	{
+		Path:           []string{"runner", "dial", "add"},
+		WebUIDispatch:  WebUIDispatch{Fn: "runnerDialAdd"},
+		SurfaceNotes:   map[Surface][]string{WebUI: {"have the server keep dialing a listening runner, across drops and its own restarts"}, TUI: {"have the server keep dialing a listening runner, across drops and its own restarts"}},
+		NoModalSurface: "an administrative verb run a handful of times per runner, like server dial-runner: the command line is the way in on every surface",
+		Notes: []string{
+			"store a dial record: the server dials the runner (agent-runner --listen)",
+			"now, again whenever the connection ends, and after its own restart",
+			"CANDIDATES is a comma-separated list tried in order on every attempt,",
+			"as --server-cid is; a host name is re-resolved each time",
+			"--key binds the record to an enrolled key: a runner on any other key is",
+			"refused, and runner unenroll of the key removes the record",
+			"needs runner_admin",
+		},
+		Action:          "RunnerDialAddAction",
+		CmdlineSurfaces: CLI | TUI | WebUI,
+		Args:            []Arg{{Name: "candidates", Type: ArgString, Field: "Candidates"}},
+		Flags: []Flag{
+			{Name: "key", Type: FlagString, Default: "", Field: "Key", Required: true,
+				Help: "the enrolled key the runner signs with: a unique prefix of at least 8 hex (see runner keys)"},
+			{Name: "label", Type: FlagString, Default: "", Field: "Label",
+				Help: "a name for the record, shown by runner dial ls (at most 64 bytes)"},
+		},
+		Examples: []string{"runner dial add ws:runner.example:8540-* --key 3f9c01ab --label aws"},
+	},
+	{
+		Path:           []string{"runner", "dial", "ls"},
+		WebUIDispatch:  WebUIDispatch{Fn: "runnerDialList"},
+		SurfaceNotes:   map[Surface][]string{WebUI: {"list dial records: connected, dialing, waiting (when and why), or duplicate"}, TUI: {"list dial records: connected, dialing, waiting (when and why), or duplicate"}},
+		NoModalSurface: "an administrative listing, like runner keys: the command line is the way in on every surface",
+		Notes: []string{
+			"list dial records: state, the runner connected through each, the",
+			"candidate that answered, and for a waiting one the next attempt and",
+			"the last error; then the number of records",
+			"needs runner_admin",
+		},
+		Action:          "RunnerDialListAction",
+		CmdlineSurfaces: CLI | TUI | WebUI,
+		Flags: []Flag{
+			{Name: "json", Type: FlagBool, Default: false, Field: "JSON",
+				CmdlineSurfaces: CLI,
+				SurfaceReason:   "the TUI and WebUI answer into a results pane, not a pipe, so there is nothing for JSON to be read by",
+				Help:            "one JSON object per record"},
+		},
+		Examples: []string{"runner dial ls", "runner dial ls --json"},
+	},
+	{
+		Path:           []string{"runner", "dial", "rm"},
+		WebUIDispatch:  WebUIDispatch{Fn: "runnerDialRemove"},
+		SurfaceNotes:   map[Surface][]string{WebUI: {"stop re-dialing a runner; its live connection stays"}, TUI: {"stop re-dialing a runner; its live connection stays"}},
+		NoModalSurface: "an administrative verb, like runner unenroll: the command line is the way in on every surface",
+		Notes: []string{
+			"remove a dial record by its id (8 hex, from runner dial ls)",
+			"stops re-dialing; the live connection stays — runner kick to disconnect",
+			"needs runner_admin",
+		},
+		Action:          "RunnerDialRemoveAction",
+		CmdlineSurfaces: CLI | TUI | WebUI,
+		Args:            []Arg{{Name: "id", Type: ArgString, Field: "ID"}},
+		Examples:        []string{"runner dial rm 3fa9c012"},
+	},
+	{
+		Path:           []string{"runner", "kick"},
+		WebUIDispatch:  WebUIDispatch{Fn: "runnerKick"},
+		SurfaceNotes:   map[Surface][]string{WebUI: {"make one runner leave: it ends its tasks and exits"}, TUI: {"make one runner leave: it ends its tasks and exits"}},
+		NoModalSurface: "an administrative verb, like runner unenroll: the command line is the way in on every surface",
+		Notes: []string{
+			"make one runner leave, named by 8-32 hex of its identity (the id= column):",
+			"it ends its tasks and the process exits; a dial record that would bring",
+			"it back is removed first. Refused while it runs tasks unless --force",
+			"the runner exits; it returns after its host restarts unless its key is unenrolled",
+			"needs runner_enroll",
+		},
+		Action:          "RunnerKickAction",
+		CmdlineSurfaces: CLI | TUI | WebUI,
+		Args:            []Arg{{Name: "runner-id", Type: ArgString, Field: "RunnerID"}},
+		Flags: []Flag{
+			{Name: "force", Type: FlagBool, Default: false, Field: "Force",
+				Help: "kick it even though it runs tasks, which end as on any runner death"},
+		},
+		Examples: []string{"runner kick 83e97d9c", "runner kick 83e97d9c --force"},
+	},
+
 	// --- ssh-gateway ---
 	//
 	// Two shapes, not one: the CLI runs the gateway in the foreground with
