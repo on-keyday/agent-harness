@@ -40,11 +40,19 @@ jobs:
           CGO_ENABLED: "0"
         run: make release
 
+      # scripts/ sits beside bin/ because daemon.py and agent_presets.py
+      # resolve bin/ as scripts/.. — so runner.py up / runner-autostart.py
+      # register work from the unpacked archive without a checkout. Tracked
+      # files only (no .venv / __pycache__), tests excluded. -P keeps the
+      # sandbox wrapper symlinks as links in the tar.gz; zip stores their
+      # target's content, which the wrappers' basename "$0" dispatch survives.
       - name: stage release artifacts
         run: |
           set -euxo pipefail
           mkdir -p dist/bin dist/webui/static
           cp bin/* dist/bin/
+          git ls-files -z scripts ':!:scripts/**/test_*.py' ':!:scripts/test_*.py' \
+            | xargs -0 cp -P --parents -t dist/
           cp webui/static/main.wasm dist/webui/static/
           cp webui/static/wasm_exec.js dist/webui/static/
           cp README.md dist/ 2>/dev/null || true
