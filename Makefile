@@ -92,6 +92,7 @@ test: js-test scripts-test
 scripts-test:
 	bash -n scripts/sandbox/agent-in-podman.sh scripts/sandbox/agent-launch.sh
 	python3 scripts/test_agent_presets.py
+	python3 scripts/test_stop_build_start.py
 	python3 -m unittest discover -s scripts/sandbox -p 'test_*.py'
 
 # Explicit network/container check, kept out of make test: latest vendor

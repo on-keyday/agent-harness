@@ -63,6 +63,17 @@ them tears down the slot running this session before the others are back.
 
    Pass through any `$ARGUMENTS` (e.g. `--skip-build`, `--dry-run`) verbatim.
 
+   **On a host where `make build` cannot replace a running binary** (Windows:
+   it fails on `bin/agent-runner.exe` while a runner runs from it), add
+   `--stop-first`. It stops every slot, builds, and starts them all again from
+   one detached process, so the sequence finishes even though this session
+   dies when its runner stops — early, not last, in this mode. Every slot is
+   down for the length of the build. Progress and the outcome
+   (`stop-first end: build=… started=… start_failed=…`) are in
+   `bin/.run/build-and-restart-all.log`, which is also the ground truth to
+   confirm from; a failed build still brings every slot back, on the binaries
+   already in `bin/`. The debounce below applies the same way.
+
    Expect this to eventually restart the runner serving this very session
    (`$HARNESS_RUNNER_ID`) **last**, detached — so the build + restart of all
    other slots completes first, then this claude process is torn down with the
