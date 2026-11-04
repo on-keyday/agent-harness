@@ -54,9 +54,16 @@ var requiredCap = map[protocol.TaskControlKind]protocol.Capability{
 	protocol.TaskControlKind_RunnerEnroll:   protocol.Capability_RunnerEnroll,
 	protocol.TaskControlKind_RunnerUnenroll: protocol.Capability_RunnerEnroll,
 	protocol.TaskControlKind_RunnerKeys:     protocol.Capability_RunnerEnroll,
-	protocol.TaskControlKind_BoardTopics:    protocol.Capability_BoardObserve,
-	protocol.TaskControlKind_BoardRead:      protocol.Capability_BoardObserve,
-	protocol.TaskControlKind_BoardPurge:     protocol.Capability_BoardPurge,
+	// Dial records are the server's network reach made durable, so they take
+	// the bit dial_runner takes. Kicking one runner is registry hygiene, the
+	// reason runner_enroll exists (spec 2026-11-04 D11).
+	protocol.TaskControlKind_RunnerDialAdd:    protocol.Capability_RunnerAdmin,
+	protocol.TaskControlKind_RunnerDialList:   protocol.Capability_RunnerAdmin,
+	protocol.TaskControlKind_RunnerDialRemove: protocol.Capability_RunnerAdmin,
+	protocol.TaskControlKind_RunnerKick:       protocol.Capability_RunnerEnroll,
+	protocol.TaskControlKind_BoardTopics:      protocol.Capability_BoardObserve,
+	protocol.TaskControlKind_BoardRead:        protocol.Capability_BoardObserve,
+	protocol.TaskControlKind_BoardPurge:       protocol.Capability_BoardPurge,
 	// A task caller is also checked against the board reach in the handler:
 	// it may retain only a topic it may publish to.
 	protocol.TaskControlKind_BoardRetain: protocol.Capability_BoardPersist,

@@ -84,6 +84,13 @@ type RunnerEntry struct {
 	// For chained relay setup, this is the addr each upstream hop uses for its
 	// SetProxy.allocate when forwarding traffic to this runner.
 	ViaDialAddr objproto.ConnectionID
+
+	// Link is how this runner is connected (RunnerInfo.link): dialed_in for an
+	// accepted connection, else the DialOrigin's. LinkRecord is the dial
+	// record's id for dial_record; LinkVia the relay runner for via.
+	Link       protocol.RunnerLink
+	LinkRecord uint32
+	LinkVia    protocol.RunnerID
 }
 
 // snapshot copies e for a caller outside r.mu. ActiveTasks is cloned: a plain

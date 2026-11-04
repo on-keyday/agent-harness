@@ -155,10 +155,14 @@ var kindCapClass = map[protocol.TaskControlKind]capClass{
 	// reasoning, with reach in place of the subscription.
 	protocol.TaskControlKind_AgentArchives:    capNone,
 	protocol.TaskControlKind_AgentArchiveRead: capNone,
+	protocol.TaskControlKind_RunnerDialAdd:    capInMap,
+	protocol.TaskControlKind_RunnerDialList:   capInMap,
+	protocol.TaskControlKind_RunnerDialRemove: capInMap,
+	protocol.TaskControlKind_RunnerKick:       capInMap,
 }
 
 func TestEveryTaskControlKindHasACapVerdict(t *testing.T) {
-	for i := 0; i <= int(protocol.TaskControlKind_AgentArchiveRead); i++ {
+	for i := 0; i <= int(protocol.TaskControlKind_RunnerKick); i++ {
 		k := protocol.TaskControlKind(i)
 		if k.String() == fmt.Sprintf("TaskControlKind(%d)", i) {
 			continue // gap in the enum, not a real kind

@@ -198,13 +198,13 @@ type Server struct {
 	issuedGrants      map[string][]issuedGrant
 	dataPlaneEndpoint atomic.Pointer[objproto.Endpoint]
 
-	// pendingViaInfoMu / pendingViaInfo carry Phase C registration metadata from
-	// DialRunnerHandler.HandleWithVia (where the via entry + target addr are in
-	// scope) to RunnerHandler.Handle's Hello case (where RunnerEntry is built).
-	// Keyed by the end-to-end conn's ConnectionID; consumed (deleted) when the
+	// pendingDialOriginMu / pendingDialOrigin carry what the server knew when
+	// it made a connection (DialOrigin: one-shot, dial record, or via) from
+	// the dialer to RunnerHandler.Handle's Hello case, where RunnerEntry is
+	// built. Keyed by the conn's ConnectionID; consumed (deleted) when the
 	// Hello arrives or when the connection closes before Hello.
-	pendingViaInfoMu sync.Mutex
-	pendingViaInfo   map[objproto.ConnectionID]*ViaRegistrationInfo
+	pendingDialOriginMu sync.Mutex
+	pendingDialOrigin   map[objproto.ConnectionID]*DialOrigin
 
 	// chainedRelay handles RunnerMessage{RequestChainedRelay} from runners
 	// registered via Phase C. Wired in New; referenced by runnerHandler.ChainedRelay.
@@ -246,14 +246,14 @@ func New(cfg Config) *Server {
 		cfg.RunnerDials, _ = LoadRunnerDialStore("")
 	}
 	s := &Server{
-		cfg:            cfg,
-		registry:       NewRegistry(),
-		tasks:          NewTaskStore(),
-		sessions:       NewSessionRegistry(),
-		pubsub:         pubsub.NewPubSub(cfg.Logger),
-		relayRespCh:    make(map[objproto.ConnectionID]chan protocol.EstablishRelayResponse),
-		pendingViaInfo: make(map[objproto.ConnectionID]*ViaRegistrationInfo),
-		activeConns:    make(map[objproto.ConnectionID]streamingConn),
+		cfg:               cfg,
+		registry:          NewRegistry(),
+		tasks:             NewTaskStore(),
+		sessions:          NewSessionRegistry(),
+		pubsub:            pubsub.NewPubSub(cfg.Logger),
+		relayRespCh:       make(map[objproto.ConnectionID]chan protocol.EstablishRelayResponse),
+		pendingDialOrigin: make(map[objproto.ConnectionID]*DialOrigin),
+		activeConns:       make(map[objproto.ConnectionID]streamingConn),
 	}
 	s.scheduler = NewScheduler(s.registry, s.tasks, s.sendAssign)
 	s.runnerHandler = &RunnerHandler{
@@ -767,22 +767,8 @@ func (s *Server) Run(ctx context.Context) error {
 		return s.setupDataPlane(ctx, ep, clientCID, entry, grant, direct)
 	}
 	s.dataPlaneEndpoint.Store(&ep)
-	s.taskHandler.OnDialed = func(connCtx context.Context, conn objproto.Connection, viaInfo *ViaRegistrationInfo) {
-		// connCtx is the server root context (long-lived). The ECDH-timeout
-		// context lives only inside DialRunnerHandler.Handle and is already
-		// cancelled by the time OnDialed fires.
-		if viaInfo != nil {
-			s.pendingViaInfoMu.Lock()
-			s.pendingViaInfo[conn.ConnectionID()] = viaInfo
-			s.pendingViaInfoMu.Unlock()
-		}
-		s.connWG.Add(1)
-		go func() {
-			defer s.connWG.Done()
-			s.handleConnection(connCtx, conn)
-		}()
-	}
-	s.runnerHandler.TakePendingViaInfo = s.takePendingViaInfo
+	s.taskHandler.OnDialed = s.onDialed
+	s.runnerHandler.TakePendingDialOrigin = s.takePendingDialOrigin
 	return s.serve(ctx, ep, mux, httpAddr)
 }
 
@@ -1516,9 +1502,9 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 	// Connection closed: clean up agent state, deregister runner, and trigger rescheduling.
 	cid := session.ConnectionID().String()
 	s.cfg.Logger.Info("server: connection closed, deregistering", "cid", cid)
-	// Clean up any pending via-info that was stashed at OnDialed time but not yet
+	// Clean up any dial origin that was stashed at OnDialed time but not yet
 	// consumed by the Hello handler (connection closed before Hello arrived).
-	s.takePendingViaInfo(session.ConnectionID())
+	s.takePendingDialOrigin(session.ConnectionID())
 	s.removeAgentConn(session.ConnectionID())
 	s.registry.Remove(session.ConnectionID())
 	s.scheduler.Tick()
@@ -1745,17 +1731,44 @@ func (s *Server) sendAssign(runnerID objproto.ConnectionID, taskID string) error
 	return sendRunnerRequest(entry.Conn, envelope)
 }
 
-// takePendingViaInfo removes and returns the ViaRegistrationInfo stashed for the
-// given conn CID. Returns nil if none was stashed (Phase A direct or reverse-dial
-// registrations). Called by RunnerHandler's Hello case to populate Via + ViaDialAddr,
-// and from handleConnection's defer to clean up any info that was not consumed
-// (conn closed before Hello arrived).
-func (s *Server) takePendingViaInfo(cid objproto.ConnectionID) *ViaRegistrationInfo {
-	s.pendingViaInfoMu.Lock()
-	defer s.pendingViaInfoMu.Unlock()
-	info := s.pendingViaInfo[cid]
-	delete(s.pendingViaInfo, cid)
-	return info
+// onDialed receives every connection the server made (one-shot dial, via
+// dial, dial record): it stashes the origin for the Hello handler and runs the
+// ordinary connection path. connCtx is the server root context (long-lived);
+// the ECDH-timeout context lives only inside the dial and is already cancelled
+// by the time this runs. origin.OnClosed fires when the connection ends.
+func (s *Server) onDialed(connCtx context.Context, conn objproto.Connection, origin *DialOrigin) {
+	if origin != nil {
+		s.pendingDialOriginMu.Lock()
+		s.pendingDialOrigin[conn.ConnectionID()] = origin
+		s.pendingDialOriginMu.Unlock()
+	}
+	s.connWG.Add(1)
+	go func() {
+		defer s.connWG.Done()
+		s.handleConnection(connCtx, conn)
+		if origin != nil && origin.OnClosed != nil {
+			origin.OnClosed()
+		}
+	}()
+}
+
+// dialWithOrigin dials one runner address the way server dial-runner does,
+// with the given origin. Only valid once Run has built the endpoint.
+func (s *Server) dialWithOrigin(ctx context.Context, cid objproto.ConnectionID, origin *DialOrigin) error {
+	h := &DialRunnerHandler{Logger: s.cfg.Logger, Endpoint: s.taskHandler.Endpoint, OnDialed: s.onDialed}
+	return h.DialCandidate(ctx, cid, origin)
+}
+
+// takePendingDialOrigin removes and returns the DialOrigin stashed for the given
+// conn CID. nil means the server did not make this connection: it was accepted,
+// so the runner dialed in. Called by RunnerHandler's Hello case, and from
+// handleConnection's teardown to clean up an origin no Hello consumed.
+func (s *Server) takePendingDialOrigin(cid objproto.ConnectionID) *DialOrigin {
+	s.pendingDialOriginMu.Lock()
+	defer s.pendingDialOriginMu.Unlock()
+	o := s.pendingDialOrigin[cid]
+	delete(s.pendingDialOrigin, cid)
+	return o
 }
 
 // deliverEstablishRelayResponse routes an inbound EstablishRelayResponse to

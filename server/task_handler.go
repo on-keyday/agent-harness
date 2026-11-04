@@ -198,7 +198,7 @@ type TaskHandler struct {
 	// via-registration metadata (non-nil only for Phase C HandleWithVia calls).
 	// Server.New wires this to: func(ctx, conn, viaInfo) { stash viaInfo; go s.handleConnection(ctx, conn) }
 	// Safe to leave nil in tests.
-	OnDialed func(ctx context.Context, conn objproto.Connection, viaInfo *ViaRegistrationInfo)
+	OnDialed func(ctx context.Context, conn objproto.Connection, origin *DialOrigin)
 
 	// ResolveVia resolves a via-relay proxy runner by IDENTITY.
 	// Server.Run wires this to Registry.GetByConnectionID. Tests that exercise
@@ -2523,6 +2523,9 @@ func toRunnerInfo(r RunnerEntry) protocol.RunnerInfo {
 	info.SetSkillsInjected(r.SkillsInjected)
 	copy(info.Key[:], r.Key)
 	info.Id = r.Identity
+	info.Link = r.Link
+	info.LinkRecord = r.LinkRecord
+	info.LinkVia = r.LinkVia
 	// WHERE it is reached, which id used to answer by being an address.
 	info.Cid = protocol.ConnIDFromObjproto(r.Conn.ConnectionID())
 

@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"crypto/ecdh"
+	"crypto/ed25519"
 	"fmt"
 	"log/slog"
 	"time"
@@ -23,6 +24,24 @@ type ViaRegistrationInfo struct {
 	// actually dialed to reach the target during EstablishRelay. Only Transport +
 	// Addr are load-bearing; ID happens to carry admin's UniqueNumber.
 	ViaDialAddr objproto.ConnectionID
+}
+
+// DialOrigin is what the server knew about a connection when IT made the
+// connection: why it dialed, and for a dial record, the key the runner must
+// prove. It travels from the dialer to the RunnerHello handler keyed by
+// ConnectionID, the way ViaRegistrationInfo always did, because the handshake
+// in between knows nothing of it. A connection the server ACCEPTED has none,
+// and is dialed_in.
+type DialOrigin struct {
+	Link      protocol.RunnerLink // dialed_out, dial_record or via; never dialed_in
+	RecordID  uint32              // dial_record: the record's id
+	ExpectKey ed25519.PublicKey   // dial_record: a runner on any other key is refused before registration
+	Via       *ViaRegistrationInfo
+
+	// Callbacks for the dial manager; any may be nil.
+	OnRegistered func(identity protocol.RunnerID) // the runner was added to the registry
+	OnRefused    func(reason string)              // refused before registration, e.g. "key mismatch: <prefix16>"
+	OnClosed     func()                           // the connection ended (handleConnection returned)
 }
 
 // DialRunnerHandler handles a single TaskControlKind_DialRunner request:
@@ -55,7 +74,7 @@ type DialRunnerHandler struct {
 	// (HandleWithVia) registrations; nil for Phase A direct (Handle).
 	// If nil, the connection is closed immediately (useful in tests that only
 	// check status codes without wanting a live connection).
-	OnDialed func(ctx context.Context, conn objproto.Connection, viaInfo *ViaRegistrationInfo)
+	OnDialed func(ctx context.Context, conn objproto.Connection, origin *DialOrigin)
 
 	// ResolveVia, when non-nil, is called for via-relay dispatch to look up the
 	// registered proxy_runner by IDENTITY. Returns the RunnerEntry and true on
@@ -91,8 +110,18 @@ func (h *DialRunnerHandler) Handle(ctx context.Context, target protocol.ConnID) 
 		return protocol.DialRunnerResponse{Status: protocol.DialRunnerStatus_InvalidTarget}
 	}
 
-	cid := target.ToObjproto()
+	if err := h.DialCandidate(ctx, target.ToObjproto(), &DialOrigin{Link: protocol.RunnerLink_DialedOut}); err != nil {
+		return protocol.DialRunnerResponse{Status: protocol.DialRunnerStatus_DialFailed}
+	}
+	return protocol.DialRunnerResponse{Status: protocol.DialRunnerStatus_Ok}
+}
 
+// DialCandidate dials one runner address directly: ECDH, the DialGreeting that
+// tells the runner's accept loop this is its server, then OnDialed, which runs
+// the ordinary handshake + RunnerHello + registry insert. origin travels with
+// the connection to the hello handler. Returns once ECDH and the greeting are
+// done; registration is reported through origin's callbacks, not here.
+func (h *DialRunnerHandler) DialCandidate(ctx context.Context, cid objproto.ConnectionID, origin *DialOrigin) error {
 	timeout := h.DialTimeout
 	if timeout == 0 {
 		timeout = 10 * time.Second
@@ -105,7 +134,7 @@ func (h *DialRunnerHandler) Handle(ctx context.Context, target protocol.ConnID) 
 		if h.Logger != nil {
 			h.Logger.Warn("dial-runner: ECDH handshake failed", "target", fmt.Sprintf("%v", cid), "err", err)
 		}
-		return protocol.DialRunnerResponse{Status: protocol.DialRunnerStatus_DialFailed}
+		return fmt.Errorf("ecdh: %w", err)
 	}
 
 	// Emit a DialGreeting so the runner's accept handler can identify this
@@ -122,16 +151,15 @@ func (h *DialRunnerHandler) Handle(ctx context.Context, target protocol.ConnID) 
 		// in handleAcceptedConn waiting for the first inbound payload)
 		// unblocks via pc.Done() instead of leaking until ctx cancellation.
 		_ = conn.Close()
-		return protocol.DialRunnerResponse{Status: protocol.DialRunnerStatus_DialFailed}
+		return fmt.Errorf("greeting: %w", err)
 	}
 
 	if h.OnDialed != nil {
-		h.OnDialed(ctx, conn, nil)
+		h.OnDialed(ctx, conn, origin)
 	} else {
 		conn.Close() //nolint:errcheck
 	}
-
-	return protocol.DialRunnerResponse{Status: protocol.DialRunnerStatus_Ok}
+	return nil
 }
 
 // HandleWithVia is the via-relay path for TaskControlKind_DialRunner. The
@@ -336,7 +364,7 @@ func (h *DialRunnerHandler) HandleWithVia(ctx context.Context, target protocol.C
 		ViaDialAddr: target.ToObjproto(),
 	}
 	if h.OnDialed != nil {
-		h.OnDialed(ctx, endToEndConn, viaInfo)
+		h.OnDialed(ctx, endToEndConn, &DialOrigin{Link: protocol.RunnerLink_Via, Via: viaInfo})
 	} else {
 		// Tests / callers without OnDialed see a clean close — matches Handle.
 		_ = endToEndConn.Close()

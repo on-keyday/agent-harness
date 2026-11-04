@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/hex"
+	"fmt"
 	"log/slog"
 	"path"
 	"time"
@@ -70,12 +71,11 @@ type RunnerHandler struct {
 	// report, which is what a test constructing one in isolation wants.
 	OnExecRunFinished func(conn ConnHandle, fin *protocol.ExecRunFinished)
 
-	// TakePendingViaInfo, when non-nil, retrieves and removes the
-	// ViaRegistrationInfo stashed by the OnDialed callback for the given
-	// ConnectionID. Populated on Phase C (HandleWithVia) dials; nil return
-	// means Phase A direct or reverse-dial — leave entry.Via + entry.ViaDialAddr zero.
-	// Server.Run wires this to Server.takePendingViaInfo.
-	TakePendingViaInfo func(cid objproto.ConnectionID) *ViaRegistrationInfo
+	// TakePendingDialOrigin, when non-nil, retrieves and removes the
+	// DialOrigin stashed by the OnDialed callback for the given ConnectionID.
+	// nil means the server did not dial this connection (link dialed_in).
+	// Server.Run wires this to Server.takePendingDialOrigin.
+	TakePendingDialOrigin func(cid objproto.ConnectionID) *DialOrigin
 
 	// ChainedRelay, when non-nil, handles RunnerMessage{RequestChainedRelay}
 	// from runners that were registered via Phase C. Wired to
@@ -161,17 +161,45 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 			LastTaskActivity: now,
 		}
 		entry.Conn = conn
-		// Populate Via + ViaDialAddr from the pending info stashed by OnDialed
-		// for Phase C (HandleWithVia) registrations. nil means Phase A direct or
-		// reverse-dial — leave both fields at zero value.
-		if h.TakePendingViaInfo != nil {
-			if info := h.TakePendingViaInfo(conn.ConnectionID()); info != nil {
-				entry.Via = info.Via
-				entry.ViaDialAddr = info.ViaDialAddr
+		// What the server knew when it made this connection, if it did. nil:
+		// the runner dialed in.
+		var origin *DialOrigin
+		if h.TakePendingDialOrigin != nil {
+			origin = h.TakePendingDialOrigin(conn.ConnectionID())
+		}
+		entry.Link = protocol.RunnerLink_DialedIn
+		if origin != nil {
+			entry.Link = origin.Link
+			entry.LinkRecord = origin.RecordID
+			if origin.Via != nil {
+				entry.Via = origin.Via.Via
+				entry.ViaDialAddr = origin.Via.ViaDialAddr
+				if origin.Via.Via != nil {
+					entry.LinkVia = origin.Via.Via.Identity
+				}
 			}
 		}
 		if h.AuthOf != nil {
 			entry.Key = h.AuthOf(conn.ConnectionID())
+		}
+		// A dial record names the key its runner must prove. Checked BEFORE
+		// the registry: the gate has already answered ok, so a refusal here is
+		// the only one that keeps the connection out of the registry — and out
+		// of the runner's notion of "my server" (no RunnerHelloResponse is
+		// sent, which is what makes a listen-mode runner switch connections).
+		// Same shape as the identity-key refusal below: a plain drop.
+		if origin != nil && origin.ExpectKey != nil && !origin.ExpectKey.Equal(entry.Key) {
+			reason := "key mismatch: " + keyPrefix(entry.Key)
+			slog.Warn("runner registration refused: dial record bound to another key",
+				"record", fmt.Sprintf("%08x", origin.RecordID), "key", keyPrefix(entry.Key),
+				"want", keyPrefix(origin.ExpectKey))
+			if origin.OnRefused != nil {
+				origin.OnRefused(reason)
+			}
+			if h.KickConn != nil {
+				h.KickConn(conn.ConnectionID())
+			}
+			return
 		}
 		displaced, err := h.Registry.Add(entry)
 		if err != nil {
@@ -190,6 +218,9 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 		}
 		if displaced != (objproto.ConnectionID{}) && h.OnRunnerDisplaced != nil {
 			h.OnRunnerDisplaced(displaced)
+		}
+		if origin != nil && origin.OnRegistered != nil {
+			origin.OnRegistered(hello.RunnerId)
 		}
 
 		// Notify the server that runner identity is now established so it can

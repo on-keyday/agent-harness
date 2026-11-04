@@ -159,10 +159,15 @@ var kindTargetClass = map[protocol.TaskControlKind]targetClass{
 	protocol.TaskControlKind_BoardArchivePurge: noTarget,
 	protocol.TaskControlKind_AgentArchives:     noTarget,
 	protocol.TaskControlKind_AgentArchiveRead:  noTarget,
+	// Dial records and kick name a key, an address or a runner — never a task.
+	protocol.TaskControlKind_RunnerDialAdd:    noTarget,
+	protocol.TaskControlKind_RunnerDialList:   noTarget,
+	protocol.TaskControlKind_RunnerDialRemove: noTarget,
+	protocol.TaskControlKind_RunnerKick:       noTarget,
 }
 
 func TestEveryTaskControlKindIsClassified(t *testing.T) {
-	for i := 0; i <= int(protocol.TaskControlKind_AgentArchiveRead); i++ {
+	for i := 0; i <= int(protocol.TaskControlKind_RunnerKick); i++ {
 		k := protocol.TaskControlKind(i)
 		if k.String() == fmt.Sprintf("TaskControlKind(%d)", i) {
 			continue // gap in the enum, not a real kind
@@ -177,7 +182,7 @@ func TestEveryTaskControlKindIsClassified(t *testing.T) {
 	}
 }
 
-// agent_archive_read is the last kind; if the enum grows past it the loops above
+// runner_kick is the last kind; if the enum grows past it the loops above
 // stop short and silently cover nothing new. It has caught fourteen appends now:
 // restore_tasks, when the bound was open_forward_tap; trsf_state; the ten
 // agent_* kinds, which arrived together and would otherwise have dispatched
@@ -185,12 +190,13 @@ func TestEveryTaskControlKindIsClassified(t *testing.T) {
 // await_idle_* kinds; board_send / board_wake; open_exec_tap;
 // agent_list_contacts; board_contacts_clear; progress_set / await_progress;
 // progress_clear; runner_enroll / runner_unenroll / runner_keys;
-// lifecycle_set; board_retain; board_membership; agent_read_page; and the
-// seven flush / archive kinds.
-func TestAgentArchiveReadIsStillTheLastKind(t *testing.T) {
-	next := protocol.TaskControlKind(int(protocol.TaskControlKind_AgentArchiveRead) + 1)
+// lifecycle_set; board_retain; board_membership; agent_read_page; the
+// seven flush / archive kinds; and runner_dial_add / _list / _remove /
+// runner_kick.
+func TestRunnerKickIsStillTheLastKind(t *testing.T) {
+	next := protocol.TaskControlKind(int(protocol.TaskControlKind_RunnerKick) + 1)
 	if next.String() != fmt.Sprintf("TaskControlKind(%d)", int(next)) {
-		t.Fatalf("a kind was appended after agent_archive_read (%v) — raise the loop bound in "+
+		t.Fatalf("a kind was appended after runner_kick (%v) — raise the loop bound in "+
 			"TestEveryTaskControlKindIsClassified and in TestEveryTaskControlKindHasACapVerdict, "+
 			"which otherwise stop before it", next)
 	}

@@ -145,6 +145,15 @@ func TestRelayE2E(t *testing.T) {
 	targetEntry := waitForRunnerByHostname(t, srv, "relay-target-runner", 5*time.Second)
 	t.Logf("target_runner registered via relay: ID=%s", targetEntry.ID)
 
+	// RunnerInfo.link (spec 2026-11-04 D21): a runner reached through a relay
+	// says so, and names the relay runner; the relay itself dialed in.
+	if targetEntry.Link != protocol.RunnerLink_Via || targetEntry.LinkVia != proxyEntry.Identity {
+		t.Errorf("target link = %v via %s, want via %s", targetEntry.Link, targetEntry.LinkVia.Hex(), proxyEntry.Identity.Hex())
+	}
+	if proxyEntry.Link != protocol.RunnerLink_DialedOut {
+		t.Errorf("proxy link = %v, want dialed_out (the test reverse-dials it)", proxyEntry.Link)
+	}
+
 	// Sanity: proxy and target must have distinct registered IDs.
 	if targetEntry.ID == proxyEntry.ID {
 		t.Errorf("proxy and target share the same registered ID %q — relay did not establish a distinct conn", targetEntry.ID)
