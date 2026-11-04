@@ -98,16 +98,10 @@ func TestDialRecordReadoptsHeldTaskAcrossDeliberateRestart(t *testing.T) {
 	c1.Close()
 
 	// Deliberate stop: hold first, then cancel — the order harness-server's
-	// signal path uses. RunHoldSequence runs off this goroutine: once the hold
-	// is recorded it closes the listeners, and its wait for the HTTP server can
-	// lose a race to serve(), which then returns on its own (a pre-existing
-	// shape; harness-server's process exits regardless). What this test needs
-	// is the hold itself, read from the store.
-	go s1.RunHoldSequence()
-	eventually(t, func() bool {
-		e, ok := s1.Tasks().Get(taskID)
-		return ok && e.Status == protocol.TaskStatus_Held
-	}, 10*time.Second, 50*time.Millisecond, "the task is held")
+	// signal path uses.
+	if held := s1.RunHoldSequence(); held != 1 {
+		t.Fatalf("held %d task(s), want 1", held)
+	}
 	cancel1()
 	select {
 	case <-done1:

@@ -1063,13 +1063,21 @@ func (s *Server) serve(ctx context.Context, ep objproto.Endpoint, mux *http.Serv
 	// Spin the HTTP server only when both mux and httpAddr are present.
 	// UDP-only servers skip this entirely; the connection-accept loop
 	// below still runs against ep.
+	// serverDone is CLOSED when the HTTP server stops, with serverErr set
+	// before the close for a failure other than a requested shutdown. A close
+	// rather than a send because two parties wait for that event: this loop
+	// (a held stop leaves through it, below) and shutdownHTTP, which the hold
+	// reaches through closeListeners. A single value went to one of them and
+	// left the other blocked forever. nil when there is no HTTP listener,
+	// which blocks the select's case as it always did.
 	var (
 		httpServer *http.Server
-		serverDone chan error
+		serverDone chan struct{}
+		serverErr  error
 	)
 	if mux != nil && httpAddr != "" {
 		httpServer = &http.Server{Addr: httpAddr, Handler: mux, TLSConfig: s.cfg.TLS}
-		serverDone = make(chan error, 1)
+		serverDone = make(chan struct{})
 		go func() {
 			var err error
 			if s.cfg.TLS != nil {
@@ -1079,10 +1087,9 @@ func (s *Server) serve(ctx context.Context, ep objproto.Endpoint, mux *http.Serv
 				err = httpServer.ListenAndServe()
 			}
 			if err != nil && !errors.Is(err, http.ErrServerClosed) {
-				serverDone <- err
-				return
+				serverErr = err
 			}
-			serverDone <- nil
+			close(serverDone)
 		}()
 	}
 
@@ -1197,9 +1204,9 @@ func (s *Server) serve(ctx context.Context, ep objproto.Endpoint, mux *http.Serv
 			shutdownHTTP()
 			waitConns()
 			return ctx.Err()
-		case serveErr := <-serverDone:
-			if serveErr != nil {
-				return fmt.Errorf("http server: %w", serveErr)
+		case <-serverDone:
+			if serverErr != nil {
+				return fmt.Errorf("http server: %w", serverErr)
 			}
 			waitConns()
 			return nil

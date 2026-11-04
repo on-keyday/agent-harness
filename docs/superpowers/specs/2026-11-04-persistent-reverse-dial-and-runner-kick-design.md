@@ -429,11 +429,16 @@ moved it.
   - Kick no longer resolves names. §2 step 3's address match uses the
     addresses the record's own loop last resolved; kick previously resolved
     every candidate on the requesting client's dispatch path.
-  - Found while writing the integration test, not changed here:
-    `RunHoldSequence` can block forever in `closeListeners` when `serve()` has
-    already consumed the HTTP server's done value (`server.go` `shutdownHTTP`).
-    It predates this branch. harness-server is unaffected in practice, because
-    the hold is persisted first and the process exits when `Run` returns.
+  - Found while writing the integration test, and fixed (operator,
+    2026-11-04): `RunHoldSequence` could block forever in `closeListeners`.
+    Two parties wait for the HTTP server to stop — `serve()`, which a held
+    stop is meant to leave through, and `shutdownHTTP` — and the stop was one
+    value on a channel, so whichever read second waited forever. It predates
+    this branch. The stop is now a closed channel with the error stored
+    beside it (`server.go`, `serverDone`), and
+    `TestCloseListenersReturnsWhileServeAlsoExits` repeats the race ten
+    times. harness-server had been unaffected in practice: the hold is
+    persisted first, and the process exits when `Run` returns.
 
 Verified on a dummy harness (2026-11-04), against this branch's binaries:
 - refusal without a key, exit 1;
