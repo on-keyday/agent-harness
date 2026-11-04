@@ -35,6 +35,9 @@ type TaskHandler struct {
 	RunnerDials *RunnerDialStore
 	Dials       *dialManager
 	DialLegs    func(transport string) bool
+	// KickWait is how long runner kick waits for the runner to end its
+	// connection before closing it (0 → 10 s).
+	KickWait time.Duration
 	// KickConn ends one connection from the server side (a wire close, then
 	// the local close), so the peer notices at once instead of at its GC.
 	// runner unenroll --force uses it on the runners of the removed key.
@@ -1145,6 +1148,10 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		}
 	case protocol.TaskControlKind_RunnerDialList:
 		h.handleRunnerDialList(conn, req.RequestId)
+	case protocol.TaskControlKind_RunnerKick:
+		if r := req.RunnerKick(); r != nil {
+			h.handleRunnerKick(conn, req.RequestId, r)
+		}
 	case protocol.TaskControlKind_RunnerDialRemove:
 		if r := req.RunnerDialRemove(); r != nil {
 			h.handleRunnerDialRemove(conn, req.RequestId, r)
