@@ -75,6 +75,11 @@ type Config struct {
 	// nil → New starts an empty in-memory set.
 	RunnerKeys *RunnerKeyStore
 
+	// RunnerDials is the set of runners this server keeps dialing
+	// (harness-server loads <data-dir>/runner-dials.json). nil → New starts an
+	// empty in-memory set.
+	RunnerDials *RunnerDialStore
+
 	// ServerKey signs every PskAuthResponse (spec 2026-10-11 server signature
 	// auth). nil → New generates an ephemeral one, so a server always signs;
 	// harness-server passes the persistent key from <data-dir>/server-key.
@@ -236,6 +241,9 @@ func New(cfg Config) *Server {
 	}
 	if cfg.RunnerKeys == nil {
 		cfg.RunnerKeys, _ = LoadRunnerKeyStore("", nil)
+	}
+	if cfg.RunnerDials == nil {
+		cfg.RunnerDials, _ = LoadRunnerDialStore("")
 	}
 	s := &Server{
 		cfg:            cfg,

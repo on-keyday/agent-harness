@@ -139,6 +139,17 @@ func loadRunnerKeys(dataDir string) (*server.RunnerKeyStore, error) {
 	return server.LoadRunnerKeyStore(filepath.Join(dataDir, runnerKeysFileName), nil)
 }
 
+const runnerDialsFileName = "runner-dials.json"
+
+// loadRunnerDials reads <data-dir>/runner-dials.json, the runners this server
+// keeps dialing. A file that does not parse is a startup error.
+func loadRunnerDials(dataDir string) (*server.RunnerDialStore, error) {
+	if dataDir == "" {
+		return server.LoadRunnerDialStore("")
+	}
+	return server.LoadRunnerDialStore(filepath.Join(dataDir, runnerDialsFileName))
+}
+
 // resolveServerKey loads the server's Ed25519 key, generating it on first run
 // the way resolveOperatorPSK does. A file that exists but does not parse is an
 // error: regenerating would silently invalidate every client's pinned key.
@@ -284,6 +295,11 @@ func main() {
 		fmt.Fprintf(os.Stderr, "harness-server: %v\n", err)
 		os.Exit(1)
 	}
+	runnerDials, err := loadRunnerDials(*dataDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "harness-server: %v\n", err)
+		os.Exit(1)
+	}
 	serverKey, err := resolveServerKey(strings.TrimSpace(*serverKeyFile), *dataDir)
 	if err != nil {
 		slog.Error("server key setup failed", "err", err)
@@ -334,6 +350,7 @@ func main() {
 		OperatorPSK:          operatorPSKBytes,
 		ServerKey:            serverKey,
 		RunnerKeys:           runnerKeys,
+		RunnerDials:          runnerDials,
 		WebUIFS:              webUIFS,
 		WebUINoCache:         webUINoCache,
 		DetachRingBufferSize: *ringSize,
