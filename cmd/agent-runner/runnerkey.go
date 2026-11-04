@@ -48,3 +48,15 @@ func runKeyAction(path string, printPubkey, rotate bool, stdout, stderr io.Write
 	}
 	return true, nil
 }
+
+// listenNeedsServerKey refuses listen mode without the server's key
+// (docs/superpowers/specs/2026-11-04-persistent-reverse-dial-and-runner-kick-design.md
+// D10): a listening runner accepts handshakes from anyone who reaches its port,
+// and without a key nothing checks that the one answering is the server — the
+// first dialer to say ok could assign it tasks.
+func listenNeedsServerKey(listenMode bool, serverPubKey ed25519.PublicKey) error {
+	if listenMode && serverPubKey == nil {
+		return fmt.Errorf("--listen/--udp-listen needs the server's key (--server-pubkey or --server-pubkey-file): without it any dialer can act as the server")
+	}
+	return nil
+}

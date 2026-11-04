@@ -168,3 +168,18 @@ func TestAgentRuntimeAliasFlags(t *testing.T) {
 		t.Fatalf("AgentArgs = %q", cfg.AgentArgs)
 	}
 }
+
+// A listen-mode runner takes any dialer that answers ok as its server unless
+// it can check the server's signature (spec 2026-11-04 D10): no key, no start.
+func TestListenWithoutServerKeyRefuses(t *testing.T) {
+	err := listenNeedsServerKey(true, nil)
+	if err == nil || !strings.Contains(err.Error(), "--server-pubkey") {
+		t.Fatalf("listen mode without a key: %v, want an error naming --server-pubkey", err)
+	}
+	if err := listenNeedsServerKey(true, make([]byte, 32)); err != nil {
+		t.Fatalf("with a key: %v", err)
+	}
+	if err := listenNeedsServerKey(false, nil); err != nil {
+		t.Fatalf("dial mode without a key is unchanged: %v", err)
+	}
+}

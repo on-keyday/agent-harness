@@ -391,6 +391,8 @@ type Session struct {
 	BinDir         string
 	// ServerPubKey is forwarded to agents as HARNESS_SERVER_PUBKEY.
 	ServerPubKey ed25519.PublicKey
+	// OnLeave: Config.OnLeave, called on RunnerRequest{leave}.
+	OnLeave func(by string)
 
 	// ProxyVia, when non-empty, is propagated into spawned agent env as
 	// HARNESS_PROXY_VIA_RUNNER (Phase B). Set by ListenAndServe in listen mode.

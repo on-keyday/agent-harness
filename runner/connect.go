@@ -129,6 +129,11 @@ type Config struct {
 	// HARNESS_PROXY_VIA_RUNNER (Phase B). ListenAndServe sets this from its
 	// listen addr; dial mode leaves it empty.
 	ProxyVia string
+
+	// OnLeave is called when the server asks this runner to leave (runner
+	// kick). agent-runner cancels the process context: the tasks end, the
+	// connection closes, and the process exits 0 without reconnecting.
+	OnLeave func(by string)
 }
 
 // RunHandle wraps the live connection + session so Connect and OnConnect can
@@ -153,6 +158,25 @@ type RunHandle struct {
 	ctlMu       sync.Mutex
 	ctlDispatch func(appwire.AppKind, []byte)
 	ctlBuf      []bufferedControl
+
+	// helloSeen closes when the server's RunnerHelloResponse arrives on this
+	// connection, i.e. the server registered the runner on it. A listen-mode
+	// runner switches to a new server connection only then (spec 2026-11-04
+	// D13): the signature check alone does not say the server accepted it.
+	helloSeen     chan struct{}
+	helloSeenOnce sync.Once
+}
+
+// noteHello closes helloSeen when payload is a RunnerHelloResponse.
+func (h *RunHandle) noteHello(kind appwire.AppKind, payload []byte) {
+	if kind != appwire.AppKind_RunnerControl || h.helloSeen == nil {
+		return
+	}
+	var req protocol.RunnerRequest
+	if _, err := req.Decode(payload); err != nil || req.Kind != protocol.RunnerRequestType_RunnerHelloResponse {
+		return
+	}
+	h.helloSeenOnce.Do(func() { close(h.helloSeen) })
 }
 
 // bufferedControl is a runner-control message captured during the handshake
@@ -167,6 +191,7 @@ type bufferedControl struct {
 // Never drops — losing RunnerHelloResponse here leaves the canonical RunnerID
 // zero and spawned agents inherit HARNESS_RUNNER_ID=":invalid AddrPort-0".
 func (h *RunHandle) bufferOrDispatch(kind appwire.AppKind, payload []byte) {
+	h.noteHello(kind, payload)
 	h.ctlMu.Lock()
 	d := h.ctlDispatch
 	if d == nil {
@@ -352,6 +377,9 @@ func dialServerCandidate(ctx context.Context, cfg Config, ep objproto.Endpoint, 
 func startAcceptLoop(ctx context.Context, cfg Config, ep objproto.Endpoint, sessionRef *atomic.Pointer[Session], sess *Session) {
 	sessionRef.Store(sess)
 	connCh := ep.GetNewActiveConnectionChannel()
+	// A dial-mode runner's server connection is the one it dialed, not one in
+	// this slot; the slot only keeps a stray server-dialed connection to one.
+	slot := &serverConnSlot{}
 	go func() {
 		defer sessionRef.CompareAndSwap(sess, nil)
 		for {
@@ -371,7 +399,7 @@ func startAcceptLoop(ctx context.Context, cfg Config, ep objproto.Endpoint, sess
 					// the grant, findable by this connection's slot.
 					MTU: dataPlaneMTUFor(sessionRef, conn.ConnectionID()),
 				})
-				go handleAcceptedConn(ctx, cfg, sessionRef, ep, pc)
+				go handleAcceptedConn(ctx, cfg, sessionRef, slot, ep, pc)
 			}
 		}
 	}()
@@ -414,6 +442,7 @@ func driveAfterConn(ctx context.Context, cfg Config, pc *peer.Conn) (*RunHandle,
 		WSPath:         cli.WebSocketPath,
 		BinDir:         binDir,
 		ServerPubKey:   cfg.ServerPubKey,
+		OnLeave:        cfg.OnLeave,
 		ProxyVia:       cfg.ProxyVia,
 		Sender:         sender,
 		Streams:        pc.Transport(),
@@ -453,6 +482,7 @@ func driveAfterConn(ctx context.Context, cfg Config, pc *peer.Conn) (*RunHandle,
 		sender:    sender,
 		cfg:       cfg,
 		pskRespCh: make(chan cli.PskAuthReply, 1),
+		helloSeen: make(chan struct{}),
 	}
 
 	// During PSK phase, only route PskAuth responses (brgen-decoded); runner
@@ -768,6 +798,15 @@ func dispatchRunnerRequest(ctx context.Context, session *Session, log *slog.Logg
 				}
 				session.reg.killHeldExcept(accepted, session.logger())
 			}
+		}
+	case protocol.RunnerRequestType_Leave:
+		l := req.Leave()
+		if l == nil {
+			return
+		}
+		session.logger().Warn("leaving on the server's request (runner kick): ending tasks and exiting", "by", string(l.By))
+		if session.OnLeave != nil {
+			session.OnLeave(string(l.By))
 		}
 	case protocol.RunnerRequestType_HoldTasks:
 		ht := req.HoldTasks()

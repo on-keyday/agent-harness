@@ -141,8 +141,8 @@ func (c *mainConfig) bindFlags(fs *flag.FlagSet) {
 	fs.DurationVar(&c.ReconnectInit, "reconnect-initial", c.ReconnectInit, "first backoff after a disconnect")
 	fs.DurationVar(&c.ReconnectMax, "reconnect-max", c.ReconnectMax, "backoff cap")
 	fs.StringVar(&c.ShutdownFile, "shutdown-file", c.ShutdownFile, "path to a sentinel file the runner polls every 250ms; when it appears the runner triggers a graceful shutdown. daemon.py injects this automatically when the runner is spawned via scripts/runner.py up, so Windows downs (where SIGTERM can't reach a DETACHED_PROCESS child) can still close the WS cleanly instead of waiting for ping timeout.")
-	fs.StringVar(&c.WSListen, "listen", c.WSListen, "WebSocket listen host:port for server-initiated reverse-dial mode (mutually exclusive with --server-cid; mirrors harness-server's --listen)")
-	fs.StringVar(&c.UDPListen, "udp-listen", c.UDPListen, "UDP listen host:port for server-initiated reverse-dial mode (mutually exclusive with --server-cid). Combine with --listen for ws+udp dualstack.")
+	fs.StringVar(&c.WSListen, "listen", c.WSListen, "WebSocket listen host:port for server-initiated reverse-dial mode (mutually exclusive with --server-cid; mirrors harness-server's --listen). Needs the server's key (--server-pubkey / --server-pubkey-file): a listening runner otherwise takes any dialer as its server")
+	fs.StringVar(&c.UDPListen, "udp-listen", c.UDPListen, "UDP listen host:port for server-initiated reverse-dial mode (mutually exclusive with --server-cid). Combine with --listen for ws+udp dualstack. Needs the server's key, as --listen does")
 	fs.StringVar(&c.PprofListen, "pprof-listen", c.PprofListen, "serve net/http/pprof on this host:port (empty = off, the default). Turning it on ALSO enables the block and mutex profilers, which ship off because they sample on every blocking event: a CPU profile alone answers \"where does the CPU go\", which is the wrong question for a process sitting at a fraction of a core — the other half is waiting, and only the block profile and the execution trace say on what. Dev-only and unauthenticated: /debug/pprof exposes goroutine stacks and lets anyone who can reach it start a profile, so bind it to loopback or to a namespace nothing else can reach.")
 }
 
@@ -451,6 +451,10 @@ func main() {
 		fmt.Fprintf(os.Stderr, "agent-runner: %v\n", err)
 		os.Exit(1)
 	}
+	if err := listenNeedsServerKey(cfg.isListenMode(), serverPubKey); err != nil {
+		fmt.Fprintf(os.Stderr, "agent-runner: %v\n", err)
+		os.Exit(1)
+	}
 	if serverPubKey != nil {
 		slog.Info("server key configured: the handshake verifies the server", "pubkey", hex.EncodeToString(serverPubKey))
 	}
@@ -504,6 +508,13 @@ func main() {
 		ForceInjectHarnessSettings: cfg.ForceInjectHarnessSettings,
 		AgentSkillsFS:              agentSkillsFS,
 		PingInterval:               cfg.PingInterval,
+		// runner kick: end the tasks, close the connection, exit 0. Dial
+		// mode's PersistLoop does not reconnect after the cancel; listen
+		// mode's ListenAndServe drains and returns.
+		OnLeave: func(by string) {
+			slog.Warn("leaving: the server asked this runner to go", "by", by)
+			cancel()
+		},
 	}
 
 	if cfg.isListenMode() {

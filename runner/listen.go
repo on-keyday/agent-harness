@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -102,11 +103,17 @@ func ListenAndServe(ctx context.Context, cfg ListenConfig) error {
 	// Backed by lastListenSession (package-scope) so test hooks can read
 	// the established Session — see runner/test_hooks.go.
 	sessionRef := &lastListenSession
+	slot := &serverConnSlot{}
 
 	connCh := ep.GetNewActiveConnectionChannel()
 	for {
 		select {
 		case <-ctx.Done():
+			// Drain: let the server connection's teardown finish — tasks
+			// cancelled, the Close SENT — before the process can exit. Over
+			// UDP nothing else tells the server, which would otherwise learn
+			// from its inactivity GC a minute later (spec 2026-11-04 §2).
+			slot.drain(listenDrainTimeout)
 			shutdownHTTP()
 			return ctx.Err()
 		case err := <-httpServerDone:
@@ -126,7 +133,7 @@ func ListenAndServe(ctx context.Context, cfg ListenConfig) error {
 				// hello, because the trsf layer is built right here.
 				MTU: dataPlaneMTUFor(sessionRef, conn.ConnectionID()),
 			})
-			go handleAcceptedConn(ctx, cfg.Config, sessionRef, ep, pc)
+			go handleAcceptedConn(ctx, cfg.Config, sessionRef, slot, ep, pc)
 		}
 	}
 }
@@ -156,7 +163,7 @@ var lastListenSession atomic.Pointer[Session]
 // reach handleAcceptedConn: objproto.receive forwards the rehandshake packet
 // raw via proxySettings before the accept channel is notified. No deferred
 // relay short-circuit is needed here.
-func handleAcceptedConn(ctx context.Context, cfg Config, sessionRef *atomic.Pointer[Session], ep objproto.Endpoint, pc *peer.Conn) {
+func handleAcceptedConn(ctx context.Context, cfg Config, sessionRef *atomic.Pointer[Session], slot *serverConnSlot, ep objproto.Endpoint, pc *peer.Conn) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
@@ -185,7 +192,7 @@ func handleAcceptedConn(ctx context.Context, cfg Config, sessionRef *atomic.Poin
 			if _, err := g.Decode(msg.payload); err == nil {
 				cfg.Logger.Info("server greeting received", "version", g.Version)
 			}
-			handleServerConn(ctx, cfg, sessionRef, ep, pc)
+			handleServerConn(ctx, cfg, sessionRef, slot, ep, pc)
 		case appwire.AppKind_AgentProxyControl:
 			handleAgentProxyConn(ctx, cfg, sessionRef, ep, pc, msg)
 		case appwire.AppKind_PskAuth:
@@ -209,13 +216,36 @@ func handleAcceptedConn(ctx context.Context, cfg Config, sessionRef *atomic.Poin
 // publishes the resulting session to sessionRef so concurrent agent-proxy
 // dials can read it. ep is stored on the session so dispatchRunnerRequest
 // can call SetProxy for EstablishRelay (eager SetProxy, Task 4).
-func handleServerConn(ctx context.Context, cfg Config, sessionRef *atomic.Pointer[Session], ep objproto.Endpoint, pc *peer.Conn) {
+func handleServerConn(ctx context.Context, cfg Config, sessionRef *atomic.Pointer[Session], slot *serverConnSlot, ep objproto.Endpoint, pc *peer.Conn) {
 	h, err := driveAfterConn(ctx, cfg, pc)
 	if err != nil {
 		// driveAfterConn already closes pc on PSK failure; do not double-close
 		// (peer.Conn.Close re-sends a wire Close + sleeps 50ms each call).
 		cfg.Logger.Error("server conn: PSK/setup failed", "err", err)
 		return
+	}
+	// The server answered with a valid signature, but only its
+	// RunnerHelloResponse says it registered us here: a dial record bound to
+	// another key is refused after the signature (spec 2026-11-04 D12/D13).
+	// Until then the previous server connection, if any, stays ours. Every
+	// control message meanwhile sits in the handshake buffer, so nothing this
+	// connection assigns can run before the previous one is retired below.
+	select {
+	case <-h.helloSeen:
+	case <-h.Done():
+		cfg.Logger.Info("server conn: closed before the server registered us; keeping the current one")
+		h.Close()
+		return
+	case <-ctx.Done():
+		h.Close()
+		return
+	}
+	done := make(chan struct{})
+	defer close(done) // after h.Close below: the drain waits for the Close to be sent
+	if prevH, prevDone := slot.replace(h, done); prevH != nil {
+		cfg.Logger.Info("server conn: a new server connection replaces the current one")
+		prevH.Close()
+		<-prevDone // its teardown (cancelTasksUnlessHeld) runs NOW, not after this one starts
 	}
 	h.session.Endpoint = ep
 	sessionRef.Store(h.session)
@@ -225,6 +255,43 @@ func handleServerConn(ctx context.Context, cfg Config, sessionRef *atomic.Pointe
 	}()
 	if err := OnConnect(ctx, h); err != nil {
 		cfg.Logger.Error("server conn: OnConnect failed", "err", err)
+	}
+}
+
+// listenDrainTimeout bounds how long a cancelled listen-mode runner waits for
+// its server connection's teardown before returning.
+const listenDrainTimeout = 5 * time.Second
+
+// serverConnSlot is a listen-mode runner's ONE server connection. The task
+// registry is process-wide and a connection's teardown cancels everything in
+// it, so two live server connections would let the older one's teardown
+// cancel the newer one's tasks; replace retires the older first.
+type serverConnSlot struct {
+	mu   sync.Mutex
+	h    *RunHandle
+	done chan struct{} // closed when h's handler has fully returned
+}
+
+// replace installs h and returns the connection it displaces, if any.
+func (s *serverConnSlot) replace(h *RunHandle, done chan struct{}) (*RunHandle, chan struct{}) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	prevH, prevDone := s.h, s.done
+	s.h, s.done = h, done
+	return prevH, prevDone
+}
+
+// drain waits, at most d, for the current connection's handler to return.
+func (s *serverConnSlot) drain(d time.Duration) {
+	s.mu.Lock()
+	done := s.done
+	s.mu.Unlock()
+	if done == nil {
+		return
+	}
+	select {
+	case <-done:
+	case <-time.After(d):
 	}
 }
 
