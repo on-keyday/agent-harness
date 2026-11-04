@@ -5,7 +5,11 @@ package agentskills
 
 import (
 	"embed"
+	"errors"
+	"fmt"
 	"io/fs"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -50,6 +54,102 @@ func ListFS(fsys fs.FS) ([]string, error) {
 	}
 	sort.Strings(names)
 	return names, nil
+}
+
+// A skill may carry files beside its SKILL.md (references/, scripts/), which
+// the runner copies into a worktree with the rest of the directory. Where no
+// worktree receives them — a no-worktree task, a runtime that never reads
+// .claude/skills — the three functions below are the only way to them, through
+// `harness-cli skill`.
+
+// Files returns the paths of a skill's files relative to its directory,
+// sorted, SKILL.md included.
+func Files(name string) ([]string, error) { return FilesFS(FS, name) }
+
+// FilesFS is Files over an arbitrary fs.FS, filtered the way ListFS is: name
+// must be a top-level directory holding a SKILL.md.
+func FilesFS(fsys fs.FS, name string) ([]string, error) {
+	if err := checkSkill(fsys, name); err != nil {
+		return nil, err
+	}
+	var out []string
+	err := fs.WalkDir(fsys, name, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.Type().IsRegular() {
+			out = append(out, strings.TrimPrefix(p, name+"/"))
+		}
+		return nil
+	})
+	sort.Strings(out)
+	return out, err
+}
+
+// File returns one file of a skill, by its path relative to the skill's
+// directory ("references/questions.md"). A path that leaves the directory is
+// refused, not resolved.
+func File(name, rel string) ([]byte, error) {
+	if err := checkSkill(FS, name); err != nil {
+		return nil, err
+	}
+	rel = strings.ReplaceAll(rel, `\`, "/")
+	if !fs.ValidPath(rel) || rel == "." {
+		return nil, fmt.Errorf("%q is not a path inside the skill", rel)
+	}
+	return FS.ReadFile(name + "/" + rel)
+}
+
+// Extract writes a skill's files under dir/<name>/, so paths the skill gives
+// relative to its own directory resolve there. Without force it refuses before
+// writing anything when any of the files already exists, and reports which.
+// It returns the paths it wrote.
+func Extract(name, dir string, force bool) ([]string, error) {
+	files, err := Files(name)
+	if err != nil {
+		return nil, err
+	}
+	root := filepath.Join(dir, name)
+	if !force {
+		var exist []string
+		for _, f := range files {
+			if _, err := os.Lstat(filepath.Join(root, filepath.FromSlash(f))); err == nil {
+				exist = append(exist, f)
+			}
+		}
+		if len(exist) > 0 {
+			return nil, fmt.Errorf("already under %s: %s (-f replaces them)", root, strings.Join(exist, ", "))
+		}
+	}
+	written := make([]string, 0, len(files))
+	for _, f := range files {
+		data, err := FS.ReadFile(name + "/" + f)
+		if err != nil {
+			return written, err
+		}
+		dst := filepath.Join(root, filepath.FromSlash(f))
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+			return written, err
+		}
+		if err := os.WriteFile(dst, data, 0o644); err != nil {
+			return written, err
+		}
+		written = append(written, dst)
+	}
+	return written, nil
+}
+
+func checkSkill(fsys fs.FS, name string) error {
+	if name == "" || strings.ContainsAny(name, `/\`) || !fs.ValidPath(name) {
+		return fmt.Errorf("%q is not a skill name", name)
+	}
+	if _, err := fs.Stat(fsys, name+"/SKILL.md"); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("not an embedded skill: %w", fs.ErrNotExist)
+		}
+		return err
+	}
+	return nil
 }
 
 // Description returns the `description:` value from a skill's YAML

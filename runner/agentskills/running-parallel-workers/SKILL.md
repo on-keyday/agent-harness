@@ -22,7 +22,11 @@ Python 3, standard library only, for Linux, macOS and Windows — `python` below
 means `python3`, or `py -3` on Windows. Script and reference paths are relative to
 this skill's directory, which in a harness worktree is
 `.claude/skills/running-parallel-workers/` (also under `.agents/skills/`); from
-the worktree root, call them by that path. The session procedures assume Claude
+the worktree root, call them by that path. With no such directory (a
+`--no-worktree` task, a runtime that does not read `.claude/skills`), get them
+from the binary: `harness-cli skill running-parallel-workers <file>` prints one,
+`--extract <dir>` writes the whole skill as `<dir>/running-parallel-workers/`.
+The session procedures assume Claude
 Code children (`/clear`, `/effort`, AskUserQuestion); another runtime has its
 own equivalents.
 

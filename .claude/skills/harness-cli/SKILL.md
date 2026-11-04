@@ -24,7 +24,16 @@ skill mechanism, and this works even where `.claude/skills/` was never injected:
 harness-cli skill            # print this skill (harness-cli) — the default
 harness-cli skill ls         # list the embedded skills + descriptions (alias: --list / -l)
 harness-cli skill <name>     # print another one, e.g. `harness-cli skill landing-to-main`
+harness-cli skill <name> --files          # the skill's files beside SKILL.md (references/, scripts/)
+harness-cli skill <name> <file>           # print one, e.g. `... running-parallel-workers references/questions.md`
+harness-cli skill <name> --extract <dir>  # write the whole skill as <dir>/<name>/ (-f replaces existing files)
 ```
+
+A skill that names files relative to its own directory expects that directory
+on disk, which a worktree task has under `.claude/skills/<name>/`. Where none
+was injected — a `--no-worktree` task, a runtime that never reads
+`.claude/skills` — those files exist only in the binary: print the one you need,
+or `--extract` the skill to a scratch directory and run its scripts from there.
 
 `harness-cli version` reports the commit this binary was built from, which is
 also the version of every skill it PRINTS — they are embedded in it. It does

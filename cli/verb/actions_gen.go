@@ -220,7 +220,14 @@ type CatalogAction struct {
 	Sub  string
 	// name every embedded skill with its description instead of printing one
 	List bool
-	Name string
+	// name the skill's files, relative to its directory (SKILL.md included)
+	Files bool
+	// write the skill's files into the directory given, as <dir>/<name>/..., instead of printing; refuses …
+	Extract string
+	// with --extract: replace files that already exist
+	Force bool
+	Name  string
+	File  string
 }
 
 // ConnsAction is built by: conns.
@@ -2805,8 +2812,14 @@ func init() {
 			a := CatalogAction{}
 			a.Sub = "skill"
 			a.List = b.Bool("list")
+			a.Files = b.Bool("files")
+			a.Extract = b.Str("extract")
+			a.Force = b.Bool("force")
 			if len(b.Args) > 0 {
 				a.Name = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.File = b.Args[1]
 			}
 			return a, nil
 		},

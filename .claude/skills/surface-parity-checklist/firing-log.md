@@ -3804,3 +3804,28 @@ missed:  18a — the first `Link` column (12 wide, from 120) truncated
          because the table test asserted the cell VALUE, never the column's
          width against it. Fixed: 13 wide from a measured 129, and the test
          now checks the widest value fits
+
+### 2026-11-05 — `harness-cli skill`: --files, <file>, --extract, -f
+
+A skill's files beside SKILL.md were unreachable where no worktree received
+them; the verb gains three ways to them. CLI-only by declaration (the row's
+`NoModalSurface` survey still holds: no TUI action or WebUI element reaches
+`skill`).
+
+done:    1 (`cli/verb/table.go` row: second Optional positional `file`, flags
+         files/extract/force, Exclusive list×files, list×extract,
+         files×extract, Requires force→extract), 2 (the cross-flag rules
+         live in the declaration; `<file>` with --files/--extract stays in
+         the handler because a Rule naming a positional counts ANY
+         positional as given — tried, refused `skill <name> --files`), 10
+         (stdout + exit code; --extract prints the paths it wrote), 24
+         (`skill ls` takes none of the new flags; no env ladder), 29
+         (errors name the skill and the file, a missing file lists the
+         skill's files), 33 (-f without --extract, `<file>` with --files,
+         and the exclusive pairs all error), 36 (harness-cli and
+         running-parallel-workers SKILL.md, mirrored)
+omitted: 35 (README's one `harness-cli skill` line is about
+         --agentskills-dir; the verb's reference is the harness-cli skill
+         and its --help), 37/39 (no spec: a CLI-only addition, described in
+         the commit)
+missed:  —

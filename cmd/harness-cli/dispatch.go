@@ -6,8 +6,10 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"time"
@@ -311,9 +313,46 @@ func (h cliVerbs) Skill(a verb.CatalogAction) error {
 		}
 		return nil
 	}
+	// Not an Exclusive rule: a Rule naming a positional counts it as given when
+	// ANY positional is, so `skill <name> --files` would be refused too.
+	if a.File != "" && (a.Files || a.Extract != "") {
+		return fmt.Errorf("skill: name a file, or use --files / --extract, not both")
+	}
 	name := a.Name
 	if name == "" {
 		name = "harness-cli"
+	}
+	switch {
+	case a.Files:
+		files, err := agentskills.Files(name)
+		if err != nil {
+			return skillErr(name, err)
+		}
+		for _, f := range files {
+			fmt.Println(f)
+		}
+		return nil
+	case a.Extract != "":
+		written, err := agentskills.Extract(name, a.Extract, a.Force)
+		for _, w := range written {
+			fmt.Println(w)
+		}
+		if err != nil {
+			return skillErr(name, err)
+		}
+		return nil
+	case a.File != "":
+		b, err := agentskills.File(name, a.File)
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				if files, ferr := agentskills.Files(name); ferr == nil {
+					return fmt.Errorf("skill %s: no file %q (files: %s)", name, a.File, strings.Join(files, ", "))
+				}
+			}
+			return skillErr(name, err)
+		}
+		os.Stdout.Write(b)
+		return nil
 	}
 	md, err := agentskills.Skill(name)
 	if err != nil {
@@ -325,6 +364,17 @@ func (h cliVerbs) Skill(a verb.CatalogAction) error {
 	}
 	os.Stdout.Write(md)
 	return nil
+}
+
+// skillErr names the available skills when the name is unknown, the way the
+// bare `skill <name>` form does.
+func skillErr(name string, err error) error {
+	if errors.Is(err, fs.ErrNotExist) {
+		if avail, lerr := agentskills.List(); lerr == nil {
+			return fmt.Errorf("skill %q: %w (available: %s)", name, err, strings.Join(avail, ", "))
+		}
+	}
+	return fmt.Errorf("skill %q: %w", name, err)
 }
 
 // --- git ----------------------------------------------------------------
