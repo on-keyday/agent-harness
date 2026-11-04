@@ -283,10 +283,15 @@ func FormatRunnerDialList(rows []RunnerDialRow) string {
 			fmt.Fprintf(&sb, " answered=%s", r.Candidates[r.Answered])
 		}
 		if r.State == protocol.RunnerDialState_Waiting {
-			fmt.Fprintf(&sb, " next=%s err=%q", r.NextAttempt.UTC().Format(time.RFC3339), r.LastError)
+			fmt.Fprintf(&sb, " next=%s", r.NextAttempt.UTC().Format(time.RFC3339))
 		}
 		if r.State == protocol.RunnerDialState_Duplicate {
 			fmt.Fprintf(&sb, " duplicate_of=%s", FormatDialID(r.DuplicateOf))
+		}
+		// Kept until the record connects, so a dialing or duplicate row still
+		// says why the previous attempt failed. A wait always has a reason.
+		if r.State == protocol.RunnerDialState_Waiting || r.LastError != "" {
+			fmt.Fprintf(&sb, " err=%q", r.LastError)
 		}
 		fmt.Fprintf(&sb, " by=%s added=%s\n", r.AddedBy, r.AddedAt.UTC().Format(time.RFC3339))
 		fmt.Fprintf(&sb, "  candidates: %s\n", strings.Join(r.Candidates, ", "))

@@ -48,6 +48,35 @@ func TestFormatRunnerDialListPrintsEveryField(t *testing.T) {
 	}
 }
 
+// The server clears a record's last error only when it connects, so a record
+// back to dialing (or yielded as a duplicate) still carries why its previous
+// attempt failed. The row shows it whenever there is one, not only in waiting.
+func TestFormatRunnerDialListShowsTheLastErrorOutsideWaiting(t *testing.T) {
+	key := ed25519.PublicKey(make([]byte, 32))
+	at := time.Date(2026, 11, 4, 10, 0, 0, 0, time.UTC)
+	rows := []RunnerDialRow{
+		{ID: 1, Key: key, Candidates: []string{"ws:a.example:8540-*"}, State: protocol.RunnerDialState_Dialing,
+			Answered: -1, LastError: "dial ws:a.example:8540: connection refused", AddedAt: at, AddedBy: "operator"},
+		{ID: 2, Key: key, Candidates: []string{"ws:b.example:8540-*"}, State: protocol.RunnerDialState_Duplicate,
+			Answered: -1, DuplicateOf: 1, LastError: "yielded", AddedAt: at, AddedBy: "operator"},
+		{ID: 3, Key: key, Candidates: []string{"ws:c.example:8540-*"}, State: protocol.RunnerDialState_Dialing,
+			Answered: -1, AddedAt: at, AddedBy: "operator"},
+	}
+	out := FormatRunnerDialList(rows)
+	for _, want := range []string{
+		"00000001 state=dialing label= key=0000000000000000 runner=- err=\"dial ws:a.example:8540: connection refused\" by=operator",
+		"00000002 state=duplicate label= key=0000000000000000 runner=- duplicate_of=00000001 err=\"yielded\" by=operator",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in\n%s", want, out)
+		}
+	}
+	// A first attempt has no previous error: absence, not an empty value.
+	if line := strings.SplitN(out, "\n", 6)[4]; !strings.HasPrefix(line, "00000003") || strings.Contains(line, "err=") {
+		t.Errorf("first-attempt row should carry no err=: %q", line)
+	}
+}
+
 func TestFormatRunnerDialAddAndRemove(t *testing.T) {
 	if s, ok := FormatRunnerDialAdd(protocol.RunnerDialStatus_Ok, 0x3fa9c012, []string{"ws:a:1-*"}); !ok || s != "dial 3fa9c012 added: ws:a:1-*" {
 		t.Errorf("ok add: %q %v", s, ok)
