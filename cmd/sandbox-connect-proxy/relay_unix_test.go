@@ -23,15 +23,19 @@ func writeCreds(t *testing.T, path, tok string, exp time.Time) {
 }
 
 // fakeClaude stands in for `claude auth status --json`: it counts its runs and
-// rewrites the credential file with a fresh token, as the real CLI does.
+// rewrites the credential file with a fresh token, as the real CLI does — by
+// renaming a staged file over it, which is claude's path whenever the rename
+// succeeds (on the host it does). A plain `>` would truncate first, and a
+// reader landing in between sees an empty file: TestRelayWaitsOutAnInPlaceRewrite
+// covers that case on its own.
 func fakeClaude(t *testing.T, dir, creds string) (bin string, runs func() int) {
 	t.Helper()
 	count := filepath.Join(dir, "runs")
 	bin = filepath.Join(dir, "claude")
 	exp := time.Now().Add(8 * time.Hour).UnixMilli()
 	script := fmt.Sprintf("#!/bin/sh\n[ \"$*\" = \"auth status --json\" ] || exit 9\necho x >>%q\n"+
-		"printf '%%s' '{\"claudeAiOauth\":{\"accessToken\":\"fresh\",\"refreshToken\":\"r2\",\"expiresAt\":%d}}' >%q\n",
-		count, exp, creds)
+		"printf '%%s' '{\"claudeAiOauth\":{\"accessToken\":\"fresh\",\"refreshToken\":\"r2\",\"expiresAt\":%d}}' >%q && mv %q %q\n",
+		count, exp, creds+".tmp", creds+".tmp", creds)
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +50,7 @@ func newCreds(t *testing.T) (*claudeCreds, func() int) {
 	path := filepath.Join(dir, ".credentials.json")
 	bin, runs := fakeClaude(t, dir, path)
 	return &claudeCreds{path: path, bin: bin, lock: filepath.Join(dir, "lock"),
-		refreshBefore: 5 * time.Minute, now: time.Now}, runs
+		refreshBefore: 5 * time.Minute, now: time.Now, sleep: time.Sleep}, runs
 }
 
 func TestRelayUsesAFreshTokenAsIs(t *testing.T) {
@@ -125,5 +129,43 @@ func TestRelayRefusesAFileWithoutAnOAuthToken(t *testing.T) {
 	}
 	if _, err := c.key(); err == nil || !strings.Contains(err.Error(), "accessToken") {
 		t.Errorf("err = %v", err)
+	}
+}
+
+// claude falls back to truncating the file and writing into it when its rename
+// fails (EBUSY on a single-file bind mount: a --mount-auth --history-window
+// sandbox's claude refreshing the same host file). A request landing between
+// the truncate and the write reads an empty file; it is read again rather than
+// answered with a 502.
+func TestRelayWaitsOutAnInPlaceRewrite(t *testing.T) {
+	c, _ := newCreds(t)
+	if err := os.WriteFile(c.path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	waits := 0
+	c.sleep = func(time.Duration) {
+		waits++
+		if waits == 2 {
+			writeCreds(t, c.path, "rewritten", time.Now().Add(time.Hour))
+		}
+	}
+	if k, err := c.key(); err != nil || k != "rewritten" {
+		t.Fatalf("key = %q, %v; want the token written after the truncate", k, err)
+	}
+}
+
+// A file that stays unparsable is not waited on for ever.
+func TestRelayGivesUpOnAFileThatStaysTorn(t *testing.T) {
+	c, _ := newCreds(t)
+	if err := os.WriteFile(c.path, []byte(`{"claudeAiOauth":{"accessT`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	waits := 0
+	c.sleep = func(time.Duration) { waits++ }
+	if _, err := c.key(); err == nil {
+		t.Fatal("a torn file read as a token")
+	}
+	if waits != tornRereads {
+		t.Errorf("waited %d times, want %d", waits, tornRereads)
 	}
 }

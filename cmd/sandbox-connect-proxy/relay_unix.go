@@ -49,7 +49,7 @@ type credSource interface {
 
 var relayKinds = map[string]func(path, agentBin, lock string, refreshBefore time.Duration) credSource{
 	"claude": func(path, agentBin, lock string, refreshBefore time.Duration) credSource {
-		return &claudeCreds{path: path, bin: agentBin, lock: lock, refreshBefore: refreshBefore, now: time.Now}
+		return &claudeCreds{path: path, bin: agentBin, lock: lock, refreshBefore: refreshBefore, now: time.Now, sleep: time.Sleep}
 	},
 }
 
@@ -59,10 +59,39 @@ type claudeCreds struct {
 	lock          string // flock'd across relays so they refresh once between them
 	refreshBefore time.Duration
 	now           func() time.Time
+	sleep         func(time.Duration)
 	mu            sync.Mutex
 }
 
+// tornRereads bounds how often read waits out an unparsable file. claude
+// renames a staged file over the credential file, so a reader sees the old
+// file or the new one; but when the rename fails (EXDEV, EPERM, EEXIST or
+// EBUSY — EBUSY on a single-file bind mount, which a --mount-auth
+// --history-window sandbox gives its claude) it truncates the file and writes
+// into it, and a read in between finds it empty or cut short. Read from claude
+// 2.1.310; see docs/superpowers/specs/2026-10-26-sandbox-history-window-design.md.
+// The gap is the writer's truncate-then-write of a few hundred bytes; 10
+// rereads 10ms apart outlast a descheduled writer, and a file that is really
+// broken fails every request anyway.
+const (
+	tornRereads   = 10
+	tornRereadGap = 10 * time.Millisecond
+)
+
+// read returns the access token and its expiry, rereading a file that does not
+// parse as JSON (tornRereads).
 func (c *claudeCreds) read() (string, time.Time, error) {
+	for i := 0; ; i++ {
+		tok, exp, err := c.readOnce()
+		var torn *json.SyntaxError
+		if !errors.As(err, &torn) || i == tornRereads {
+			return tok, exp, err
+		}
+		c.sleep(tornRereadGap)
+	}
+}
+
+func (c *claudeCreds) readOnce() (string, time.Time, error) {
 	b, err := os.ReadFile(c.path)
 	if err != nil {
 		return "", time.Time{}, err
