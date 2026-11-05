@@ -49,8 +49,10 @@ type Board struct {
 
 	// onDeliver, if non-nil, is invoked once per subscriber that Send delivers
 	// to (i.e. once per (rid, tid) whose subscription set matches the
-	// published topic). Used by the server to emit task_wake to the runners
-	// hosting those tasks. Called outside b.mu.
+	// published topic), except where a live wait takes the message over
+	// (liveWait); such a wait invokes it when it ends without the message.
+	// Used by the server to emit task_wake to the runners hosting those
+	// tasks. Called with no board lock held.
 	onDeliver func(protocol.RunnerID, protocol.TaskID)
 	reach     ReachSource // nil = no reach enforcement; see SetReach
 	// store mirrors retained topics to disk; nil until AttachStore. Topics
@@ -361,22 +363,32 @@ func (b *Board) Send(topicName string, payload []byte, fromRid protocol.RunnerID
 	// topic's ring and log hold its messages in seq order. Taking the seq
 	// outside let a later seq reach the log first, and an archive cut
 	// between the two missed the earlier one for good.
+	//
+	// Who is woken is decided under the same hold, before any wait can scan
+	// the message (handOff, under liveWait).
 	t.mu.Lock()
 	seq := b.seq.Add(1)
 	m := t.appendLocked(seq, payload, fromRid, fromTid, fromHost, fromProfile, inReplyTo, cfg)
 	if retained {
 		storeLog("append", topicName, store.Append(topicName, m))
 	}
+	var wake []*taskState
+	if !cfg.noWake {
+		for _, ts := range targets {
+			if !ts.handOff(topicName, m) {
+				wake = append(wake, ts)
+			}
+		}
+	}
 	t.mu.Unlock()
 
-	b.deliver(targets, topicName, !cfg.noWake)
+	b.deliver(targets, wake)
 	return seq, len(targets), nil
 }
 
-// deliver pings every target's connections and, when wake is set, emits
-// onDeliver for each target that is not already waiting on this topic. It
-// returns how many onDeliver calls it made. Shared by Send and Wake so the two
-// cannot disagree about who a publish reaches.
+// deliver pings every target's connections and emits onDeliver for each task
+// in wake. It returns how many onDeliver calls it made. Shared by Send and
+// Wake so the two cannot disagree about who a publish reaches.
 //
 // Subscription is the opt-in: every matching subscriber is pinged AND
 // gets onDeliver (hence a task_wake) — the publisher's own taskState
@@ -387,29 +399,32 @@ func (b *Board) Send(topicName string, payload []byte, fromRid protocol.RunnerID
 // never matched a publisher skip. Loop pressure is bounded elsewhere —
 // the runner debounces wake injections per task (wakeDebounceWindow),
 // and agents are told to subscribe only to topics they receive on.
-func (b *Board) deliver(targets []*taskState, topicName string, wake bool) int {
-	b.mu.Lock()
-	fn := b.onDeliver
-	b.mu.Unlock()
-	woken := 0
+func (b *Board) deliver(targets, wake []*taskState) int {
 	for _, ts := range targets {
 		for _, c := range ts.snapshotConns() {
 			c.ping()
 		}
-		// A task synchronously waiting on THIS topic is already being handed
-		// the message by that wait. Waking it as well types a
-		// <harness:agentboard-wake> prompt into the PTY of an agent that
-		// shares the task id, about a message it did not ask for and that the
-		// waiter has already taken. The check is per (task, topic): another
-		// task subscribed to the same topic still gets its wake, and this task
-		// still gets woken for its other topics.
-		if wake && fn != nil && !ts.isWaiting(topicName) {
-			rid, tid, _, _ := ts.identity()
-			fn(rid, tid)
+	}
+	woken := 0
+	for _, ts := range wake {
+		if b.emitWake(ts) {
 			woken++
 		}
 	}
 	return woken
+}
+
+// emitWake calls onDeliver for ts, and reports whether there was one to call.
+func (b *Board) emitWake(ts *taskState) bool {
+	b.mu.Lock()
+	fn := b.onDeliver
+	b.mu.Unlock()
+	if fn == nil {
+		return false
+	}
+	rid, tid, _, _ := ts.identity()
+	fn(rid, tid)
+	return true
 }
 
 // Wake emits a wake to every task subscribed to topicName, exactly as a
@@ -425,7 +440,16 @@ func (b *Board) Wake(topicName string) int {
 		}
 	}
 	b.mu.Unlock()
-	return b.deliver(b.readableTargets(targets, topicName), topicName, true)
+	targets = b.readableTargets(targets, topicName)
+	// No message, so nothing for a wait to take over: a task waiting on the
+	// topic is skipped as a whole, as it was before liveWait.
+	wake := make([]*taskState, 0, len(targets))
+	for _, ts := range targets {
+		if !ts.isWaiting(topicName) {
+			wake = append(wake, ts)
+		}
+	}
+	return b.deliver(targets, wake)
 }
 
 // Inbox returns retained messages for all topics the (rid, tid) taskState is
@@ -507,7 +531,7 @@ func (b *Board) InboxAdvance(c *ConnState) []RetainedMessage {
 // or until ctx is done. Returns (messages, timedOut, error).
 //
 // For the duration of the call the topic is subscribed: beginWait/endWait
-// refcount it and taskState.matches is the union of the persistent pattern set
+// register it and taskState.matches is the union of the persistent pattern set
 // and the topics under a live wait. A wait therefore leaves no subscription
 // behind, and does not remove one the task already held. It used to call
 // addPattern and never undo it, so one wait on a peer's chat.<short-id>
@@ -524,8 +548,13 @@ func (b *Board) Wait(ctx context.Context, c *ConnState, topicName string, since,
 	if !b.readableTopic(c.task, topicName) {
 		return nil, false, ErrNotPermitted
 	}
-	c.task.beginWait(topicName)
-	defer c.task.endWait(topicName)
+	w := c.task.beginWait(topicName, since, inReplyTo)
+	var took []RetainedMessage
+	defer func() {
+		if c.task.endWait(topicName, w, took) {
+			b.emitWake(c.task)
+		}
+	}()
 	for {
 		b.mu.Lock()
 		var msgs []RetainedMessage
@@ -538,14 +567,13 @@ func (b *Board) Wait(ctx context.Context, c *ConnState, topicName string, since,
 		for _, m := range msgs {
 			// The caller's own --exclude-self messages are passed over, as
 			// inbox and the hook pass them over.
-			if m.ownExcluded(self) || (inReplyTo != 0 && m.InReplyTo != inReplyTo) {
-				continue
+			if w.wants(m, self) {
+				kept = append(kept, m)
 			}
-			kept = append(kept, m)
 		}
-		msgs = kept
-		if len(msgs) > 0 {
-			return msgs, false, nil
+		if len(kept) > 0 {
+			took = kept
+			return kept, false, nil
 		}
 		select {
 		case <-c.notify:

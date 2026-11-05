@@ -1,6 +1,7 @@
 package agentboard
 
 import (
+	"slices"
 	"sync"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -16,14 +17,12 @@ import (
 type taskState struct {
 	mu       sync.Mutex
 	patterns map[string]struct{}
-	// waiting counts the live synchronous Board.Wait calls per topic for this
-	// task. It does two jobs, and they have the same extent: a topic with a
-	// live wait is subscribed for the duration of that wait, and a publish to
-	// it must not also wake this task's PTY — the waiter is already being
-	// handed the message, so the wake would type a prompt into an agent about
-	// something it did not ask for. Refcounted because two waits on one topic
-	// may overlap; the entry is deleted at zero so matches needs no zero check.
-	waiting map[string]int
+	// waits holds the live synchronous Board.Wait calls per topic for this
+	// task. A topic with a live wait is subscribed for the duration of that
+	// wait (matches). It also decides the wake: see liveWait. A slice because
+	// two waits on one topic may overlap; the entry is deleted when it empties
+	// so matches is a plain map lookup.
+	waits map[string][]*liveWait
 	// The delivery mark is NOT here: it is topic.shown, so it lives as long as
 	// the ring it indexes rather than as long as this state, which Revoke
 	// destroys while the topic may stay.
@@ -53,7 +52,7 @@ type taskState struct {
 func newTaskState() *taskState {
 	return &taskState{
 		patterns: make(map[string]struct{}),
-		waiting:  make(map[string]int),
+		waits:    make(map[string][]*liveWait),
 		contacts: make(map[string]struct{}),
 		conns:    make(map[*ConnState]struct{}),
 	}
@@ -141,30 +140,107 @@ func (t *taskState) hasContact(topic string) bool {
 	return ok
 }
 
-// beginWait registers a live synchronous wait on topic. Paired with endWait.
-func (t *taskState) beginWait(topic string) {
-	t.mu.Lock()
-	t.waiting[topic]++
-	t.mu.Unlock()
+// liveWait is one synchronous Board.Wait in progress.
+//
+// A publish to a topic this task waits on must not also wake the task's PTY
+// when the wait hands the message over: the wake would type a
+// <harness:agentboard-wake> prompt into an agent sharing the task id, about a
+// message it did not ask for and the waiter has already taken. Whether the
+// wait hands it over is known for sure only when the wait returns, so the
+// publish does not decide it alone:
+//
+//   - Board.Send calls handOff under the topic's lock, before any wait can
+//     see the message. A wait whose filter (wants) accepts it records the seq
+//     in owed, and the publish emits no wake for this task.
+//   - Board.Wait calls endWait with what it returned. A seq it returned is
+//     settled for every wait of the task on that topic; a seq it did not
+//     return, and no other live wait still owes, makes endWait report that
+//     the withheld wake is due, and Wait emits it.
+//
+// Deciding after the message became visible lost this both ways: a wait could
+// take the message and end before the check, which then woke the task too;
+// and a check keyed on the topic alone withheld the wake for a message the
+// wait's in_reply_to filter would never return.
+//
+// since and inReplyTo never change after beginWait; owed is guarded by the
+// taskState's mu. Every method here keeps that mu a leaf lock (nothing else is
+// taken under it): Send takes it under the topic's lock.
+type liveWait struct {
+	since, inReplyTo uint64
+	owed             []uint64
 }
 
-// endWait retires one live wait on topic. Deleting at zero keeps matches a
-// plain map lookup rather than a lookup plus a count comparison.
-func (t *taskState) endWait(topic string) {
+// wants reports whether this wait returns m to a reader that is task self.
+// Board.Wait filters its scan with it, so handOff predicts exactly that.
+func (w *liveWait) wants(m RetainedMessage, self protocol.TaskID) bool {
+	return m.Seq > w.since && !m.ownExcluded(self) &&
+		(w.inReplyTo == 0 || m.InReplyTo == w.inReplyTo)
+}
+
+// beginWait registers a live synchronous wait on topic. Paired with endWait.
+func (t *taskState) beginWait(topic string, since, inReplyTo uint64) *liveWait {
+	w := &liveWait{since: since, inReplyTo: inReplyTo}
 	t.mu.Lock()
-	if n := t.waiting[topic] - 1; n > 0 {
-		t.waiting[topic] = n
-	} else {
-		delete(t.waiting, topic)
-	}
+	t.waits[topic] = append(t.waits[topic], w)
 	t.mu.Unlock()
+	return w
+}
+
+// handOff reports whether a live wait on topic will return m, recording it as
+// owed by each such wait. True means the publish emits no wake for this task.
+func (t *taskState) handOff(topic string, m RetainedMessage) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	handed := false
+	for _, w := range t.waits[topic] {
+		if w.wants(m, t.tid) {
+			w.owed = append(w.owed, m.Seq)
+			handed = true
+		}
+	}
+	return handed
+}
+
+// endWait retires w, which returned took, and reports whether a wake handOff
+// withheld is now due.
+func (t *taskState) endWait(topic string, w *liveWait, took []RetainedMessage) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	rest := make([]*liveWait, 0, len(t.waits[topic]))
+	for _, o := range t.waits[topic] {
+		if o != w {
+			rest = append(rest, o)
+		}
+	}
+	if len(rest) == 0 {
+		delete(t.waits, topic)
+	} else {
+		t.waits[topic] = rest
+	}
+	due := false
+	for _, seq := range w.owed {
+		if returned(took, seq) {
+			for _, o := range rest {
+				o.owed = slices.DeleteFunc(o.owed, func(s uint64) bool { return s == seq })
+			}
+			continue
+		}
+		if !slices.ContainsFunc(rest, func(o *liveWait) bool { return slices.Contains(o.owed, seq) }) {
+			due = true
+		}
+	}
+	return due
+}
+
+func returned(took []RetainedMessage, seq uint64) bool {
+	return slices.ContainsFunc(took, func(m RetainedMessage) bool { return m.Seq == seq })
 }
 
 // isWaiting reports whether this task has a live synchronous wait on topic.
 func (t *taskState) isWaiting(topic string) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	_, ok := t.waiting[topic]
+	_, ok := t.waits[topic]
 	return ok
 }
 
@@ -190,7 +266,7 @@ func (t *taskState) matches(topic string) bool {
 	if _, ok := t.patterns[topic]; ok {
 		return true
 	}
-	_, ok := t.waiting[topic]
+	_, ok := t.waits[topic]
 	return ok
 }
 
@@ -212,11 +288,11 @@ func (t *taskState) detachConn(c *ConnState) {
 func (t *taskState) snapshotPatterns() []string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	out := make([]string, 0, len(t.patterns)+len(t.waiting))
+	out := make([]string, 0, len(t.patterns)+len(t.waits))
 	for p := range t.patterns {
 		out = append(out, p)
 	}
-	for p := range t.waiting {
+	for p := range t.waits {
 		if _, dup := t.patterns[p]; !dup {
 			out = append(out, p)
 		}

@@ -141,6 +141,48 @@ func TestBoard_SendSkipsWakeForTheTaskWaitingOnThatTopic(t *testing.T) {
 	}
 }
 
+// A wait narrowed to replies to one seq does not return an unrelated message
+// on its topic, so that message must still wake the task: before, the skip was
+// keyed on the topic alone, and such a message reached neither the wait nor
+// the agent until something else woke it.
+func TestBoard_FilteredWaitDoesNotSwallowAnUnrelatedWake(t *testing.T) {
+	b := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
+	defer b.Close()
+	conn := b.Attach(protocol.RunnerID{}, boardTaskIDFromByte(4), "host-d", "")
+	defer b.Detach(conn)
+	_ = b.Subscribe(conn, "topic/replies")
+
+	var mu sync.Mutex
+	wakes := 0
+	b.SetOnDeliver(func(_ protocol.RunnerID, _ protocol.TaskID) {
+		mu.Lock()
+		wakes++
+		mu.Unlock()
+	})
+
+	got := make(chan int, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+		defer cancel()
+		msgs, _, _ := b.Wait(ctx, conn, "topic/replies", 0, 42)
+		got <- len(msgs)
+	}()
+	time.Sleep(50 * time.Millisecond)
+
+	if _, _, err := b.Send("topic/replies", []byte("unrelated"), testRid, testTid, "h", "", 0); err != nil {
+		t.Fatal(err)
+	}
+	if n := <-got; n != 0 {
+		t.Fatalf("the wait for replies to 42 returned %d messages, want 0", n)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if wakes != 1 {
+		t.Errorf("wakes = %d, want 1: the wait did not take the message, so the task must be woken for it", wakes)
+	}
+}
+
 func TestBoard_WaitingTaskIsStillWokenForItsOtherTopics(t *testing.T) {
 	b := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
 	defer b.Close()
