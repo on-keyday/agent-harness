@@ -19,8 +19,7 @@ turning into debt. Noticing that takes a human looking at the real thing.
   214 files.
 - **P3 — a diff review cannot carry this.** A diff shows what changed,
   not what is missing, not what holds across branches, and not how a change
-  relates to an earlier decision (discussed in the parallel-agent-operations
-  survey kept with the owner's notes).
+  relates to an earlier decision.
 
 **Trial run (2026-11-06, this repository).** A first page was written by
 hand. What it showed:
@@ -32,8 +31,8 @@ hand. What it showed:
   difference. Another item told the owner what they already knew.
 - The questions hid the answer and asked the owner to predict it. That
   framing was rejected.
-- The useful outcome came from the owner's follow-up question, "can
-  `main.js` be split?". That led to the split (9e101803), and the split
+- The useful outcome came from a follow-up question the owner asked about
+  splitting `main.js`. That led to the split (9e101803), and the split
   surfaced a comment naming a function that had never existed (1fb36d34).
   Neither finding was on the page.
 - The owner knew the intent behind the code's structure (helpers hoisted out

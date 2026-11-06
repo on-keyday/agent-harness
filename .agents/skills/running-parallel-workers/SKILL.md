@@ -281,7 +281,7 @@ not an outward action.
 7. Have the child land its work records — the actual time against its estimate,
    if the conventions keep estimates.
 8. Retract the instruction messages that are done with; review deferred backlog
-   items ("Checkpoints").
+   items, and count the landing toward the next codebase tour ("Checkpoints").
 
 - **Stage with `git add -u` and explicit paths only.** Why: the runner leaves
   `.claude/`, `.agents/` and `GEMINI.md` untracked in every worktree; a pathless
@@ -312,7 +312,10 @@ a large miss asks what was unknown at planning time.
 - **A codebase tour after the conventions' number of landings since the last
   one**, with the owner present. First settle the children's next items, as at
   any landing, so no child waits on the tour. Then run `codebase-tour` on
-  `<records>/tours/`. When the owner's pushback asks for a fix, the fix becomes
+  `<records>/tours/`. If the conventions have no "Codebase tour" section (one
+  written before it existed), add it the way any mid-run change goes: a
+  registered question, then the document. Don't invent a count, and don't ask
+  the tour's settings directly while children run. When the owner's pushback asks for a fix, the fix becomes
   a backlog item or a child's assignment, because the parent does no child's
   work; a choice becomes a registered `Q<n>`. Why: the owner reads little of
   the code the children write, and passing tests hide how far the code has

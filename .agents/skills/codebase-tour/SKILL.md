@@ -30,7 +30,9 @@ the pages (`<date>.md`) and `settings.md`.
 
 - Inside running-parallel-workers it is `<records>/tours/`.
 - A standalone run uses the same directory when those records exist, so there
-  is one reaction history.
+  is one reaction history. To find them, look in the repository for
+  running-parallel-workers' conventions document. If it names a records
+  location, the tour directory is `<records>/tours/`.
 - Without records, ask the owner where to put it on the first run. On later
   runs the owner names it again, since nothing in the repository may point to
   it.
@@ -74,7 +76,9 @@ letting it cancel a finding would hide the thing the page is for.
    point the owner names, or the commit 30 days back.
 2. **Gather decisions.** List decisions made or touched since the baseline,
    plus any still open from earlier pages. Record where each one lives (file
-   and row) and whether it is the owner's or an agent's.
+   and row) and whether it is the owner's or an agent's. An agent's decision
+   that the owner confirmed in an earlier page's reaction line is the owner's;
+   do not ask about it again.
 3. **Gather the owner's symptoms.** Take the symptoms the owner has named in
    conversation, in questions or in earlier reactions ("many bugs where A and
    B disagreed"). Grouping the fix commits since the baseline by the kind of
