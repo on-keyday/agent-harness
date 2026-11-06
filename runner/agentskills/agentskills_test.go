@@ -55,7 +55,7 @@ func TestList(t *testing.T) {
 		}
 	}
 	// The core skills must be present.
-	want := map[string]bool{"harness-cli": false, "independent-review": false, "landing-to-main": false, "session-debugging": false}
+	want := map[string]bool{"codebase-tour": false, "harness-cli": false, "independent-review": false, "landing-to-main": false, "session-debugging": false}
 	for _, n := range names {
 		if _, ok := want[n]; ok {
 			want[n] = true
