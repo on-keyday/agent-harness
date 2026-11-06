@@ -39,7 +39,8 @@ nobody questions has no purpose); a metrics dashboard.
 ## The tour directory
 
 Each repository has one tour directory, **outside the repository**. It holds
-the pages and `settings.md`.
+the pages, `settings.md`, and `walks/` (code walks no decision anchors; see
+"Answering the pushback").
 
 **Page files are numbered:** `<nnn>-<date>.md`, three digits from `001`, such
 as `001-2026-11-07.md`. The highest number is the last page. A page redone,
@@ -70,7 +71,8 @@ copied from running-parallel-workers' conventions):
    text, or an answered-questions directory. A record without such a mark
    counts as an agent's decision.
 
-Pages contain local paths, so **a page is never committed** to the repository.
+Pages and walks contain local paths, so **neither is ever committed** to the
+repository.
 
 ## Whose decision it is
 
@@ -208,9 +210,12 @@ half happened and a comment naming a function that never existed. None of
 them was on the page.
 
 When the owner asks to see code the page did not cover, walk them through it
-the same way. A walk that no decision anchors stays in the conversation: it is
-not a page, takes no number and gets no reaction line, because pages are the
-record of decisions measured.
+the same way. A walk that no decision anchors is kept, unless the owner says
+the conversation is enough, so they can read it again later. It goes in
+`walks/` in the tour directory as `<nnn>-<date>-<topic>.md`, numbered on its
+own from `001`, in the same quoted form. It is not a page: it gets no reaction
+line, and the baseline never comes from it, because pages are the record of
+decisions measured.
 
 Route each outcome as follows:
 
