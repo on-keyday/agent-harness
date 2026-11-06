@@ -39,7 +39,13 @@ nobody questions has no purpose); a metrics dashboard.
 ## The tour directory
 
 Each repository has one tour directory, **outside the repository**. It holds
-the pages (`<date>.md`) and `settings.md`.
+the pages and `settings.md`.
+
+**Page files are numbered:** `<nnn>-<date>.md`, three digits from `001`, such
+as `001-2026-11-07.md`. The highest number is the last page. A page redone,
+even on the same day, takes the next number; no page is overwritten, so every
+reaction stays on record. Why: with date-only names, two pages on one day left
+no way to tell which was the last one, and the baseline comes from it.
 
 - Inside running-parallel-workers it is `<records>/tours/`.
 - A standalone run uses the same directory when those records exist, so there
@@ -85,7 +91,7 @@ letting it cancel a finding would hide the thing the page is for.
 
 1. **State and baseline.** Find the tour directory and read `settings.md`. On
    a first run, settle its two answers with the owner and write them. The
-   baseline is the commit the last page recorded. With no earlier page, use a
+   baseline is the commit the highest-numbered page recorded. With no earlier page, use a
    point the owner names, or the commit 30 days back.
 2. **Gather decisions.** List decisions made or touched since the baseline,
    plus any still open from earlier pages. Record where each one lives (file
@@ -122,7 +128,7 @@ letting it cancel a finding would hide the thing the page is for.
 ## The page
 
 ````
-# Codebase tour — <date>  (describes <commit>; baseline <commit>)
+# Codebase tour <nnn> — <date>  (describes <commit>; baseline <commit>)
 
 ## <n>. <decision, in a few words>: <how far it got, in a few words>
 
