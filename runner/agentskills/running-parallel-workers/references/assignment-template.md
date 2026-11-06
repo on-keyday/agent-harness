@@ -49,6 +49,7 @@ This repository's conventions for parallel work are in <path>; read it in full.
 
 ## Reports
 - Put the body in the message itself. Times are the output of `date`.
+- If the owner talks to you directly, send the parent what the owner said, verbatim, with the `date`, at once; then act on it.
 - When the design is written down, send where it is and the list of owner decisions.
 - When the work is done, send the branch tip commit, check results, review findings you set aside, and the decisions you want put to the owner.
 - Reply with: harness-cli agent send --topic chat.<parent short id> --in-reply-to <seq> --data '<JSON>'

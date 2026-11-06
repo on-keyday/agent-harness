@@ -34,7 +34,7 @@ own equivalents.
 
 | Role | Does | Does not |
 |---|---|---|
-| owner (human) | decides scope, outward actions, the conventions, and the other kinds of decision the conventions reserve | talk to children directly — everything goes through the parent |
+| owner (human) | decides scope, outward actions, the conventions, and the other kinds of decision the conventions reserve | talk to children directly as the normal path — everything goes through the parent |
 | parent (one session) | starts and assigns children, relays questions, verifies results, lands, keeps the records | do a child's work; decide in the owner's place |
 | child (one per item) | takes one item through the stages the conventions name, then reports it ready to land | land (unless the conventions hand it PR creation), create sessions, ask the owner directly, write auto-memory |
 | reader (optional, different model) | reads what the conventions give it, under their brief, and lists findings | change the work, or decide what gets fixed |
@@ -46,6 +46,13 @@ own equivalents.
   in the child's first instruction.
 - **Give children no `spawn` capability.** A grandchild is something the parent
   cannot track. Research subagents inside a child are fine.
+- **When the owner does talk to a child directly, the child reports it to the
+  parent at once** — what was said, verbatim, and when — and the parent records
+  it as it would an owner answer. Why: the message log, the question register
+  and the parent-state file see only what passes through the parent; an
+  instruction typed into a child's session reaches none of them, and the parent
+  would check the child's work against a scope the owner had already changed.
+  Say so in the child's first instruction.
 
 ## How many children
 
