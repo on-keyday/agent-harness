@@ -95,6 +95,18 @@ item" says.
 their return; a failing trunk check isolated and recorded, not reverted, and
 later landings held>.
 
+## Codebase tour
+
+The coordinator runs a codebase tour with the owner present (the
+`codebase-tour` skill). The last two lines are copied into the tour's settings.
+
+- Landings between tours: <n>.
+- How code locations are written so the owner can open them as they are:
+  <e.g. absolute `path:line` in the owner's checkout | a link to the code host>.
+- Where the owner's decisions are recorded, and how their maker is marked:
+  <e.g. a "Decided by" column in design docs | "DECIDED (owner, <date>)" text
+  in the backlog>. A record without that mark counts as an agent's decision.
+
 ## Reader on a different model
 
 - Is there a reader: <yes | no>. With no reader, the work gets the reviews in

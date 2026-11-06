@@ -181,7 +181,7 @@ def tasks():
 
 APP = "running-parallel-workers"
 REPO_MARK = ".repo"
-SUBDIRS = ("instructions", "log", "questions", "readback")
+SUBDIRS = ("instructions", "log", "questions", "readback", "tours")
 
 
 class RecordsError(Exception):

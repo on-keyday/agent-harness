@@ -99,6 +99,7 @@ set it — a temporary instruction, kept in your parent-state file.
     log/              the message log, <start date>-<run>.md
     questions/        owner questions, q<n>.md; answered/ beside them
     readback/         reader inputs (prepared/<name>/) and results
+    tours/            codebase-tour pages, their settings.md and reactions
   ```
 
 ## The conventions document
@@ -143,6 +144,8 @@ timestamped events.
   whether to land. The file survives both.
 - The owner's temporary instructions ("do not push for a while") go here only —
   not in the repository, not to children.
+- The last codebase tour's date and commit, and the landings counted since
+  then (see Checkpoints).
 
 ## A child's lifetime
 
@@ -255,6 +258,8 @@ not an outward action.
   ran fewer children, batched owner decisions for the owner's return, and on a
   failing trunk check isolated and recorded instead of reverting, holding later
   landings — the owner preferred work stopping to unattended autonomy.
+  No codebase tour runs while the owner is away; a tour count reached then
+  waits for their return, because the page exists to be questioned.
 
 ## Landing
 
@@ -304,6 +309,15 @@ a large miss asks what was unknown at planning time.
   close / keep to the owner. Why: of 61 such items, zero closed because their
   trigger arrived; no child standing where a trigger fires checks the list. A
   "when a user asks" trigger counts users' issues.
+- **A codebase tour after the conventions' number of landings since the last
+  one**, with the owner present. First settle the children's next items, as at
+  any landing, so no child waits on the tour. Then run `codebase-tour` on
+  `<records>/tours/`. When the owner's pushback asks for a fix, the fix becomes
+  a backlog item or a child's assignment, because the parent does no child's
+  work; a choice becomes a registered `Q<n>`. Why: the owner reads little of
+  the code the children write, and passing tests hide how far the code has
+  moved from what the owner decided. Only the owner looking at the real thing
+  catches that, and by then the drift has spread.
 - **No news to a child you will /clear** — put it in its next assignment; a child
   mid-work does get it.
 - **Batch notices that need no reply** into the next exchange.
