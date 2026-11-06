@@ -102,9 +102,10 @@ sandbox-upstream:
 	python3 scripts/sandbox/check_agent_releases.py --agent all --smoke
 
 # Every JavaScript assertion in the repo, under node's built-in test runner:
-# the half of main.js that lives outside the page's IIFE -- its command line
-# (cmd_test) and the preview's pure decisions (preview_test) -- against the
-# REAL wasm bridge (webui/static/harness_env.mjs loads main.wasm, so the
+# the page's top-level helpers, which index.html loads before main.js's IIFE --
+# its command line (cmd_test) and the preview's pure decisions (preview_test) --
+# against the REAL wasm bridge
+# (webui/static/harness_env.mjs loads main.wasm, so the
 # declaration under test is the one the CLI and TUI parse from), plus the two
 # pure functions behind memviewer's project map (maplayout_test), which reads
 # its subject out of the Python source the same way.

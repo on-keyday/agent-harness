@@ -702,6 +702,16 @@
 <script src="/static/wasm_exec.js"></script>
 <script src="/static/xterm.js"></script>
 <script src="/static/addon-fit.js"></script>
+<!-- The page's own scripts are the `defer` ones, run in this order once the
+     document is parsed. The per-area files hold the top-level helpers that
+     main.js's IIFE calls, so they come first. webui/static/harness_env.mjs
+     reads this list to load the same files, in the same order, under node. -->
+<script src="/static/board.js" defer></script>
+<script src="/static/selects.js" defer></script>
+<script src="/static/task_models.js" defer></script>
+<script src="/static/cmdline.js" defer></script>
+<script src="/static/files.js" defer></script>
+<script src="/static/graph.js" defer></script>
 <script src="/static/main.js" defer></script>
 </body>
 </html>

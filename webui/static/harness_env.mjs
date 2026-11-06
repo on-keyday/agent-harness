@@ -1,8 +1,9 @@
-// A Node home for main.js's top-level half, with the REAL wasm bridge.
+// A Node home for the page's top-level helpers, with the REAL wasm bridge.
 //
-// The page is one `(async () => { … })()` over a live DOM, so nothing inside
+// main.js is one `(async () => { … })()` over a live DOM, so nothing inside
 // it runs outside a browser. What was hoisted out of it -- runVerbCommand,
-// runFileAction, runGitAction, tokenize and ~50 helpers -- is plain JavaScript,
+// runFileAction, runGitAction, tokenize and ~100 helpers, now in the per-area
+// scripts index.html loads before main.js -- is plain JavaScript,
 // and this loads that half into a vm context whose `window.harness` is
 // cmd/harness-webui-wasm compiled to wasm. So a test drives the surface's
 // dispatch against the same declaration table the CLI and the TUI parse from,
@@ -15,10 +16,10 @@ import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
 
-// loadPage returns the vm context with main.js's top-level declarations and a
-// live `harness`. The page's IIFE throws on the first DOM call it cannot fake;
-// that is expected and ignored, because function declarations are hoisted
-// before it runs.
+// loadPage returns the vm context with the page's top-level declarations and a
+// live `harness`. main.js's IIFE throws on the first DOM call it cannot fake;
+// that is expected and ignored, because every declaration a test reaches is in
+// a file loaded before it.
 export async function loadPage(dir) {
   // One element stub, permissive in both directions: any method is a no-op,
   // any unknown property is another stub so `el.dataset.fpid = 1` and
@@ -85,12 +86,21 @@ export async function loadPage(dir) {
   }
   if (typeof ctx.harness !== "object") throw new Error("wasm bridge did not register window.harness");
 
-  try {
-    vm.runInContext(fs.readFileSync(path.join(dir, "main.js"), "utf8"), ctx, { filename: "main.js" });
-  } catch (e) {
-    // Same thing, thrown synchronously. The hoisted declarations are already
-    // in the context by then.
-    if (typeof ctx.runVerbCommand !== "function") throw e;
+  // The page's own scripts, in the order index.html runs them: every
+  // `<script src="/static/X" defer>`. Read from index.html rather than listed
+  // here, so a file added there is loaded here too. The per-area files are
+  // plain declarations and load cleanly; main.js comes last.
+  const html = fs.readFileSync(path.join(dir, "..", "index.html"), "utf8");
+  const pageScripts = [...html.matchAll(/<script src="\/static\/([^"]+)" defer><\/script>/g)].map((m) => m[1]);
+  if (pageScripts.at(-1) !== "main.js") throw new Error(`index.html: main.js must be the last deferred script, got ${pageScripts}`);
+  for (const name of pageScripts) {
+    try {
+      vm.runInContext(fs.readFileSync(path.join(dir, name), "utf8"), ctx, { filename: name });
+    } catch (e) {
+      // Same thing, thrown synchronously by main.js's IIFE. Everything a test
+      // reaches is declared by the files before it.
+      if (name !== "main.js" || typeof ctx.runVerbCommand !== "function") throw e;
+    }
   }
   // A top-level `const` in a vm script is a LEXICAL binding: reachable from a
   // later runInContext in the same context, but never a property of the
