@@ -106,9 +106,10 @@ async function watcherListText(ctx, b, condition) {
 // PathsForSurface cannot name a verb the declaration does not give this
 // surface, nor miss one it does.
 //
-// It is populated at startup rather than at module load, because the bridge is
-// what supplies it; assertDispatchIsWired below is the first thing that reads
-// it and runs after the wasm module is up.
+// It is populated at startup rather than at load, because the bridge is what
+// supplies it: main.js's IIFE assigns it once the wasm module is up, in the
+// block that checks every entry names a function the bridge exports ("Every
+// verb the declaration marks as reachable here must be dispatchable").
 let RUNCMD_DISPATCH = {};
 
 // HelpRequest is a -h on its way out of the switch below. It is not an error:
