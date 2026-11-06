@@ -130,7 +130,7 @@ func DispatchWith(ctx context.Context, a verb.AgentSendAction, stdin io.Reader, 
 				return nil, errors.New("--reply-to too long")
 			}
 		}
-		sendReq := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AgentSend}
+		sendReq := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_AgentSend}}
 		sendReq.SetAgentSend(sr)
 		return sendReq, nil
 	}, payload)
@@ -187,7 +187,7 @@ func DispatchWith(ctx context.Context, a verb.AgentSendAction, stdin io.Reader, 
 		waitOn = *replyTo
 	}
 	wr.SetPattern([]byte(waitOn))
-	waitReq := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AgentWait}
+	waitReq := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_AgentWait}}
 	waitReq.SetAgentWait(wr)
 
 	waitResp, err := c.RoundTripTaskControl(ctx, waitReq)

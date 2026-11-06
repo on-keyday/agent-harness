@@ -61,10 +61,10 @@ func InboxWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) error 
 	// --user-prompt-submit-hook — whose output is a hook envelope — makes that
 	// the shape of the CLI rather than an instruction in a skill file.
 	kind := protocol.TaskControlKind_AgentInbox
-	req := &protocol.TaskControlRequest{Kind: kind}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: kind}}
 	if *promptHook {
 		kind = protocol.TaskControlKind_AgentInboxAdvance
-		req.Kind = kind
+		req.Header.Kind = kind
 		req.SetAgentInboxAdvance(protocol.AgentInboxAdvanceRequest{})
 	} else {
 		req.SetAgentInbox(protocol.AgentInboxRequest{Since: *since})

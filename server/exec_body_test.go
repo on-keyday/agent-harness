@@ -65,17 +65,17 @@ func TestDiscardPayloadStreamCancels(t *testing.T) {
 
 // Which requests carry a payload stream: the central denial cancels it.
 func TestPayloadStreamOf(t *testing.T) {
-	ex := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_OpenExecRun}
+	ex := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_OpenExecRun}}
 	ex.SetOpenExecRun(protocol.ExecRunRequest{PayloadStreamId: 9})
 	if got := payloadStreamOf(ex); got != 9 {
 		t.Errorf("exec: %d, want 9", got)
 	}
-	bs := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_BoardSend}
+	bs := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_BoardSend}}
 	bs.SetBoardSend(protocol.BoardSendRequest{PayloadStreamId: 7})
 	if got := payloadStreamOf(bs); got != 7 {
 		t.Errorf("board send: %d, want 7", got)
 	}
-	if got := payloadStreamOf(&protocol.TaskControlRequest{Kind: protocol.TaskControlKind_Whoami}); got != 0 {
+	if got := payloadStreamOf(&protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_Whoami}}); got != 0 {
 		t.Errorf("whoami: %d, want 0", got)
 	}
 }

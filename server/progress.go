@@ -44,7 +44,7 @@ func validateProgressText(text string, clear bool) error {
 // operator connection has no principal and is refused.
 func (h *TaskHandler) handleProgressSet(conn ConnHandle, req *protocol.TaskControlRequest) {
 	respond := func(status protocol.ProgressSetStatus, at int64) {
-		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_ProgressSet, RequestId: req.RequestId}
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_ProgressSet, RequestId: req.Header.RequestId}
 		resp.SetProgressSet(protocol.ProgressSetResponse{Status: status, ProgressAt: uint64(at)})
 		conn.SendMessage(resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})) //nolint:errcheck
 	}
@@ -83,7 +83,7 @@ func (h *TaskHandler) handleProgressSet(conn ConnHandle, req *protocol.TaskContr
 // cancel itself reports it.
 func (h *TaskHandler) handleProgressClear(conn ConnHandle, req *protocol.TaskControlRequest) {
 	respond := func(status protocol.ProgressSetStatus, at int64) {
-		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_ProgressClear, RequestId: req.RequestId}
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_ProgressClear, RequestId: req.Header.RequestId}
 		resp.SetProgressClear(protocol.ProgressSetResponse{Status: status, ProgressAt: uint64(at)})
 		conn.SendMessage(resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})) //nolint:errcheck
 	}

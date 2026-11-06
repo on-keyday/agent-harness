@@ -19,7 +19,7 @@ import (
 // sends. Long-lived embedders (TUI/WebUI) that already hold a *Client call
 // this form; short-lived processes use WhoAmI.
 func WhoAmIWith(ctx context.Context, c taskControlClient) (protocol.WhoAmIResponse, error) {
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_Whoami}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_Whoami}}
 	req.SetWhoami(protocol.WhoAmIRequest{Reserved: 0})
 
 	resp, err := c.RoundTripTaskControl(ctx, req)

@@ -80,7 +80,7 @@ func TitleStr(t *protocol.TaskInfo) string {
 // helper so the RoundTripTaskControl + stream-decode logic exists in exactly
 // one place.
 func (c *Client) Snapshot(ctx context.Context) (*protocol.ListResultBody, error) {
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_List}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_List}}
 	req.SetList(protocol.ListQuery{Query: nil})
 	resp, err := c.RoundTripTaskControl(ctx, req)
 	if err != nil {

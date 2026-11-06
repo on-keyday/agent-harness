@@ -20,7 +20,7 @@ func (f *resumeFixture) openAttached(t *testing.T, resume string) protocol.TaskC
 	if resume != "" {
 		oi.ResumeTaskId = hexToTaskID(t, resume)
 	}
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_OpenInteractive, RequestId: f.reqID}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_OpenInteractive, RequestId: f.reqID}}
 	req.SetOpenInteractive(oi)
 	f.h.Handle(f.conn, encodeTaskControlRequest(t, req))
 	return lastTaskControlResponse(t, f.conn)
@@ -112,7 +112,7 @@ func TestOperatorAttachedOpenStillWorks(t *testing.T) {
 	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9131-1"), nextBidi: newFakeStream(t)}
 	oi := protocol.OpenInteractiveRequest{}
 	oi.SetRepoPath([]byte("/r"))
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_OpenInteractive, RequestId: 1}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_OpenInteractive, RequestId: 1}}
 	req.SetOpenInteractive(oi)
 	h.Handle(conn, encodeTaskControlRequest(t, req))
 	r := lastTaskControlResponse(t, conn)

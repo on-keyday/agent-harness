@@ -37,7 +37,7 @@ func ArchivesWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) err
 
 	lr := protocol.AgentArchivesRequest{}
 	lr.SetTopic([]byte(a.Topic))
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AgentArchives}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_AgentArchives}}
 	req.SetAgentArchives(lr)
 	resp, err := c.RoundTripTaskControl(ctx, req)
 	if err != nil {
@@ -81,7 +81,7 @@ func readArchive(ctx context.Context, a verb.AgentAction, stdout io.Writer) erro
 	if !ar.SetId([]byte(a.Archive)) {
 		return errors.New("read --archive: id too long")
 	}
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AgentArchiveRead}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_AgentArchiveRead}}
 	req.SetAgentArchiveRead(ar)
 	resp, err := c.RoundTripTaskControl(ctx, req)
 	if err != nil {

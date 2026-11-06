@@ -69,7 +69,7 @@ func WaitWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) error {
 		InReplyTo: *inReplyTo,
 	}
 	wr.SetPattern([]byte(*topic))
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AgentWait}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_AgentWait}}
 	req.SetAgentWait(wr)
 
 	// The round trip blocks for as long as the server holds the long poll. That

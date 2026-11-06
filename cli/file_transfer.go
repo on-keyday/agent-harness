@@ -51,7 +51,7 @@ func (c *Client) OpenFileTransfer(
 	if err != nil {
 		return nil, fmt.Errorf("file: parse task id: %w", err)
 	}
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_OpenFileTransfer}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_OpenFileTransfer}}
 	body := protocol.OpenFileTransferRequest{
 		TaskId:       tid,
 		Direction:    direction,
@@ -136,7 +136,7 @@ func (c *Client) ListFiles(ctx context.Context, taskIDHex, relPath string, route
 	if err != nil {
 		return nil, fmt.Errorf("file ls: parse task id: %w", err)
 	}
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_ListFiles}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_ListFiles}}
 	body := protocol.ListFilesRequest{TaskId: tid}
 	body.SetRelPath([]byte(relPath))
 	body.Route = route

@@ -116,7 +116,7 @@ func (c *Client) OpenPortForward(ctx context.Context, taskIDHex, remoteHost stri
 	if err != nil {
 		return nil, fmt.Errorf("forward: parse task id: %w", err)
 	}
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_OpenPortForward}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_OpenPortForward}}
 	body := protocol.OpenPortForwardRequest{
 		TaskId:     tid,
 		RemotePort: uint16(remotePort),
@@ -514,7 +514,7 @@ func registerResponseError(r *protocol.RegisterPortForwardResponse) error {
 // one funnel RegisterPortForward and RegisterIPLink share, so the answer is
 // read, and a stranded registration cleaned up, the same way for both.
 func (c *Client) registerForward(ctx context.Context, body protocol.RegisterPortForwardRequest) (trsf.BidirectionalStream, uint64, error) {
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_RegisterPortForward}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_RegisterPortForward}}
 	req.SetRegisterPortForward(body)
 
 	resp, err := c.RoundTripTaskControl(ctx, req)

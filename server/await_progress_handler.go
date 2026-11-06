@@ -26,7 +26,7 @@ import (
 // before the task ended is delivered rather than task_ended.
 func (h *TaskHandler) handleAwaitProgress(conn ConnHandle, req *protocol.TaskControlRequest) {
 	ap := req.AwaitProgress()
-	requestID := req.RequestId
+	requestID := req.Header.RequestId
 	respond := func(status protocol.AwaitProgressStatus, at int64, text string, watcherID uint64) {
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_AwaitProgress, RequestId: requestID}
 		r := protocol.AwaitProgressResponse{Status: status, ProgressAt: uint64(at), WatcherId: watcherID}

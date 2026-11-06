@@ -120,7 +120,7 @@ func TestAttachSessionGateIsWiredPerMode(t *testing.T) {
 
 	send := func(t *testing.T, mode protocol.AttachMode, reqID uint32) protocol.TaskControlResponse {
 		t.Helper()
-		req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AttachSession, RequestId: reqID}
+		req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_AttachSession, RequestId: reqID}}
 		req.SetAttach(protocol.AttachSessionRequest{TaskId: target, Mode: mode})
 		h.Handle(conn, encodeTaskControlRequest(t, req))
 		return lastTaskControlResponse(t, conn)

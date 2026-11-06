@@ -298,7 +298,7 @@ func TestHandleListConns_StreamPattern(t *testing.T) {
 	fc := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9300-99")}
 	fc.nextSendStreamID = 77
 
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_ListConns}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_ListConns}}
 	req.SetListConns(protocol.ConnListQuery{})
 
 	payload, err := req.Append(nil)

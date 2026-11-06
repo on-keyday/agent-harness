@@ -12,7 +12,7 @@ import (
 func lifecycleSetAs(t *testing.T, h *TaskHandler, conn *fakeConn, st protocol.LifecycleState, reportedAt uint64) *protocol.LifecycleSetResponse {
 	t.Helper()
 	before := len(conn.Sent())
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_LifecycleSet, RequestId: 6}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_LifecycleSet, RequestId: 6}}
 	req.SetLifecycleSet(protocol.LifecycleSetRequest{Lifecycle: st, ReportedAt: reportedAt})
 	h.Handle(conn, encodeTaskControlRequest(t, req))
 	waitFor(t, func() bool { return len(conn.Sent()) == before+1 })

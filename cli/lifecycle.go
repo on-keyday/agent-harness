@@ -19,7 +19,7 @@ import (
 // inside a task. reportedAt is the reporter's clock when the hook started; the
 // server drops a report older than the last one it accepted (stale).
 func (c *Client) LifecycleSet(ctx context.Context, st protocol.LifecycleState, reportedAt int64) (*protocol.LifecycleSetResponse, error) {
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_LifecycleSet}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_LifecycleSet}}
 	req.SetLifecycleSet(protocol.LifecycleSetRequest{Lifecycle: st, ReportedAt: uint64(reportedAt)})
 	resp, err := c.RoundTripTaskControl(ctx, req)
 	if err != nil {

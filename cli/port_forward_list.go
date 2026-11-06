@@ -49,7 +49,7 @@ func (c *Client) PortForwardListWith(ctx context.Context, q ForwardListQuery) ([
 		}
 		wq.TaskId = tid
 	}
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_ListPortForwards}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_ListPortForwards}}
 	req.SetListPortForwards(wq)
 	resp, err := c.RoundTripTaskControl(ctx, req)
 	if err != nil {
@@ -102,7 +102,7 @@ func PortForwardList(ctx context.Context, peerCID objproto.ConnectionID, q Forwa
 
 // KillPortForwardWith closes one registered forward by id.
 func (c *Client) KillPortForwardWith(ctx context.Context, id uint64) error {
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_KillPortForward}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_KillPortForward}}
 	req.SetKillPortForward(protocol.KillPortForwardRequest{ForwardId: id})
 	resp, err := c.RoundTripTaskControl(ctx, req)
 	if err != nil {

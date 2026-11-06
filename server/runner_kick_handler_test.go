@@ -58,7 +58,7 @@ func (f *kickFixture) kick(t *testing.T, conn *fakeConn, prefix string, force bo
 	r := protocol.RunnerKickRequest{}
 	r.SetPrefix([]byte(prefix))
 	r.SetForce(force)
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_RunnerKick, RequestId: 6}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_RunnerKick, RequestId: 6}}
 	req.SetRunnerKick(r)
 	f.h.Handle(conn, encodeTaskControlRequest(t, req))
 	var resp protocol.TaskControlResponse
@@ -138,7 +138,7 @@ func TestKickNeedsRunnerEnroll(t *testing.T) {
 	f.h.principals = map[string]protocol.TaskID{agent.ConnectionID().String(): hexToTaskID(t, tid)}
 	r := protocol.RunnerKickRequest{}
 	r.SetPrefix([]byte(e.Identity.Hex()))
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_RunnerKick, RequestId: 1}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_RunnerKick, RequestId: 1}}
 	req.SetRunnerKick(r)
 	f.h.Handle(agent, encodeTaskControlRequest(t, req))
 	if resp := lastTaskControlResponse(t, agent); resp.Kind != protocol.TaskControlKind_PermissionDenied {

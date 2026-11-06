@@ -44,7 +44,7 @@ func (c *Client) attachSessionRPC(ctx context.Context, taskIDHex string, mode pr
 		return nil, nil, fmt.Errorf("AttachSession: parse task id: %w", err)
 	}
 
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AttachSession}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_AttachSession}}
 	req.SetAttach(protocol.AttachSessionRequest{TaskId: tid, Mode: mode, ReplayLimit: replayLimit})
 
 	resp, err := c.RoundTripTaskControl(ctx, req)

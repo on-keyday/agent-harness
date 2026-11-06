@@ -32,13 +32,13 @@ func TestOutOfScopeTargetsAnswerNotFound(t *testing.T) {
 		resp := lastTaskControlResponse(t, conn)
 		if resp.Kind == protocol.TaskControlKind_PermissionDenied {
 			t.Fatalf("answered permission_denied for an out-of-scope target; "+
-				"want the kind's own not-found (req kind %v)", req.Kind)
+				"want the kind's own not-found (req kind %v)", req.Header.Kind)
 		}
 		return resp
 	}
 
 	t.Run("cancel", func(t *testing.T) {
-		req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_Cancel, RequestId: 1}
+		req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_Cancel, RequestId: 1}}
 		req.SetCancel(protocol.CancelTask{TaskId: utid})
 		resp := send(t, req)
 		if got := resp.Cancel(); got == nil || got.Status != protocol.CancelResult_NoSuchTask {
@@ -50,7 +50,7 @@ func TestOutOfScopeTargetsAnswerNotFound(t *testing.T) {
 	})
 
 	t.Run("attach_session", func(t *testing.T) {
-		req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AttachSession, RequestId: 2}
+		req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_AttachSession, RequestId: 2}}
 		req.SetAttach(protocol.AttachSessionRequest{TaskId: utid})
 		resp := send(t, req)
 		if got := resp.Attach(); got == nil || got.Status != protocol.AttachSessionStatus_NotFound {
@@ -59,7 +59,7 @@ func TestOutOfScopeTargetsAnswerNotFound(t *testing.T) {
 	})
 
 	t.Run("await_idle", func(t *testing.T) {
-		req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AwaitIdle, RequestId: 3}
+		req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_AwaitIdle, RequestId: 3}}
 		req.SetAwaitIdle(protocol.AwaitIdleRequest{TaskId: utid})
 		resp := send(t, req)
 		if got := resp.AwaitIdle(); got == nil || got.Status != protocol.AwaitIdleStatus_NotFound {
@@ -68,7 +68,7 @@ func TestOutOfScopeTargetsAnswerNotFound(t *testing.T) {
 	})
 
 	t.Run("open_file_transfer", func(t *testing.T) {
-		req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_OpenFileTransfer, RequestId: 4}
+		req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_OpenFileTransfer, RequestId: 4}}
 		req.SetOpenFileTransfer(protocol.OpenFileTransferRequest{
 			TaskId: utid, Direction: protocol.FileTransferDirection_Pull,
 		})
@@ -79,7 +79,7 @@ func TestOutOfScopeTargetsAnswerNotFound(t *testing.T) {
 	})
 
 	t.Run("list_files", func(t *testing.T) {
-		req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_ListFiles, RequestId: 5}
+		req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_ListFiles, RequestId: 5}}
 		req.SetListFiles(protocol.ListFilesRequest{TaskId: utid})
 		resp := send(t, req)
 		if got := resp.ListFiles(); got == nil || got.Status != protocol.ListFilesStatus_NoSuchTask {
@@ -88,7 +88,7 @@ func TestOutOfScopeTargetsAnswerNotFound(t *testing.T) {
 	})
 
 	t.Run("git_query", func(t *testing.T) {
-		req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_GitQuery, RequestId: 6}
+		req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_GitQuery, RequestId: 6}}
 		req.SetGitQuery(protocol.GitQueryRequest{TaskId: utid})
 		resp := send(t, req)
 		if got := resp.GitQuery(); got == nil || got.Status != protocol.GitQueryStatus_NoSuchTask {
@@ -97,7 +97,7 @@ func TestOutOfScopeTargetsAnswerNotFound(t *testing.T) {
 	})
 
 	t.Run("open_port_forward", func(t *testing.T) {
-		req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_OpenPortForward, RequestId: 7}
+		req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_OpenPortForward, RequestId: 7}}
 		req.SetOpenPortForward(protocol.OpenPortForwardRequest{TaskId: utid})
 		resp := send(t, req)
 		if got := resp.OpenPortForward(); got == nil || got.Status != protocol.OpenPortForwardStatus_NoSuchTask {
@@ -106,7 +106,7 @@ func TestOutOfScopeTargetsAnswerNotFound(t *testing.T) {
 	})
 
 	t.Run("register_port_forward", func(t *testing.T) {
-		req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_RegisterPortForward, RequestId: 8}
+		req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_RegisterPortForward, RequestId: 8}}
 		req.SetRegisterPortForward(protocol.RegisterPortForwardRequest{
 			TaskId: utid, Direction: protocol.PortForwardDirection_Local,
 		})
@@ -129,7 +129,7 @@ func TestInScopeTargetPassesTheGate(t *testing.T) {
 	h.principals[cid] = hexToTaskID(t, c)
 
 	// g is c's grandchild — inside the default subtree scope.
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_Cancel, RequestId: 9}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_Cancel, RequestId: 9}}
 	req.SetCancel(protocol.CancelTask{TaskId: hexToTaskID(t, g)})
 	h.Handle(conn, encodeTaskControlRequest(t, req))
 

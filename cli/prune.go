@@ -101,7 +101,7 @@ func (c *Client) PruneTasks(ctx context.Context, cutoff time.Time, taskIDs []str
 	if force {
 		pr.Force = 1
 	}
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_PruneTasks}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_PruneTasks}}
 	req.SetPrune(pr)
 	resp, err := c.RoundTripTaskControl(ctx, req)
 	if err != nil {

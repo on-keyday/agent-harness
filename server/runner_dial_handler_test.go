@@ -43,7 +43,7 @@ func dialAdd(t *testing.T, f *keyVerbFixture, conn *fakeConn, keyPrefix, label s
 		cs[i].SetText([]byte(c))
 	}
 	r.SetCandidates(cs)
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_RunnerDialAdd, RequestId: 3}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_RunnerDialAdd, RequestId: 3}}
 	req.SetRunnerDialAdd(r)
 	f.h.Handle(conn, encodeTaskControlRequest(t, req))
 	resp := lastTaskControlResponse(t, conn)
@@ -146,7 +146,7 @@ func TestRunnerDialCapabilities(t *testing.T) {
 	r.SetKeyPrefix([]byte(hex.EncodeToString(k)))
 	r.SetCandidates([]protocol.RunnerDialCandidate{{}})
 	r.Candidates[0].SetText([]byte("ws:127.0.0.1:9200-*"))
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_RunnerDialAdd, RequestId: 1}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_RunnerDialAdd, RequestId: 1}}
 	req.SetRunnerDialAdd(r)
 	f.h.Handle(agent, encodeTaskControlRequest(t, req))
 	if resp := lastTaskControlResponse(t, agent); resp.Kind != protocol.TaskControlKind_PermissionDenied {
@@ -159,7 +159,7 @@ func TestRunnerDialCapabilities(t *testing.T) {
 
 func dialList(t *testing.T, f *keyVerbFixture, conn *fakeConn) []protocol.RunnerDialRow {
 	t.Helper()
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_RunnerDialList, RequestId: 4}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_RunnerDialList, RequestId: 4}}
 	req.SetRunnerDialList(protocol.RunnerDialListRequest{})
 	f.h.Handle(conn, encodeTaskControlRequest(t, req))
 	resp := lastTaskControlResponse(t, conn)
@@ -184,7 +184,7 @@ func TestRunnerDialListAndRemove(t *testing.T) {
 	if len(rows) != 1 || rows[0].Id != id || string(rows[0].Label) != "aws" || string(rows[0].AddedBy) != "operator" {
 		t.Fatalf("rows %+v", rows)
 	}
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_RunnerDialRemove, RequestId: 5}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_RunnerDialRemove, RequestId: 5}}
 	req.SetRunnerDialRemove(protocol.RunnerDialRemoveRequest{Id: id})
 	removeStatus := func() protocol.RunnerDialStatus {
 		f.h.Handle(op, encodeTaskControlRequest(t, req))

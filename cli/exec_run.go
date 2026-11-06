@@ -145,7 +145,7 @@ func (c *Client) ExecRun(ctx context.Context, taskIDHex string, argv []string, o
 		env.SetSshdParent(opts.SshdParent)
 		env.SetStdinEnabled(opts.Stdin != nil || opts.Terminal)
 		env.SetPty(opts.Pty)
-		req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_OpenExecRun}
+		req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_OpenExecRun}}
 		req.SetOpenExecRun(env)
 		return req, nil
 	}, bodyBytes)
@@ -315,7 +315,7 @@ func (c *Client) ExecRunListWith(ctx context.Context, taskFilter string) ([]prot
 		}
 		q.TaskFilter = tid
 	}
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_ExecRunList}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_ExecRunList}}
 	req.SetExecRunList(q)
 	resp, err := c.RoundTripTaskControl(ctx, req)
 	if err != nil {
@@ -365,7 +365,7 @@ func ExecRunList(ctx context.Context, peerCID objproto.ConnectionID, taskFilter 
 
 // ExecRunKillWith stops one running exec by id.
 func (c *Client) ExecRunKillWith(ctx context.Context, id uint64) error {
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_ExecRunKill}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_ExecRunKill}}
 	req.SetExecRunKill(protocol.ExecRunKillRequest{ExecId: id})
 	resp, err := c.RoundTripTaskControl(ctx, req)
 	if err != nil {

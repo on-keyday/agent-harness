@@ -20,7 +20,7 @@ type fakePermDeniedClient struct {
 func (f *fakePermDeniedClient) RoundTripTaskControl(_ context.Context, req *protocol.TaskControlRequest) (*protocol.TaskControlResponse, error) {
 	resp := &protocol.TaskControlResponse{
 		Kind:      protocol.TaskControlKind_PermissionDenied,
-		RequestId: req.RequestId,
+		RequestId: req.Header.RequestId,
 	}
 	resp.SetPermissionDenied(protocol.PermissionDeniedResponse{
 		RequestedKind: f.requestedKind,
@@ -75,14 +75,14 @@ func TestPermissionDeniedRecognition(t *testing.T) {
 // RoundTripTaskControl, using an arbitrary taskControlClient implementation.
 // This lets us test the guard logic without a live WebSocket connection.
 func roundTripWithFake(ctx context.Context, c taskControlClient, kind protocol.TaskControlKind) (*protocol.TaskControlResponse, error) {
-	req := &protocol.TaskControlRequest{Kind: kind}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: kind}}
 	resp, err := c.RoundTripTaskControl(ctx, req)
 	if err != nil {
 		return nil, err
 	}
 	// PermissionDenied guard — mirrors the guard in client.go RoundTripTaskControl.
 	if resp.Kind == protocol.TaskControlKind_PermissionDenied &&
-		req.Kind != protocol.TaskControlKind_PermissionDenied {
+		req.Header.Kind != protocol.TaskControlKind_PermissionDenied {
 		pd := resp.PermissionDenied()
 		if pd != nil {
 			return nil, &CapabilityDeniedError{

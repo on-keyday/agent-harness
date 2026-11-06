@@ -104,7 +104,7 @@ func RunnerDialAddWith(ctx context.Context, c taskControlClient, candidates []st
 	if !r.SetCandidates(cs) {
 		return 0, 0, fmt.Errorf("runner dial add: too many candidates")
 	}
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_RunnerDialAdd}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_RunnerDialAdd}}
 	req.SetRunnerDialAdd(r)
 	resp, err := c.RoundTripTaskControl(ctx, req)
 	if err != nil {
@@ -118,7 +118,7 @@ func RunnerDialAddWith(ctx context.Context, c taskControlClient, candidates []st
 }
 
 func RunnerDialListWith(ctx context.Context, c *Client) ([]RunnerDialRow, error) {
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_RunnerDialList}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_RunnerDialList}}
 	req.SetRunnerDialList(protocol.RunnerDialListRequest{})
 	resp, err := c.RoundTripTaskControl(ctx, req)
 	if err != nil {
@@ -154,7 +154,7 @@ func RunnerDialListWith(ctx context.Context, c *Client) ([]RunnerDialRow, error)
 }
 
 func RunnerDialRemoveWith(ctx context.Context, c taskControlClient, id uint32) (protocol.RunnerDialStatus, error) {
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_RunnerDialRemove}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_RunnerDialRemove}}
 	req.SetRunnerDialRemove(protocol.RunnerDialRemoveRequest{Id: id})
 	resp, err := c.RoundTripTaskControl(ctx, req)
 	if err != nil {
@@ -173,7 +173,7 @@ func RunnerKickWith(ctx context.Context, c *Client, prefix string, force bool) (
 		return 0, RunnerKickResult{}, fmt.Errorf("runner kick: id prefix too long")
 	}
 	r.SetForce(force)
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_RunnerKick}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_RunnerKick}}
 	req.SetRunnerKick(r)
 	resp, err := c.RoundTripTaskControl(ctx, req)
 	if err != nil {

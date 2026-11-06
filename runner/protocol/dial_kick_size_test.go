@@ -20,7 +20,7 @@ func worstDialAdd(nCandidates, each int) *TaskControlRequest {
 		cands[i].SetText(bytes.Repeat([]byte("c"), each))
 	}
 	r.SetCandidates(cands)
-	req := &TaskControlRequest{Kind: TaskControlKind_RunnerDialAdd}
+	req := &TaskControlRequest{Header: TaskControlRequestHeader{Kind: TaskControlKind_RunnerDialAdd}}
 	req.SetRunnerDialAdd(r)
 	return req
 }
@@ -43,7 +43,7 @@ func TestDialKickControlMessagesFitOneDatagram(t *testing.T) {
 	kick := RunnerKickRequest{}
 	kick.SetPrefix(bytes.Repeat([]byte("f"), 64))
 	kick.SetForce(true)
-	kreq := &TaskControlRequest{Kind: TaskControlKind_RunnerKick}
+	kreq := &TaskControlRequest{Header: TaskControlRequestHeader{Kind: TaskControlKind_RunnerKick}}
 	kreq.SetRunnerKick(kick)
 	if n := encodedLen(t, kreq); n > controlDatagramBudget {
 		t.Errorf("worst runner_kick is %d bytes, budget %d", n, controlDatagramBudget)

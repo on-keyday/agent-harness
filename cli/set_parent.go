@@ -49,7 +49,7 @@ func SetParentWith(ctx context.Context, c taskControlClient, opts SetParentOpts)
 	}
 	body.SetSwap(opts.Swap)
 
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_SetParent}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_SetParent}}
 	req.SetSetParent(body)
 	resp, err := c.RoundTripTaskControl(ctx, req)
 	if err != nil {

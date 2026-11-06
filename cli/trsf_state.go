@@ -46,7 +46,7 @@ func (c *Client) TrsfStateOn(ctx context.Context, peer TrsfPeer) ([]protocol.Trs
 		}
 		body.PeerCid = protocol.ConnIDFromObjproto(cid)
 	}
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_TrsfState}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_TrsfState}}
 	req.SetTrsfState(body)
 
 	resp, err := c.RoundTripTaskControl(ctx, req)

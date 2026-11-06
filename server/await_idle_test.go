@@ -154,7 +154,7 @@ func waitForWithin(t *testing.T, d time.Duration, cond func() bool) {
 // returns the decoded response once exactly one message has been sent.
 func awaitIdleViaHandle(t *testing.T, h *TaskHandler, conn *fakeConn, req protocol.AwaitIdleRequest) *protocol.AwaitIdleResponse {
 	t.Helper()
-	tcr := protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AwaitIdle, RequestId: 7}
+	tcr := protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_AwaitIdle, RequestId: 7}}
 	tcr.SetAwaitIdle(req)
 	payload := tcr.MustAppend(nil)
 	h.Handle(conn, payload)
@@ -241,7 +241,7 @@ func TestHandleAwaitIdle_NotifySinkRequiresNotifyCap(t *testing.T) {
 	}
 	h.principals[callerConn.ConnectionID().String()] = hexToTaskID(t, pidHex)
 
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AwaitIdle, RequestId: 7}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_AwaitIdle, RequestId: 7}}
 	nreq := protocol.AwaitIdleRequest{TaskId: target, Sink: protocol.AwaitSink_Notify}
 	req.SetAwaitIdle(nreq)
 	h.Handle(callerConn, encodeTaskControlRequest(t, req))
@@ -257,7 +257,7 @@ func TestHandleAwaitIdle_NotifySinkRequiresNotifyCap(t *testing.T) {
 	// Positive control: the SAME caller may still use sink=reply.
 	runner.QueueRead(makeWireFrame(byte(frame.FrameType_Stdout), []byte("x")))
 	waitFor(t, func() bool { return mux.LastOutputUnixNano() != 0 })
-	req2 := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AwaitIdle, RequestId: 8}
+	req2 := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_AwaitIdle, RequestId: 8}}
 	req2.SetAwaitIdle(protocol.AwaitIdleRequest{TaskId: target, ThresholdMs: 50, Sink: protocol.AwaitSink_Reply})
 	h.Handle(callerConn, encodeTaskControlRequest(t, req2))
 	waitForWithin(t, 3*time.Second, func() bool { return len(callerConn.Sent()) == 2 })
@@ -373,7 +373,7 @@ func TestHandleAwaitIdle_ReplyLongPollFires(t *testing.T) {
 	runner.QueueRead(makeWireFrame(byte(frame.FrameType_Stdout), []byte("turn output")))
 	waitFor(t, func() bool { return mux.LastOutputUnixNano() != 0 })
 
-	tcr := protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AwaitIdle, RequestId: 7}
+	tcr := protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_AwaitIdle, RequestId: 7}}
 	tcr.SetAwaitIdle(protocol.AwaitIdleRequest{TaskId: tid, ThresholdMs: 50, Sink: protocol.AwaitSink_Reply})
 	h.Handle(conn, tcr.MustAppend(nil))
 

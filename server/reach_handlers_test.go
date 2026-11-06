@@ -234,7 +234,7 @@ func TestAwaitIdleBoardSinkObeysTheRequestersReach(t *testing.T) {
 		t.Helper()
 		req := protocol.AwaitIdleRequest{TaskId: me, ThresholdMs: 50, Sink: protocol.AwaitSink_Board}
 		req.SetTopic([]byte(topic))
-		tcr := protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AwaitIdle, RequestId: 7}
+		tcr := protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_AwaitIdle, RequestId: 7}}
 		tcr.SetAwaitIdle(req)
 		before := len(conn.Sent())
 		h.Handle(conn, tcr.MustAppend(nil))

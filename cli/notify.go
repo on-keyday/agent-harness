@@ -45,7 +45,7 @@ func newNotifyRequest(level protocol.NotifyLevel, title, text string) *protocol.
 // encodedNotifyWireLen measures the wire size of the TaskControlRequest that
 // would carry nr (AppKind byte + kind + request_id + NotifyRequest body).
 func encodedNotifyWireLen(nr *protocol.NotifyRequest) int {
-	tcr := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_Notify}
+	tcr := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_Notify}}
 	tcr.SetNotify(*nr)
 	return len(tcr.MustAppend([]byte{byte(appwire.AppKind_TaskControl)}))
 }
@@ -98,7 +98,7 @@ func (c *Client) Notify(ctx context.Context, level, title, text string) error {
 	nr := newNotifyRequest(lvl, title, text)
 	mtuGuardNotify(nr)
 
-	tcr := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_Notify}
+	tcr := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_Notify}}
 	tcr.SetNotify(*nr)
 	resp, err := c.RoundTripTaskControl(ctx, tcr)
 	if err != nil {

@@ -91,7 +91,7 @@ func (c *Client) GitQuery(ctx context.Context, taskIDHex string, q GitQuery) (*G
 	if err != nil {
 		return nil, fmt.Errorf("git: parse task id: %w", err)
 	}
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_GitQuery}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_GitQuery}}
 	body := protocol.GitQueryRequest{
 		TaskId:     tid,
 		Kind:       q.Kind,

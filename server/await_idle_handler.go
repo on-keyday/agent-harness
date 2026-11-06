@@ -42,7 +42,7 @@ func (h *TaskHandler) handleAwaitIdle(conn ConnHandle, req *protocol.TaskControl
 		slog.Error("TaskHandler: AwaitIdle variant is nil")
 		return
 	}
-	requestID := req.RequestId
+	requestID := req.Header.RequestId
 	respond := func(status protocol.AwaitIdleStatus, lastOutputUnixNano int64, watcherID uint64) {
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_AwaitIdle, RequestId: requestID}
 		lo := uint64(0)

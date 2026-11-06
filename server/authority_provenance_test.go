@@ -184,7 +184,7 @@ func TestResumeWritesResumer(t *testing.T) {
 		sub.SetRepoPath([]byte("/r"))
 		sub.SetPrompt([]byte("again"))
 		sub.SetResumeCapsOverride(true)
-		req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_Submit, RequestId: 9}
+		req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_Submit, RequestId: 9}}
 		req.SetSubmit(sub)
 		f.h.Handle(conn, encodeTaskControlRequest(t, req))
 		resp := lastTaskControlResponse(t, conn)

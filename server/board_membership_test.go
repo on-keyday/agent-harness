@@ -11,7 +11,7 @@ import (
 
 func membership(t *testing.T, h *TaskHandler, conn *fakeConn, task protocol.TaskID, topic string, op protocol.BoardMembershipOp) protocol.TaskControlResponse {
 	t.Helper()
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_BoardMembership, RequestId: 3}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_BoardMembership, RequestId: 3}}
 	r := protocol.BoardMembershipRequest{Task: task, Op: op}
 	r.SetTopic([]byte(topic))
 	req.SetBoardMembership(r)

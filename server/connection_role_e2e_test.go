@@ -88,7 +88,7 @@ func TestConnectionRolesE2E(t *testing.T) {
 					msg.SetTaskFinished(protocol.TaskFinished{TaskId: taskIDFromHex(victim)})
 					wire = msg.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)})
 				} else {
-					msg := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_ClientHello}
+					msg := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_ClientHello}}
 					msg.SetClientHello(protocol.ClientHello{Kind: protocol.ClientKind_Cli})
 					wire = msg.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 				}
@@ -124,7 +124,7 @@ func TestConnectionRolesE2E(t *testing.T) {
 					t.Fatal("runner handshake timed out")
 				}
 				if mode == "runner task control" {
-					msg := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_Cancel}
+					msg := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_Cancel}}
 					msg.SetCancel(protocol.CancelTask{TaskId: taskIDFromHex(victim)})
 					wire = msg.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 				} else {

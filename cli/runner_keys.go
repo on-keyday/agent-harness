@@ -59,7 +59,7 @@ func RunnerEnrollWith(ctx context.Context, c taskControlClient, key ed25519.Publ
 	if !r.SetLabel([]byte(label)) {
 		return 0, fmt.Errorf("runner enroll: label too long (%d bytes, max 255)", len(label))
 	}
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_RunnerEnroll}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_RunnerEnroll}}
 	req.SetRunnerEnroll(r)
 	resp, err := c.RoundTripTaskControl(ctx, req)
 	if err != nil {
@@ -72,7 +72,7 @@ func RunnerEnrollWith(ctx context.Context, c taskControlClient, key ed25519.Publ
 }
 
 func RunnerKeysWith(ctx context.Context, c *Client) ([]RunnerKeyRow, error) {
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_RunnerKeys}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_RunnerKeys}}
 	req.SetRunnerKeys(protocol.RunnerKeysRequest{})
 	resp, err := c.RoundTripTaskControl(ctx, req)
 	if err != nil {
@@ -103,7 +103,7 @@ func RunnerUnenrollWith(ctx context.Context, c *Client, prefix string, force boo
 	r := protocol.RunnerUnenrollRequest{}
 	r.SetPrefix([]byte(prefix))
 	r.SetForce(force)
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_RunnerUnenroll}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_RunnerUnenroll}}
 	req.SetRunnerUnenroll(r)
 	resp, err := c.RoundTripTaskControl(ctx, req)
 	if err != nil {

@@ -93,7 +93,7 @@ func SendWith(ctx context.Context, a verb.AgentSendAction, stdin io.Reader, stdo
 				return nil, errors.New("--reply-to too long")
 			}
 		}
-		tcReq := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AgentSend}
+		tcReq := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_AgentSend}}
 		tcReq.SetAgentSend(req)
 		return tcReq, nil
 	}, payload)

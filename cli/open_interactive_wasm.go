@@ -135,7 +135,7 @@ func (c *Client) Interactive(ctx context.Context, repo string, opts SessionOpts)
 	if opts.EventStream {
 		opts.Detached = true
 	}
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_OpenInteractive}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_OpenInteractive}}
 	oi := buildOpenInteractiveRequest(repo, opts)
 	resumeTaskID := opts.ResumeTaskID
 	if resumeTaskID != "" {

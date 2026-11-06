@@ -225,7 +225,7 @@ func TestHandleDeniesWithoutCap(t *testing.T) {
 	vtid := hexToTaskID(t, victimIDHex)
 
 	// Build and encode a Cancel request targeting the victim.
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_Cancel, RequestId: 7}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_Cancel, RequestId: 7}}
 	req.SetCancel(protocol.CancelTask{TaskId: vtid})
 	h.Handle(callerConn, encodeTaskControlRequest(t, req))
 
@@ -277,7 +277,7 @@ func TestHandleAllowsOperator(t *testing.T) {
 	vtid.Id = rawID
 
 	operatorConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9601-1")}
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_Cancel, RequestId: 3}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_Cancel, RequestId: 3}}
 	req.SetCancel(protocol.CancelTask{TaskId: vtid})
 	h.Handle(operatorConn, encodeTaskControlRequest(t, req))
 
@@ -369,8 +369,7 @@ func TestDirectionGate(t *testing.T) {
 	t.Run("file_pull_no_read_denied", func(t *testing.T) {
 		h, conn := makeAgentConn(t, protocol.Capability_FileWrite) // has Write but not Read
 		req := &protocol.TaskControlRequest{
-			Kind:      protocol.TaskControlKind_OpenFileTransfer,
-			RequestId: 11,
+			Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_OpenFileTransfer, RequestId: 11},
 		}
 		req.SetOpenFileTransfer(protocol.OpenFileTransferRequest{
 			Direction: protocol.FileTransferDirection_Pull,
@@ -383,8 +382,7 @@ func TestDirectionGate(t *testing.T) {
 	t.Run("file_push_no_write_denied", func(t *testing.T) {
 		h, conn := makeAgentConn(t, protocol.Capability_FileRead) // has Read but not Write
 		req := &protocol.TaskControlRequest{
-			Kind:      protocol.TaskControlKind_OpenFileTransfer,
-			RequestId: 12,
+			Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_OpenFileTransfer, RequestId: 12},
 		}
 		req.SetOpenFileTransfer(protocol.OpenFileTransferRequest{
 			Direction: protocol.FileTransferDirection_Push,
@@ -397,8 +395,7 @@ func TestDirectionGate(t *testing.T) {
 	t.Run("file_ls_with_write_allowed", func(t *testing.T) {
 		h, conn := makeAgentConn(t, protocol.Capability_FileWrite) // Write but no Read
 		req := &protocol.TaskControlRequest{
-			Kind:      protocol.TaskControlKind_ListFiles,
-			RequestId: 13,
+			Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_ListFiles, RequestId: 13},
 		}
 		req.SetListFiles(protocol.ListFilesRequest{})
 		h.Handle(conn, encodeTaskControlRequest(t, req))
@@ -409,8 +406,7 @@ func TestDirectionGate(t *testing.T) {
 	t.Run("file_ls_no_caps_denied", func(t *testing.T) {
 		h, conn := makeAgentConn(t, protocol.Capability_Spawn) // has Spawn only
 		req := &protocol.TaskControlRequest{
-			Kind:      protocol.TaskControlKind_ListFiles,
-			RequestId: 14,
+			Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_ListFiles, RequestId: 14},
 		}
 		req.SetListFiles(protocol.ListFilesRequest{})
 		h.Handle(conn, encodeTaskControlRequest(t, req))
@@ -424,8 +420,7 @@ func TestDirectionGate(t *testing.T) {
 	t.Run("forward_local_no_cap_denied", func(t *testing.T) {
 		h, conn := makeAgentConn(t, protocol.Capability_FileRead) // has FileRead only
 		req := &protocol.TaskControlRequest{
-			Kind:      protocol.TaskControlKind_RegisterPortForward,
-			RequestId: 15,
+			Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_RegisterPortForward, RequestId: 15},
 		}
 		req.SetRegisterPortForward(protocol.RegisterPortForwardRequest{
 			Direction: protocol.PortForwardDirection_Local,
@@ -438,8 +433,7 @@ func TestDirectionGate(t *testing.T) {
 	t.Run("forward_remote_only_local_denied", func(t *testing.T) {
 		h, conn := makeAgentConn(t, protocol.Capability_ForwardLocal) // has ForwardLocal but not ForwardRemote
 		req := &protocol.TaskControlRequest{
-			Kind:      protocol.TaskControlKind_RegisterPortForward,
-			RequestId: 16,
+			Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_RegisterPortForward, RequestId: 16},
 		}
 		req.SetRegisterPortForward(protocol.RegisterPortForwardRequest{
 			Direction: protocol.PortForwardDirection_Remote,
@@ -455,8 +449,7 @@ func TestDirectionGate(t *testing.T) {
 	t.Run("forward_open_local_no_cap_denied", func(t *testing.T) {
 		h, conn := makeAgentConn(t, protocol.Capability_FileRead) // has FileRead only
 		req := &protocol.TaskControlRequest{
-			Kind:      protocol.TaskControlKind_OpenPortForward,
-			RequestId: 17,
+			Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_OpenPortForward, RequestId: 17},
 		}
 		req.SetOpenPortForward(protocol.OpenPortForwardRequest{})
 		h.Handle(conn, encodeTaskControlRequest(t, req))
@@ -478,8 +471,7 @@ func TestDirectionGate(t *testing.T) {
 		ownHex := hex.EncodeToString(ownTID.Id[:])
 		id := h.pforwards().add(&portForward{direction: protocol.PortForwardDirection_Local, taskIDHex: ownHex})
 		req := &protocol.TaskControlRequest{
-			Kind:      protocol.TaskControlKind_KillPortForward,
-			RequestId: 18,
+			Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_KillPortForward, RequestId: 18},
 		}
 		req.SetKillPortForward(protocol.KillPortForwardRequest{ForwardId: id})
 		h.Handle(conn, encodeTaskControlRequest(t, req))
@@ -494,8 +486,7 @@ func TestDirectionGate(t *testing.T) {
 		ownHex := hex.EncodeToString(ownTID.Id[:])
 		id := h.pforwards().add(&portForward{direction: protocol.PortForwardDirection_Remote, taskIDHex: ownHex})
 		req := &protocol.TaskControlRequest{
-			Kind:      protocol.TaskControlKind_KillPortForward,
-			RequestId: 19,
+			Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_KillPortForward, RequestId: 19},
 		}
 		req.SetKillPortForward(protocol.KillPortForwardRequest{ForwardId: id})
 		h.Handle(conn, encodeTaskControlRequest(t, req))
@@ -507,14 +498,14 @@ func TestDirectionGate(t *testing.T) {
 	// links the day this landed.
 	t.Run("link_with_both_forward_bits_denied", func(t *testing.T) {
 		h, conn := makeAgentConn(t, protocol.Capability_ForwardLocal|protocol.Capability_ForwardRemote)
-		req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_RegisterPortForward, RequestId: 60}
+		req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_RegisterPortForward, RequestId: 60}}
 		req.SetRegisterPortForward(linkRegisterRequest(t))
 		h.Handle(conn, encodeTaskControlRequest(t, req))
 		assertPermissionDenied(t, conn, 60, protocol.Capability_ForwardLink)
 	})
 	t.Run("link_with_forward_link_passes_gate", func(t *testing.T) {
 		h, conn := makeAgentConn(t, protocol.Capability_ForwardLink)
-		req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_RegisterPortForward, RequestId: 61}
+		req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_RegisterPortForward, RequestId: 61}}
 		req.SetRegisterPortForward(linkRegisterRequest(t))
 		h.Handle(conn, encodeTaskControlRequest(t, req))
 		assertNotPermissionDenied(t, conn)
@@ -526,7 +517,7 @@ func TestDirectionGate(t *testing.T) {
 		ownHex := hex.EncodeToString(ownTID.Id[:])
 		id := h.pforwards().add(&portForward{direction: protocol.PortForwardDirection_Link,
 			protocolKind: protocol.ForwardProtocol_Ip, taskIDHex: ownHex})
-		req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_KillPortForward, RequestId: 62}
+		req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_KillPortForward, RequestId: 62}}
 		req.SetKillPortForward(protocol.KillPortForwardRequest{ForwardId: id})
 		h.Handle(conn, encodeTaskControlRequest(t, req))
 		assertPermissionDenied(t, conn, 62, protocol.Capability_ForwardLink)
@@ -543,8 +534,7 @@ func TestDirectionGate(t *testing.T) {
 		ownHex := hex.EncodeToString(ownTID.Id[:])
 		id := h.pforwards().add(&portForward{direction: protocol.PortForwardDirection_Local, taskIDHex: ownHex})
 		req := &protocol.TaskControlRequest{
-			Kind:      protocol.TaskControlKind_KillPortForward,
-			RequestId: 20,
+			Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_KillPortForward, RequestId: 20},
 		}
 		req.SetKillPortForward(protocol.KillPortForwardRequest{ForwardId: id})
 		h.Handle(conn, encodeTaskControlRequest(t, req))
@@ -567,8 +557,7 @@ func TestDirectionGate(t *testing.T) {
 		h, conn := makeAgentConn(t, protocol.Capability_None) // no caps at all
 		id := h.pforwards().add(&portForward{direction: protocol.PortForwardDirection_Local, taskIDHex: "deadbeefdeadbeefdeadbeefdeadbeef"})
 		req := &protocol.TaskControlRequest{
-			Kind:      protocol.TaskControlKind_KillPortForward,
-			RequestId: 21,
+			Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_KillPortForward, RequestId: 21},
 		}
 		req.SetKillPortForward(protocol.KillPortForwardRequest{ForwardId: id})
 		h.Handle(conn, encodeTaskControlRequest(t, req))
@@ -677,7 +666,7 @@ func TestListFilteredToSubtree(t *testing.T) {
 	}
 	h.principals[callerConn.ConnectionID().String()] = aTID
 
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_List}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_List}}
 	req.SetList(protocol.ListQuery{})
 	h.Handle(callerConn, encodeTaskControlRequest(t, req))
 
@@ -762,7 +751,7 @@ func TestListIncludesRedactedParent(t *testing.T) {
 	}
 	h.principals[callerConn.ConnectionID().String()] = hexToTaskID(t, cHex)
 
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_List}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_List}}
 	req.SetList(protocol.ListQuery{})
 	h.Handle(callerConn, encodeTaskControlRequest(t, req))
 
@@ -847,7 +836,7 @@ func TestListIncludesRedactedParent(t *testing.T) {
 	// ACCESS scope unchanged: the parent's logs are still out of reach — the
 	// caller holds exec_view, so this is the SCOPE refusing, and it refuses by
 	// looking absent rather than by naming a capability.
-	logReq := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_GetTaskLog, RequestId: 77}
+	logReq := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_GetTaskLog, RequestId: 77}}
 	logReq.SetGetLog(protocol.GetTaskLogRequest{TaskId: bTID})
 	h.Handle(callerConn, encodeTaskControlRequest(t, logReq))
 	resp := lastTaskControlResponse(t, callerConn)
@@ -895,7 +884,7 @@ func TestListRunnersGatedByInfoGlobal(t *testing.T) {
 		h.principals = make(map[string]protocol.TaskID)
 	}
 
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_List}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_List}}
 	req.SetList(protocol.ListQuery{})
 
 	// -- Case 1: confined caller (no InfoGlobal) sees zero runners ---
@@ -1004,7 +993,7 @@ func TestGetTaskLogOutOfSubtreeDenied(t *testing.T) {
 	}
 
 	// Request logs for task D (out of A's subtree).
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_GetTaskLog, RequestId: 42}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_GetTaskLog, RequestId: 42}}
 	req.SetGetLog(protocol.GetTaskLogRequest{TaskId: dTID})
 	h.Handle(callerConn, encodeTaskControlRequest(t, req))
 
@@ -1114,7 +1103,7 @@ func TestTopicsGated(t *testing.T) {
 		h.Board = newTestBoard(t)
 		publishToBoard(t, h.Board)
 
-		req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_BoardTopics, RequestId: 1}
+		req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_BoardTopics, RequestId: 1}}
 		req.SetBoardTopics(protocol.BoardTopicsRequest{})
 		h.Handle(conn, encodeTaskControlRequest(t, req))
 
@@ -1127,7 +1116,7 @@ func TestTopicsGated(t *testing.T) {
 		h.Board = newTestBoard(t)
 		publishToBoard(t, h.Board)
 
-		req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_BoardTopics, RequestId: 2}
+		req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_BoardTopics, RequestId: 2}}
 		req.SetBoardTopics(protocol.BoardTopicsRequest{})
 		h.Handle(conn, encodeTaskControlRequest(t, req))
 
@@ -1801,7 +1790,7 @@ func TestGetTaskLogWithoutExecViewIsDenied(t *testing.T) {
 	callerConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9812-1")}
 	h.principals[callerConn.ConnectionID().String()] = aTID
 
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_GetTaskLog, RequestId: 43}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_GetTaskLog, RequestId: 43}}
 	req.SetGetLog(protocol.GetTaskLogRequest{TaskId: aTID})
 	h.Handle(callerConn, encodeTaskControlRequest(t, req))
 

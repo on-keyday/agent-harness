@@ -81,7 +81,7 @@ func SetCapsWith(ctx context.Context, c taskControlClient, opts SetCapsOpts) (Se
 	body.SetCascade(opts.Cascade)
 	body.SetKeepConns(opts.KeepConns)
 
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_SetCaps}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_SetCaps}}
 	req.SetSetCaps(body)
 	resp, err := c.RoundTripTaskControl(ctx, req)
 	if err != nil {

@@ -18,7 +18,7 @@ func boardReq(t *testing.T, h *TaskHandler, conn *fakeConn, req *protocol.TaskCo
 
 func flush(t *testing.T, h *TaskHandler, conn *fakeConn, topic string) protocol.BoardFlushResponse {
 	t.Helper()
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_BoardFlush, RequestId: 7}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_BoardFlush, RequestId: 7}}
 	var r protocol.BoardFlushRequest
 	r.SetTopic([]byte(topic))
 	req.SetBoardFlush(r)
@@ -32,7 +32,7 @@ func flush(t *testing.T, h *TaskHandler, conn *fakeConn, topic string) protocol.
 
 func archive(t *testing.T, h *TaskHandler, conn *fakeConn, topic string) protocol.BoardArchiveResponse {
 	t.Helper()
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_BoardArchive, RequestId: 7}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_BoardArchive, RequestId: 7}}
 	var r protocol.BoardArchiveRequest
 	r.SetTopic([]byte(topic))
 	req.SetBoardArchive(r)
@@ -86,7 +86,7 @@ func TestBoardFlush_OperatorAndStatuses(t *testing.T) {
 func TestBoardFlush_TaskNeedsBitAndPublishable(t *testing.T) {
 	none := protocol.Capability_None
 	h, conn, _ := retainHandler(t, &none)
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_BoardFlush, RequestId: 7}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_BoardFlush, RequestId: 7}}
 	var r protocol.BoardFlushRequest
 	r.SetTopic([]byte("x"))
 	req.SetBoardFlush(r)
@@ -139,7 +139,7 @@ func TestBoardArchive_StatusMapping(t *testing.T) {
 
 func archivesRows(t *testing.T, h *TaskHandler, conn *fakeConn, kind protocol.TaskControlKind, topic string) (protocol.BoardStatus, []protocol.BoardArchiveRow) {
 	t.Helper()
-	req := &protocol.TaskControlRequest{Kind: kind, RequestId: 7}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: kind, RequestId: 7}}
 	if kind == protocol.TaskControlKind_BoardArchives {
 		r := protocol.BoardArchivesRequest{RequestId: 7}
 		r.SetTopic([]byte(topic))
@@ -192,7 +192,7 @@ func TestBoardArchives_ListAndRead(t *testing.T) {
 		t.Fatalf("keep archives = %+v", rows)
 	}
 
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_BoardArchiveRead, RequestId: 7}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_BoardArchiveRead, RequestId: 7}}
 	r := protocol.BoardArchiveReadRequest{RequestId: 7, BeforeSeq: seqs[29], Limit: 5}
 	r.SetId([]byte(id))
 	req.SetBoardArchiveRead(r)
@@ -220,7 +220,7 @@ func TestBoardArchivePurge_SeqAndWhole(t *testing.T) {
 	seqs := sendN(t, h, "plain", 3)
 	id := archive(t, h, conn, "plain").Id
 	purge := func(seq uint64) protocol.BoardPurgeResponse {
-		req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_BoardArchivePurge, RequestId: 7}
+		req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_BoardArchivePurge, RequestId: 7}}
 		r := protocol.BoardArchivePurgeRequest{RequestId: 7, Seq: seq}
 		r.SetId(id)
 		req.SetBoardArchivePurge(r)
@@ -247,7 +247,7 @@ func TestBoardArchivePurge_SeqAndWhole(t *testing.T) {
 
 func agentArchiveRead(t *testing.T, h *TaskHandler, conn *fakeConn, id string) (protocol.AgentReadPageStatus, []protocol.DeliveredMessage) {
 	t.Helper()
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AgentArchiveRead, RequestId: 7}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_AgentArchiveRead, RequestId: 7}}
 	r := protocol.AgentArchiveReadRequest{RequestId: 7, Limit: 100}
 	r.SetId([]byte(id))
 	req.SetAgentArchiveRead(r)

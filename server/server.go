@@ -1502,7 +1502,7 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 				// handlers so they record identity (clientKinds/principals for
 				// client role; Registry.Add for runner role). We re-encode the
 				// embedded hello as the normal wire form the handlers already consume:
-				//   client → [0x41]+TaskControlRequest{Kind:ClientHello,...}
+				//   client → [0x41]+TaskControlRequest{Header: TaskControlRequestHeader{Kind:ClientHello},...}
 				//   runner → [0x43]+RunnerMessage{Kind:Hello,...}
 				// Then call s.dispatcher.Dispatch so the same code path runs as
 				// if the hello had arrived on the wire in the old two-RTT form.

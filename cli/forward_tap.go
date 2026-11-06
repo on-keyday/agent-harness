@@ -26,7 +26,7 @@ type ForwardTapOpts struct {
 // WebUI both already hold one, and dialling afresh there would throw away a
 // handshake.
 func (c *Client) OpenForwardTap(ctx context.Context, forwardID uint64, opts ForwardTapOpts) (trsf.BidirectionalStream, error) {
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_OpenForwardTap}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_OpenForwardTap}}
 	req.SetOpenForwardTap(protocol.OpenForwardTapRequest{
 		ForwardId:       forwardID,
 		DirectionFilter: opts.Filter,

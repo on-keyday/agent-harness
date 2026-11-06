@@ -6,7 +6,7 @@ import "testing"
 // both TaskInfo and TaskStatusEvent, so a round trip is the cheapest proof each
 // one lands where its neighbours expect it.
 func TestLifecycleWire_RoundTrip(t *testing.T) {
-	req := TaskControlRequest{Kind: TaskControlKind_LifecycleSet, RequestId: 3}
+	req := TaskControlRequest{Header: TaskControlRequestHeader{Kind: TaskControlKind_LifecycleSet, RequestId: 3}}
 	req.SetLifecycleSet(LifecycleSetRequest{Lifecycle: LifecycleState_Waiting, ReportedAt: 123})
 	enc := req.MustAppend(nil)
 	if len(enc) >= 64 {

@@ -37,7 +37,7 @@ func pskDispatchIdentity(d *Dispatcher, conn ConnHandle, req *protocol.PskAuthRe
 		if d.RecordClientIdentity != nil {
 			return d.RecordClientIdentity(conn.ConnectionID().String(), conn, hello) == protocol.ClientHelloStatus_Ok
 		}
-		tcReq := protocol.TaskControlRequest{Kind: protocol.TaskControlKind_ClientHello}
+		tcReq := protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_ClientHello}}
 		tcReq.SetClientHello(*hello)
 		data, err := tcReq.Append([]byte{byte(appwire.AppKind_TaskControl)})
 		if err != nil {

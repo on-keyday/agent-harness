@@ -60,7 +60,7 @@ func retainHandler(t *testing.T, caps *protocol.Capability) (*TaskHandler, *fake
 
 func retain(t *testing.T, h *TaskHandler, conn *fakeConn, topic string, ttl time.Duration, forever, clear bool) protocol.TaskControlResponse {
 	t.Helper()
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_BoardRetain, RequestId: 7}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_BoardRetain, RequestId: 7}}
 	r := protocol.BoardRetainRequest{TtlMs: uint64(ttl.Milliseconds())}
 	r.SetTopic([]byte(topic))
 	r.SetForever(forever)
@@ -143,7 +143,7 @@ func TestBoardRetain_ChatRefused(t *testing.T) {
 		t.Fatalf("no ttl, no forever, no clear: %v, want bad_request", st)
 	}
 	// A ttl_ms past what a Duration holds would wrap negative and expire at once.
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_BoardRetain, RequestId: 8}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_BoardRetain, RequestId: 8}}
 	r := protocol.BoardRetainRequest{TtlMs: 1 << 63}
 	r.SetTopic([]byte("free.z"))
 	req.SetBoardRetain(r)
@@ -161,7 +161,7 @@ func TestBoardRead_Pages(t *testing.T) {
 	}
 	read := func(before uint64, limit uint16) []protocol.BoardMessageRow {
 		t.Helper()
-		req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_BoardRead, RequestId: 9}
+		req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_BoardRead, RequestId: 9}}
 		r := protocol.BoardReadRequest{BeforeSeq: before, Limit: limit}
 		r.SetTopic([]byte("paged"))
 		req.SetBoardRead(r)
@@ -199,7 +199,7 @@ func TestBoardRead_PageFailureIsNotEmpty(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(path, 0o644) })
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_BoardRead, RequestId: 9}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_BoardRead, RequestId: 9}}
 	r := protocol.BoardReadRequest{Limit: 10}
 	r.SetTopic([]byte("unreadable"))
 	req.SetBoardRead(r)

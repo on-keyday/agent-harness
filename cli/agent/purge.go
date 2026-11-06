@@ -61,7 +61,7 @@ func PurgeWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) error 
 	// name and where the capability check was written.
 	pr := protocol.BoardPurgeRequest{Seq: *seq}
 	pr.SetTopic([]byte(*topic))
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_BoardPurge}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_BoardPurge}}
 	req.SetBoardPurge(pr)
 
 	resp, err := c.RoundTripTaskControl(ctx, req)

@@ -27,7 +27,7 @@ import (
 //     encoded ConnListResultBody.
 //  3. Read that stream until EOF and decode.
 func (c *Client) ConnListWith(ctx context.Context) ([]protocol.ConnInfo, error) {
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_ListConns}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_ListConns}}
 	req.SetListConns(protocol.ConnListQuery{Reserved: 0})
 	resp, err := c.RoundTripTaskControl(ctx, req)
 	if err != nil {

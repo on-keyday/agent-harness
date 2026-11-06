@@ -23,7 +23,7 @@ type ExecTapOpts struct {
 // stream its records arrive on. A method on the long-lived *Client for
 // OpenForwardTap's reason: the TUI and the WebUI already hold one.
 func (c *Client) OpenExecTap(ctx context.Context, execID uint64, opts ExecTapOpts) (trsf.BidirectionalStream, error) {
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_OpenExecTap}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_OpenExecTap}}
 	req.SetOpenExecTap(protocol.OpenExecTapRequest{
 		ExecId:         execID,
 		ChannelFilter:  opts.Filter,

@@ -39,7 +39,7 @@ func TopicsWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) error
 	// value instead of PermissionDenied, and in NOT carrying retracted_count.
 	// That second difference was drift, not policy: the same caller holding
 	// board_observe could already get the field by typing `board topics`.
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_BoardTopics}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_BoardTopics}}
 	req.SetBoardTopics(protocol.BoardTopicsRequest{})
 
 	resp, err := c.RoundTripTaskControl(ctx, req)

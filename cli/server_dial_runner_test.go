@@ -36,7 +36,7 @@ func (f *fakeTaskControlClient) RoundTripTaskControl(_ context.Context, req *pro
 	}
 	resp := &protocol.TaskControlResponse{
 		Kind:      kind,
-		RequestId: req.RequestId,
+		RequestId: req.Header.RequestId,
 	}
 	if !f.dropDialRunner {
 		resp.SetDialRunner(protocol.DialRunnerResponse{Status: f.responseStatus})
@@ -70,8 +70,8 @@ func TestServerDialRunnerSendsRequestAndDecodesResponse(t *testing.T) {
 	if fc.lastRequest == nil {
 		t.Fatal("client never saw a request")
 	}
-	if fc.lastRequest.Kind != protocol.TaskControlKind_DialRunner {
-		t.Errorf("request kind: got %v want DialRunner", fc.lastRequest.Kind)
+	if fc.lastRequest.Header.Kind != protocol.TaskControlKind_DialRunner {
+		t.Errorf("request kind: got %v want DialRunner", fc.lastRequest.Header.Kind)
 	}
 	dr := fc.lastRequest.DialRunner()
 	if dr == nil {

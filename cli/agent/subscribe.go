@@ -48,10 +48,10 @@ func subscribeOrUnsubWith(ctx context.Context, a verb.AgentAction, stdout io.Wri
 	defer c.Close()
 
 	kind := protocol.TaskControlKind_AgentSubscribe
-	req := &protocol.TaskControlRequest{Kind: kind}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: kind}}
 	if remove {
 		kind = protocol.TaskControlKind_AgentUnsubscribe
-		req.Kind = kind
+		req.Header.Kind = kind
 		ur := protocol.AgentUnsubscribeRequest{}
 		ur.SetPattern([]byte(*pattern))
 		req.SetAgentUnsubscribe(ur)

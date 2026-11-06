@@ -33,7 +33,7 @@ func restoreRequest(t *testing.T, listOnly uint8, ids ...protocol.TaskID) []byte
 	if len(ids) > 0 && !rr.SetTaskIds(ids) {
 		t.Fatal("SetTaskIds refused")
 	}
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_RestoreTasks, RequestId: 11}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_RestoreTasks, RequestId: 11}}
 	req.SetRestoreTasks(rr)
 	return encodeTaskControlRequest(t, req)
 }

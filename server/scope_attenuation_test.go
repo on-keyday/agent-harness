@@ -242,7 +242,7 @@ func TestSubmitRejectsUnpermittedScope(t *testing.T) {
 	sub.SetPrompt([]byte("p"))
 	sub.Scope = authority.Scope{Base: protocol.ScopeBase_None, IDs: []string{u}}.ToWire()
 	_ = utid
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_Submit, RequestId: 1}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_Submit, RequestId: 1}}
 	req.SetSubmit(sub)
 	h.Handle(conn, encodeTaskControlRequest(t, req))
 
@@ -275,7 +275,7 @@ func TestResumeOfOutOfScopeTaskIsNotFound(t *testing.T) {
 	sub := protocol.SubmitRequest{ResumeTaskId: hexToTaskID(t, u), RequestedCaps: protocol.Capability_All}
 	sub.SetRepoPath([]byte("/r"))
 	sub.SetPrompt([]byte("takeover"))
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_Submit, RequestId: 2}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_Submit, RequestId: 2}}
 	req.SetSubmit(sub)
 	h.Handle(conn, encodeTaskControlRequest(t, req))
 

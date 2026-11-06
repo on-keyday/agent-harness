@@ -37,7 +37,7 @@ type RestorableTask struct {
 // everyone who pruned by accident -- had no way to learn it.
 func (c *Client) Restorable(ctx context.Context) ([]RestorableTask, protocol.RestoreWALStatus, error) {
 	rr := protocol.RestoreTasksRequest{ListOnly: 1}
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_RestoreTasks}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_RestoreTasks}}
 	req.SetRestoreTasks(rr)
 	resp, err := c.RoundTripTaskControl(ctx, req)
 	if err != nil {
@@ -126,7 +126,7 @@ func (c *Client) RestoreTasks(ctx context.Context, taskIDs []string) (RestoreRes
 	if !rr.SetTaskIds(ids) {
 		return RestoreResult{}, fmt.Errorf("too many task ids: %d (max 65535)", len(ids))
 	}
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_RestoreTasks}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_RestoreTasks}}
 	req.SetRestoreTasks(rr)
 	resp, err := c.RoundTripTaskControl(ctx, req)
 	if err != nil {

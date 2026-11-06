@@ -196,7 +196,7 @@ func TestHandleAwaitIdle_ReplyKilledAnswersCancelled(t *testing.T) {
 	conn := &fakeConn{}
 
 	// No output: the watcher waits indefinitely until killed.
-	tcr := protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AwaitIdle, RequestId: 7}
+	tcr := protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_AwaitIdle, RequestId: 7}}
 	tcr.SetAwaitIdle(protocol.AwaitIdleRequest{TaskId: tid, ThresholdMs: 50, Sink: protocol.AwaitSink_Reply})
 	h.Handle(conn, tcr.MustAppend(nil))
 	waitFor(t, func() bool { return len(h.idleWatchers().list("")) == 1 })
@@ -262,7 +262,7 @@ func TestIdleWatcher_FireKillRaceHasOneWinner(t *testing.T) {
 		runner.QueueRead(makeWireFrame(byte(frame.FrameType_Stdout), []byte("x")))
 		waitFor(t, func() bool { return mux.LastOutputUnixNano() != 0 })
 
-		tcr := protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AwaitIdle, RequestId: 7}
+		tcr := protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_AwaitIdle, RequestId: 7}}
 		tcr.SetAwaitIdle(protocol.AwaitIdleRequest{TaskId: tid, ThresholdMs: 1, Sink: protocol.AwaitSink_Reply})
 		h.Handle(conn, tcr.MustAppend(nil))
 		// id is 1: a fresh handler per iteration.

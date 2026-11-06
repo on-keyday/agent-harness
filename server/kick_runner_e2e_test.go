@@ -17,7 +17,7 @@ func kickVia(t *testing.T, s *Server, identity protocol.RunnerID) protocol.Runne
 	conn := keyVerbConn()
 	r := protocol.RunnerKickRequest{}
 	r.SetPrefix([]byte(identity.Hex()))
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_RunnerKick, RequestId: 9}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_RunnerKick, RequestId: 9}}
 	req.SetRunnerKick(r)
 	s.taskHandler.Handle(conn, encodeTaskControlRequest(t, req))
 	var st protocol.RunnerKickStatus

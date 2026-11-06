@@ -44,7 +44,7 @@ func itoa(n int) string { return strconv.Itoa(n) }
 
 func (f *keyVerbFixture) enroll(t *testing.T, conn *fakeConn, key ed25519.PublicKey, label string) protocol.RunnerKeyStatus {
 	t.Helper()
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_RunnerEnroll, RequestId: 1}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_RunnerEnroll, RequestId: 1}}
 	r := protocol.RunnerEnrollRequest{}
 	copy(r.Key[:], key)
 	r.SetLabel([]byte(label))
@@ -59,7 +59,7 @@ func (f *keyVerbFixture) enroll(t *testing.T, conn *fakeConn, key ed25519.Public
 
 func (f *keyVerbFixture) unenroll(t *testing.T, conn *fakeConn, prefix string, force bool) (protocol.RunnerKeyStatus, *protocol.RunnerUnenrollBody) {
 	t.Helper()
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_RunnerUnenroll, RequestId: 2}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_RunnerUnenroll, RequestId: 2}}
 	r := protocol.RunnerUnenrollRequest{}
 	r.SetPrefix([]byte(prefix))
 	r.SetForce(force)
@@ -95,7 +95,7 @@ func TestRunnerVerbsNeedRunnerEnroll(t *testing.T) {
 		}
 	}
 	pub, _, _ := ed25519.GenerateKey(nil)
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_RunnerEnroll, RequestId: 1}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_RunnerEnroll, RequestId: 1}}
 	r := protocol.RunnerEnrollRequest{}
 	copy(r.Key[:], pub)
 	req.SetRunnerEnroll(r)
@@ -194,7 +194,7 @@ func TestRunnerKeysListsUsers(t *testing.T) {
 	f.enroll(t, op, pub, "gmk")
 	f.h.Registry.Add(&RunnerEntry{ID: tcid("ws:127.0.0.1:9902-1"), Identity: testRunnerID("a"), Hostname: "gmkhost", Key: pub, Conn: &fakeConn{id: tcid("ws:127.0.0.1:9902-1")}})
 
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_RunnerKeys, RequestId: 3}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_RunnerKeys, RequestId: 3}}
 	req.SetRunnerKeys(protocol.RunnerKeysRequest{})
 	f.h.Handle(op, encodeTaskControlRequest(t, req))
 	resp := lastTaskControlResponse(t, op)

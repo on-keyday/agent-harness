@@ -127,7 +127,7 @@ const ThreadWindowAgent = "agent thread: shows what is still on the board on the
 // anything the task subscribed to); a wildcard pattern would under-report
 // here, and ListRetained per concrete name is how the messages are collected.
 func listSubscribedTopics(ctx context.Context, c *cli.Client) ([]string, error) {
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AgentListSubscriptions}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_AgentListSubscriptions}}
 	req.SetAgentListSubscriptions(protocol.AgentListSubscriptionsRequest{})
 	resp, err := c.RoundTripTaskControl(ctx, req)
 	if err != nil {
@@ -159,7 +159,7 @@ func listSubscribedTopics(ctx context.Context, c *cli.Client) ([]string, error) 
 func retainedMetas(ctx context.Context, c *cli.Client, topic string) ([]cli.BoardMessage, map[uint64]int, error) {
 	lr := protocol.AgentListRetainedRequest{}
 	lr.SetTopic([]byte(topic))
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AgentListRetained}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_AgentListRetained}}
 	req.SetAgentListRetained(lr)
 	resp, err := c.RoundTripTaskControl(ctx, req)
 	if err != nil {
@@ -215,7 +215,7 @@ func retainedMetas(ctx context.Context, c *cli.Client, topic string) ([]cli.Boar
 // fetchBody reads one message's payload through the read path — scoped to the
 // topics this task subscribes to, so it needs no capability either.
 func fetchBody(ctx context.Context, c *cli.Client, seq uint64) ([]byte, error) {
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AgentReadSeq}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_AgentReadSeq}}
 	req.SetAgentReadSeq(protocol.AgentReadSeqRequest{Seq: seq})
 	resp, err := c.RoundTripTaskControl(ctx, req)
 	if err != nil {

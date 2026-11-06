@@ -24,7 +24,7 @@ func (c *Client) AwaitProgress(ctx context.Context, taskIDHex string, since uint
 	copy(tid.Id[:], raw)
 	ap := protocol.AwaitProgressRequest{TaskId: tid, SinceProgressAt: since, Sink: sink}
 	ap.SetTopic([]byte(topic))
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AwaitProgress}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_AwaitProgress}}
 	req.SetAwaitProgress(ap)
 	resp, err := c.RoundTripTaskControl(ctx, req)
 	if err != nil {

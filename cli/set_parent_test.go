@@ -17,7 +17,7 @@ type fakeSetParentClient struct {
 
 func (f *fakeSetParentClient) RoundTripTaskControl(_ context.Context, req *protocol.TaskControlRequest) (*protocol.TaskControlResponse, error) {
 	f.lastRequest = req
-	resp := &protocol.TaskControlResponse{Kind: protocol.TaskControlKind_SetParent, RequestId: req.RequestId}
+	resp := &protocol.TaskControlResponse{Kind: protocol.TaskControlKind_SetParent, RequestId: req.Header.RequestId}
 	resp.SetSetParent(f.resp)
 	return resp, nil
 }

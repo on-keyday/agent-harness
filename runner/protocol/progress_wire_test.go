@@ -37,7 +37,7 @@ func TestProgressWire_RoundTrip(t *testing.T) {
 		t.Fatalf("TaskStatusEvent round trip = %+v", gotEv)
 	}
 
-	req := TaskControlRequest{Kind: TaskControlKind_ProgressSet, RequestId: 3}
+	req := TaskControlRequest{Header: TaskControlRequestHeader{Kind: TaskControlKind_ProgressSet, RequestId: 3}}
 	var ps ProgressSetRequest
 	ps.SetClear(true)
 	req.SetProgressSet(ps)

@@ -54,7 +54,7 @@ func RetractWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) erro
 	}
 	defer c.Close()
 
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AgentRetract}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_AgentRetract}}
 	req.SetAgentRetract(protocol.AgentRetractRequest{Seq: seq})
 
 	resp, err := c.RoundTripTaskControl(ctx, req)

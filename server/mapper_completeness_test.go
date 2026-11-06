@@ -284,7 +284,7 @@ func TestWhoamiResponseMapsEveryField(t *testing.T) {
 	h.ServerRevision = "ad55e3f52700aaad9b8b441657df90dce7cb6614"
 	h.ServerDirty = true
 
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_Whoami, RequestId: 1}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_Whoami, RequestId: 1}}
 	req.SetWhoami(protocol.WhoAmIRequest{})
 	h.Handle(conn, encodeTaskControlRequest(t, req))
 

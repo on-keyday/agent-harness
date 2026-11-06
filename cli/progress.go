@@ -17,7 +17,7 @@ func (c *Client) ProgressSet(ctx context.Context, text string, clear bool) (*pro
 	var ps protocol.ProgressSetRequest
 	ps.SetClear(clear)
 	ps.SetText([]byte(text))
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_ProgressSet}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_ProgressSet}}
 	req.SetProgressSet(ps)
 	resp, err := c.RoundTripTaskControl(ctx, req)
 	if err != nil {
@@ -51,7 +51,7 @@ func (c *Client) ProgressClear(ctx context.Context, taskIDHex string) (*protocol
 	}
 	var tid protocol.TaskID
 	copy(tid.Id[:], raw)
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_ProgressClear}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_ProgressClear}}
 	req.SetProgressClear(protocol.ProgressClearRequest{TaskId: tid})
 	resp, err := c.RoundTripTaskControl(ctx, req)
 	if err != nil {

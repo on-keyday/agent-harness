@@ -59,7 +59,7 @@ func RetainedWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) err
 
 	lr := protocol.AgentListRetainedRequest{}
 	lr.SetTopic([]byte(*topic))
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AgentListRetained}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_AgentListRetained}}
 	req.SetAgentListRetained(lr)
 
 	resp, err := c.RoundTripTaskControl(ctx, req)

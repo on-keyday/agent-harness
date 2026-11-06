@@ -68,7 +68,7 @@ func ArchiveRows(rows []protocol.BoardArchiveRow) []BoardArchiveRow {
 // Requires Capability_BoardPersist, and a task caller may flush only a topic
 // it may publish to. A non-ok status is returned as an error naming it.
 func (c *Client) BoardFlush(ctx context.Context, topic string) (through uint64, dropped int, err error) {
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_BoardFlush}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_BoardFlush}}
 	var fr protocol.BoardFlushRequest
 	if !fr.SetTopic([]byte(topic)) {
 		return 0, 0, errors.New("board flush: topic too long")
@@ -90,7 +90,7 @@ func (c *Client) BoardFlush(ctx context.Context, topic string) (through uint64, 
 
 // BoardArchive freezes topic's history into an archive. Gated like BoardFlush.
 func (c *Client) BoardArchive(ctx context.Context, topic string) (BoardArchiveRow, error) {
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_BoardArchive}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_BoardArchive}}
 	var ar protocol.BoardArchiveRequest
 	if !ar.SetTopic([]byte(topic)) {
 		return BoardArchiveRow{}, errors.New("board archive: topic too long")
@@ -113,7 +113,7 @@ func (c *Client) BoardArchive(ctx context.Context, topic string) (BoardArchiveRo
 // BoardArchives lists archives of topic, or every archive for "". Requires
 // Capability_BoardObserve.
 func (c *Client) BoardArchives(ctx context.Context, topic string) ([]BoardArchiveRow, error) {
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_BoardArchives}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_BoardArchives}}
 	var lr protocol.BoardArchivesRequest
 	if !lr.SetTopic([]byte(topic)) {
 		return nil, errors.New("board archives: topic too long")
@@ -141,7 +141,7 @@ func (c *Client) BoardArchives(ctx context.Context, topic string) ([]BoardArchiv
 // first: up to limit with seq below beforeSeq (0 = from the newest). found is
 // false for an unknown archive. Requires Capability_BoardObserve.
 func (c *Client) BoardArchiveRead(ctx context.Context, id string, beforeSeq uint64, limit uint16) ([]BoardMessage, bool, error) {
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_BoardArchiveRead}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_BoardArchiveRead}}
 	rr := protocol.BoardArchiveReadRequest{BeforeSeq: beforeSeq, Limit: limit}
 	if !rr.SetId([]byte(id)) {
 		return nil, false, errors.New("board read --archive: id too long")
@@ -173,7 +173,7 @@ func (c *Client) BoardArchiveRead(ctx context.Context, id string, beforeSeq uint
 // for seq 0. found is false when the archive, or that seq in it, does not
 // exist. Requires Capability_BoardPurge.
 func (c *Client) BoardArchivePurge(ctx context.Context, id string, seq uint64) (purged int, found bool, err error) {
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_BoardArchivePurge}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_BoardArchivePurge}}
 	pr := protocol.BoardArchivePurgeRequest{Seq: seq}
 	if !pr.SetId([]byte(id)) {
 		return 0, false, errors.New("purge --archive: id too long")

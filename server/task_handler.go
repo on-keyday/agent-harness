@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"crypto/rand"
-	"encoding/binary"
 	"encoding/hex"
 	"io"
 	"log/slog"
@@ -349,30 +348,38 @@ func (h *TaskHandler) denyTaskControl(conn ConnHandle, reqKind protocol.TaskCont
 	conn.SendMessage(out) //nolint:errcheck
 }
 
+// requestHeaderOf names the kind and request id of a TaskControlRequest whose
+// body may not decode, through TaskControlRequestHeader alone. ("?", 0) when
+// even the header is incomplete.
+func requestHeaderOf(payload []byte) (string, uint32) {
+	var h protocol.TaskControlRequestHeader
+	if len(payload) < protocol.TaskControlRequestHeaderSize ||
+		h.DecodeExact(payload[:protocol.TaskControlRequestHeaderSize]) != nil {
+		return "?", 0
+	}
+	return h.Kind.String(), h.RequestId
+}
+
 // Handle decodes a TaskControlRequest payload (bytes after the wire-kind byte) and replies via conn.SendMessage.
 // Decode failures are logged and silently dropped (no panic).
 func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 	var req protocol.TaskControlRequest
 	if err := req.DecodeExact(payload); err != nil {
 		// An undecodable request gets no response at all, so a version-skewed
-		// client sees a hang rather than an error. kind and request_id sit at
-		// fixed offsets ahead of the union arm, so name them here: one server
-		// log line identifies the skewed peer instead of leaving the hang to be
-		// diagnosed from the other end.
-		kind, reqID := "?", uint32(0)
-		if len(payload) >= 5 {
-			kind = protocol.TaskControlKind(payload[0]).String()
-			reqID = binary.BigEndian.Uint32(payload[1:5])
-		}
+		// client sees a hang rather than an error. Its header decodes on its
+		// own, so name kind and request_id here: one server log line identifies
+		// the skewed peer instead of leaving the hang to be diagnosed from the
+		// other end.
+		kind, reqID := requestHeaderOf(payload)
 		slog.Error("TaskHandler: failed to decode TaskControlRequest",
 			"error", err, "kind", kind, "request_id", reqID, "payload_len", len(payload))
 		return
 	}
 
 	cid := conn.ConnectionID().String()
-	if want, gated := requiredCap[req.Kind]; gated {
+	if want, gated := requiredCap[req.Header.Kind]; gated {
 		if !hasCap(h.callerCaps(cid), want) {
-			h.denyTaskControl(conn, req.Kind, req.RequestId, want)
+			h.denyTaskControl(conn, req.Header.Kind, req.Header.RequestId, want)
 			// A refused request's body would otherwise sit in the receive
 			// buffer until the connection ends.
 			if id := payloadStreamOf(&req); id != 0 {
@@ -382,7 +389,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		}
 	}
 
-	switch req.Kind {
+	switch req.Header.Kind {
 	case protocol.TaskControlKind_Submit:
 		sub := req.Submit()
 		if sub == nil {
@@ -392,7 +399,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		// Request-dependent gate: create needs spawn, resume needs the resume
 		// rank. requiredCap is keyed on the kind alone and cannot tell them apart.
 		if want := resumeRequestCap(sub.ResumeTaskId, sub.ResumeExact()); !hasAnyCap(h.callerCaps(cid), want) {
-			h.denyTaskControl(conn, req.Kind, req.RequestId, want)
+			h.denyTaskControl(conn, req.Header.Kind, req.Header.RequestId, want)
 			return
 		}
 		origin := h.lookupClientKind(cid)
@@ -400,7 +407,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		creatorCaps := h.callerCaps(cid)
 		submitResp, body := h.handleSubmit(cid, sub, origin, creator, creatorCaps)
 		send := func(r protocol.SubmitResponse) {
-			resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_Submit, RequestId: req.RequestId}
+			resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_Submit, RequestId: req.Header.RequestId}
 			resp.SetSubmit(r)
 			conn.SendMessage(resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})) //nolint:errcheck
 		}
@@ -418,10 +425,10 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		}
 
 	case protocol.TaskControlKind_List:
-		h.handleList(conn, req.RequestId, cid)
+		h.handleList(conn, req.Header.RequestId, cid)
 
 	case protocol.TaskControlKind_ListConns:
-		h.handleListConns(conn, req.RequestId, cid)
+		h.handleListConns(conn, req.Header.RequestId, cid)
 
 	case protocol.TaskControlKind_Cancel:
 		can := req.Cancel()
@@ -439,7 +446,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			result = protocol.CancelResult_Ok
 		}
 
-		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_Cancel, RequestId: req.RequestId}
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_Cancel, RequestId: req.Header.RequestId}
 		resp.SetCancel(protocol.CancelStatus{Status: result})
 
 		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
@@ -467,7 +474,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			skippedActive = uint32(sa)
 			skippedMissing = uint32(sm)
 		}
-		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_PruneTasks, RequestId: req.RequestId}
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_PruneTasks, RequestId: req.Header.RequestId}
 		resp.SetPrune(protocol.PruneTasksResponse{
 			Removed:        removed,
 			SkippedActive:  skippedActive,
@@ -484,7 +491,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			return
 		}
 		taskID := hex.EncodeToString(gl.TaskId.Id[:])
-		h.handleGetTaskLog(conn, req.RequestId, taskID, cid)
+		h.handleGetTaskLog(conn, req.Header.RequestId, taskID, cid)
 
 	case protocol.TaskControlKind_OpenInteractive:
 		oi := req.OpenInteractive()
@@ -494,13 +501,13 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		}
 		// Same request-dependent gate as Submit.
 		if want := resumeRequestCap(oi.ResumeTaskId, oi.ResumeExact()); !hasAnyCap(h.callerCaps(cid), want) {
-			h.denyTaskControl(conn, req.Kind, req.RequestId, want)
+			h.denyTaskControl(conn, req.Header.Kind, req.Header.RequestId, want)
 			return
 		}
 		// An attached open hands the opener the control seat, so it needs what
 		// an attach --control needs. Detached opens attach nobody.
 		if want := authority.AttachModeCap(protocol.AttachMode_Control); !oi.Detached() && !hasAnyCap(h.callerCaps(cid), want) {
-			h.denyTaskControl(conn, req.Kind, req.RequestId, want)
+			h.denyTaskControl(conn, req.Header.Kind, req.Header.RequestId, want)
 			return
 		}
 		origin := h.lookupClientKind(cid)
@@ -508,7 +515,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		oiCreatorCaps := h.callerCaps(cid)
 		oresp, body := h.handleOpenInteractive(cid, conn, oi, origin, creator, oiCreatorCaps)
 		send := func(r protocol.OpenInteractiveResponse) {
-			resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_OpenInteractive, RequestId: req.RequestId}
+			resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_OpenInteractive, RequestId: req.Header.RequestId}
 			resp.SetOpenInteractive(r)
 			conn.SendMessage(resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})) //nolint:errcheck
 		}
@@ -533,14 +540,14 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			need = protocol.Capability_FileRead
 		}
 		if !hasCap(h.callerCaps(cid), need) {
-			h.denyTaskControl(conn, req.Kind, req.RequestId, need)
+			h.denyTaskControl(conn, req.Header.Kind, req.Header.RequestId, need)
 			return
 		}
 		oresp := protocol.OpenFileTransferResponse{Status: protocol.OpenFileTransferStatus_NoSuchTask}
 		if h.inScope(cid, need, hex.EncodeToString(oft.TaskId.Id[:])) {
 			oresp = h.handleOpenFileTransfer(conn, oft)
 		}
-		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_OpenFileTransfer, RequestId: req.RequestId}
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_OpenFileTransfer, RequestId: req.Header.RequestId}
 		resp.SetOpenFileTransfer(oresp)
 		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
@@ -560,7 +567,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			caps := h.callerCaps(cid)
 			if !hasCap(caps, protocol.Capability_FileRead) && !hasCap(caps, protocol.Capability_FileWrite) {
 				// report FileRead as the representative requirement in the denial
-				h.denyTaskControl(conn, req.Kind, req.RequestId, protocol.Capability_FileRead)
+				h.denyTaskControl(conn, req.Header.Kind, req.Header.RequestId, protocol.Capability_FileRead)
 				return
 			}
 			if !hasCap(caps, protocol.Capability_FileRead) {
@@ -571,7 +578,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		if h.inScope(cid, lfNeed, hex.EncodeToString(lf.TaskId.Id[:])) {
 			lresp = h.handleListFiles(conn, lf)
 		}
-		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_ListFiles, RequestId: req.RequestId}
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_ListFiles, RequestId: req.Header.RequestId}
 		resp.SetListFiles(lresp)
 		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
@@ -587,7 +594,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		if h.inScope(cid, protocol.Capability_FileRead, hex.EncodeToString(gq.TaskId.Id[:])) {
 			gresp = h.handleGitQuery(conn, gq)
 		}
-		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_GitQuery, RequestId: req.RequestId}
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_GitQuery, RequestId: req.Header.RequestId}
 		resp.SetGitQuery(gresp)
 		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
@@ -607,7 +614,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		// shape. Copied first: the request is the decoded frame, and the
 		// envelope has only fixed-size fields, so a value copy is the whole of it.
 		envCopy := *er
-		requestID := req.RequestId
+		requestID := req.Header.RequestId
 		go func() {
 			eresp := protocol.ExecRunResponse{Status: protocol.ExecRunStatus_NotFound}
 			if h.inScope(cid, protocol.Capability_ExecRun, hex.EncodeToString(envCopy.TaskId.Id[:])) {
@@ -629,7 +636,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("TaskHandler: ExecRunList variant is nil")
 			return
 		}
-		h.handleExecRunList(conn, req.RequestId, cid, el.TaskFilter)
+		h.handleExecRunList(conn, req.Header.RequestId, cid, el.TaskFilter)
 
 	case protocol.TaskControlKind_ExecRunKill:
 		// Gated inline: the target task is only known after the registry
@@ -639,7 +646,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("TaskHandler: ExecRunKill variant is nil")
 			return
 		}
-		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_ExecRunKill, RequestId: req.RequestId}
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_ExecRunKill, RequestId: req.Header.RequestId}
 		resp.SetExecRunKill(h.handleExecRunKill(cid, ek))
 		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
@@ -651,7 +658,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("TaskHandler: AwaitIdleList variant is nil")
 			return
 		}
-		h.handleAwaitIdleList(conn, req.RequestId, cid, al.TaskId)
+		h.handleAwaitIdleList(conn, req.Header.RequestId, cid, al.TaskId)
 
 	case protocol.TaskControlKind_AwaitKill:
 		// No capability, and gated inline for exec_run_kill's reason: the
@@ -661,7 +668,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("TaskHandler: AwaitIdleKill variant is nil")
 			return
 		}
-		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_AwaitKill, RequestId: req.RequestId}
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_AwaitKill, RequestId: req.Header.RequestId}
 		resp.SetAwaitKill(h.handleAwaitIdleKill(cid, ak))
 		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
@@ -673,14 +680,14 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			return
 		}
 		if !hasCap(h.callerCaps(cid), protocol.Capability_ForwardLocal) {
-			h.denyTaskControl(conn, req.Kind, req.RequestId, protocol.Capability_ForwardLocal)
+			h.denyTaskControl(conn, req.Header.Kind, req.Header.RequestId, protocol.Capability_ForwardLocal)
 			return
 		}
 		presp := protocol.OpenPortForwardResponse{Status: protocol.OpenPortForwardStatus_NoSuchTask}
 		if h.inScope(cid, protocol.Capability_ForwardLocal, hex.EncodeToString(pf.TaskId.Id[:])) {
 			presp = h.handleOpenPortForward(conn, pf)
 		}
-		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_OpenPortForward, RequestId: req.RequestId}
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_OpenPortForward, RequestId: req.Header.RequestId}
 		resp.SetOpenPortForward(presp)
 		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
@@ -696,7 +703,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		// disagree about which direction is being authorised.
 		need := forwardCapFor(rf.Direction)
 		if !hasCap(h.callerCaps(cid), need) {
-			h.denyTaskControl(conn, req.Kind, req.RequestId, need)
+			h.denyTaskControl(conn, req.Header.Kind, req.Header.RequestId, need)
 			return
 		}
 		// RegisterPortForwardResponse shares OpenPortForwardStatus.
@@ -704,7 +711,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		if h.inScope(cid, need, hex.EncodeToString(rf.TaskId.Id[:])) {
 			rresp = h.handleRegisterPortForward(conn, rf, cid)
 		}
-		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_RegisterPortForward, RequestId: req.RequestId}
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_RegisterPortForward, RequestId: req.Header.RequestId}
 		resp.SetRegisterPortForward(rresp)
 		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
@@ -715,7 +722,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("TaskHandler: ListPortForwards variant is nil")
 			return
 		}
-		h.handleListPortForwards(conn, req.RequestId, cid, lp.TaskId, lp.AskEndpoints == 1)
+		h.handleListPortForwards(conn, req.Header.RequestId, cid, lp.TaskId, lp.AskEndpoints == 1)
 
 	case protocol.TaskControlKind_KillPortForward:
 		kr := req.KillPortForward()
@@ -734,12 +741,12 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 				// visibility rank may still belong to a task outside its ACTION
 				// scope, and the two are deliberately different sets.
 				if !h.authorize(cid, need, pf.taskIDHex) {
-					h.denyTaskControl(conn, req.Kind, req.RequestId, need)
+					h.denyTaskControl(conn, req.Header.Kind, req.Header.RequestId, need)
 					return
 				}
 			}
 		}
-		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_KillPortForward, RequestId: req.RequestId}
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_KillPortForward, RequestId: req.Header.RequestId}
 		resp.SetKillPortForward(protocol.KillPortForwardResponse{Status: h.killPortForward(cid, kr.ForwardId)})
 		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
@@ -750,7 +757,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("TaskHandler: OpenForwardTap variant is nil")
 			return
 		}
-		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_OpenForwardTap, RequestId: req.RequestId}
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_OpenForwardTap, RequestId: req.Header.RequestId}
 		resp.SetOpenForwardTap(h.handleOpenForwardTap(conn, tr, cid))
 		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
@@ -761,7 +768,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("TaskHandler: OpenExecTap variant is nil")
 			return
 		}
-		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_OpenExecTap, RequestId: req.RequestId}
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_OpenExecTap, RequestId: req.Header.RequestId}
 		resp.SetOpenExecTap(h.handleOpenExecTap(conn, tr, cid))
 		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
@@ -778,14 +785,14 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		// this way at all gets permission_denied rather than a scope answer
 		// about a task it cannot reach anyway.
 		if want := authority.AttachModeCap(a.Mode); !hasAnyCap(h.callerCaps(cid), want) {
-			h.denyTaskControl(conn, req.Kind, req.RequestId, want)
+			h.denyTaskControl(conn, req.Header.Kind, req.Header.RequestId, want)
 			return
 		}
 		aresp := protocol.AttachSessionResponse{Status: protocol.AttachSessionStatus_NotFound}
 		if h.inScope(cid, authority.AttachModeScopeCap(a.Mode), hex.EncodeToString(a.TaskId.Id[:])) {
 			aresp = h.handleAttachSession(conn, a)
 		}
-		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_AttachSession, RequestId: req.RequestId}
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_AttachSession, RequestId: req.Header.RequestId}
 		resp.SetAttach(aresp)
 		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
@@ -801,7 +808,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 
 		status := h.RecordClientIdentity(cid, conn, hello)
 
-		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_ClientHello, RequestId: req.RequestId}
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_ClientHello, RequestId: req.Header.RequestId}
 		resp.SetClientHello(protocol.ClientHelloResponse{Status: status})
 		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
@@ -810,13 +817,13 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		h.handleNotify(conn, &req)
 
 	case protocol.TaskControlKind_BoardTopics:
-		h.handleBoardTopics(conn, req.RequestId)
+		h.handleBoardTopics(conn, req.Header.RequestId)
 
 	case protocol.TaskControlKind_BoardPurge:
 		if r := req.BoardPurge(); r != nil {
-			h.handleBoardPurge(conn, req.RequestId, string(r.Topic), r.Seq)
+			h.handleBoardPurge(conn, req.Header.RequestId, string(r.Topic), r.Seq)
 		} else {
-			slog.Error("board_purge variant is nil", "request_id", req.RequestId)
+			slog.Error("board_purge variant is nil", "request_id", req.Header.RequestId)
 		}
 
 	case protocol.TaskControlKind_BoardRetract:
@@ -826,16 +833,16 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			// it, and a caller that could name itself could blame another task
 			// for its own retract. An operator client has no principal task, so
 			// this is the zero id — see BoardMessageRow.retracted_by_task.
-			h.handleBoardRetract(conn, req.RequestId, string(r.Topic), r.Seq, h.lookupPrincipal(cid))
+			h.handleBoardRetract(conn, req.Header.RequestId, string(r.Topic), r.Seq, h.lookupPrincipal(cid))
 		} else {
-			slog.Error("board_retract variant is nil", "request_id", req.RequestId)
+			slog.Error("board_retract variant is nil", "request_id", req.Header.RequestId)
 		}
 
 	case protocol.TaskControlKind_BoardContactsClear:
 		if r := req.BoardContactsClear(); r != nil {
-			h.handleBoardContactsClear(conn, req.RequestId, cid, r.Task, string(r.Topic))
+			h.handleBoardContactsClear(conn, req.Header.RequestId, cid, r.Task, string(r.Topic))
 		} else {
-			slog.Error("board_contacts_clear variant is nil", "request_id", req.RequestId)
+			slog.Error("board_contacts_clear variant is nil", "request_id", req.Header.RequestId)
 		}
 
 	case protocol.TaskControlKind_BoardSubscribers:
@@ -843,7 +850,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		if bs := req.BoardSubscribers(); bs != nil {
 			topic = string(bs.Topic)
 		}
-		h.handleBoardSubscribers(conn, req.RequestId, topic)
+		h.handleBoardSubscribers(conn, req.Header.RequestId, topic)
 
 	case protocol.TaskControlKind_BoardSend:
 		bs := req.BoardSend()
@@ -851,7 +858,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("TaskHandler: BoardSend variant is nil")
 			return
 		}
-		h.handleBoardSend(conn, req.RequestId, bs, h.lookupPrincipal(cid))
+		h.handleBoardSend(conn, req.Header.RequestId, bs, h.lookupPrincipal(cid))
 
 	case protocol.TaskControlKind_BoardWake:
 		bw := req.BoardWake()
@@ -859,67 +866,67 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("TaskHandler: BoardWake variant is nil")
 			return
 		}
-		h.handleBoardWake(conn, req.RequestId, string(bw.Topic))
+		h.handleBoardWake(conn, req.Header.RequestId, string(bw.Topic))
 
 	case protocol.TaskControlKind_BoardRetain:
 		if r := req.BoardRetain(); r != nil {
 			// The setter is the connection's principal, never a request field:
 			// it is what board topics shows as by=, the operator's lead when a
 			// retention needs undoing.
-			h.handleBoardRetain(conn, req.RequestId, r, h.lookupPrincipal(cid))
+			h.handleBoardRetain(conn, req.Header.RequestId, r, h.lookupPrincipal(cid))
 		} else {
-			slog.Error("board_retain variant is nil", "request_id", req.RequestId)
+			slog.Error("board_retain variant is nil", "request_id", req.Header.RequestId)
 		}
 
 	case protocol.TaskControlKind_BoardFlush:
 		if r := req.BoardFlush(); r != nil {
-			h.handleBoardFlush(conn, req.RequestId, string(r.Topic), h.lookupPrincipal(cid))
+			h.handleBoardFlush(conn, req.Header.RequestId, string(r.Topic), h.lookupPrincipal(cid))
 		} else {
-			slog.Error("board_flush variant is nil", "request_id", req.RequestId)
+			slog.Error("board_flush variant is nil", "request_id", req.Header.RequestId)
 		}
 
 	case protocol.TaskControlKind_BoardArchive:
 		if r := req.BoardArchive(); r != nil {
 			// The creator is the connection's principal, never a request
 			// field: board archives shows it as by=.
-			h.handleBoardArchive(conn, req.RequestId, string(r.Topic), h.lookupPrincipal(cid))
+			h.handleBoardArchive(conn, req.Header.RequestId, string(r.Topic), h.lookupPrincipal(cid))
 		} else {
-			slog.Error("board_archive variant is nil", "request_id", req.RequestId)
+			slog.Error("board_archive variant is nil", "request_id", req.Header.RequestId)
 		}
 
 	case protocol.TaskControlKind_BoardArchives:
 		if r := req.BoardArchives(); r != nil {
-			h.handleBoardArchives(conn, req.RequestId, protocol.TaskControlKind_BoardArchives, string(r.Topic))
+			h.handleBoardArchives(conn, req.Header.RequestId, protocol.TaskControlKind_BoardArchives, string(r.Topic))
 		} else {
-			slog.Error("board_archives variant is nil", "request_id", req.RequestId)
+			slog.Error("board_archives variant is nil", "request_id", req.Header.RequestId)
 		}
 
 	case protocol.TaskControlKind_BoardArchiveRead:
 		if r := req.BoardArchiveRead(); r != nil {
-			h.handleBoardArchiveRead(conn, req.RequestId, string(r.Id), r.BeforeSeq, r.Limit)
+			h.handleBoardArchiveRead(conn, req.Header.RequestId, string(r.Id), r.BeforeSeq, r.Limit)
 		} else {
-			slog.Error("board_archive_read variant is nil", "request_id", req.RequestId)
+			slog.Error("board_archive_read variant is nil", "request_id", req.Header.RequestId)
 		}
 
 	case protocol.TaskControlKind_BoardArchivePurge:
 		if r := req.BoardArchivePurge(); r != nil {
-			h.handleBoardArchivePurge(conn, req.RequestId, string(r.Id), r.Seq)
+			h.handleBoardArchivePurge(conn, req.Header.RequestId, string(r.Id), r.Seq)
 		} else {
-			slog.Error("board_archive_purge variant is nil", "request_id", req.RequestId)
+			slog.Error("board_archive_purge variant is nil", "request_id", req.Header.RequestId)
 		}
 
 	case protocol.TaskControlKind_BoardMembership:
 		if r := req.BoardMembership(); r != nil {
-			h.handleBoardMembership(conn, req.RequestId, cid, r)
+			h.handleBoardMembership(conn, req.Header.RequestId, cid, r)
 		} else {
-			slog.Error("board_membership variant is nil", "request_id", req.RequestId)
+			slog.Error("board_membership variant is nil", "request_id", req.Header.RequestId)
 		}
 
 	case protocol.TaskControlKind_BoardRead:
 		if r := req.BoardRead(); r != nil {
-			h.handleBoardRead(conn, req.RequestId, string(r.Topic), r.BeforeSeq, r.Limit)
+			h.handleBoardRead(conn, req.Header.RequestId, string(r.Topic), r.BeforeSeq, r.Limit)
 		} else {
-			slog.Error("board_read variant is nil", "request_id", req.RequestId)
+			slog.Error("board_read variant is nil", "request_id", req.Header.RequestId)
 		}
 
 	case protocol.TaskControlKind_Whoami:
@@ -943,7 +950,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 				delegCaps, delegScope = t.DelegateCaps, t.DelegateScope
 			}
 		}
-		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_Whoami, RequestId: req.RequestId}
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_Whoami, RequestId: req.Header.RequestId}
 		w := protocol.WhoAmIResponse{
 			PrincipalTaskId: pid,
 			CreatorTaskId:   creator,
@@ -978,7 +985,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("TaskHandler: TrsfState variant is nil")
 			return
 		}
-		h.handleTrsfState(conn, req.RequestId, cid, ts)
+		h.handleTrsfState(conn, req.Header.RequestId, cid, ts)
 
 	// The agentboard's agent face. None of these appears in requiredCap: each
 	// is keyed to the caller's own subscriptions or authorship, which is the
@@ -990,7 +997,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("TaskHandler: AgentSend variant is nil")
 			return
 		}
-		h.handleAgentSend(conn, req.RequestId, asend)
+		h.handleAgentSend(conn, req.Header.RequestId, asend)
 
 	case protocol.TaskControlKind_AgentSubscribe:
 		as := req.AgentSubscribe()
@@ -998,7 +1005,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("TaskHandler: AgentSubscribe variant is nil")
 			return
 		}
-		h.handleAgentSubscribe(conn, req.RequestId, string(as.Pattern), false)
+		h.handleAgentSubscribe(conn, req.Header.RequestId, string(as.Pattern), false)
 
 	case protocol.TaskControlKind_AgentUnsubscribe:
 		au := req.AgentUnsubscribe()
@@ -1006,21 +1013,21 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("TaskHandler: AgentUnsubscribe variant is nil")
 			return
 		}
-		h.handleAgentSubscribe(conn, req.RequestId, string(au.Pattern), true)
+		h.handleAgentSubscribe(conn, req.Header.RequestId, string(au.Pattern), true)
 
 	case protocol.TaskControlKind_AgentListContacts:
 		if req.AgentListContacts() == nil {
 			slog.Error("TaskHandler: AgentListContacts variant is nil")
 			return
 		}
-		h.handleAgentListContacts(conn, req.RequestId)
+		h.handleAgentListContacts(conn, req.Header.RequestId)
 
 	case protocol.TaskControlKind_AgentListSubscriptions:
 		if req.AgentListSubscriptions() == nil {
 			slog.Error("TaskHandler: AgentListSubscriptions variant is nil")
 			return
 		}
-		h.handleAgentListSubscriptions(conn, req.RequestId)
+		h.handleAgentListSubscriptions(conn, req.Header.RequestId)
 
 	case protocol.TaskControlKind_AgentWait:
 		aw := req.AgentWait()
@@ -1031,7 +1038,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		// On its own goroutine: this one blocks for the caller's whole timeout,
 		// and the receive loop must stay free for every other request on the
 		// connection.
-		go h.handleAgentWait(conn, req.RequestId, aw)
+		go h.handleAgentWait(conn, req.Header.RequestId, aw)
 
 	case protocol.TaskControlKind_AgentInbox:
 		ai := req.AgentInbox()
@@ -1039,14 +1046,14 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("TaskHandler: AgentInbox variant is nil")
 			return
 		}
-		h.handleAgentInbox(conn, req.RequestId, ai)
+		h.handleAgentInbox(conn, req.Header.RequestId, ai)
 
 	case protocol.TaskControlKind_AgentInboxAdvance:
 		if req.AgentInboxAdvance() == nil {
 			slog.Error("TaskHandler: AgentInboxAdvance variant is nil")
 			return
 		}
-		h.handleAgentInboxAdvance(conn, req.RequestId)
+		h.handleAgentInboxAdvance(conn, req.Header.RequestId)
 
 	case protocol.TaskControlKind_AgentListRetained:
 		alr := req.AgentListRetained()
@@ -1054,7 +1061,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("TaskHandler: AgentListRetained variant is nil")
 			return
 		}
-		h.handleAgentListRetained(conn, req.RequestId, alr)
+		h.handleAgentListRetained(conn, req.Header.RequestId, alr)
 
 	case protocol.TaskControlKind_AgentReadSeq:
 		ars := req.AgentReadSeq()
@@ -1062,20 +1069,20 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("TaskHandler: AgentReadSeq variant is nil")
 			return
 		}
-		h.handleAgentReadSeq(conn, req.RequestId, ars)
+		h.handleAgentReadSeq(conn, req.Header.RequestId, ars)
 
 	case protocol.TaskControlKind_AgentArchives:
 		if r := req.AgentArchives(); r != nil {
-			h.handleAgentArchives(conn, req.RequestId, string(r.Topic))
+			h.handleAgentArchives(conn, req.Header.RequestId, string(r.Topic))
 		} else {
-			slog.Error("agent_archives variant is nil", "request_id", req.RequestId)
+			slog.Error("agent_archives variant is nil", "request_id", req.Header.RequestId)
 		}
 
 	case protocol.TaskControlKind_AgentArchiveRead:
 		if r := req.AgentArchiveRead(); r != nil {
-			h.handleAgentArchiveRead(conn, req.RequestId, r)
+			h.handleAgentArchiveRead(conn, req.Header.RequestId, r)
 		} else {
-			slog.Error("agent_archive_read variant is nil", "request_id", req.RequestId)
+			slog.Error("agent_archive_read variant is nil", "request_id", req.Header.RequestId)
 		}
 
 	case protocol.TaskControlKind_AgentReadPage:
@@ -1084,7 +1091,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("TaskHandler: AgentReadPage variant is nil")
 			return
 		}
-		h.handleAgentReadPage(conn, req.RequestId, arp)
+		h.handleAgentReadPage(conn, req.Header.RequestId, arp)
 
 	case protocol.TaskControlKind_AgentRetract:
 		art := req.AgentRetract()
@@ -1092,7 +1099,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("TaskHandler: AgentRetract variant is nil")
 			return
 		}
-		h.handleAgentRetract(conn, req.RequestId, art)
+		h.handleAgentRetract(conn, req.Header.RequestId, art)
 
 	case protocol.TaskControlKind_RestoreTasks:
 		// Operator-identity gate, like SetCaps below; deliberately NOT in
@@ -1102,7 +1109,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("TaskHandler: RestoreTasks variant is nil")
 			return
 		}
-		h.handleRestoreTasks(conn, req.RequestId, cid, rt)
+		h.handleRestoreTasks(conn, req.Header.RequestId, cid, rt)
 
 	case protocol.TaskControlKind_SetCaps:
 		// Deliberately NOT in requiredCap: the gate is operator identity, and a
@@ -1112,7 +1119,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("TaskHandler: SetCaps variant is nil")
 			return
 		}
-		h.handleSetCaps(conn, req.RequestId, cid, sc)
+		h.handleSetCaps(conn, req.Header.RequestId, cid, sc)
 
 	case protocol.TaskControlKind_SetParent:
 		// Same operator-identity gate as SetCaps; deliberately NOT in
@@ -1122,7 +1129,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("TaskHandler: SetParent variant is nil")
 			return
 		}
-		h.handleSetParent(conn, req.RequestId, cid, sp)
+		h.handleSetParent(conn, req.Header.RequestId, cid, sp)
 
 	case protocol.TaskControlKind_AwaitIdle:
 		h.handleAwaitIdle(conn, &req)
@@ -1132,29 +1139,29 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 
 	case protocol.TaskControlKind_RunnerEnroll:
 		if r := req.RunnerEnroll(); r != nil {
-			h.handleRunnerEnroll(conn, req.RequestId, r)
+			h.handleRunnerEnroll(conn, req.Header.RequestId, r)
 		}
 
 	case protocol.TaskControlKind_RunnerUnenroll:
 		if r := req.RunnerUnenroll(); r != nil {
-			h.handleRunnerUnenroll(conn, req.RequestId, r)
+			h.handleRunnerUnenroll(conn, req.Header.RequestId, r)
 		}
 
 	case protocol.TaskControlKind_RunnerKeys:
-		h.handleRunnerKeys(conn, req.RequestId)
+		h.handleRunnerKeys(conn, req.Header.RequestId)
 	case protocol.TaskControlKind_RunnerDialAdd:
 		if r := req.RunnerDialAdd(); r != nil {
-			h.handleRunnerDialAdd(conn, req.RequestId, r)
+			h.handleRunnerDialAdd(conn, req.Header.RequestId, r)
 		}
 	case protocol.TaskControlKind_RunnerDialList:
-		h.handleRunnerDialList(conn, req.RequestId)
+		h.handleRunnerDialList(conn, req.Header.RequestId)
 	case protocol.TaskControlKind_RunnerKick:
 		if r := req.RunnerKick(); r != nil {
-			h.handleRunnerKick(conn, req.RequestId, r)
+			h.handleRunnerKick(conn, req.Header.RequestId, r)
 		}
 	case protocol.TaskControlKind_RunnerDialRemove:
 		if r := req.RunnerDialRemove(); r != nil {
-			h.handleRunnerDialRemove(conn, req.RequestId, r)
+			h.handleRunnerDialRemove(conn, req.Header.RequestId, r)
 		}
 
 	case protocol.TaskControlKind_DialRunner:
@@ -1180,13 +1187,13 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		} else {
 			dialResp = handler.HandleWithVia(dialCtx, dr.Target, dr.Via)
 		}
-		out := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_DialRunner, RequestId: req.RequestId}
+		out := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_DialRunner, RequestId: req.Header.RequestId}
 		out.SetDialRunner(dialResp)
 		bytes := out.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(bytes) //nolint:errcheck
 
 	default:
-		slog.Error("TaskHandler: unhandled kind", "kind", req.Kind)
+		slog.Error("TaskHandler: unhandled kind", "kind", req.Header.Kind)
 	}
 }
 
@@ -2769,7 +2776,7 @@ func (h *TaskHandler) handleNotify(conn ConnHandle, req *protocol.TaskControlReq
 	}
 	status := runNotifyHook(h.NotifyHook, payload)
 
-	resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_Notify, RequestId: req.RequestId}
+	resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_Notify, RequestId: req.Header.RequestId}
 	resp.SetNotify(protocol.NotifyResponse{Status: status})
 	out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 	conn.SendMessage(out) //nolint:errcheck

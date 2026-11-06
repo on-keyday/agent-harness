@@ -40,7 +40,7 @@ func TestPruneIsScopedToTheCaller(t *testing.T) {
 		req := protocol.PruneTasksRequest{TaskIdsLen: 2, TaskIds: []protocol.TaskID{
 			hexToTaskID(t, g), hexToTaskID(t, u),
 		}}
-		tc := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_PruneTasks, RequestId: 1}
+		tc := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_PruneTasks, RequestId: 1}}
 		tc.SetPrune(req)
 		h.Handle(conn, encodeTaskControlRequest(t, tc))
 
@@ -60,7 +60,7 @@ func TestPruneIsScopedToTheCaller(t *testing.T) {
 	t.Run("bare age sweep", func(t *testing.T) {
 		// The dangerous form: no ids, sweep everything older than the cutoff.
 		req := protocol.PruneTasksRequest{BeforeTs: uint64(time.Now().Add(time.Hour).UnixNano())}
-		tc := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_PruneTasks, RequestId: 2}
+		tc := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_PruneTasks, RequestId: 2}}
 		tc.SetPrune(req)
 		h.Handle(conn, encodeTaskControlRequest(t, tc))
 

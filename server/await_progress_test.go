@@ -16,7 +16,7 @@ func armProgress(t *testing.T, h *TaskHandler, conn *fakeConn, taskHex string, s
 	before := len(conn.Sent())
 	ap := protocol.AwaitProgressRequest{TaskId: hexToTaskID(t, taskHex), SinceProgressAt: since, Sink: sink}
 	ap.SetTopic([]byte(topic))
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AwaitProgress, RequestId: 21}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_AwaitProgress, RequestId: 21}}
 	req.SetAwaitProgress(ap)
 	h.Handle(conn, encodeTaskControlRequest(t, req))
 	return before
@@ -176,7 +176,7 @@ func TestAwaitList_ShowsCondition(t *testing.T) {
 	reg.Add(f.tHex, mux)
 	op := operatorConn("9749")
 	armProgress(t, f.h, op, f.tHex, 0, protocol.AwaitSink_Reply, "")
-	idle := protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AwaitIdle, RequestId: 30}
+	idle := protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_AwaitIdle, RequestId: 30}}
 	idle.SetAwaitIdle(protocol.AwaitIdleRequest{TaskId: hexToTaskID(t, f.tHex), ThresholdMs: 60000, Sink: protocol.AwaitSink_Reply})
 	f.h.Handle(op, encodeTaskControlRequest(t, &idle))
 	waitFor(t, func() bool { return len(f.h.idleWatchers().list("")) == 2 })

@@ -224,7 +224,7 @@ func TestGitQueryThroughTaskControlEnvelope(t *testing.T) {
 	body.SetTargetRev(nil)
 	body.SetPath(nil)
 
-	req := TaskControlRequest{Kind: TaskControlKind_GitQuery, RequestId: 99}
+	req := TaskControlRequest{Header: TaskControlRequestHeader{Kind: TaskControlKind_GitQuery, RequestId: 99}}
 	if !req.SetGitQuery(body) {
 		t.Fatal("SetGitQuery rejected")
 	}
@@ -237,7 +237,7 @@ func TestGitQueryThroughTaskControlEnvelope(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 	gq := got.GitQuery()
-	if gq == nil || gq.Kind != GitQueryKind_Status || got.RequestId != 99 {
+	if gq == nil || gq.Kind != GitQueryKind_Status || got.Header.RequestId != 99 {
 		t.Fatalf("envelope: %+v", gq)
 	}
 

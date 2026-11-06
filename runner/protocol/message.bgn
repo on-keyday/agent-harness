@@ -2741,10 +2741,18 @@ format AwaitProgressResponse:
     progress :[progress_len]u8  # the firing text; empty otherwise
     watcher_id :u64           # the registry id; 0 for not_found / bad_request
 
-format TaskControlRequest:
+# TaskControlRequestHeader is the fixed prefix of every TaskControlRequest.
+# It is its own format so the server can still name a request whose body
+# does not decode (a version-skewed client): it decodes this prefix alone.
+format TaskControlRequestHeader:
     kind :TaskControlKind
     request_id :u32
-    match kind:
+
+TaskControlRequestHeaderSize ::= sizeof(TaskControlRequestHeader)
+
+format TaskControlRequest:
+    header :TaskControlRequestHeader
+    match header.kind:
         TaskControlKind.submit => submit :SubmitRequest
         TaskControlKind.list => list :ListQuery
         TaskControlKind.cancel => cancel :CancelTask

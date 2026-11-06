@@ -43,7 +43,7 @@ func progressSetAs(t *testing.T, h *TaskHandler, conn *fakeConn, text string, cl
 	var ps protocol.ProgressSetRequest
 	ps.SetClear(clear)
 	ps.SetText([]byte(text))
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_ProgressSet, RequestId: 5}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_ProgressSet, RequestId: 5}}
 	req.SetProgressSet(ps)
 	h.Handle(conn, encodeTaskControlRequest(t, req))
 	waitFor(t, func() bool { return len(conn.Sent()) == before+1 })
@@ -57,7 +57,7 @@ func progressSetAs(t *testing.T, h *TaskHandler, conn *fakeConn, text string, cl
 func listRowAs(t *testing.T, h *TaskHandler, conn *fakeConn, taskHex string) (protocol.TaskInfo, bool) {
 	t.Helper()
 	before := len(conn.sendStreams)
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_List}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_List}}
 	req.SetList(protocol.ListQuery{})
 	h.Handle(conn, encodeTaskControlRequest(t, req))
 	if len(conn.sendStreams) != before+1 {
@@ -329,7 +329,7 @@ func TestProgressClear_Gates(t *testing.T) {
 	}
 	clear := func(conn *fakeConn, target string) protocol.TaskControlResponse {
 		before := len(conn.Sent())
-		req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_ProgressClear, RequestId: 9}
+		req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_ProgressClear, RequestId: 9}}
 		req.SetProgressClear(protocol.ProgressClearRequest{TaskId: hexToTaskID(t, target)})
 		h.Handle(conn, encodeTaskControlRequest(t, req))
 		waitFor(t, func() bool { return len(conn.Sent()) == before+1 })
@@ -376,7 +376,7 @@ func TestProgressClear_FiresWatchersAndEvent(t *testing.T) {
 	watcher := operatorConn("9764")
 	before := armProgress(t, f.h, watcher, f.tHex, 0, protocol.AwaitSink_Reply, "")
 	op := operatorConn("9765")
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_ProgressClear, RequestId: 3}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_ProgressClear, RequestId: 3}}
 	req.SetProgressClear(protocol.ProgressClearRequest{TaskId: hexToTaskID(t, f.tHex)})
 	f.h.Handle(op, encodeTaskControlRequest(t, req))
 	if got := awaitProgressReply(t, watcher, before); got.Status != protocol.AwaitProgressStatus_Fired || len(got.Progress) != 0 {

@@ -30,7 +30,7 @@ func (c *Client) AwaitIdle(ctx context.Context, taskIDHex string, thresholdMs ui
 	}
 	var tid protocol.TaskID
 	copy(tid.Id[:], raw)
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AwaitIdle}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_AwaitIdle}}
 	ar := protocol.AwaitIdleRequest{TaskId: tid, ThresholdMs: thresholdMs, Sink: sink}
 	ar.SetTopic([]byte(topic))
 	req.SetAwaitIdle(ar)
@@ -56,7 +56,7 @@ func (c *Client) AwaitIdleListWith(ctx context.Context, taskFilter string) ([]pr
 		}
 		q.TaskId = tid
 	}
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AwaitList}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_AwaitList}}
 	req.SetAwaitList(q)
 	resp, err := c.RoundTripTaskControl(ctx, req)
 	if err != nil {
@@ -106,7 +106,7 @@ func AwaitIdleList(ctx context.Context, peerCID objproto.ConnectionID, taskFilte
 
 // AwaitIdleKillWith disarms one watcher by id.
 func (c *Client) AwaitIdleKillWith(ctx context.Context, id uint64) error {
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AwaitKill}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_AwaitKill}}
 	req.SetAwaitKill(protocol.AwaitIdleKillRequest{WatcherId: id})
 	resp, err := c.RoundTripTaskControl(ctx, req)
 	if err != nil {

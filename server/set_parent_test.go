@@ -10,7 +10,7 @@ import (
 
 func sendSetParent(t *testing.T, h *TaskHandler, conn *fakeConn, req protocol.SetParentRequest) protocol.SetParentResponse {
 	t.Helper()
-	tc := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_SetParent, RequestId: 1}
+	tc := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_SetParent, RequestId: 1}}
 	tc.SetSetParent(req)
 	h.Handle(conn, encodeTaskControlRequest(t, tc))
 	resp := lastTaskControlResponse(t, conn)

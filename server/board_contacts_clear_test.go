@@ -32,7 +32,7 @@ func TestBoardContactsClearIsScopeGated(t *testing.T) {
 
 	clear := func(t *testing.T, taskHex, topic string) protocol.BoardContactsClearResponse {
 		t.Helper()
-		req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_BoardContactsClear, RequestId: 1}
+		req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_BoardContactsClear, RequestId: 1}}
 		r := protocol.BoardContactsClearRequest{Task: hexToTaskID(t, taskHex)}
 		r.SetTopic([]byte(topic))
 		req.SetBoardContactsClear(r)

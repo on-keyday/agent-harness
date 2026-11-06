@@ -78,7 +78,7 @@ func TestSubmitCreatesTaskAndReplies(t *testing.T) {
 		OnChange: func() { changeCalled++ },
 	}
 
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_Submit}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_Submit}}
 	sub := protocol.SubmitRequest{}
 	sub.SetRepoPath([]byte("/repo"))
 	sub.SetPrompt([]byte("do stuff"))
@@ -170,7 +170,7 @@ func TestListReturnsRunnersAndTasks(t *testing.T) {
 	// Pre-populate TaskStore with 1 Queued task on "/x".
 	taskID := tasks.Create("/x", "list-prompt", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()}, "")
 
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_List}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_List}}
 	req.SetList(protocol.ListQuery{})
 
 	payload := encodeTaskControlRequest(t, req)
@@ -258,7 +258,7 @@ func TestCancelMarksTaskCancelled(t *testing.T) {
 	tasks.mu.Unlock()
 
 	// Encode TaskControlRequest with Cancel for that taskID.
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_Cancel}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_Cancel}}
 	cancel := protocol.CancelTask{}
 	cancel.TaskId.Id = rawID
 	req.SetCancel(cancel)
@@ -834,7 +834,7 @@ func TestHandleSendsCandidatesOnAStream(t *testing.T) {
 
 	oi := protocol.OpenInteractiveRequest{}
 	oi.SetRepoPath([]byte("/repo"))
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_OpenInteractive, RequestId: 9}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_OpenInteractive, RequestId: 9}}
 	req.SetOpenInteractive(oi)
 	h.Handle(conn, encodeTaskControlRequest(t, req))
 

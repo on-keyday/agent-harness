@@ -40,7 +40,7 @@ func TestTaskControlWithPayloadClosesTheStreamWhenTheRequestFails(t *testing.T) 
 		return nil, errors.New("send: too large")
 	}
 	build := func(uint64) (*protocol.TaskControlRequest, error) {
-		return &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_OpenExecRun}, nil
+		return &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_OpenExecRun}}, nil
 	}
 	if _, err := taskControlWithPayload(context.Background(), st, begin, build, []byte("x")); err == nil || !st.closed {
 		t.Fatalf("err=%v closed=%v, want the send error and the stream closed", err, st.closed)

@@ -197,7 +197,7 @@ func TestDialRunnerTaskHandlerCase(t *testing.T) {
 	}
 
 	var req protocol.TaskControlRequest
-	req.Kind = protocol.TaskControlKind_DialRunner
+	req.Header.Kind = protocol.TaskControlKind_DialRunner
 	// Target has empty transport → InvalidTarget
 	var dr protocol.DialRunnerRequest
 	dr.Target.SetIpAddr([]byte{127, 0, 0, 1})
@@ -242,8 +242,8 @@ func TestDialRunnerTaskHandlerCase(t *testing.T) {
 // codegen.
 func TestTaskControlDialRunnerRequestRoundTrip(t *testing.T) {
 	var req protocol.TaskControlRequest
-	req.Kind = protocol.TaskControlKind_DialRunner
-	req.RequestId = 42
+	req.Header.Kind = protocol.TaskControlKind_DialRunner
+	req.Header.RequestId = 42
 	var dr protocol.DialRunnerRequest
 	dr.Target.SetTransport([]byte("ws"))
 	dr.Target.SetIpAddr([]byte{10, 0, 0, 1})
@@ -260,11 +260,11 @@ func TestTaskControlDialRunnerRequestRoundTrip(t *testing.T) {
 	if err := got.DecodeExact(encoded); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if got.Kind != protocol.TaskControlKind_DialRunner {
-		t.Errorf("kind: got %v", got.Kind)
+	if got.Header.Kind != protocol.TaskControlKind_DialRunner {
+		t.Errorf("kind: got %v", got.Header.Kind)
 	}
-	if got.RequestId != 42 {
-		t.Errorf("request_id: got %d", got.RequestId)
+	if got.Header.RequestId != 42 {
+		t.Errorf("request_id: got %d", got.Header.RequestId)
 	}
 	drGot := got.DialRunner()
 	if drGot == nil {

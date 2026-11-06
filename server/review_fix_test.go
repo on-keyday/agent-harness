@@ -111,7 +111,7 @@ func TestRunnerDialRemoveReportsStoreFailure(t *testing.T) {
 	rec, _ := f.h.RunnerDials.Add(RunnerDialRecord{Candidates: []string{"ws:127.0.0.1:2-*"}, Key: k})
 	os.Chmod(dir, 0o500)
 	defer os.Chmod(dir, 0o700)
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_RunnerDialRemove, RequestId: 5}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_RunnerDialRemove, RequestId: 5}}
 	req.SetRunnerDialRemove(protocol.RunnerDialRemoveRequest{Id: rec.ID})
 	f.h.Handle(op, encodeTaskControlRequest(t, req))
 	resp := lastTaskControlResponse(t, op)

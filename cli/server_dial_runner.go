@@ -66,7 +66,7 @@ func ServerDialRunner(ctx context.Context, serverCID objproto.ConnectionID, targ
 // connected taskControlClient. Exposed for callers that hold a long-lived
 // *Client and want to avoid re-dialing.
 func ServerDialRunnerWith(ctx context.Context, c taskControlClient, target protocol.ConnID, via protocol.RunnerID) (protocol.DialRunnerResponse, error) {
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_DialRunner}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_DialRunner}}
 	req.SetDialRunner(protocol.DialRunnerRequest{Target: target, Via: via})
 
 	resp, err := c.RoundTripTaskControl(ctx, req)

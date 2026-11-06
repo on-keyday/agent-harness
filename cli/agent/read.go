@@ -48,7 +48,7 @@ func ReadWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) error {
 	}
 	defer c.Close()
 
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AgentReadSeq}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_AgentReadSeq}}
 	req.SetAgentReadSeq(protocol.AgentReadSeqRequest{Seq: seq})
 
 	resp, err := c.RoundTripTaskControl(ctx, req)
@@ -100,7 +100,7 @@ func readPage(ctx context.Context, a verb.AgentAction, stdout io.Writer) error {
 
 	pr := protocol.AgentReadPageRequest{BeforeSeq: a.Before, Limit: uint16(a.Limit)}
 	pr.SetTopic([]byte(topic))
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AgentReadPage}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_AgentReadPage}}
 	req.SetAgentReadPage(pr)
 
 	resp, err := c.RoundTripTaskControl(ctx, req)

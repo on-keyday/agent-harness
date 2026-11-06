@@ -77,7 +77,7 @@ func TestHandleNotify_IdentityFromPrincipalNotClient(t *testing.T) {
 
 func sendNotify(t *testing.T, h *TaskHandler, conn *fakeConn) {
 	t.Helper()
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_Notify, RequestId: 1}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_Notify, RequestId: 1}}
 	nr := protocol.NotifyRequest{Level: protocol.NotifyLevel_Info}
 	nr.SetTitle([]byte("t"))
 	nr.SetText([]byte("x"))

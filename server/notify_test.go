@@ -214,7 +214,7 @@ func TestHandleNotify_NoHook_RunsLiveLeg(t *testing.T) {
 	nr := protocol.NotifyRequest{Level: protocol.NotifyLevel_Warn}
 	nr.TextLen = uint16(len("hi"))
 	nr.Text = []byte("hi")
-	req := protocol.TaskControlRequest{Kind: protocol.TaskControlKind_Notify, RequestId: 7}
+	req := protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_Notify, RequestId: 7}}
 	req.SetNotify(nr)
 
 	conn := &captureConn{}

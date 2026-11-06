@@ -30,7 +30,7 @@ func (c *Client) GetTaskLog(ctx context.Context, taskIDHex string) ([]byte, bool
 	}
 	var tid protocol.TaskID
 	copy(tid.Id[:], raw)
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_GetTaskLog}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_GetTaskLog}}
 	req.SetGetLog(protocol.GetTaskLogRequest{TaskId: tid})
 
 	resp, err := c.RoundTripTaskControl(ctx, req)

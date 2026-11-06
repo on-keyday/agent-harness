@@ -16,7 +16,7 @@ import (
 // nothing: async hooks may land out of order.
 func (h *TaskHandler) handleLifecycleSet(conn ConnHandle, req *protocol.TaskControlRequest) {
 	respond := func(status protocol.LifecycleSetStatus, at int64) {
-		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_LifecycleSet, RequestId: req.RequestId}
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_LifecycleSet, RequestId: req.Header.RequestId}
 		resp.SetLifecycleSet(protocol.LifecycleSetResponse{Status: status, LifecycleAt: uint64(at)})
 		conn.SendMessage(resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})) //nolint:errcheck
 	}

@@ -17,7 +17,7 @@ import (
 // of the process. opts zero value = new task, any runner, default agent,
 // no caps (see SessionOpts).
 func (c *Client) Submit(ctx context.Context, repo, prompt string, opts SessionOpts) (string, error) {
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_Submit}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_Submit}}
 	sub := buildSubmitRequest(repo, prompt, opts)
 	if opts.ResumeTaskID != "" {
 		tid, err := parseTaskIDHex(opts.ResumeTaskID)

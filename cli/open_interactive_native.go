@@ -78,7 +78,7 @@ func (c *Client) OpenDetached(ctx context.Context, repoPath string, opts Session
 // into an error, an ambiguous one into an *AmbiguousRunnerError. Shared by the
 // attached and the detached open so the two cannot map statuses differently.
 func (c *Client) roundTripOpen(ctx context.Context, repoPath string, opts SessionOpts, x11 *X11Request) (*protocol.OpenInteractiveResponse, error) {
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_OpenInteractive}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_OpenInteractive}}
 	oi := buildOpenInteractiveRequest(repoPath, opts)
 	resumeTaskID := opts.ResumeTaskID
 	if resumeTaskID != "" {

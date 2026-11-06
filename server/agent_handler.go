@@ -270,7 +270,7 @@ func discardPayloadStream(conn ConnHandle, id uint64) {
 
 // payloadStreamOf is the body stream a task-control request names, or 0.
 func payloadStreamOf(req *protocol.TaskControlRequest) uint64 {
-	switch req.Kind {
+	switch req.Header.Kind {
 	case protocol.TaskControlKind_OpenExecRun:
 		if r := req.OpenExecRun(); r != nil {
 			return r.PayloadStreamId

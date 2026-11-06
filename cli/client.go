@@ -281,7 +281,7 @@ func (c *Client) RoundTripTaskControl(ctx context.Context, req *protocol.TaskCon
 	c.pending[id] = ch
 	c.mu.Unlock()
 
-	req.RequestId = id
+	req.Header.RequestId = id
 	data := req.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 	if err := c.sendTaskControlFrame(data); err != nil {
 		c.mu.Lock()
@@ -306,7 +306,7 @@ func (c *Client) RoundTripTaskControl(ctx context.Context, req *protocol.TaskCon
 		// returning the raw response. All native and wasm callers funnel through
 		// RoundTripTaskControl, so this one check covers every gated operation.
 		if resp.Kind == protocol.TaskControlKind_PermissionDenied &&
-			req.Kind != protocol.TaskControlKind_PermissionDenied {
+			req.Header.Kind != protocol.TaskControlKind_PermissionDenied {
 			pd := resp.PermissionDenied()
 			if pd != nil {
 				return nil, &CapabilityDeniedError{
@@ -367,7 +367,7 @@ func (c *Client) BeginTaskControl(req *protocol.TaskControlRequest) (<-chan Task
 	c.pending[id] = ch
 	c.mu.Unlock()
 
-	req.RequestId = id
+	req.Header.RequestId = id
 	data := req.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 	if err := c.sendTaskControlFrame(data); err != nil {
 		c.mu.Lock()
@@ -386,7 +386,7 @@ func (c *Client) BeginTaskControl(req *protocol.TaskControlRequest) (<-chan Task
 		// agent CLI.
 		if r.err == nil && r.resp != nil &&
 			r.resp.Kind == protocol.TaskControlKind_PermissionDenied &&
-			req.Kind != protocol.TaskControlKind_PermissionDenied {
+			req.Header.Kind != protocol.TaskControlKind_PermissionDenied {
 			if pd := r.resp.PermissionDenied(); pd != nil {
 				out <- TaskControlResult{Err: &CapabilityDeniedError{
 					RequestedKind: pd.RequestedKind,

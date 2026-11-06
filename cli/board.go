@@ -187,7 +187,7 @@ type BoardSubscriberPattern struct {
 // iterates a map and declares its order unspecified, and stable output is a
 // property the CLI and its tests want, not one the board should have to promise.
 func (c *Client) BoardSubscribers(ctx context.Context, topic string) ([]BoardSubscriberRow, error) {
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_BoardSubscribers}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_BoardSubscribers}}
 	sr := protocol.BoardSubscribersRequest{}
 	sr.SetTopic([]byte(topic))
 	req.SetBoardSubscribers(sr)
@@ -295,7 +295,7 @@ func RetractedByLabel(m BoardMessage) string {
 // to hold Capability_BoardObserve; operator connections (ClientKind_Cli with no
 // principal task) hold Capability_All and pass this gate unconditionally.
 func (c *Client) BoardTopics(ctx context.Context) ([]BoardTopicRow, error) {
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_BoardTopics}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_BoardTopics}}
 	req.SetBoardTopics(protocol.BoardTopicsRequest{})
 	resp, err := c.RoundTripTaskControl(ctx, req)
 	if err != nil {
@@ -342,7 +342,7 @@ func (c *Client) BoardTopics(ctx context.Context) ([]BoardTopicRow, error) {
 // retain only a topic it may publish to. A non-ok status is returned as an
 // error naming it.
 func (c *Client) BoardRetain(ctx context.Context, topic string, ttl time.Duration, forever, clear bool) error {
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_BoardRetain}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_BoardRetain}}
 	rr := protocol.BoardRetainRequest{TtlMs: uint64(ttl.Milliseconds())}
 	if !rr.SetTopic([]byte(topic)) {
 		return errors.New("board retain: topic too long")
@@ -373,7 +373,7 @@ func (c *Client) BoardMembership(ctx context.Context, taskHex, topic string, op 
 	if err != nil {
 		return err
 	}
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_BoardMembership}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_BoardMembership}}
 	mr := protocol.BoardMembershipRequest{Task: task, Op: op}
 	if !mr.SetTopic([]byte(topic)) {
 		return fmt.Errorf("board %s: topic too long", op)
@@ -403,7 +403,7 @@ func (c *Client) BoardRead(ctx context.Context, topic string) ([]BoardMessage, b
 // below beforeSeq (0 = from the newest), newest first. On a retained topic it
 // reaches past the ring into the disk log. limit 0 is BoardRead.
 func (c *Client) BoardReadPage(ctx context.Context, topic string, beforeSeq uint64, limit uint16) ([]BoardMessage, bool, error) {
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_BoardRead}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_BoardRead}}
 	rr := protocol.BoardReadRequest{BeforeSeq: beforeSeq, Limit: limit}
 	rr.SetTopic([]byte(topic))
 	req.SetBoardRead(rr)
@@ -461,7 +461,7 @@ func boardMessages(msgs []protocol.BoardMessageRow) []BoardMessage {
 // (seq == 0). Returns (purged count, found, error).
 // found=false when the topic (or the specific seq) does not exist.
 func (c *Client) BoardPurge(ctx context.Context, topic string, seq uint64) (int, bool, error) {
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_BoardPurge}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_BoardPurge}}
 	pr := protocol.BoardPurgeRequest{Seq: seq}
 	pr.SetTopic([]byte(topic))
 	req.SetBoardPurge(pr)
@@ -491,7 +491,7 @@ func (c *Client) BoardPurge(ctx context.Context, topic string, seq uint64) (int,
 // "seq 0 means the whole topic" shorthand must not be inherited by a call that
 // a mistyped seq would otherwise widen. Both need Capability_BoardPurge.
 func (c *Client) BoardRetract(ctx context.Context, topic string, seq uint64) (bool, error) {
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_BoardRetract}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_BoardRetract}}
 	rr := protocol.BoardRetractRequest{Seq: seq}
 	rr.SetTopic([]byte(topic))
 	req.SetBoardRetract(rr)
@@ -519,7 +519,7 @@ func (c *Client) BoardContactsClear(ctx context.Context, taskIDHex, topic string
 	r := protocol.BoardContactsClearRequest{}
 	copy(r.Task.Id[:], raw)
 	r.SetTopic([]byte(topic))
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_BoardContactsClear}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_BoardContactsClear}}
 	req.SetBoardContactsClear(r)
 	resp, err := c.RoundTripTaskControl(ctx, req)
 	if err != nil {
@@ -702,7 +702,7 @@ func (c *Client) BoardSend(ctx context.Context, p BoardSendParams, payload []byt
 		br.SetNoRetireOnReply(p.NoRetireOnReply)
 		br.SetNoWake(p.NoWake)
 		br.SetExcludeSelf(p.ExcludeSelf)
-		req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_BoardSend}
+		req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_BoardSend}}
 		req.SetBoardSend(br)
 		return req, nil
 	}, payload)
@@ -732,7 +732,7 @@ func (c *Client) BoardSend(ctx context.Context, p BoardSendParams, payload []byt
 // BoardWake wakes every task subscribed to topic and publishes nothing.
 // Returns how many tasks a wake was emitted for.
 func (c *Client) BoardWake(ctx context.Context, topic string) (int, error) {
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_BoardWake}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_BoardWake}}
 	var bw protocol.BoardWakeRequest
 	if !bw.SetTopic([]byte(topic)) {
 		return 0, errors.New("board wake: topic too long")

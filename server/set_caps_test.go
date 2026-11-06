@@ -10,7 +10,7 @@ import (
 
 func sendSetCaps(t *testing.T, h *TaskHandler, conn *fakeConn, req protocol.SetCapsRequest) protocol.SetCapsResponse {
 	t.Helper()
-	tc := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_SetCaps, RequestId: 1}
+	tc := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_SetCaps, RequestId: 1}}
 	tc.SetSetCaps(req)
 	h.Handle(conn, encodeTaskControlRequest(t, tc))
 	resp := lastTaskControlResponse(t, conn)

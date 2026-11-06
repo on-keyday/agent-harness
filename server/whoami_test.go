@@ -13,7 +13,7 @@ import (
 // decoded WhoAmIResponse. Fails if the response is not a Whoami variant.
 func whoamiResp(t *testing.T, h *TaskHandler, conn *fakeConn, reqID uint32) protocol.WhoAmIResponse {
 	t.Helper()
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_Whoami, RequestId: reqID}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_Whoami, RequestId: reqID}}
 	req.SetWhoami(protocol.WhoAmIRequest{Reserved: 0})
 	h.Handle(conn, encodeTaskControlRequest(t, req))
 

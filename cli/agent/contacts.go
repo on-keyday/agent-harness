@@ -32,7 +32,7 @@ func ContactsWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) err
 	}
 	defer c.Close()
 
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AgentListContacts}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_AgentListContacts}}
 	req.SetAgentListContacts(protocol.AgentListContactsRequest{})
 
 	resp, err := c.RoundTripTaskControl(ctx, req)
