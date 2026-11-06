@@ -1,14 +1,15 @@
 ---
 name: codebase-tour
-description: Use when a repository's owner wants to see where the code stands against what they decided — they have stopped reading the code agents write, specs go unread, unease about drift or recurring "A and B disagreed" bugs — when running-parallel-workers' tour checkpoint fires, and when answering the owner's pushback on such a page.
+description: Use when a repository's owner wants to see the code as it stands now — they ask to be shown the code, they have stopped reading the code agents write, specs go unread, unease about drift or recurring "A and B disagreed" bugs — when running-parallel-workers' tour checkpoint fires, and when answering the owner's pushback on such a page.
 ---
 
-# codebase-tour (one page for the owner to push back on)
+# codebase-tour (walking the owner through the code, against what they decided)
 
 When agents write the code, the owner stops reading it, and the work still
 functions. Tests pass, behaviour is right, and nothing reports that a decision
 the owner made was only half carried out. This skill puts one page in front of
-the owner, then answers what they push back on.
+the owner that walks them through the code itself, then answers what they push
+back on.
 
 **The owner's decisions are the yardstick.** Every item on the page is a
 decision and how far the code has carried it out. The author's own sense of
@@ -17,8 +18,20 @@ from, items picked by the author's signals ("comments calling themselves
 mirrors", file growth) produced one wrong item and one the owner already knew.
 The useful outcome came from the owner's follow-up question, not from the page.
 
+**The page shows the code, not just where it is.** Each item walks through the
+code in reading order, quoting it. Why: in the source run, a page that gave
+locations and a line or two of evidence, under rules that only asked for
+brevity, left the owner with nothing to read. Another session using this skill
+would not show code at all, and when the owner asked to see the code, it said
+that was outside the skill. The same item rewritten as a walk through quoted
+code was the one the owner found clear.
+
 **The page is the opening, the conversation is the work.** It exists to be
-questioned, so it is short and every claim on it holds up.
+questioned, so it has few items and every claim on it holds up.
+
+**Showing the code is always this skill's job.** When the owner asks to see
+code, walk them through it in the form below, whether or not a decision
+anchors it.
 
 Not for: correctness review (tests and review do that); unattended runs (a page
 nobody questions has no purpose); a metrics dashboard.
@@ -97,47 +110,85 @@ letting it cancel a finding would hide the thing the page is for.
    differently on two surfaces went on the page as drift, but an owner-marked
    spec row had decided that difference. The owner spent a round correcting
    the page instead of using it.
-7. **Write the page.** Use about three items, in the format below, in the
-   owner's language and a polite register. Record the commit the page
-   describes. More items do not get more pushback; the owner engages with one
-   or two.
+7. **Read the code you will show, then write the page.** Use one or two items,
+   in the format below, in the owner's language and a polite register. Record
+   the commit the page describes. More items do not get more pushback; the
+   owner engages with one or two, and each item is long because it carries
+   its code.
 8. **Hand it over and end the turn.** The owner may take a while.
 9. **Answer the pushback** (below).
 10. **Record reactions** on the page, one line per item.
 
 ## The page
 
-```
+````
 # Codebase tour — <date>  (describes <commit>; baseline <commit>)
 
 ## <n>. <decision, in a few words>: <how far it got, in a few words>
 
 Decision: <what was decided>, recorded at <file and row> — <the owner's |
 an agent's, not yours (do you stand by it?)>.
-Now: <how far it got, with the figure>; <where the rest is>.
-<Locations in the settings.md form; two things being compared go side by side>
+
+### ① <what this stop shows, in a few words>
+
+<location in the settings.md form>
+
+```<language>
+<the code itself>
+```
+
+<what to look at here, in one to three lines>
+
+### ② … (more stops, in reading order)
+
+### Now
+
+<how far it got, with figures, each with the command that produced it;
+where the rest is>
 
 What I'd like to ask: <what you intended, or what you want done>
 
 ---
 Reactions (filled in after the conversation):
 - <n>: pushed back | accepted | passed over — <what came of it>
-```
+````
+
+**The stops follow the order you would read the code in:** where it starts,
+how it is laid out, where the part that follows the decision meets the part
+that does not, and an earlier case that already solved the problem, if one
+exists.
+
+**Each stop quotes enough code to read without opening the file:** a whole
+function, or a call together with the code it reaches. Elide long middles
+with `...`, keeping the lines the prose points at. When the code is too long
+for that, such as a dispatch over dozens of cases, quote its shape instead: the
+head, one case of each kind, and how many cases there are. When two things are
+compared, quote both, one after the other. An agent's reason written in a
+comment is quoted too, labelled as an agent's.
+
+**The prose under a quote says what to look at.** It does not restate the
+code line by line.
 
 **The question asks what only the owner can answer:** what they intended, or
-what they want done. When a fact matters, show it side by side with its
-counterpart so the difference is visible on the page. Why: in the source run,
-questions that hid an answer the author already knew and asked the owner to
-predict it read as being tested, which is the wrong seat for the person who
-owns the code's intent.
+what they want done. Why: in the source run, questions that hid an answer the
+author already knew and asked the owner to predict it read as being tested,
+which is the wrong seat for the person who owns the code's intent.
+
+If the decision is fully carried out and nothing is left for the owner to
+decide, the item says so in place of a question. A question found by looking
+around the item is a new item, picked by your own signals.
 
 ## Answering the pushback
 
 Answer each question by digging into the artifact: history, decision records,
-the code, a run. Do not answer from memory or a summary. Why: in the source
-run, every finding that mattered came from this digging, such as how a split
-had only half happened and a comment naming a function that never existed.
-None of them was on the page.
+the code, a run. Do not answer from memory or a summary. Show the code you
+found, in the same quoted form as the page. Why: in the source run, every
+finding that mattered came from this digging, such as how a split had only
+half happened and a comment naming a function that never existed. None of
+them was on the page.
+
+When the owner asks to see code the page did not cover, walk them through it
+the same way.
 
 Route each outcome as follows:
 
@@ -162,6 +213,8 @@ author's assumptions.
 | Picking items by your own debt signals | Wrong or already-known items; the owner stops reading | Anchor on decisions; use signals only to find evidence |
 | Calling a difference drift before checking the records | The owner spends a round correcting you | Step 6; only owner decisions explain a difference away |
 | Letting an agent's spec row cancel a finding | The drift the tour exists to show is hidden | Keep it, labelled as an agent's decision |
+| Listing locations without quoting the code | The owner has nothing to read and must open every file | Stops in reading order, each with the code quoted |
+| Declining to show code because no decision anchors it | The owner cannot see the code they asked for | Showing code is always this skill's job; walk them through it |
 | Quiz questions with the answer held back | The owner feels tested | Ask intent or choice; show facts side by side |
-| A long, complete report | Nothing gets questioned | About three items |
+| Many items | Nothing gets questioned | One or two items, each with its walk |
 | Committing the page | Local paths published | Keep it in the tour directory |
