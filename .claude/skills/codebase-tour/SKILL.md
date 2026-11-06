@@ -90,8 +90,9 @@ letting it cancel a finding would hide the thing the page is for.
    Mechanical searches (grep, line counts, history) are how you find this
    evidence. They are never a reason on their own to list an item.
 6. **Check every claim.** Re-read the decision record and the code behind each
-   statement. Drop anything an owner decision explains. Label anything you
-   could not check. A difference that only an agent's decision covers stays,
+   statement. That includes the comments around the code and the commit that
+   introduced it, which is where an agent usually wrote down its reason. Drop
+   anything an owner decision explains. Label anything you could not check. A difference that only an agent's decision covers stays,
    labelled as that agent's. Why: in the source run, a badge spelled
    differently on two surfaces went on the page as drift, but an owner-marked
    spec row had decided that difference. The owner spent a round correcting
