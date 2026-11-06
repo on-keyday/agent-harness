@@ -45,7 +45,9 @@ the pages and `settings.md`.
 as `001-2026-11-07.md`. The highest number is the last page. A page redone,
 even on the same day, takes the next number; no page is overwritten, so every
 reaction stays on record. Why: with date-only names, two pages on one day left
-no way to tell which was the last one, and the baseline comes from it.
+no way to tell which was the last one, and the baseline comes from it. Pages
+from before this rule, named by date only, are renamed once in date order,
+from `001`.
 
 - Inside running-parallel-workers it is `<records>/tours/`.
 - A standalone run uses the same directory when those records exist, so there
@@ -97,7 +99,10 @@ letting it cancel a finding would hide the thing the page is for.
    plus any still open from earlier pages. Record where each one lives (file
    and row) and whether it is the owner's or an agent's. An agent's decision
    that the owner confirmed in an earlier page's reaction line is the owner's;
-   do not ask about it again.
+   do not ask about it again. Look first at decisions carried out since the
+   last page: drift there is newest, and the reasons written for it are
+   still fresh. Older decisions stay candidates; the first page of the source
+   run held three, all pushed back on.
 3. **Gather the owner's symptoms.** Take the symptoms the owner has named in
    conversation, in questions or in earlier reactions ("many bugs where A and
    B disagreed"). Grouping the fix commits since the baseline by the kind of
@@ -120,7 +125,9 @@ letting it cancel a finding would hide the thing the page is for.
    in the format below, in the owner's language and a polite register. Record
    the commit the page describes. More items do not get more pushback; the
    owner engages with one or two, and each item is long because it carries
-   its code.
+   its code. When it is written, open every location at its line and check
+   that the quoted code is there. Why: a page author once wrote line 16 for
+   code on line 18.
 8. **Hand it over and end the turn.** The owner may take a while.
 9. **Answer the pushback** (below).
 10. **Record reactions** on the page, one line per item.
@@ -164,6 +171,13 @@ how it is laid out, where the part that follows the decision meets the part
 that does not, and an earlier case that already solved the problem, if one
 exists.
 
+**When the point is behaviour, a stop is a run:** the smallest input that
+shows it, varied in one thing at a time, with the command and its output
+quoted. Run only what is safe in the checkout: nothing that pushes, sends, or
+writes outside a scratch place. Why: in a run of this skill on another
+repository, the strongest evidence on the page was two lines of a linter run
+on the same input with and without one field.
+
 **Each stop quotes enough code to read without opening the file:** a whole
 function, or a call together with the code it reaches. Elide long middles
 with `...`, keeping the lines the prose points at. When the code is too long
@@ -194,13 +208,16 @@ half happened and a comment naming a function that never existed. None of
 them was on the page.
 
 When the owner asks to see code the page did not cover, walk them through it
-the same way.
+the same way. A walk that no decision anchors stays in the conversation: it is
+not a page, takes no number and gets no reaction line, because pages are the
+record of decisions measured.
 
 Route each outcome as follows:
 
 - **Inside running-parallel-workers:** the parent does no child's work. A fix
-  becomes a backlog item or a child's assignment. A choice becomes a registered
-  owner question (`Q<n>`).
+  becomes a backlog item or a child's assignment, or, when the owner agrees,
+  goes into the current item of a child already working in that area, as a new
+  instruction. A choice becomes a registered owner question (`Q<n>`).
 - **Standalone:** make a fix yourself when the owner asks for one. Put a
   choice to the owner directly.
 

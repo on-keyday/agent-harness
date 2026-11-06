@@ -316,8 +316,9 @@ a large miss asks what was unknown at planning time.
   written before it existed), add it the way any mid-run change goes: a
   registered question, then the document. Don't invent a count, and don't ask
   the tour's settings directly while children run. When the owner's pushback asks for a fix, the fix becomes
-  a backlog item or a child's assignment, because the parent does no child's
-  work; a choice becomes a registered `Q<n>`. Why: the owner reads little of
+  a backlog item or a child's assignment, or, when the owner agrees, joins the
+  current item of a child already working in that area, because the parent
+  does no child's work; a choice becomes a registered `Q<n>`. Why: the owner reads little of
   the code the children write, and passing tests hide how far the code has
   moved from what the owner decided. Only the owner looking at the real thing
   catches that, and by then the drift has spread.
