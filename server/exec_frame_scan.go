@@ -11,7 +11,7 @@ import (
 // the bytes unchanged whatever the scanner concluded. See the exec tap spec,
 // § Why the server must parse frames.
 type frameScanner struct {
-	hdr       []byte // header bytes collected so far (< frameHeaderSize, session_mux.go)
+	hdr       []byte // header bytes collected so far (< frame.FrameHeaderSize)
 	typ       frame.FrameType
 	remaining uint32 // payload bytes left in the current frame
 	inPayload bool
@@ -34,7 +34,7 @@ func (s *frameScanner) scan(chunk []byte, onPayload func(frame.FrameType, []byte
 			}
 			continue
 		}
-		need := frameHeaderSize - len(s.hdr)
+		need := frame.FrameHeaderSize - len(s.hdr)
 		if need > len(chunk) {
 			s.hdr = append(s.hdr, chunk...)
 			return
@@ -42,8 +42,8 @@ func (s *frameScanner) scan(chunk []byte, onPayload func(frame.FrameType, []byte
 		s.hdr = append(s.hdr, chunk[:need]...)
 		chunk = chunk[need:]
 		var h frame.FrameHeader
-		// DecodeExact cannot fail on exactly frameHeaderSize bytes of a
-		// fixed-layout header; TestFrameHeaderSizeMatchesTheSchema pins the size.
+		// DecodeExact cannot fail on exactly frame.FrameHeaderSize bytes of a
+		// fixed-layout header.
 		_ = h.DecodeExact(s.hdr)
 		s.hdr = s.hdr[:0]
 		s.typ = h.Type

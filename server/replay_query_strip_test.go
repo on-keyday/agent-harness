@@ -1,7 +1,6 @@
 package server
 
 import (
-	"encoding/binary"
 	"testing"
 
 	"github.com/on-keyday/objtrsf/exec/frame"
@@ -132,17 +131,17 @@ func parseFrames(t *testing.T, data []byte) ([]frame.FrameType, [][]byte) {
 	var payloads [][]byte
 	off := 0
 	for off < len(data) {
-		if len(data)-off < frameHeaderSize {
+		if len(data)-off < frame.FrameHeaderSize {
 			t.Fatalf("truncated frame header at %d (len %d)", off, len(data))
 		}
-		n := int(binary.BigEndian.Uint32(data[off+1 : off+5]))
-		if off+frameHeaderSize+n > len(data) {
+		n := int(frameHeaderAt(data[off:]).Len)
+		if off+frame.FrameHeaderSize+n > len(data) {
 			t.Fatalf("frame at %d claims %d payload bytes, only %d remain",
-				off, n, len(data)-off-frameHeaderSize)
+				off, n, len(data)-off-frame.FrameHeaderSize)
 		}
 		types = append(types, frame.FrameType(data[off]))
-		payloads = append(payloads, data[off+frameHeaderSize:off+frameHeaderSize+n])
-		off += frameHeaderSize + n
+		payloads = append(payloads, data[off+frame.FrameHeaderSize:off+frame.FrameHeaderSize+n])
+		off += frame.FrameHeaderSize + n
 	}
 	return types, payloads
 }

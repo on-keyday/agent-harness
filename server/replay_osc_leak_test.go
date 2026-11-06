@@ -2,7 +2,6 @@ package server
 
 import (
 	"bytes"
-	"encoding/binary"
 	"strings"
 	"testing"
 
@@ -16,11 +15,11 @@ func stripStdoutFrames(t *testing.T, data []byte) []byte {
 	t.Helper()
 	var out []byte
 	for off := 0; off < len(data); {
-		if len(data)-off < frameHeaderSize {
+		if len(data)-off < frame.FrameHeaderSize {
 			t.Fatalf("truncated frame header at %d", off)
 		}
-		n := int(binary.BigEndian.Uint32(data[off+1 : off+5]))
-		start := off + frameHeaderSize
+		n := int(frameHeaderAt(data[off:]).Len)
+		start := off + frame.FrameHeaderSize
 		if start+n > len(data) {
 			t.Fatalf("frame payload overruns blob at %d", off)
 		}

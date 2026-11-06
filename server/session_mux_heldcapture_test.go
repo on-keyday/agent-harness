@@ -3,7 +3,6 @@ package server
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"strings"
 	"testing"
 	"time"
@@ -176,15 +175,15 @@ func TestHeldCaptureDoesNotEnterTheRing(t *testing.T) {
 func renderReplay(t *testing.T, replay []byte, cols, rows int) string {
 	t.Helper()
 	term := vtgrid.New(cols, rows)
-	for off := 0; off+frameHeaderSize <= len(replay); {
-		n := int(binary.BigEndian.Uint32(replay[off+1 : off+5]))
-		end := off + frameHeaderSize + n
+	for off := 0; off+frame.FrameHeaderSize <= len(replay); {
+		n := int(frameHeaderAt(replay[off:]).Len)
+		end := off + frame.FrameHeaderSize + n
 		if end > len(replay) {
 			break
 		}
 		switch frame.FrameType(replay[off]) {
 		case frame.FrameType_Stdout, frame.FrameType_Stderr, frame.FrameType_Synth:
-			_, _ = term.Write(replay[off+frameHeaderSize : end])
+			_, _ = term.Write(replay[off+frame.FrameHeaderSize : end])
 		}
 		off = end
 	}

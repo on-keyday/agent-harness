@@ -2,7 +2,6 @@ package server
 
 import (
 	"bytes"
-	"encoding/binary"
 
 	"github.com/on-keyday/objtrsf/exec/frame"
 )
@@ -187,17 +186,17 @@ func stripReplyQueriesFrames(data []byte) []byte {
 	var s queryStripper
 	off := 0
 	for off < len(data) {
-		if len(data)-off < frameHeaderSize {
+		if len(data)-off < frame.FrameHeaderSize {
 			break // malformed tail: pass the remainder through
 		}
-		total := frameHeaderSize + int(binary.BigEndian.Uint32(data[off+1:off+5]))
+		total := frame.FrameHeaderSize + int(frameHeaderAt(data[off:]).Len)
 		if total <= 0 || off+total > len(data) {
 			break // malformed frame: don't rewrite what we cannot parse
 		}
 		fb := data[off : off+total]
 		switch frame.FrameType(fb[0]) {
 		case frame.FrameType_Stdout, frame.FrameType_Stderr:
-			filtered := s.strip(fb[frameHeaderSize:])
+			filtered := s.strip(fb[frame.FrameHeaderSize:])
 			if len(filtered) > 0 {
 				out = append(out, encodeFrame(frame.FrameType(fb[0]), filtered)...)
 			}

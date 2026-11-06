@@ -62,6 +62,8 @@ github.com/muesli/termenv v0.16.0 h1:S5AlUN9dENB57rsbnkPyfdGuWIlkmzJjbFf0Tf5FWUc
 github.com/muesli/termenv v0.16.0/go.mod h1:ZRfOIKPFDYQoDFF4Olj7/QJbW60Ol/kL1pU3VfY/Cnk=
 github.com/on-keyday/objtrsf v0.0.0-20261104190346-6d4f4538e75c h1:SKKcaTd6rCNxuAYNnrK3q0dmkcwO/MrSx1bElenMzVQ=
 github.com/on-keyday/objtrsf v0.0.0-20261104190346-6d4f4538e75c/go.mod h1:Q5TJzv1Ck+b1CkSYNp6jDKBEGI8yiECGw7M9GegQx8Y=
+github.com/on-keyday/objtrsf v0.0.0-20261106151144-515c39074ef8 h1:UQIOU9siue5fSpt+NA7tCWiH8bzOnZYv/ADnvL37uzE=
+github.com/on-keyday/objtrsf v0.0.0-20261106151144-515c39074ef8/go.mod h1:Q5TJzv1Ck+b1CkSYNp6jDKBEGI8yiECGw7M9GegQx8Y=
 github.com/rivo/uniseg v0.4.7 h1:WUdvkW8uEhrYfLC4ZzdpI2ztxP1I582+49Oc5Mq64VQ=
 github.com/rivo/uniseg v0.4.7/go.mod h1:FN3SvrM+Zdj16jyLfmOkMNblXMcoc8DfTHruCPUcx88=
 github.com/u-root/gobusybox/src v0.0.0-20250101170133-2e884e4509c7 h1:dtiVT4SeBUc/vHtwI2HjDZN+FCKTstQBxugIxJEGo9g=

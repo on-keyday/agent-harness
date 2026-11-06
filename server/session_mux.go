@@ -3,7 +3,6 @@ package server
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -18,11 +17,15 @@ import (
 	"github.com/on-keyday/objtrsf/trsf"
 )
 
-// frameHeaderSize is the wire size of exec/frame.FrameHeader: 1-byte Type
-// followed by 4-byte big-endian Len. Hard-coded here rather than imported
-// from exec/frame because SessionMux only needs the *boundary*, not the
-// frame's semantic content. Keep in sync with exec/frame/frame.bgn.
-const frameHeaderSize = 5
+// frameHeaderAt decodes the exec/frame.FrameHeader at the start of b, which
+// must hold at least frame.FrameHeaderSize bytes. The header's layout and size
+// both come from exec/frame/frame.bgn; nothing here restates them.
+func frameHeaderAt(b []byte) frame.FrameHeader {
+	var h frame.FrameHeader
+	// Cannot fail: the header is fixed-size and gets exactly that many bytes.
+	_ = h.DecodeExact(b[:frame.FrameHeaderSize])
+	return h
+}
 
 // viewerQueueDepth bounds per-viewer buffering. A viewer that cannot drain its
 // queue this fast is dropped (it can never block the runner pump or the writer).
@@ -53,15 +56,15 @@ type viewerConn struct {
 // deadlock it on a fake Len. Returns the read error verbatim — callers
 // should stop the session on any non-nil error.
 func readOneFrame(r io.Reader) ([]byte, error) {
-	hdr := make([]byte, frameHeaderSize)
+	hdr := make([]byte, frame.FrameHeaderSize)
 	if _, err := io.ReadFull(r, hdr); err != nil {
 		return nil, err
 	}
-	payloadLen := binary.BigEndian.Uint32(hdr[1:5])
-	out := make([]byte, frameHeaderSize+int(payloadLen))
+	payloadLen := frameHeaderAt(hdr).Len
+	out := make([]byte, frame.FrameHeaderSize+int(payloadLen))
 	copy(out, hdr)
 	if payloadLen > 0 {
-		if _, err := io.ReadFull(r, out[frameHeaderSize:]); err != nil {
+		if _, err := io.ReadFull(r, out[frame.FrameHeaderSize:]); err != nil {
 			return nil, err
 		}
 	}
@@ -103,14 +106,14 @@ func capReplayTail(data []byte, limit uint32) []byte {
 			}
 			lastGround = off
 		}
-		if len(data)-off < frameHeaderSize {
+		if len(data)-off < frame.FrameHeaderSize {
 			break // malformed tail
 		}
-		total := frameHeaderSize + int(binary.BigEndian.Uint32(data[off+1:off+5]))
+		total := frame.FrameHeaderSize + int(frameHeaderAt(data[off:]).Len)
 		if total <= 0 || off+total > len(data) {
 			break // malformed frame; don't split it
 		}
-		sc.scan(data[off+frameHeaderSize : off+total])
+		sc.scan(data[off+frame.FrameHeaderSize : off+total])
 		off += total
 	}
 	return data[lastGround:]
@@ -138,11 +141,8 @@ func encodeSynthFrame(payload []byte) []byte {
 }
 
 func encodeFrame(typ frame.FrameType, payload []byte) []byte {
-	out := make([]byte, frameHeaderSize+len(payload))
-	out[0] = byte(typ)
-	binary.BigEndian.PutUint32(out[1:5], uint32(len(payload)))
-	copy(out[frameHeaderSize:], payload)
-	return out
+	h := frame.FrameHeader{Type: typ, Len: uint32(len(payload))}
+	return append(h.MustAppend(make([]byte, 0, frame.FrameHeaderSize+len(payload))), payload...)
 }
 
 // SessionHooks lets the controller observe SessionMux state transitions.
@@ -352,13 +352,13 @@ func (m *SessionMux) recordFrame(frameBytes []byte) {
 	// re-establish modes (e.g. a hidden cursor) whose controlling sequence
 	// has since been evicted from the ring. Only Stdout/Stderr carry it.
 	wasAlt := m.modes.OnAltScreen()
-	if len(frameBytes) >= frameHeaderSize {
+	if len(frameBytes) >= frame.FrameHeaderSize {
 		switch frame.FrameType(frameBytes[0]) {
 		case frame.FrameType_Stdout, frame.FrameType_Stderr:
 			if m.terminal {
-				m.modes.Feed(frameBytes[frameHeaderSize:])
+				m.modes.Feed(frameBytes[frame.FrameHeaderSize:])
 				m.screenMu.Lock()
-				_, _ = m.screen.Write(frameBytes[frameHeaderSize:])
+				_, _ = m.screen.Write(frameBytes[frame.FrameHeaderSize:])
 				probes := m.screen.TakeProgramStatusQueries()
 				m.screenMu.Unlock()
 				m.answerProgramStatusProbes(probes)
@@ -468,8 +468,8 @@ func (m *SessionMux) loadHeldCapture(b []byte) (gotSize, gotScreen bool, err err
 				return gotSize, gotScreen, aerr
 			}
 			gotSize = true
-		case len(fb) > frameHeaderSize && frame.FrameType(fb[0]) == frame.FrameType_Synth:
-			m.loadScreen(fb[frameHeaderSize:])
+		case len(fb) > frame.FrameHeaderSize && frame.FrameType(fb[0]) == frame.FrameType_Synth:
+			m.loadScreen(fb[frame.FrameHeaderSize:])
 			gotScreen = true
 		}
 	}
@@ -825,8 +825,8 @@ func (m *SessionMux) tuiPump(ctx context.Context, tui trsf.BidirectionalStream) 
 // control client owns the size). Returns the unconsumed tail and false on runner
 // write failure.
 func (m *SessionMux) forwardControlFrames(acc []byte) ([]byte, bool) {
-	for len(acc) >= frameHeaderSize {
-		total := frameHeaderSize + int(binary.BigEndian.Uint32(acc[1:5]))
+	for len(acc) >= frame.FrameHeaderSize {
+		total := frame.FrameHeaderSize + int(frameHeaderAt(acc).Len)
 		if len(acc) < total {
 			break // incomplete frame; carry to next read
 		}
@@ -878,8 +878,8 @@ func (m *SessionMux) observerInputPump(ctx context.Context, v *viewerConn) {
 // permitted is read and discarded, exactly as the whole stream used to be for a
 // viewer. Returns the unconsumed tail and false on runner write failure.
 func (m *SessionMux) forwardObserverFrames(v *viewerConn, acc []byte) ([]byte, bool) {
-	for len(acc) >= frameHeaderSize {
-		total := frameHeaderSize + int(binary.BigEndian.Uint32(acc[1:5]))
+	for len(acc) >= frame.FrameHeaderSize {
+		total := frame.FrameHeaderSize + int(frameHeaderAt(acc).Len)
 		if len(acc) < total {
 			break
 		}
@@ -984,7 +984,7 @@ func (m *SessionMux) writeFrameToRunner(fb []byte) error {
 // for anything else. Both callers need the same decode — one to route the
 // frame, one to resize the grid — so it happens once.
 func winSizeOf(fb []byte) (cols, rows int, ok bool) {
-	if len(fb) < frameHeaderSize || frame.FrameType(fb[0]) != frame.FrameType_Control {
+	if len(fb) < frame.FrameHeaderSize || frame.FrameType(fb[0]) != frame.FrameType_Control {
 		return 0, 0, false
 	}
 	f := &frame.Frame{}

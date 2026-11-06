@@ -105,11 +105,3 @@ func TestExecTapChannelOf(t *testing.T) {
 		}
 	}
 }
-
-// frameHeaderSize is a literal in session_mux.go; the scanner decodes headers
-// of exactly that many bytes, so it must equal what the schema encodes.
-func TestFrameHeaderSizeMatchesTheSchema(t *testing.T) {
-	if n := len((&frame.FrameHeader{}).MustAppend(nil)); n != frameHeaderSize {
-		t.Fatalf("FrameHeader encodes to %d bytes, frameHeaderSize = %d", n, frameHeaderSize)
-	}
-}

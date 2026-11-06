@@ -3,7 +3,6 @@ package server
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"io"
 	"sync"
 	"sync/atomic"
@@ -243,7 +242,7 @@ func stripSynth(t *testing.T, b []byte) []byte {
 	t.Helper()
 	var out []byte
 	for off := 0; off+5 <= len(b); {
-		total := 5 + int(binary.BigEndian.Uint32(b[off+1:off+5]))
+		total := frame.FrameHeaderSize + int(frameHeaderAt(b[off:]).Len)
 		if off+total > len(b) {
 			break // partial trailing frame; the caller is still waiting for it
 		}
@@ -273,11 +272,8 @@ func waitPTY(t *testing.T, f *fakeBidiStream, n int) []byte {
 }
 
 func makeWireFrame(typ byte, payload []byte) []byte {
-	out := make([]byte, frameHeaderSize+len(payload))
-	out[0] = typ
-	binary.BigEndian.PutUint32(out[1:5], uint32(len(payload)))
-	copy(out[frameHeaderSize:], payload)
-	return out
+	h := frame.FrameHeader{Type: frame.FrameType(typ), Len: uint32(len(payload))}
+	return append(h.MustAppend(nil), payload...)
 }
 
 func TestSessionMux_AttachReplaysRingBuffer(t *testing.T) {

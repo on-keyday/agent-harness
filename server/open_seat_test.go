@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/hex"
+	"github.com/on-keyday/objtrsf/exec/frame"
 	"testing"
 	"time"
 
@@ -170,7 +171,7 @@ func TestDetachedOpenAppliesInitialSize(t *testing.T) {
 	if resp.Status != protocol.OpenInteractiveStatus_Ok {
 		t.Fatalf("status %v", resp.Status)
 	}
-	cols, rows, ok := winSizeOf(runner.WaitWritten(t, frameHeaderSize+1))
+	cols, rows, ok := winSizeOf(runner.WaitWritten(t, frame.FrameHeaderSize+1))
 	if !ok || cols != 150 || rows != 40 {
 		t.Fatalf("runner got size %dx%d ok=%v, want 150x40", cols, rows, ok)
 	}
