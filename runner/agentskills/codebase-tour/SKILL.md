@@ -18,6 +18,13 @@ from, items picked by the author's signals ("comments calling themselves
 mirrors", file growth) produced one wrong item and one the owner already knew.
 The useful outcome came from the owner's follow-up question, not from the page.
 
+**One item is drawn, not chosen.** A script draws a place in the code that no
+page has shown yet, and that item goes on the page whatever you think of it.
+Why: every other item passes through your judgement of what has drifted, and
+a place you judged fine would never reach the owner, so your blind spots would
+stay theirs. The draw also walks the tour, page by page, over the whole
+codebase, where your own choices would keep returning to what is recent.
+
 **The page shows the code, not just where it is.** Each item walks through the
 code in reading order, quoting it. Why: in the source run, a page that gave
 locations and a line or two of evidence, under rules that only asked for
@@ -65,8 +72,8 @@ from `001`.
   "proposed", while the owner's tour directory, with two pages and settled
   settings, sat where that run's sandbox could not see.
 
-`settings.md` holds two answers, settled with the owner on the first run (or
-copied from running-parallel-workers' conventions):
+`settings.md` holds three answers, settled with the owner on the first run
+(the first two may be copied from running-parallel-workers' conventions):
 
 1. **How code locations are written** so the owner can open them as they are in
    their editor. One owner may want an absolute `path:line` in their own
@@ -76,6 +83,11 @@ copied from running-parallel-workers' conventions):
    Examples are a `Decided by` column in specs, `DECIDED (operator, <date>)`
    text, or an answered-questions directory. A record without such a mark
    counts as an agent's decision.
+3. **What the draw leaves out**, as a fenced `draw-exclude` block (the format
+   is at the top of `scripts/tour_draw.py`): for example generated code,
+   mirrored copies, test data. Propose candidates, but only the owner sets
+   it, and you never change it. Why: an exclusion is a place no draw reaches,
+   so one you add yourself is a place you hid.
 
 Pages and walks contain local paths, so **neither is ever committed** to the
 repository.
@@ -99,21 +111,24 @@ letting it cancel a finding would hide the thing the page is for.
 
 ## Procedure
 
-1. **State and baseline.** Find the tour directory and read `settings.md`. On
-   a first run, settle its two answers with the owner and write them. The
-   baseline is the commit the highest-numbered page recorded. With no earlier page, use a
-   point the owner names, or the commit 30 days back.
-2. **Gather decisions.** List decisions made or touched since the baseline,
-   plus any still open from earlier pages. Record where each one lives (file
-   and row) and whether it is the owner's or an agent's. An agent's decision
-   that the owner confirmed in an earlier page's reaction line is the owner's;
-   do not ask about it again. Do not draw only on decisions carried out since
-   the last page: the commit that carried one out usually explains it, so such
-   an item confirms what the owner just read instead of finding anything.
-   Reach back over every earlier page and prefer decisions no page has visited
-   yet, where drift has had time to accumulate; a page of only the last page's
-   decisions is a page of confirmations. Older decisions stay candidates; the
-   first page of the source run held three, all pushed back on.
+1. **State, baseline and draw.** Find the tour directory and read
+   `settings.md`. On a first run, settle its answers with the owner and write
+   them. The baseline is the commit the highest-numbered page recorded. With
+   no earlier page, use a point the owner names, or the commit 30 days back.
+   Then run the draw (below) on the commit the page will describe.
+2. **Gather decisions** for the other items: those made or touched since the
+   baseline, those still open from earlier pages, and older ones. Record where each one lives
+   (file and row) and whether it is the owner's or an agent's. An agent's
+   decision that the owner confirmed in an earlier page's reaction line is the
+   owner's; do not ask about it again. **Choose by drift, not by age.** A
+   decision carried out since the last page is worth an item only where the
+   code has moved away from it. One its own commit just carried out and
+   explained, with nothing moved, would only confirm what the owner just read:
+   it takes no slot. Beyond that, prefer what no page has shown, then what
+   was shown longest ago: decisions old enough to be forgotten, and places
+   none of them names. Why: on page 004, two items confirmed decisions the
+   commit just before had carried out, and the owner's reaction was that
+   nothing in them was new.
 3. **Gather the owner's symptoms.** Take the symptoms the owner has named in
    conversation, in questions or in earlier reactions ("many bugs where A and
    B disagreed"). Grouping the fix commits since the baseline by the kind of
@@ -133,8 +148,9 @@ letting it cancel a finding would hide the thing the page is for.
    spec row had decided that difference. The owner spent a round correcting
    the page instead of using it.
 7. **Read the code you will show, then write the page.** Use about three
-   items, in the format below, in the owner's language and a polite register.
-   If no more than one or two hold up after step 6, use those; never pad. When
+   items, the drawn one among them, in the format below, in the owner's
+   language and a polite register. If no more than one or two hold up after
+   step 6, use those; never pad. When
    the owner names a number, use theirs. Why: the first page of the source run
    held three, and the owner pushed back on all three. Record the commit the
    page describes. When it is written, open every location at its line and check
@@ -143,6 +159,29 @@ letting it cancel a finding would hide the thing the page is for.
 8. **Hand it over and end the turn.** The owner may take a while.
 9. **Answer the pushback** (below).
 10. **Record reactions** on the page, one line per item.
+
+## The drawn item
+
+Run `scripts/tour_draw.py` (beside this file) with `--tour-dir`, `--repo` set
+to the checkout, and `--commit` set to the commit the page describes. It reads
+every earlier page and walk, counts as shown the lines they quoted, picks a
+directory weighted by how much of it no page has shown yet, and picks an
+unshown line in it. The same commit and the same pages give the same draw.
+
+- **Start from the drawn line.** Walk the code that holds it (its function, or
+  its type, or the file's head for a top-level declaration) in the usual stops.
+- **Anchor it on what governs that code:** the owner's decisions about it, or,
+  with none, an agent's decision there (a spec row, a comment, the commit that
+  introduced it), labelled as the agent's.
+- **It stays on the page whatever you find.** Say what you found: drift, or
+  that the code does what the decision says. Ask whether that is what the
+  owner intended. Never draw again because the line looked dull; a redraw is
+  a choice, and the item exists so that this one is not yours.
+- **Quote the draw on the item**: the command and its whole output, so the
+  owner can rerun it.
+
+If the draw reports nothing left to draw, the whole codebase outside the
+exclusions has been shown; say so on the page.
 
 ## The page
 
@@ -206,9 +245,11 @@ what they want done. Why: in the source run, questions that hid an answer the
 author already knew and asked the owner to predict it read as being tested,
 which is the wrong seat for the person who owns the code's intent.
 
-If the decision is fully carried out and nothing is left for the owner to
-decide, the item says so in place of a question. A question found by looking
-around the item is a new item, picked by your own signals.
+A chosen item whose decision is fully carried out, with nothing left for the
+owner to decide, is dropped in step 2; choose another, or use fewer items. The
+drawn item is the exception: it stays, says what it found, and asks. A
+question found by looking around an item is a new item, picked by your own
+signals.
 
 ## Answering the pushback
 
@@ -255,4 +296,7 @@ author's assumptions.
 | Declining to show code because no decision anchors it | The owner cannot see the code they asked for | Showing code is always this skill's job; walk them through it |
 | Quiz questions with the answer held back | The owner feels tested | Ask intent or choice; show facts side by side |
 | A long, complete report | Nothing gets questioned | About three items, each with its walk; fewer only when no more hold up; the owner's number when they name one |
+| Spending a slot confirming a decision the last commit just carried out | Nothing new; the owner says so | Choose by drift; a confirmation takes no slot |
+| Redrawing, or dropping the drawn item as dull | The place you judged fine is never seen, which is what the draw prevents | Keep it; say what you found and ask |
+| Adding an exclusion yourself | A place no draw reaches, hidden by you | Exclusions are the owner's setting |
 | Committing the page | Local paths published | Keep it in the tour directory |
