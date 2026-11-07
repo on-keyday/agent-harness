@@ -99,15 +99,11 @@ function treeNodeProgress(t) {
   return { line, cleared: now.cleared, tooltip };
 }
 
-// watcherWaitsFor is the condition cell of a watcher row: await-idle and
-// await-progress share one registry. An idle watcher names its signal unless
-// it is the default quiet one, and shows its threshold when a quiet leg uses
-// it — the TUI modal's wording.
+// watcherWaitsFor is the condition cell of a watcher row. The wording is Go's
+// (cli.AwaitWatcherWaitsFor), carried on the snapshot row as waits_for, so the
+// page never respells it.
 function watcherWaitsFor(w) {
-  if (w.condition === "progress") return "progress";
-  if (!w.signal || w.signal === "quiet") return `idle ${w.threshold_ms}ms`;
-  if (w.signal === "any") return `idle any ${w.threshold_ms}ms`;
-  return `idle ${w.signal}`;
+  return w.waits_for;
 }
 
 // taskEventBanner is the command-output line for a task event, or null for a

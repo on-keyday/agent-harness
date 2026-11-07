@@ -617,9 +617,11 @@ test("task now-line: progress with age, title for a live terminal", () => {
 
 // The watcher panel lists both conditions out of one registry: a progress
 // watcher has no threshold and must not read as "idle 0ms".
-test("watcher panel: the condition cell", () => {
-  eq(page.watcherWaitsFor({ condition: "progress", threshold_ms: 0 }), "progress");
-  eq(page.watcherWaitsFor({ condition: "idle", threshold_ms: 2500 }), "idle 2500ms");
+// The cell's wording is Go's (cli.AwaitWatcherWaitsFor), carried on the row
+// as waits_for: the page prints it and never respells it.
+test("watcher panel: the condition cell is the bridge's waits_for", () => {
+  eq(page.watcherWaitsFor({ condition: "progress", threshold_ms: 0, waits_for: "progress" }), "progress");
+  eq(page.watcherWaitsFor({ condition: "idle", threshold_ms: 2500, waits_for: "idle quiet 2500ms" }), "idle quiet 2500ms");
 });
 
 // A progress write is routine, like a busy/idle edge: it refreshes the list
@@ -778,10 +780,11 @@ test("session await-idle --signal passes the signal and prints what the fire saw
 });
 
 test("watcher list and panel name a non-default signal", async () => {
-  const rows = [{ watcherId: 1, taskId: ID, sink: "reply", topic: "", by: "operator", condition: "idle", signal: "lifecycle" }];
+  const rows = [
+    { watcherId: 1, taskId: ID, sink: "reply", topic: "", by: "operator", condition: "idle", signal: "lifecycle", waitsFor: "idle lifecycle" },
+    { watcherId: 2, taskId: ID, sink: "reply", topic: "", by: "operator", condition: "idle", signal: "quiet", waitsFor: "idle quiet 2500ms" },
+  ];
   const il = await run("session await-idle ls", { awaitIdleList: rows });
-  assert.match(String(il.out), /#1 .*lifecycle/);
-  eq(page.watcherWaitsFor({ condition: "idle", threshold_ms: 2500, signal: "quiet" }), "idle 2500ms");
-  eq(page.watcherWaitsFor({ condition: "idle", threshold_ms: 2500, signal: "program" }), "idle program");
-  eq(page.watcherWaitsFor({ condition: "idle", threshold_ms: 2500, signal: "any" }), "idle any 2500ms");
+  assert.match(String(il.out), /#1 .*idle lifecycle/);
+  assert.match(String(il.out), /#2 .*idle quiet 2500ms/);
 });

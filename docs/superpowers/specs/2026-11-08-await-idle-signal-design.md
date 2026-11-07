@@ -160,15 +160,27 @@ hand-written on each surface. `go generate ./cli/verb` regenerates
 | TUI cmdline (`tui/dispatch.go:604`) | pass `a.Signal` to `DoAwaitIdle` |
 | TUI keys `w` / `W` (`tui/actions.go:336`) | unchanged: they arm the default signal (D15) |
 | TUI fire result (`tui/app.go:1189`) | the result line names the leg and the state, e.g. `session is idle (program done)`; quiet keeps today's `last output …` wording |
-| TUI watcher modal (`tui/idlewatchersmodal.go:38`, `watcherWaitsFor`) | `idle 2500ms` for quiet, `idle lifecycle` / `idle program` / `idle any 2500ms` otherwise |
+| TUI watcher modal (`tui/idlewatchersmodal.go:38`, `watcherWaitsFor`) | ~~`idle 2500ms` for quiet~~ — amended (A1): `idle quiet 2500ms`, `idle lifecycle`, `idle program`, `idle any 2500ms`, from `cli.AwaitWatcherWaitsFor` |
 | WebUI cmdline (`webui/static/cmdline.js:604-633`) | pass `signal`; print the new response fields; `watcherListText` (`:94`) shows the signal |
 | WebUI button / grid 🔔 / task sheet (`main.js:5029`, `:5748`, `:6186`) | unchanged: default signal (D15) |
-| WebUI watcher list (`main.js:1588`, `task_models.js:104` `watcherWaitsFor`) | same wording as the TUI modal |
-| WASM (`cmd/harness-webui-wasm/main.go:3822` `harnessAwaitIdle`, `:1929` snapshot rows, `:4972` list) | read `signal`; return `firedBy`, `lifecycle`, `programState`, `programKind`; rows carry `signal` |
+| WebUI watcher list (`main.js:1588`, `task_models.js:104` `watcherWaitsFor`) | same wording as the TUI modal — amended (A1): printed from the row's `waits_for`, not respelled in JS |
+| WASM (`cmd/harness-webui-wasm/main.go:3822` `harnessAwaitIdle`, `:1929` snapshot rows, `:4972` list) | read `signal`; return `firedBy`, `lifecycle`, `programState`, `programKind` and `firedDetail` (`cli.AwaitIdleFiredDetail`); rows carry `signal` and `waits_for` / `waitsFor` (A1) |
 | Agent skill (`runner/agentskills/supervising-workers/SKILL.md:240-262`, and its mirrors under `.claude/skills/` and `.agents/skills/`) | document `--signal`, the reported state replacing "snapshot once after the fire" for lifecycle/program, that a source which never reports leaves the watcher armed (D10; use `any` when unsure), and the payload's new keys. The payload description at `:251` also gains the existing `last_output_at_unix_ms` it leaves out |
 
 `surface-parity-checklist` is walked item by item in the plan; the table above
 is the minimum, not the walk.
+
+### Amendment A1 (implementation, 2026-11-08)
+
+The surface-parity walk found two defects in the table above. (1) Its item 31:
+the quiet signal was the one value left unnamed (`idle 2500ms`), and a hidden
+default reads as an absent field. Every watcher cell now names its signal.
+(2) Its item 32: the condition cell was spelled twice, in Go (TUI) and in JS
+(WebUI), and this change grew the grammar both had to follow. The wording is
+now one Go function, `cli.AwaitWatcherWaitsFor`, which the TUI calls and the
+wasm bridge puts on every watcher row; the page prints it. The fire's wording
+follows the same rule through `cli.AwaitIdleFiredDetail` (notify text, TUI
+result line, the bridge's `firedDetail`).
 
 ## Rollout and verification
 

@@ -3829,3 +3829,31 @@ omitted: 35 (README's one `harness-cli skill` line is about
          and its --help), 37/39 (no spec: a CLI-only addition, described in
          the commit)
 missed:  —
+
+### 2026-11-08 — `session await-idle --signal` and the fire's readings
+
+A request enum (`signal`), four response fields (`fired_by`, `lifecycle`,
+`program_state`, `program_kind`) and a watcher-row field (`signal`). Spec
+`2026-11-08-await-idle-signal-design.md`.
+
+done:    1 (`cli/verb/table.go` flag with OneOf; CLI/TUI/WebUI parse it), 7
+         (no new path: `session await-idle` already dispatches `awaitIdle`),
+         8 (`harness.awaitIdle` reads `signal`, returns the readings and
+         `firedDetail`), 12 (watcher `ls --json` carries `signal`), 23 (wasm
+         snapshot and list rows carry `signal` + `waits_for`), 24 (one path:
+         the arm; the same meaning under reply/notify/board; no env ladder),
+         25 (zero = quiet = the default, deliberately), 27 (one request
+         builder, `Client.AwaitIdle`, signal positional so the compiler found
+         all three callers), 28a (`grep AwaitIdleRequest{` = 1 site), 29/30
+         (TUI cmdresult and WebUI cmdline name the task and the leg/state),
+         31 (found: the quiet signal was the one value left unnamed in the
+         TUI modal and WebUI list — every cell names it now), 32 (found: the
+         condition cell was spelled in Go AND JS; now `cli.AwaitWatcherWaitsFor`
+         over the bridge, as `cli.AwaitIdleFiredDetail` is for the fire), 33
+         (OneOf refuses an unknown word on every cmdline; the bridge refuses
+         one too), 35 (README await-idle block), 36 (supervising-workers,
+         mirrored), 37 (spec Amendment A1 for 31/32), 39 (spec Surfaces table
+         walked row by row against the code)
+omitted: 4/6 (TUI `w`/`W`, WebUI button, grid bell, task sheet keep the
+         default signal — spec D15: choosing one is a command-line act)
+missed:  —

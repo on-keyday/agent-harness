@@ -1941,6 +1941,7 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					"threshold_ms": float64(w.ThresholdMs),
 					"condition":    cli.AwaitConditionString(w.Condition),
 					"signal":       cli.AwaitIdleSignalString(w.Signal),
+					"waits_for":    cli.AwaitWatcherWaitsFor(w),
 					// RAW, for the exec rows' reason: the page re-renders per poll.
 					"armed_unix_ms": float64(w.ArmedUnixMs),
 					"by":            cli.AwaitIdleWatcherBy(w),
@@ -5022,6 +5023,7 @@ func harnessAwaitIdleList(this js.Value, args []js.Value) any {
 					"originCid":   string(w.OriginCid),
 					"condition":   cli.AwaitConditionString(w.Condition),
 					"signal":      cli.AwaitIdleSignalString(w.Signal),
+					"waitsFor":    cli.AwaitWatcherWaitsFor(w),
 				})
 			}
 			resolve.Invoke(js.ValueOf(rows))

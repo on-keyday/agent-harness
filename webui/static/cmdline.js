@@ -96,7 +96,7 @@ async function watcherListText(ctx, b, condition) {
   const ws = (Array.isArray(all) ? all : []).filter((w) => w.condition === condition);
   if (!ws.length) return "(no armed watchers)";
   if (b.flags.json) return ws.map((w) => JSON.stringify(w)).join("\n");
-  return ws.map((w) => `#${w.watcherId}  ${String(w.taskId).slice(0, 8)}…  ${w.sink}${w.sink === "board" ? ` ${w.topic}` : ""}${w.signal && w.signal !== "quiet" ? `  ${w.signal}` : ""}  by ${w.by}`).join("\n");
+  return ws.map((w) => `#${w.watcherId}  ${String(w.taskId).slice(0, 8)}…  ${w.sink}${w.sink === "board" ? ` ${w.topic}` : ""}  ${w.waitsFor}  by ${w.by}`).join("\n");
 }
 
 // RUNCMD_DISPATCH comes from the verb declarations, via the wasm bridge — it

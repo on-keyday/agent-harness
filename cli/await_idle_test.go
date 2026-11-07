@@ -132,3 +132,25 @@ func TestAwaitIdleFiredDetail(t *testing.T) {
 		}
 	}
 }
+
+// One wording for the watcher's condition cell, every surface: the signal is
+// always named — quiet included, a value is never hidden for what it is — and
+// the threshold is shown wherever a quiet leg uses it.
+func TestAwaitWatcherWaitsFor(t *testing.T) {
+	for _, c := range []struct {
+		cond protocol.AwaitCondition
+		sig  protocol.AwaitIdleSignal
+		want string
+	}{
+		{protocol.AwaitCondition_Progress, protocol.AwaitIdleSignal_Quiet, "progress"},
+		{protocol.AwaitCondition_Idle, protocol.AwaitIdleSignal_Quiet, "idle quiet 2500ms"},
+		{protocol.AwaitCondition_Idle, protocol.AwaitIdleSignal_Lifecycle, "idle lifecycle"},
+		{protocol.AwaitCondition_Idle, protocol.AwaitIdleSignal_Program, "idle program"},
+		{protocol.AwaitCondition_Idle, protocol.AwaitIdleSignal_Any, "idle any 2500ms"},
+	} {
+		w := protocol.AwaitIdleWatcherInfo{Condition: c.cond, ThresholdMs: 2500, Signal: c.sig}
+		if got := AwaitWatcherWaitsFor(&w); got != c.want {
+			t.Errorf("AwaitWatcherWaitsFor(%v,%v) = %q, want %q", c.cond, c.sig, got, c.want)
+		}
+	}
+}

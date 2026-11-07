@@ -212,7 +212,7 @@ harness-cli session kill <id>     # terminate one (alias of `cancel`)
 harness-cli session snapshot <id> # PRINT the current screen as text (non-TTY; safe for you)
 harness-cli session send -enter <id> "…" # inject input + Enter (non-TTY co-write); flags BEFORE the id
 harness-cli session exec <id> <cmd>...  # RUN one shell cmd, wait, return combined output + exit code (POSIX-shell foreground)
-harness-cli session await-idle --topic chat.<your-short-id> <id>  # one-shot "tell me when its turn ends"
+harness-cli session await-idle --topic chat.<your-short-id> <id>  # one-shot "tell me when its turn ends" (--signal picks how: below)
 harness-cli session await-idle ls                # the watchers you have armed
 harness-cli session await-idle kill <watcher-id> # disarm one
 harness-cli await-progress --since <progress_at> --topic chat.<your-short-id> <id>  # one-shot "tell me its next stage" (any task kind)
@@ -248,7 +248,7 @@ spinner ~every 100ms, an idle prompt emits nothing at all. Two surfaces:
     as `agent wait`).
   - `--topic T`: replies `armed` immediately, with the `watcher_id` that
     `session await-idle kill` takes; on fire the server publishes
-    `{"kind":"session_idle","task":"<32-hex>","status":"fired"|"session_stopped"}`
+    `{"kind":"session_idle","task":"<32-hex>","last_output_at_unix_ms":N,"status":"fired"|"session_stopped","signal":…,"fired_by":…,"lifecycle":…,"program_state":…,"program_kind":…}`
     to T. THE agent pattern: arm with your own `chat.<short-id>`, end the
     turn, and the fire wakes you via the inbox hook — replaces snapshot
     polling when babysitting a worker session, but NOT a reply you already
@@ -256,9 +256,32 @@ spinner ~every 100ms, an idle prompt emits nothing at all. Two surfaces:
   - `--notify`: replies `armed` immediately; on fire the operator gets a
     notification. For "tell the human when it's done" (they may be away).
 
-An idle fire means "waiting for input" — turn finished, permission prompt,
-or a menu all look the same at the byte level. `snapshot` once after the
-fire to see which; that needs `exec_view`. **Arming the watcher itself needs
+**`--signal` picks what idle means.** `quiet` (the default) is the byte
+quiescence above. `lifecycle` fires when the agent hooks' state (`ls`
+`lifecycle=`) leaves `working`; `program` when the program's own OSC 7501
+report (`ls` `program=`) does; `any` on whichever of the three comes first.
+The two state signals fire within ~0.5s of the turn ending instead of
+threshold + tick. They count a state only if it came after the session's last
+input AND a `working` followed that input — so arming right after `session
+send` waits for the turn you started, not the previous one — or, when the
+input started nothing (text without Enter), once the session has been quiet
+for the threshold.
+
+Every fire, whatever the signal, reports `fired_by` (the leg that fired) and
+the `lifecycle`, `program_state` and `program_kind` the session showed — wire
+words, `""` when never reported. So a state-signal fire already tells you
+which "waiting for input" it found: `lifecycle=waiting` or
+`program_state=blocked` with `program_kind=permission|question` is a prompt
+waiting on a human; `idle` / `done` is a finished turn.
+
+A source that never reports leaves a `lifecycle` / `program` watcher armed
+until the session ends: an agent without the harness hooks, or any program on
+a Windows runner (no OSC 7501 there). Nothing refuses the arm. Use `any` when
+unsure, and `session await-idle ls` / `kill` for one left waiting.
+
+A `quiet` fire alone cannot tell them apart — turn finished, permission
+prompt, or a menu all look the same at the byte level; read the reported
+states, or `snapshot` once after the fire (that needs `exec_view`). **Arming the watcher itself needs
 no capability at all** — it reports `last_output_at`, which `ls` already gives
 you — except `--notify`, which needs `notify` because it reaches the operator's
 egress, and `--topic` on a topic outside your board reach, which needs
@@ -267,9 +290,12 @@ egress, and `--topic` on a topic outside your board reach, which needs
 
 **Do not arm it for a peer you asked to report back.** A skill-aware claude
 worker runs `agent send` *during* its turn, so its reply reaches you while the
-PTY is still emitting; the idle fire lands ~3s later and, per the paragraph
-above, cannot even say which kind of "waiting for input" it found. Two wakes
-for one event, the second one strictly weaker. If you armed one anyway and the
+PTY is still emitting; the idle fire lands ~3s later and adds nothing the
+reply did not say. Two wakes for one event, the second one strictly weaker.
+The state signals are worse here, not better: the agentboard wake is typed
+into the PTY by the runner, not through the server, so it does not count as
+input, and a `lifecycle` / `program` watcher armed right after `agent send`
+can fire at once on the previous turn's state. If you armed one anyway and the
 reply arrived first, `harness-cli session await-idle kill <watcher_id>`
 disarms it — nothing is published for a killed watcher. `session await-idle ls`
 shows what you have armed (yours only; the operator sees everyone's). A
@@ -280,8 +306,9 @@ Arm it when **no reply is coming**:
 - the peer has no agentboard path — `agent=bash`, an `agent=claude` without
   `+skills`, or any non-claude peer that must poll its own inbox;
 - you drove the session by **keystrokes** (`session send`) rather than by
-  message — a `/clear`, a permission answer, a menu selection. Quiescence is
-  the only completion edge that exists there;
+  message — a `/clear`, a permission answer, a menu selection. No reply
+  exists there; quiescence, or for an agent that reports them the state
+  signals, is the completion edge;
 - `--notify`, to tell the human.
 
 `await-idle` is the completion signal for the keyboard channel. The agentboard

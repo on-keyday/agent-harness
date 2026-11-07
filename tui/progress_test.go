@@ -70,7 +70,7 @@ func TestIdleWatcherRow_Condition(t *testing.T) {
 	now := time.Now()
 	idle := idleWatcherRow(&protocol.AwaitIdleWatcherInfo{WatcherId: 1, Condition: protocol.AwaitCondition_Idle, ThresholdMs: 2500}, now)
 	prog := idleWatcherRow(&protocol.AwaitIdleWatcherInfo{WatcherId: 2, Condition: protocol.AwaitCondition_Progress}, now)
-	if idle[3] != "idle 2500ms" || prog[3] != "progress" {
+	if idle[3] != "idle quiet 2500ms" || prog[3] != "progress" {
 		t.Errorf("condition cells = %q / %q", idle[3], prog[3])
 	}
 }

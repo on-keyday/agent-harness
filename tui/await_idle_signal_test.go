@@ -12,7 +12,7 @@ func TestWatcherWaitsFor_Signal(t *testing.T) {
 		sig  protocol.AwaitIdleSignal
 		want string
 	}{
-		{protocol.AwaitIdleSignal_Quiet, "idle 2500ms"},
+		{protocol.AwaitIdleSignal_Quiet, "idle quiet 2500ms"},
 		{protocol.AwaitIdleSignal_Lifecycle, "idle lifecycle"},
 		{protocol.AwaitIdleSignal_Program, "idle program"},
 		{protocol.AwaitIdleSignal_Any, "idle any 2500ms"},

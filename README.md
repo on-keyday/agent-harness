@@ -321,7 +321,12 @@ bin/harness-cli session kill   <task-id>
 # all of them. A killed one delivers nothing, and a caller still blocked on it
 # gets "cancelled" (exit 4). TUI: `I` (lists await-idle and await-progress
 # watchers, each with its condition); WebUI: the Connections tab.
-bin/harness-cli session await-idle <task-id> [--topic T | --notify]
+# --signal picks what "quiet" means: quiet (PTY output, the default),
+# lifecycle (the agent hooks' state leaves working), program (the program's
+# OSC 7501 state does), any (first of the three). Every fire reports fired_by
+# and the lifecycle / program state it saw, so a finished turn and a permission
+# prompt are told apart without a snapshot.
+bin/harness-cli session await-idle <task-id> [--topic T | --notify] [--signal quiet|lifecycle|program|any]
 bin/harness-cli session await-idle ls [--task <task-id>] [--json]
 bin/harness-cli session await-idle kill <watcher-id>
 

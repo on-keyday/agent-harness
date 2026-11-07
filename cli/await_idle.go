@@ -222,6 +222,21 @@ func AwaitIdleFiredDetail(firedBy protocol.AwaitIdleSignal, lc protocol.Lifecycl
 	return ""
 }
 
+// AwaitWatcherWaitsFor is a watcher row's condition cell, the one wording the
+// TUI modal, the WebUI panel and the WebUI command line print: "progress", or
+// "idle <signal>" with the threshold wherever a quiet leg uses it. The signal
+// is named even when it is the default — a hidden value reads as an absent one.
+func AwaitWatcherWaitsFor(w *protocol.AwaitIdleWatcherInfo) string {
+	if w.Condition == protocol.AwaitCondition_Progress {
+		return "progress"
+	}
+	s := "idle " + AwaitIdleSignalString(w.Signal)
+	if w.Signal == protocol.AwaitIdleSignal_Quiet || w.Signal == protocol.AwaitIdleSignal_Any {
+		s += fmt.Sprintf(" %dms", w.ThresholdMs)
+	}
+	return s
+}
+
 // FilterWatchers keeps the rows of one condition: the registry, and so
 // await_list, is shared by await-idle and await-progress, and each verb's
 // `ls` shows its own.
