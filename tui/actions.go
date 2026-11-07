@@ -349,7 +349,9 @@ func (a *App) onAwaitIdle(msg tea.KeyMsg) (tea.Cmd, bool) {
 	} else {
 		a.cmdresult.Append(fmt.Sprintf("await-idle %s: watching (result lands here when the session goes idle)…", shortTaskID(taskID)))
 	}
-	return DoAwaitIdle(a.appCtx, a.client, taskID, 0, sink, ""), true
+	// The one-key arm keeps the default signal; choosing one is a command-line
+	// act (await-idle signal spec D15).
+	return DoAwaitIdle(a.appCtx, a.client, taskID, 0, sink, "", protocol.AwaitIdleSignal_Quiet), true
 }
 
 // `m` arms an await-progress watcher on the selected task: the fire lands as a

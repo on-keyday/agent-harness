@@ -14,13 +14,14 @@ import (
 )
 
 // AwaitIdle sends an AwaitIdle TaskControl request over an existing *Client.
-// sink=Reply LONG-POLLS: the server defers the response until the session's
-// PTY output has been quiescent for the threshold (or the session stops), so
-// the call blocks until then — bound it with ctx if needed. sink=Notify/Board
+// signal picks what idle means (quiet = PTY output quiescent for the
+// threshold; lifecycle / program / any: see protocol.AwaitIdleSignal).
+// sink=Reply LONG-POLLS: the server defers the response until the watcher
+// fires (or the session stops), so the call blocks until then — bound it with ctx if needed. sink=Notify/Board
 // return immediately with Status_Armed and the server delivers the fire
 // out-of-band. Method form: long-lived consumers (TUI/WebUI) call this on
 // their held client.
-func (c *Client) AwaitIdle(ctx context.Context, taskIDHex string, thresholdMs uint32, sink protocol.AwaitSink, topic string) (*protocol.AwaitIdleResponse, error) {
+func (c *Client) AwaitIdle(ctx context.Context, taskIDHex string, thresholdMs uint32, sink protocol.AwaitSink, topic string, signal protocol.AwaitIdleSignal) (*protocol.AwaitIdleResponse, error) {
 	raw, err := hex.DecodeString(taskIDHex)
 	if err != nil {
 		return nil, fmt.Errorf("invalid task id %q: %w", taskIDHex, err)
@@ -31,7 +32,7 @@ func (c *Client) AwaitIdle(ctx context.Context, taskIDHex string, thresholdMs ui
 	var tid protocol.TaskID
 	copy(tid.Id[:], raw)
 	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_AwaitIdle}}
-	ar := protocol.AwaitIdleRequest{TaskId: tid, ThresholdMs: thresholdMs, Sink: sink}
+	ar := protocol.AwaitIdleRequest{TaskId: tid, ThresholdMs: thresholdMs, Sink: sink, Signal: signal}
 	ar.SetTopic([]byte(topic))
 	req.SetAwaitIdle(ar)
 	resp, err := c.RoundTripTaskControl(ctx, req)
@@ -255,7 +256,7 @@ func AwaitIdleWatcherLines(ws []protocol.AwaitIdleWatcherInfo) []string {
 		if w.Sink == protocol.AwaitSink_Board {
 			sink += " topic=" + string(w.Topic)
 		}
-		wait := fmt.Sprintf("threshold=%dms", w.ThresholdMs)
+		wait := fmt.Sprintf("signal=%s threshold=%dms", AwaitIdleSignalString(w.Signal), w.ThresholdMs)
 		if w.Condition == protocol.AwaitCondition_Progress {
 			wait = "on=progress"
 		}
@@ -283,6 +284,7 @@ func AwaitIdleWatcherJSONLine(w *protocol.AwaitIdleWatcherInfo) string {
 		OriginKind  string `json:"origin_kind"`
 		OriginCID   string `json:"origin_cid"`
 		Condition   string `json:"condition"`
+		Signal      string `json:"signal"`
 	}{
 		WatcherID:   w.WatcherId,
 		TaskID:      hex.EncodeToString(w.TaskId.Id[:]),
@@ -294,6 +296,7 @@ func AwaitIdleWatcherJSONLine(w *protocol.AwaitIdleWatcherInfo) string {
 		OriginKind:  w.OriginKind.String(),
 		OriginCID:   string(w.OriginCid),
 		Condition:   AwaitConditionString(w.Condition),
+		Signal:      AwaitIdleSignalString(w.Signal),
 	}
 	b, err := json.Marshal(row)
 	if err != nil {

@@ -98,3 +98,18 @@ func TestAwaitIdleSignalString(t *testing.T) {
 		}
 	}
 }
+
+func TestAwaitIdleWatcherLines_Signal(t *testing.T) {
+	w := protocol.AwaitIdleWatcherInfo{WatcherId: 4, Sink: protocol.AwaitSink_Reply, ThresholdMs: 2500,
+		Condition: protocol.AwaitCondition_Idle, Signal: protocol.AwaitIdleSignal_Program}
+	if lines := AwaitIdleWatcherLines([]protocol.AwaitIdleWatcherInfo{w}); !strings.Contains(lines[0], "signal=program") {
+		t.Fatalf("text row = %q, want signal=program", lines[0])
+	}
+	var row map[string]any
+	if err := json.Unmarshal([]byte(AwaitIdleWatcherJSONLine(&w)), &row); err != nil {
+		t.Fatal(err)
+	}
+	if row["signal"] != "program" {
+		t.Fatalf("json row signal = %v, want program", row["signal"])
+	}
+}

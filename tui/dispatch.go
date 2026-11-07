@@ -607,6 +607,11 @@ func (h tuiVerbs) SessionAwaitIdle(v verb.SessionAction) tea.Cmd {
 	if !ok {
 		return nil
 	}
+	signal, err := cli.ParseAwaitIdleSignal(v.Signal)
+	if err != nil {
+		a.cmdresult.Append("await-idle: " + err.Error())
+		return nil
+	}
 	sink := protocol.AwaitSink_Reply
 	switch {
 	case v.Notify:
@@ -620,7 +625,7 @@ func (h tuiVerbs) SessionAwaitIdle(v verb.SessionAction) tea.Cmd {
 	// appCtx, not a round-trip timeout: the reply sink long-polls until the
 	// session actually goes idle. The cmd goroutine carries it; the UI stays
 	// interactive meanwhile.
-	return DoAwaitIdle(a.appCtx, a.client, full, uint32(v.ThresholdMs), sink, v.Topic)
+	return DoAwaitIdle(a.appCtx, a.client, full, uint32(v.ThresholdMs), sink, v.Topic, signal)
 }
 
 func (h tuiVerbs) SessionAwaitIdleLs(v verb.SessionAction) tea.Cmd {

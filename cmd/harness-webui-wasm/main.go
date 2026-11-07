@@ -3852,7 +3852,7 @@ func harnessAwaitIdle(this js.Value, args []js.Value) any {
 			}
 			// rootCtx, not a round-trip timeout: the reply sink's response is
 			// deferred until the session actually goes idle.
-			resp, err := c.AwaitIdle(rootCtx, taskID, thresholdMs, sink, topic)
+			resp, err := c.AwaitIdle(rootCtx, taskID, thresholdMs, sink, topic, protocol.AwaitIdleSignal_Quiet)
 			if err != nil {
 				rejectErr(reject, fmt.Errorf("awaitIdle: %w", err))
 				return

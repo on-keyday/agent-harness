@@ -2875,7 +2875,8 @@ var Verbs = []VerbSpec{
 			{Surface: WebUI, At: "webui/index.html#await-idle-btn"},
 		},
 		Notes: []string{
-			"one-shot: fire when the session's PTY output goes quiescent.",
+			"one-shot: fire when the session goes idle. --signal picks the reading: quiet (PTY output quiescent for --threshold-ms, the default), lifecycle (the agent hooks' state leaves working), program (the program's OSC 7501 state leaves working), any (the first of the three)",
+			"the fire reports fired_by and the lifecycle/program state it saw, so a turn end and a permission prompt need no snapshot; a source that never reports (no hooks, a Windows runner) leaves a lifecycle/program watcher armed — use any when unsure",
 			"default long-polls; --notify/--topic arm a server-side sink and return. Every arm prints its watcher_id; see `session await-idle ls` / `kill`",
 		},
 		Action: "SessionAction",
@@ -2888,8 +2889,11 @@ var Verbs = []VerbSpec{
 			{Name: "threshold-ms", Type: FlagUint, Default: uint(0), Field: "ThresholdMs", Help: "quiescence threshold in ms (0 = server default)"},
 			{Name: "notify", Type: FlagBool, Default: false, Field: "Notify", Help: "fire via the operator-notification egress"},
 			{Name: "topic", Type: FlagString, Default: "", Field: "Topic", Help: "fire via an agentboard publish to this topic"},
+			{Name: "signal", Type: FlagString, Default: "quiet", Field: "Signal",
+				OneOf: []string{"quiet", "lifecycle", "program", "any"},
+				Help:  "what to wait for: quiet (PTY output, default), lifecycle (agent hooks), program (OSC 7501), any (first of the three)"},
 		},
-		Examples: []string{"session await-idle aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+		Examples: []string{"session await-idle aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "session await-idle --signal any aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 	},
 	{
 		Path:          []string{"session", "await-idle", "ls"},

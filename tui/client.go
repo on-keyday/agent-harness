@@ -449,9 +449,9 @@ type AwaitIdleResultMsg struct {
 // DoAwaitIdle arms a one-shot idle watcher via the persistent client. ctx
 // must be the long-lived app context, NOT a 10s round-trip timeout: the
 // reply sink's response is deferred until the session actually goes idle.
-func DoAwaitIdle(ctx context.Context, c *cli.Client, taskID string, thresholdMs uint32, sink protocol.AwaitSink, topic string) tea.Cmd {
+func DoAwaitIdle(ctx context.Context, c *cli.Client, taskID string, thresholdMs uint32, sink protocol.AwaitSink, topic string, signal protocol.AwaitIdleSignal) tea.Cmd {
 	return func() tea.Msg {
-		resp, err := c.AwaitIdle(ctx, taskID, thresholdMs, sink, topic)
+		resp, err := c.AwaitIdle(ctx, taskID, thresholdMs, sink, topic, signal)
 		if err != nil {
 			return AwaitIdleResultMsg{TaskID: taskID, Err: err}
 		}

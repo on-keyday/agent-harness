@@ -673,6 +673,8 @@ type SessionAction struct {
 	Notify bool
 	// fire via an agentboard publish to this topic
 	Topic string
+	// what to wait for: quiet (PTY output, default), lifecycle (agent hooks), program (OSC 7501), any (fir…
+	Signal string
 	// only watchers on this task id
 	TaskFilter string
 	WatcherIDs []uint64
@@ -3465,6 +3467,7 @@ func init() {
 			a.ThresholdMs = uintOf(b.Flags["threshold-ms"])
 			a.Notify = b.Bool("notify")
 			a.Topic = b.Str("topic")
+			a.Signal = b.Str("signal")
 			if len(b.Args) > 0 {
 				a.TaskID = b.Args[0]
 			}
@@ -3476,6 +3479,7 @@ func init() {
 			a.ThresholdMs = uintOf(b.Flags["threshold-ms"])
 			a.Notify = b.Bool("notify")
 			a.Topic = b.Str("topic")
+			a.Signal = b.Str("signal")
 			if len(b.Args) > 0 {
 				a.TaskID = b.Args[0]
 			}
@@ -3487,6 +3491,7 @@ func init() {
 			a.ThresholdMs = uintOf(b.Flags["threshold-ms"])
 			a.Notify = b.Bool("notify")
 			a.Topic = b.Str("topic")
+			a.Signal = b.Str("signal")
 			if len(b.Args) > 0 {
 				a.TaskID = b.Args[0]
 			}

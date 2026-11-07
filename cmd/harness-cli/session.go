@@ -686,6 +686,10 @@ func runSessionAwaitIdleWith(cid objproto.ConnectionID, a verb.SessionAction) er
 	case a.Topic != "":
 		sink = protocol.AwaitSink_Board
 	}
+	signal, err := cli.ParseAwaitIdleSignal(a.Signal)
+	if err != nil {
+		return err
+	}
 	ctx := context.Background()
 	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)
 	if err != nil {
@@ -693,14 +697,20 @@ func runSessionAwaitIdleWith(cid objproto.ConnectionID, a verb.SessionAction) er
 	}
 	defer c.Close()
 
-	resp, err := c.AwaitIdle(ctx, taskIDHex, uint32(*thresholdMs), sink, *topic)
+	resp, err := c.AwaitIdle(ctx, taskIDHex, uint32(*thresholdMs), sink, *topic, signal)
 	if err != nil {
 		return err
 	}
+	// fired_by names the leg that fired; the three readings are what the
+	// session showed at decision time, whatever the signal.
 	_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
 		"status":         cli.AwaitIdleStatusString(resp.Status),
 		"last_output_at": resp.LastOutputAt,
 		"watcher_id":     resp.WatcherId,
+		"fired_by":       cli.AwaitIdleSignalString(resp.FiredBy),
+		"lifecycle":      cli.LifecycleWord(resp.Lifecycle),
+		"program_state":  cli.ProgramWord(resp.ProgramState),
+		"program_kind":   cli.ProgramKindWord(resp.ProgramKind),
 	})
 	switch resp.Status {
 	case protocol.AwaitIdleStatus_Fired, protocol.AwaitIdleStatus_Armed:
