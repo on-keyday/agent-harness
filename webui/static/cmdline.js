@@ -96,7 +96,7 @@ async function watcherListText(ctx, b, condition) {
   const ws = (Array.isArray(all) ? all : []).filter((w) => w.condition === condition);
   if (!ws.length) return "(no armed watchers)";
   if (b.flags.json) return ws.map((w) => JSON.stringify(w)).join("\n");
-  return ws.map((w) => `#${w.watcherId}  ${String(w.taskId).slice(0, 8)}…  ${w.sink}${w.sink === "board" ? ` ${w.topic}` : ""}  by ${w.by}`).join("\n");
+  return ws.map((w) => `#${w.watcherId}  ${String(w.taskId).slice(0, 8)}…  ${w.sink}${w.sink === "board" ? ` ${w.topic}` : ""}${w.signal && w.signal !== "quiet" ? `  ${w.signal}` : ""}  by ${w.by}`).join("\n");
 }
 
 // RUNCMD_DISPATCH comes from the verb declarations, via the wasm bridge — it
@@ -627,9 +627,11 @@ async function runVerbCommandDispatch(tokens, ctx) {
         if (sink === "reply") ctx.echo("await-idle: waiting for the session to go idle…");
         const r = await ctx.harness.awaitIdle({
           taskId: b.args[0], thresholdMs: b.flags["threshold-ms"] || 0,
-          sink, topic: b.flags.topic || undefined,
+          sink, topic: b.flags.topic || undefined, signal: b.flags.signal || "quiet",
         });
-        out = `await-idle ${b.args[0].slice(0, 12)}: ${r.status}${r.watcherId ? ` (watcher ${r.watcherId})` : ""}`;
+        // firedDetail names the leg and state a lifecycle/program fire saw.
+        const saw = r.status === "fired" && r.firedDetail ? ` (${r.firedDetail})` : "";
+        out = `await-idle ${b.args[0].slice(0, 12)}: ${r.status}${saw}${r.watcherId ? ` (watcher ${r.watcherId})` : ""}`;
         break;
       }
       if (tokens[1] !== "stream") {

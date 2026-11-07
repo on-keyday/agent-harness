@@ -100,9 +100,14 @@ function treeNodeProgress(t) {
 }
 
 // watcherWaitsFor is the condition cell of a watcher row: await-idle and
-// await-progress share one registry, and only idle watchers have a threshold.
+// await-progress share one registry. An idle watcher names its signal unless
+// it is the default quiet one, and shows its threshold when a quiet leg uses
+// it — the TUI modal's wording.
 function watcherWaitsFor(w) {
-  return w.condition === "progress" ? "progress" : `idle ${w.threshold_ms}ms`;
+  if (w.condition === "progress") return "progress";
+  if (!w.signal || w.signal === "quiet") return `idle ${w.threshold_ms}ms`;
+  if (w.signal === "any") return `idle any ${w.threshold_ms}ms`;
+  return `idle ${w.signal}`;
 }
 
 // taskEventBanner is the command-output line for a task event, or null for a

@@ -1940,6 +1940,7 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					"topic":        string(w.Topic),
 					"threshold_ms": float64(w.ThresholdMs),
 					"condition":    cli.AwaitConditionString(w.Condition),
+					"signal":       cli.AwaitIdleSignalString(w.Signal),
 					// RAW, for the exec rows' reason: the page re-renders per poll.
 					"armed_unix_ms": float64(w.ArmedUnixMs),
 					"by":            cli.AwaitIdleWatcherBy(w),
@@ -3817,8 +3818,12 @@ func harnessSendNotification(this js.Value, args []js.Value) any {
 // UI handler unless that is the point); for notify/board sinks it resolves
 // immediately with status "armed".
 //
-//	harness.awaitIdle({taskId: "...", thresholdMs?: N, sink?: "reply"|"notify"|"board", topic?: "..."})
-//	  -> Promise<{status: string, lastOutputAt: number, watcherId: number}>
+//	harness.awaitIdle({taskId: "...", thresholdMs?: N, sink?: "reply"|"notify"|"board", topic?: "...",
+//	                   signal?: "quiet"|"lifecycle"|"program"|"any"})
+//	  -> Promise<{status, lastOutputAt, watcherId, firedBy, lifecycle, programState, programKind, firedDetail}>
+//
+// firedDetail is cli.AwaitIdleFiredDetail ("program done", "" for the quiet
+// leg), so the page never respells it.
 func harnessAwaitIdle(this js.Value, args []js.Value) any {
 	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
 		resolve := promiseArgs[0]
@@ -3850,9 +3855,18 @@ func harnessAwaitIdle(this js.Value, args []js.Value) any {
 					topic = t.String()
 				}
 			}
+			word := ""
+			if s := opts.Get("signal"); s.Type() == js.TypeString {
+				word = s.String()
+			}
+			signal, err := cli.ParseAwaitIdleSignal(word)
+			if err != nil {
+				rejectErr(reject, fmt.Errorf("awaitIdle: %w", err))
+				return
+			}
 			// rootCtx, not a round-trip timeout: the reply sink's response is
 			// deferred until the session actually goes idle.
-			resp, err := c.AwaitIdle(rootCtx, taskID, thresholdMs, sink, topic, protocol.AwaitIdleSignal_Quiet)
+			resp, err := c.AwaitIdle(rootCtx, taskID, thresholdMs, sink, topic, signal)
 			if err != nil {
 				rejectErr(reject, fmt.Errorf("awaitIdle: %w", err))
 				return
@@ -3861,6 +3875,11 @@ func harnessAwaitIdle(this js.Value, args []js.Value) any {
 				"status":       cli.AwaitIdleStatusString(resp.Status),
 				"lastOutputAt": float64(resp.LastOutputAt),
 				"watcherId":    float64(resp.WatcherId),
+				"firedBy":      cli.AwaitIdleSignalString(resp.FiredBy),
+				"lifecycle":    cli.LifecycleWord(resp.Lifecycle),
+				"programState": cli.ProgramWord(resp.ProgramState),
+				"programKind":  cli.ProgramKindWord(resp.ProgramKind),
+				"firedDetail":  cli.AwaitIdleFiredDetail(resp.FiredBy, resp.Lifecycle, resp.ProgramState, resp.ProgramKind),
 			}))
 		}()
 		return nil
@@ -5002,6 +5021,7 @@ func harnessAwaitIdleList(this js.Value, args []js.Value) any {
 					"originKind":  w.OriginKind.String(),
 					"originCid":   string(w.OriginCid),
 					"condition":   cli.AwaitConditionString(w.Condition),
+					"signal":      cli.AwaitIdleSignalString(w.Signal),
 				})
 			}
 			resolve.Invoke(js.ValueOf(rows))

@@ -761,3 +761,27 @@ test("caps what-if dispatches its report", async () => {
   assert.equal(r.err, undefined);
   eq(r.calls, [["capsWhatIfText", { taskId: ID, caps: "cancel", cascade: true }]]);
 });
+
+// await-idle --signal reaches the bridge, and the fire line names the leg and
+// state the bridge reported (await-idle signal spec D8).
+test("session await-idle --signal passes the signal and prints what the fire saw", async () => {
+  const fired = { status: "fired", lastOutputAt: 1, watcherId: 5, firedBy: "program", firedDetail: "program done" };
+  const a = await run(`session await-idle --signal any ${ID}`, { awaitIdle: fired });
+  const arm = named(a.calls, "awaitIdle");
+  eq(arm.length, 1);
+  eq(arm[0][1].signal, "any");
+  assert.match(String(a.out), /fired \(program done\)/);
+  const d = await run(`session await-idle ${ID}`, { awaitIdle: { status: "fired", watcherId: 6, firedDetail: "" } });
+  eq(named(d.calls, "awaitIdle")[0][1].signal, "quiet");
+  const bad = await run(`session await-idle --signal bogus ${ID}`);
+  assert.ok(bad.err, "an unknown signal must be refused");
+});
+
+test("watcher list and panel name a non-default signal", async () => {
+  const rows = [{ watcherId: 1, taskId: ID, sink: "reply", topic: "", by: "operator", condition: "idle", signal: "lifecycle" }];
+  const il = await run("session await-idle ls", { awaitIdleList: rows });
+  assert.match(String(il.out), /#1 .*lifecycle/);
+  eq(page.watcherWaitsFor({ condition: "idle", threshold_ms: 2500, signal: "quiet" }), "idle 2500ms");
+  eq(page.watcherWaitsFor({ condition: "idle", threshold_ms: 2500, signal: "program" }), "idle program");
+  eq(page.watcherWaitsFor({ condition: "idle", threshold_ms: 2500, signal: "any" }), "idle any 2500ms");
+});
