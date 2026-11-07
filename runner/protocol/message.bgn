@@ -2584,11 +2584,18 @@ format AwaitIdleRequest:
     sink :AwaitSink
     topic_len :u16            # sink=board: agentboard topic to publish to
     topic :[topic_len]u8      # ignored for other sinks
+    signal :AwaitIdleSignal   # which reading to wait on; quiet = the above
+                              # byte quiescence. See AwaitIdleSignal.
 
 format AwaitIdleResponse:
     status :AwaitIdleStatus
     last_output_at :u64       # unix nanos at decision time (0 if none)
     watcher_id :u64           # the registry id; 0 for not_found / bad_request
+    fired_by :AwaitIdleSignal # status=fired: the leg that fired (quiet for a
+                              # quiet watcher); quiet for every other status
+    lifecycle :LifecycleState # the readings at decision time, whatever the
+    program_state :ProgramState # signal: the waiter tells a turn end from a
+    program_kind :ProgramKind # permission prompt without a snapshot
 
 format AwaitIdleListRequest:
     task_id :TaskID           # all-zero = every watcher visible to the caller
@@ -2617,6 +2624,7 @@ format AwaitIdleWatcherInfo:
     origin_cid     :[origin_cid_len]u8  # ConnectionID canonical String()
     condition      :AwaitCondition    # which edge this watcher waits for;
                                       # threshold_ms is 0 for progress
+    signal         :AwaitIdleSignal   # the armed signal; quiet for progress
 
 format AwaitIdleKillRequest:
     watcher_id :u64
@@ -2635,6 +2643,18 @@ enum AwaitCondition:
     :u8
     idle = 0
     progress = 1
+
+# Which reading an await_idle watcher waits on. lifecycle and program fire when
+# their state leaves `working`, counting only a state reported after the
+# session's last input (and its start) that followed a `working`, or one left
+# standing by threshold_ms of silence since that input. See
+# docs/superpowers/specs/2026-11-08-await-idle-signal-design.md (D6, D18).
+enum AwaitIdleSignal:
+    :u8
+    quiet = 0        # PTY output quiescence (the default)
+    lifecycle = 1    # the agent hooks' LifecycleState
+    program = 2      # the OSC 7501 root record (ProgramState)
+    any = 3          # whichever leg is satisfied first: program, lifecycle, quiet
 
 # progress_set: a task writes its OWN self-reported progress line (which task,
 # which stage). The target is the connection's principal; nothing in the

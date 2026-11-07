@@ -173,6 +173,36 @@ func AwaitIdleSinkString(s protocol.AwaitSink) string {
 	}
 }
 
+// awaitIdleSignalWords is the schema's word for each signal, the one spelling
+// the flag, the JSON output, the board payload and the watcher lists share.
+var awaitIdleSignalWords = map[protocol.AwaitIdleSignal]string{
+	protocol.AwaitIdleSignal_Quiet:     "quiet",
+	protocol.AwaitIdleSignal_Lifecycle: "lifecycle",
+	protocol.AwaitIdleSignal_Program:   "program",
+	protocol.AwaitIdleSignal_Any:       "any",
+}
+
+// AwaitIdleSignalString is the signal's word, unknown(N) outside the enum.
+func AwaitIdleSignalString(s protocol.AwaitIdleSignal) string {
+	if w, ok := awaitIdleSignalWords[s]; ok {
+		return w
+	}
+	return fmt.Sprintf("unknown(%d)", int(s))
+}
+
+// ParseAwaitIdleSignal reads a --signal word; "" is the default, quiet.
+func ParseAwaitIdleSignal(word string) (protocol.AwaitIdleSignal, error) {
+	if word == "" {
+		return protocol.AwaitIdleSignal_Quiet, nil
+	}
+	for s, w := range awaitIdleSignalWords {
+		if w == word {
+			return s, nil
+		}
+	}
+	return 0, fmt.Errorf("unknown signal %q (want quiet, lifecycle, program or any)", word)
+}
+
 // FilterWatchers keeps the rows of one condition: the registry, and so
 // await_list, is shared by await-idle and await-progress, and each verb's
 // `ls` shows its own.

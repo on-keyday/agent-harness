@@ -66,3 +66,35 @@ func TestAwaitIdleWatcherJSONLine_CarriesFullIDs(t *testing.T) {
 		t.Fatalf("operator requester = %v, want empty string", got["requester"])
 	}
 }
+
+func TestParseAwaitIdleSignal(t *testing.T) {
+	for in, want := range map[string]protocol.AwaitIdleSignal{
+		"":          protocol.AwaitIdleSignal_Quiet,
+		"quiet":     protocol.AwaitIdleSignal_Quiet,
+		"lifecycle": protocol.AwaitIdleSignal_Lifecycle,
+		"program":   protocol.AwaitIdleSignal_Program,
+		"any":       protocol.AwaitIdleSignal_Any,
+	} {
+		got, err := ParseAwaitIdleSignal(in)
+		if err != nil || got != want {
+			t.Errorf("ParseAwaitIdleSignal(%q) = %v, %v; want %v", in, got, err, want)
+		}
+	}
+	if _, err := ParseAwaitIdleSignal("busy"); err == nil {
+		t.Error(`ParseAwaitIdleSignal("busy") accepted an unknown word`)
+	}
+}
+
+func TestAwaitIdleSignalString(t *testing.T) {
+	for s, want := range map[protocol.AwaitIdleSignal]string{
+		protocol.AwaitIdleSignal_Quiet:     "quiet",
+		protocol.AwaitIdleSignal_Lifecycle: "lifecycle",
+		protocol.AwaitIdleSignal_Program:   "program",
+		protocol.AwaitIdleSignal_Any:       "any",
+		protocol.AwaitIdleSignal(9):        "unknown(9)",
+	} {
+		if got := AwaitIdleSignalString(s); got != want {
+			t.Errorf("AwaitIdleSignalString(%d) = %q, want %q", s, got, want)
+		}
+	}
+}
