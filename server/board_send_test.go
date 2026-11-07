@@ -98,7 +98,7 @@ func TestBoardSendAndWakeNeedBoardSend(t *testing.T) {
 
 func TestFireIdleBoardStampsServer(t *testing.T) {
 	h, _ := newBoardTestHandler(t)
-	h.fireIdleBoard("chat.1d1e0000", "00", protocol.TaskID{}, false, 0)
+	h.fireIdleBoard("chat.1d1e0000", "00", protocol.TaskID{}, protocol.AwaitIdleSignal_Quiet, IdleFire{})
 	rows, _ := h.Board.ListRetained("chat.1d1e0000")
 	if len(rows) != 1 || rows[0].SenderKind != protocol.SenderKind_Server {
 		t.Fatalf("rows = %+v, want one server-kind message", rows)

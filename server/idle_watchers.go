@@ -28,9 +28,12 @@ type idleWatcher struct {
 	// for condition=progress, called only by the path that won the remove.
 	fireProgress func(status protocol.AwaitProgressStatus, text string, at int64)
 	sink         protocol.AwaitSink
-	topic        string
-	threshold    time.Duration
-	armedAt      time.Time
+	// signal is the reading an idle-condition watcher waits on; quiet for
+	// progress watchers.
+	signal    protocol.AwaitIdleSignal
+	topic     string
+	threshold time.Duration
+	armedAt   time.Time
 	// requester is the arming principal, resolved at arm time because the
 	// board/notify sinks outlive the arming connection. Zero = operator.
 	requester  protocol.TaskID
@@ -153,6 +156,7 @@ func idleWatcherInfo(w *idleWatcher) protocol.AwaitIdleWatcherInfo {
 		Requester:   w.requester,
 		OriginKind:  w.clientKind,
 		Condition:   w.condition,
+		Signal:      w.signal,
 	}
 	if raw, err := hex.DecodeString(w.taskIDHex); err == nil && len(raw) == 16 {
 		copy(info.TaskId.Id[:], raw)

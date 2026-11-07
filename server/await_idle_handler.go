@@ -2,12 +2,14 @@ package server
 
 import (
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/appwire"
+	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -27,7 +29,8 @@ const defaultAwaitIdleThreshold = 2500 * time.Millisecond
 // see the task at all. Gating only the edge-triggered path made the efficient
 // route cost strictly more authority than polling for the same answer, which
 // protects nothing and taxes the cheap path. The scope check below is the real
-// gate: a session outside the caller's reach reports NotFound.
+// gate: a session outside the caller's reach reports NotFound. The lifecycle
+// and program legs observe what `ls` shows too (lifecycle, program_state).
 //
 // sink=notify is the one exception and it is gated below, on `notify` — the
 // egress, not the observation, is what needs authority.
@@ -43,13 +46,16 @@ func (h *TaskHandler) handleAwaitIdle(conn ConnHandle, req *protocol.TaskControl
 		return
 	}
 	requestID := req.Header.RequestId
-	respond := func(status protocol.AwaitIdleStatus, lastOutputUnixNano int64, watcherID uint64) {
+	respond := func(status protocol.AwaitIdleStatus, f IdleFire, watcherID uint64) {
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_AwaitIdle, RequestId: requestID}
 		lo := uint64(0)
-		if lastOutputUnixNano > 0 {
-			lo = uint64(lastOutputUnixNano)
+		if f.LastOutput > 0 {
+			lo = uint64(f.LastOutput)
 		}
-		resp.SetAwaitIdle(protocol.AwaitIdleResponse{Status: status, LastOutputAt: lo, WatcherId: watcherID})
+		resp.SetAwaitIdle(protocol.AwaitIdleResponse{
+			Status: status, LastOutputAt: lo, WatcherId: watcherID,
+			FiredBy: f.FiredBy, Lifecycle: f.Lifecycle, ProgramState: f.ProgramState, ProgramKind: f.ProgramKind,
+		})
 		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
 	}
@@ -65,7 +71,7 @@ func (h *TaskHandler) handleAwaitIdle(conn ConnHandle, req *protocol.TaskControl
 	// for the same answer, since a narrowed exec_view would refuse here while
 	// `ls` kept answering.
 	if !h.inScope(conn.ConnectionID().String(), protocol.Capability_None, hex.EncodeToString(ai.TaskId.Id[:])) {
-		respond(protocol.AwaitIdleStatus_NotFound, 0, 0)
+		respond(protocol.AwaitIdleStatus_NotFound, IdleFire{}, 0)
 		return
 	}
 
@@ -89,7 +95,7 @@ func (h *TaskHandler) handleAwaitIdle(conn ConnHandle, req *protocol.TaskControl
 		}
 	case protocol.AwaitSink_Board:
 		if topic == "" || h.Board == nil {
-			respond(protocol.AwaitIdleStatus_BadRequest, 0, 0)
+			respond(protocol.AwaitIdleStatus_BadRequest, IdleFire{}, 0)
 			return
 		}
 		// The fire publishes a row stamped with the requester and wakes the
@@ -103,14 +109,18 @@ func (h *TaskHandler) handleAwaitIdle(conn ConnHandle, req *protocol.TaskControl
 			return
 		}
 	default:
-		respond(protocol.AwaitIdleStatus_BadRequest, 0, 0)
+		respond(protocol.AwaitIdleStatus_BadRequest, IdleFire{}, 0)
+		return
+	}
+	if !validAwaitIdleSignal(ai.Signal) {
+		respond(protocol.AwaitIdleStatus_BadRequest, IdleFire{}, 0)
 		return
 	}
 
 	taskIDHex := hex.EncodeToString(ai.TaskId.Id[:])
 	mux := h.sessionMux(taskIDHex)
 	if mux == nil {
-		respond(protocol.AwaitIdleStatus_NotFound, 0, 0)
+		respond(protocol.AwaitIdleStatus_NotFound, IdleFire{}, 0)
 		return
 	}
 
@@ -118,6 +128,16 @@ func (h *TaskHandler) handleAwaitIdle(conn ConnHandle, req *protocol.TaskControl
 	if threshold == 0 {
 		threshold = defaultAwaitIdleThreshold
 	}
+	// Every signal reports the lifecycle reading (spec D8), so the reader is
+	// set whatever leg the watcher waits on. No refusal for a task that never
+	// reported: the watcher waits (spec D10).
+	spec := IdleWatchSpec{Signal: ai.Signal, Threshold: threshold, Lifecycle: func() LifecycleReading {
+		t, ok := h.Tasks.Get(taskIDHex)
+		if !ok {
+			return LifecycleReading{}
+		}
+		return LifecycleReading{State: t.Lifecycle, At: t.LifecycleAt, WorkingAt: t.LifecycleWorkingAt}
+	}}
 
 	// Resolve the requester's identity NOW — by fire time the conn may be
 	// gone (sink=notify/board deliberately outlive the request).
@@ -127,6 +147,7 @@ func (h *TaskHandler) handleAwaitIdle(conn ConnHandle, req *protocol.TaskControl
 	w := &idleWatcher{
 		taskIDHex:  taskIDHex,
 		sink:       ai.Sink,
+		signal:     ai.Signal,
 		topic:      topic,
 		threshold:  threshold,
 		requester:  requester,
@@ -138,58 +159,72 @@ func (h *TaskHandler) handleAwaitIdle(conn ConnHandle, req *protocol.TaskControl
 	// the moment the entry is in the registry. w.id is read at call time,
 	// which is after add assigned it.
 	if ai.Sink == protocol.AwaitSink_Reply {
-		w.onCancel = func() { respond(protocol.AwaitIdleStatus_Cancelled, mux.LastOutputUnixNano(), w.id) }
+		w.onCancel = func() { respond(protocol.AwaitIdleStatus_Cancelled, mux.idleReadings(spec), w.id) }
 	}
 	// Registered BEFORE arming: an already-idle session fires on the first
 	// check, and the fire must find its own entry to remove.
 	id := h.idleWatchers().add(w)
 
-	var deliver func(stopped bool, lo int64)
+	var deliver func(f IdleFire)
 	switch ai.Sink {
 	case protocol.AwaitSink_Reply:
-		deliver = func(stopped bool, lo int64) {
+		deliver = func(f IdleFire) {
 			st := protocol.AwaitIdleStatus_Fired
-			if stopped {
+			if f.Stopped {
 				st = protocol.AwaitIdleStatus_SessionStopped
 			}
-			respond(st, lo, id)
+			respond(st, f, id)
 		}
 	case protocol.AwaitSink_Notify:
-		respond(protocol.AwaitIdleStatus_Armed, mux.LastOutputUnixNano(), id)
-		deliver = func(stopped bool, lo int64) {
-			h.fireIdleNotify(taskIDHex, requesterConnID, stopped, lo)
+		respond(protocol.AwaitIdleStatus_Armed, mux.idleReadings(spec), id)
+		deliver = func(f IdleFire) {
+			h.fireIdleNotify(taskIDHex, requesterConnID, f)
 		}
 	case protocol.AwaitSink_Board:
-		respond(protocol.AwaitIdleStatus_Armed, mux.LastOutputUnixNano(), id)
-		deliver = func(stopped bool, lo int64) {
-			h.fireIdleBoard(topic, taskIDHex, requester, stopped, lo)
+		respond(protocol.AwaitIdleStatus_Armed, mux.idleReadings(spec), id)
+		deliver = func(f IdleFire) {
+			h.fireIdleBoard(topic, taskIDHex, requester, ai.Signal, f)
 		}
 	}
-	mux.ArmIdleWatcher(threshold, w.stop, func(stopped bool, lo int64) {
+	mux.ArmIdleWatcher(spec, w.stop, func(f IdleFire) {
 		// A kill or a teardown that removed it first owns the outcome.
 		if _, still := h.idleWatchers().remove(id); !still {
 			return
 		}
-		deliver(stopped, lo)
+		deliver(f)
 	})
+}
+
+// idleNotifyText is the notification line for a fire: the quiet leg keeps
+// its "since last output" wording, the state legs name what they saw.
+func idleNotifyText(taskIDHex string, f IdleFire) string {
+	short := taskIDHex
+	if len(short) > 8 {
+		short = short[:8]
+	}
+	switch {
+	case f.Stopped:
+		return fmt.Sprintf("session %s ended", short)
+	case f.FiredBy == protocol.AwaitIdleSignal_Program:
+		state := cli.ProgramWord(f.ProgramState)
+		if f.ProgramState == protocol.ProgramState_Blocked && f.ProgramKind != protocol.ProgramKind_None {
+			state += ":" + cli.ProgramKindWord(f.ProgramKind)
+		}
+		return fmt.Sprintf("session %s idle (program %s)", short, state)
+	case f.FiredBy == protocol.AwaitIdleSignal_Lifecycle:
+		return fmt.Sprintf("session %s idle (lifecycle %s)", short, cli.LifecycleWord(f.Lifecycle))
+	default:
+		idle := time.Since(time.Unix(0, f.LastOutput))
+		return fmt.Sprintf("session %s idle (%ds since last output)", short, int(idle/time.Second))
+	}
 }
 
 // fireIdleNotify delivers a fired idle watcher through the notify path: the
 // live leg (OnNotify → ring + topic) and the egress leg (NotifyHook), same
 // two legs as a client-sent notify. Origin=external: the text was
 // synthesized by the server, not sent from inside a worker.
-func (h *TaskHandler) fireIdleNotify(taskIDHex, requesterConnID string, stopped bool, lastOutputUnixNano int64) {
-	short := taskIDHex
-	if len(short) > 8 {
-		short = short[:8]
-	}
-	var text string
-	if stopped {
-		text = fmt.Sprintf("session %s ended", short)
-	} else {
-		idle := time.Since(time.Unix(0, lastOutputUnixNano))
-		text = fmt.Sprintf("session %s idle (%ds since last output)", short, int(idle/time.Second))
-	}
+func (h *TaskHandler) fireIdleNotify(taskIDHex, requesterConnID string, f IdleFire) {
+	text := idleNotifyText(taskIDHex, f)
 	ts := time.Now().Unix()
 	ev := protocol.NotifyEvent{
 		Ts:     uint64(ts),
@@ -212,23 +247,50 @@ func (h *TaskHandler) fireIdleNotify(taskIDHex, requesterConnID string, stopped 
 	})
 }
 
+// sessionIdlePayload is the board fire's JSON. kind/task/last_output_at_unix_ms/
+// status are the original keys; the rest report the signal and the readings
+// (await-idle signal spec D8), wire words with "" for unset/none.
+type sessionIdlePayload struct {
+	Kind         string `json:"kind"`
+	Task         string `json:"task"`
+	LastOutputMs int64  `json:"last_output_at_unix_ms"`
+	Status       string `json:"status"`
+	Signal       string `json:"signal"`
+	FiredBy      string `json:"fired_by"`
+	Lifecycle    string `json:"lifecycle"`
+	ProgramState string `json:"program_state"`
+	ProgramKind  string `json:"program_kind"`
+}
+
 // fireIdleBoard publishes a fired idle watcher to the agentboard topic the
 // requester named (typically its own chat.<short-id> inbound channel, so the
 // arming agent's inbox hook wakes it). Attributed to the requester's
 // principal task (zero for an operator) with a zero RunnerID, and stamped
 // sender_kind=server.
-func (h *TaskHandler) fireIdleBoard(topic, taskIDHex string, requester protocol.TaskID, stopped bool, lastOutputUnixNano int64) {
+func (h *TaskHandler) fireIdleBoard(topic, taskIDHex string, requester protocol.TaskID, signal protocol.AwaitIdleSignal, f IdleFire) {
 	status := "fired"
-	if stopped {
+	if f.Stopped {
 		status = "session_stopped"
 	}
-	payload := fmt.Sprintf(
-		`{"kind":"session_idle","task":"%s","last_output_at_unix_ms":%d,"status":"%s"}`,
-		taskIDHex, lastOutputUnixNano/int64(time.Millisecond), status)
+	payload, err := json.Marshal(sessionIdlePayload{
+		Kind:         "session_idle",
+		Task:         taskIDHex,
+		LastOutputMs: f.LastOutput / int64(time.Millisecond),
+		Status:       status,
+		Signal:       cli.AwaitIdleSignalString(signal),
+		FiredBy:      cli.AwaitIdleSignalString(f.FiredBy),
+		Lifecycle:    cli.LifecycleWord(f.Lifecycle),
+		ProgramState: cli.ProgramWord(f.ProgramState),
+		ProgramKind:  cli.ProgramKindWord(f.ProgramKind),
+	})
+	if err != nil {
+		slog.Warn("await-idle: encode board payload", "err", err)
+		return
+	}
 	// The agent profile is empty because this publish originates in the
 	// server itself, not in any agent. The kind is what identifies it; the
 	// "server" hostname stays for readers that predate the kind.
-	if _, _, err := h.Board.Send(topic, []byte(payload), protocol.RunnerID{}, requester, "server", "", 0,
+	if _, _, err := h.Board.Send(topic, payload, protocol.RunnerID{}, requester, "server", "", 0,
 		agentboard.WithSenderKind(protocol.SenderKind_Server)); err != nil {
 		slog.Warn("await-idle: board publish failed", "topic", topic, "task", taskIDHex, "err", err)
 	}

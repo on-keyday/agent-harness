@@ -1266,32 +1266,38 @@ func (m *SessionMux) lastWinSizeBytes() []byte {
 const idleWatchTick = 500 * time.Millisecond
 
 // ArmIdleWatcher registers fn to be called EXACTLY ONCE, from its own
-// goroutine, when the session's PTY output has been quiescent for threshold
-// — or with stopped=true when the session stops first. Semantics:
+// goroutine, when spec's signal is satisfied — or with Stopped=true when the
+// session stops first. The quiet leg keeps await-idle's original semantics:
 //   - already idle at arm time => fires immediately;
 //   - no output ever yet (lastOutput==0) => waits for the first output frame,
 //     then for the idle edge (arming during process boot means the caller
 //     wants the boot turn's end, not an instant fire);
 //   - one-shot: the watcher is gone after firing either way.
 //
+// The lifecycle and program legs are evaluateIdle's (idle_signal.go).
+//
 // A closed stop ends the watcher without calling fn; a nil stop never fires.
-func (m *SessionMux) ArmIdleWatcher(threshold time.Duration, stop <-chan struct{}, fn func(stopped bool, lastOutputUnixNano int64)) {
+func (m *SessionMux) ArmIdleWatcher(spec IdleWatchSpec, stop <-chan struct{}, fn func(IdleFire)) {
 	go func() {
 		t := time.NewTicker(idleWatchTick)
 		defer t.Stop()
+		stopped := func() {
+			f := m.idleReadings(spec)
+			f.Stopped = true
+			fn(f)
+		}
 		for {
-			lo := m.lastOutput.Load()
 			if m.ctx.Err() != nil {
-				fn(true, lo)
+				stopped()
 				return
 			}
-			if lo != 0 && time.Now().UnixNano()-lo >= threshold.Nanoseconds() {
-				fn(false, lo)
+			if f, ok := m.evaluateIdle(spec, time.Now().UnixNano()); ok {
+				fn(f)
 				return
 			}
 			select {
 			case <-m.ctx.Done():
-				fn(true, m.lastOutput.Load())
+				stopped()
 				return
 			case <-stop:
 				// Killed or its requester went away. Whoever closed stop owns

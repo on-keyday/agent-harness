@@ -23,7 +23,7 @@ func TestSessionMux_IdleWatcherStopChannelEndsWithoutFiring(t *testing.T) {
 	stop := make(chan struct{})
 	fired := make(chan bool, 1)
 	// No output yet (lastOutput == 0), so the watcher is waiting.
-	mux.ArmIdleWatcher(10*time.Millisecond, stop, func(stopped bool, _ int64) { fired <- stopped })
+	mux.ArmIdleWatcher(IdleWatchSpec{Signal: protocol.AwaitIdleSignal_Quiet, Threshold: 10 * time.Millisecond}, stop, func(f IdleFire) { fired <- f.Stopped })
 	close(stop)
 	runner.QueueRead(makeWireFrame(byte(frame.FrameType_Stdout), []byte("x")))
 	select {
