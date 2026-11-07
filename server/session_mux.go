@@ -1164,6 +1164,19 @@ func (m *SessionMux) ProgramStamps() (at, workingAt int64) {
 	return m.programAt.Load(), m.programWorkingAt.Load()
 }
 
+// programSnapshot is the root 7501 state with its two stamps, read under the
+// one screenMu hold stampProgramChange writes them under, so a watcher never
+// pairs an old state with a new change's stamps (final review I1).
+func (m *SessionMux) programSnapshot() (st protocol.ProgramState, kind protocol.ProgramKind, at, workingAt int64) {
+	if !m.terminal {
+		return protocol.ProgramState_None, protocol.ProgramKind_None, 0, 0
+	}
+	m.screenMu.Lock()
+	defer m.screenMu.Unlock()
+	ps := m.screen.ProgramStatus()
+	return programStateOf(ps.State), programKindOf(ps.Kind), m.programAt.Load(), m.programWorkingAt.Load()
+}
+
 // stampInput records a forwarded client Stdin frame. Every other frame type a
 // forwarder passes (Control: signals) is not input.
 func (m *SessionMux) stampInput(fb []byte) {

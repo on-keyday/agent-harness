@@ -269,3 +269,24 @@ func TestFireIdleNotifyText(t *testing.T) {
 		}
 	}
 }
+
+// I1 (final review): the lifecycle reading a fire reports must be the one the
+// decision used. A reader that changes between two calls in one tick exposed
+// a second read: the fire said lifecycle=working for a leg that fired on idle.
+func TestEvaluateIdle_ReportsTheLifecycleItDecidedOn(t *testing.T) {
+	f := newSignalFixture(t)
+	f.output(t, "x")
+	calls := 0
+	spec := IdleWatchSpec{Signal: protocol.AwaitIdleSignal_Lifecycle, Threshold: time.Hour, Lifecycle: func() LifecycleReading {
+		calls++
+		if calls%2 == 1 {
+			return LifecycleReading{State: protocol.LifecycleState_Working, At: time.Now().UnixNano(), WorkingAt: time.Now().UnixNano()}
+		}
+		return LifecycleReading{State: protocol.LifecycleState_Idle, At: time.Now().UnixNano(), WorkingAt: 1}
+	}}
+	for i := 0; i < 4; i++ {
+		if fire, ok := f.mux.evaluateIdle(spec, time.Now().UnixNano()); ok && fire.Lifecycle != protocol.LifecycleState_Idle {
+			t.Fatalf("fired by %v on idle but reported lifecycle=%v", fire.FiredBy, fire.Lifecycle)
+		}
+	}
+}

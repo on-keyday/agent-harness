@@ -95,14 +95,11 @@ func validAwaitIdleSignal(s protocol.AwaitIdleSignal) bool {
 // evaluateIdle runs one tick of a watcher: the legs its signal selects, in the
 // order program → lifecycle → quiet so the most specific reading wins a tick
 // where several hold (spec D4). fired reports whether a leg was satisfied.
+// Each source is read ONCE per tick, and the fire reports exactly what the
+// decision saw (final review I1).
 func (m *SessionMux) evaluateIdle(spec IdleWatchSpec, now int64) (IdleFire, bool) {
-	fire := m.idleReadings(spec)
+	fire, pat, pwat, lc := m.idleSnapshot(spec)
 	lo := fire.LastOutput
-	pat, pwat := m.ProgramStamps()
-	var lc LifecycleReading
-	if spec.Lifecycle != nil {
-		lc = spec.Lifecycle()
-	}
 	s := idleStamps{Now: now, MuxStart: m.MuxStartUnixNano(), LastInput: m.LastInputUnixNano(), LastOutput: lo, Threshold: spec.Threshold}
 	sig := spec.Signal
 	if (sig == protocol.AwaitIdleSignal_Program || sig == protocol.AwaitIdleSignal_Any) &&
@@ -123,12 +120,19 @@ func (m *SessionMux) evaluateIdle(spec IdleWatchSpec, now int64) (IdleFire, bool
 	return fire, false
 }
 
+// idleSnapshot reads every source once: the program state with its stamps
+// under one lock, the lifecycle reading in one call.
+func (m *SessionMux) idleSnapshot(spec IdleWatchSpec) (f IdleFire, programAt, programWorkingAt int64, lc LifecycleReading) {
+	pst, pkind, pat, pwat := m.programSnapshot()
+	if spec.Lifecycle != nil {
+		lc = spec.Lifecycle()
+	}
+	f = IdleFire{LastOutput: m.LastOutputUnixNano(), ProgramState: pst, ProgramKind: pkind, Lifecycle: lc.State}
+	return f, pat, pwat, lc
+}
+
 // idleReadings is an IdleFire with the current readings and no leg chosen.
 func (m *SessionMux) idleReadings(spec IdleWatchSpec) IdleFire {
-	pst, pkind, _ := m.Program()
-	f := IdleFire{LastOutput: m.LastOutputUnixNano(), ProgramState: pst, ProgramKind: pkind}
-	if spec.Lifecycle != nil {
-		f.Lifecycle = spec.Lifecycle().State
-	}
+	f, _, _, _ := m.idleSnapshot(spec)
 	return f
 }
