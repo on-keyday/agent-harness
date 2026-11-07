@@ -107,10 +107,13 @@ letting it cancel a finding would hide the thing the page is for.
    plus any still open from earlier pages. Record where each one lives (file
    and row) and whether it is the owner's or an agent's. An agent's decision
    that the owner confirmed in an earlier page's reaction line is the owner's;
-   do not ask about it again. Look first at decisions carried out since the
-   last page: drift there is newest, and the reasons written for it are
-   still fresh. Older decisions stay candidates; the first page of the source
-   run held three, all pushed back on.
+   do not ask about it again. Do not draw only on decisions carried out since
+   the last page: the commit that carried one out usually explains it, so such
+   an item confirms what the owner just read instead of finding anything.
+   Reach back over every earlier page and prefer decisions no page has visited
+   yet, where drift has had time to accumulate; a page of only the last page's
+   decisions is a page of confirmations. Older decisions stay candidates; the
+   first page of the source run held three, all pushed back on.
 3. **Gather the owner's symptoms.** Take the symptoms the owner has named in
    conversation, in questions or in earlier reactions ("many bugs where A and
    B disagreed"). Grouping the fix commits since the baseline by the kind of

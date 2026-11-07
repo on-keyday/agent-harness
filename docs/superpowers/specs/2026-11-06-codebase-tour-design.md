@@ -69,7 +69,8 @@ worth a second look.
 | D14 | Version 1 ships no scripts, only the procedure. Scripts come once a source has proved useful across several pages, following the repository's prototype-first practice | this spec |
 | D15 | **Decisions made by agents.** These are spec rows the author decided, plan lines, commit messages and code comments. They may anchor an item, but the page says the decision was an agent's and not the owner's, and asks whether the owner stands by it. If the owner confirms it, it counts as the owner's decision from then on, and the confirmation is recorded in the reaction line. Only the owner's own decisions can explain a difference away under D6. An agent's written reason never cancels a finding, because the tour exists to show drift from the owner's intent, and an agent's justification is where that drift hides | operator |
 | D16 | Where the owner's decisions are recorded, and how their maker is marked, is settled once per repository, alongside D8's location form. Examples are a `Decided by` column, `DECIDED (operator, <date>)` text, or an answered-questions directory. Not every record in a repository marks its maker: in this one, 36 of 133 specs have a `Decided by` column. A record without a mark counts as an agent's (D15) | this spec (builder check) |
-| D17 | **Tour state.** One directory per repository, outside the repository, holds the pages, their reaction lines, and a `settings.md` with the D8 and D16 answers. If the repository has running-parallel-workers records, the directory is `<records>/tours/`. A standalone run uses the same directory, so there is one reaction history. **Finding it assumes nothing about the repository:** one has running-parallel-workers' conventions, one records the directory some other way, one records it nowhere. A run that keeps a memory across sessions also looks there, and records the directory there once it is known. If nothing names it, the run asks the owner; if it is named but out of the run's reach (a sandbox that does not mount it), the run says so and waits. It never picks a directory itself | this spec (builder check); operator (2026-11-07: no assumption about the repository's conventions; record the location in memory) |
+| D17 | **Tour state.** One directory per repository, outside the repository, holds the pages, their reaction lines, and a `settings.md` with the D8 and D16 answers. Page files are numbered `<nnn>-<date>.md` from `001`; the highest number is the last page, and a redone page takes the next number instead of overwriting one. If the repository has running-parallel-workers records, the directory is `<records>/tours/`. A standalone run uses the same directory, so there is one reaction history. **Finding it assumes nothing about the repository:** one has running-parallel-workers' conventions, one records the directory some other way, one records it nowhere. A run that keeps a memory across sessions also looks there, and records the directory there once it is known. If nothing names it, the run asks the owner; if it is named but out of the run's reach (a sandbox that does not mount it), the run says so and waits. It never picks a directory itself | this spec (builder check); operator (2026-11-07: no assumption about the repository's conventions; record the location in memory; number the page files) |
+| D18 | **What a page draws on.** A page is not only the decisions carried out since the last page: the commit that carried one out usually explains it, so the item confirms what the owner just read instead of finding anything. The run reaches back over every earlier page and prefers decisions no page has visited yet, where drift has had time to accumulate. Decisions carried out since the last page stay candidates | operator (2026-11-07: "carried out since the last page" alone is a poor strategy; also look at what past tours have not visited) |
 
 ## Non-goals
 
@@ -95,7 +96,10 @@ running-parallel-workers' trigger fires (§2).
 2. **Gather decisions.** List the decisions made or touched since the
    baseline, or still open from earlier pages, with where each is recorded
    (file and row). Mark each one as the owner's or an agent's by the marking
-   in `settings.md` (D16).
+   in `settings.md` (D16). Do not draw only on decisions carried out since the
+   last page: the commit that carried one out usually explains it, so the item
+   confirms what the owner just read. Reach back over every earlier page and
+   prefer decisions no page has visited yet (D18).
 3. **Gather owner-named symptoms.** Use symptoms the owner has named in
    conversation, in questions, or in earlier reactions. To show a symptom's
    shape, group the fix commits since the baseline by the kind of fault they
@@ -120,7 +124,7 @@ running-parallel-workers' trigger fires (§2).
 ### Page format
 
 ```
-# Codebase tour — <date>  (describes <commit>; baseline <commit>)
+# Codebase tour <nnn> — <date>  (describes <commit>; baseline <commit>)
 
 ## <n>. <decision, in a few words>: <how far it got, in a few words>
 
@@ -138,7 +142,7 @@ Reactions (filled in after the conversation):
 
 ### Where the page goes
 
-The page goes in `<tour directory>/<date>.md` (D17), never in the
+The page goes in `<tour directory>/<nnn>-<date>.md` (D17), never in the
 repository (D8).
 
 ## 2. Changes to running-parallel-workers
