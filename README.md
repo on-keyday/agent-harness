@@ -291,8 +291,9 @@ bin/harness-cli progress --clear --task <task-id>
 # included; same long-poll / --topic / --notify shape as `session await-idle`
 # (5 below) and the same watcher registry, so either verb's ls / kill sees both.
 # --since takes a progress_at from `ls --json` and fires at once if the task has
-# written since. Exit: 0 fired or armed, 3 task_ended, 4 cancelled. TUI: `m` on
-# the selected task, `M` to fire as an operator notification.
+# written since. Exit: 0 fired or armed, 3 task_ended, 4 cancelled. TUI: `w`
+# (or `W` to fire as an operator notification) and pick "progress"; WebUI: the
+# 🔔 通知… menu.
 bin/harness-cli await-progress [--since <progress_at>] [--notify | --topic T] <task-id>
 bin/harness-cli await-progress ls [--task <task-id>] [--json]
 bin/harness-cli await-progress kill <watcher-id>
@@ -1675,8 +1676,10 @@ tab focus · s submit · enter follow · c cancel · T tree · ? help · q quit
 Keys for orientation — `Tab` cycles focus, `s` submit popup, `S` opens
 a detachable session, `r`/`R` reattach/resume the selected task, `Enter`
 follows its log, `d` detail, `c` cancel, `a` re-grant caps/scope, `i`
-who holds which capability (`caps audit`), `m`/`M` arm `await-progress` on the
-selected task (`M` fires as an operator notification), `X` empties its
+who holds which capability (`caps audit`), `w`/`W` arm a watcher on the
+selected task, picking what to wake on — output quiet, the hooks' lifecycle,
+the program's status, any of them, or the next progress line (`W` fires as an
+operator notification), `X` empties its
 progress line, `I` the armed watchers
 (await-idle and await-progress, each with its condition), `G` git, `F` files,
 `q` quit. **The authoritative list is the TUI itself**:

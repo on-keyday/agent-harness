@@ -52,8 +52,6 @@ type mainKeyMap struct {
 	ViewOnly               string
 	AwaitIdle              string
 	AwaitIdleNotify        string
-	AwaitProgress          string
-	AwaitProgressNotify    string
 	ProgressClear          string
 	ForwardLocal           string
 	ForwardLocalStop       string
@@ -93,8 +91,6 @@ var mainKeys = mainKeyMap{
 	ViewOnly:               "v",
 	AwaitIdle:              "w",
 	AwaitIdleNotify:        "W",
-	AwaitProgress:          "m",
-	AwaitProgressNotify:    "M",
 	ProgressClear:          "X",
 	ForwardLocal:           "p",
 	ForwardLocalStop:       "P",
@@ -317,9 +313,7 @@ var mainKeyBindings = []keyBinding{
 	{Keys: []string{mainKeys.ReGrant}, Scope: scopeTasks, Do: (*App).onReGrant, Short: "a re-grant", Long: "open the re-grant picker for the selected task's caps/scope (operator-only)"},
 	{Keys: []string{mainKeys.SetParent}, Scope: scopeTasks, Do: (*App).onSetParent, Short: "A set parent", Long: "re-point the selected task's parent link (root / swap / another task; operator-only)"},
 	{Keys: []string{mainKeys.AwaitIdle, mainKeys.AwaitIdleNotify}, Scope: scopeTasks, Do: (*App).onAwaitIdle,
-		Short: "w/W await-idle", Long: "arm a one-shot idle watcher (W also notifies the operator)"},
-	{Keys: []string{mainKeys.AwaitProgress, mainKeys.AwaitProgressNotify}, Scope: scopeTasks, Do: (*App).onAwaitProgress,
-		Short: "m/M await-progress", Long: "arm a one-shot watcher on the selected task's next progress line; a line written since this row was drawn fires at once (M notifies the operator)"},
+		Short: "w/W watch", Long: "arm a one-shot watcher on the selected task, picking what to wake on: output quiet, the hooks' lifecycle, the program's status, any of them, or the next progress line (W notifies the operator)"},
 	{Keys: []string{mainKeys.ProgressClear}, Scope: scopeTasks, Do: (*App).onProgressClear,
 		Short: "X clear progress", Long: "empty the selected task's progress line (needs cancel on it; the operator has it)"},
 	{Keys: []string{mainKeys.FilePicker}, Scope: scopeTasks, Do: (*App).onFilePicker, OutsideHint: "file picker: focus the tasks pane first", Short: "F files", Long: "open the file picker on the selected task's worktree"},

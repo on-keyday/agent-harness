@@ -788,3 +788,18 @@ test("watcher list and panel name a non-default signal", async () => {
   assert.match(String(il.out), /#1 .*idle lifecycle/);
   assert.match(String(il.out), /#2 .*idle quiet 2500ms/);
 });
+
+// The one watch menu (🔔): a live session offers the four idle signals and the
+// progress line; a task without one, only the progress line; a finished task,
+// nothing. The arm call is built here so the DOM never decides a verb.
+test("watch menu: choices follow the task, and each choice arms its own verb", () => {
+  const live = { id: ID, kind: "Interactive", status: "Detached", progressAt: "17" };
+  eq(page.watchChoices(live).map((c) => c.key), ["quiet", "lifecycle", "program", "any", "progress"]);
+  eq(page.watchChoices({ id: ID, kind: "Oneshot", status: "Running" }).map((c) => c.key), ["progress"]);
+  eq(page.watchChoices({ id: ID, kind: "Interactive", status: "Succeeded" }).map((c) => c.key), []);
+  const [quiet, , program, , progress] = page.watchChoices(live);
+  eq(page.watchArm(program, live), { fn: "awaitIdle", opts: { taskId: ID, sink: "notify", signal: "program" } });
+  eq(page.watchArm(quiet, live), { fn: "awaitIdle", opts: { taskId: ID, sink: "notify", signal: "quiet" } });
+  eq(page.watchArm(progress, live), { fn: "awaitProgress", opts: { taskId: ID, since: "17", sink: "notify" } });
+  eq(page.watchArm(progress, { id: ID, kind: "Oneshot", status: "Running" }).opts.since, "0");
+});

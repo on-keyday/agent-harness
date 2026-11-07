@@ -55,7 +55,7 @@ the author chose it while writing; those rows are the ones to check.
 | D12 | `await-idle ls` shows each watcher's signal | this spec |
 | D13 | Known gaps, accepted. (1) Lifecycle stays `working` after an Esc while the model is thinking (lifecycle D15): `--signal lifecycle` then waits for the next turn. (2) D6(b) misfires if, after an Enter that does start a turn, the PTY is silent for `threshold` before the program draws anything; claude's busy-side output gap was measured at ≤ ~0.5 s (`server/await_idle_handler.go:15-18`), but the gap right after Enter was not measured — the dummy-harness check measures it. `any` covers (1); (2) is the same exposure quiescence already has. (3) An agentboard wake is typed into the PTY by the runner (`runner/session.go:1264` `WakeStdin`), not through the mux, so it does not stamp `lastInput`: a lifecycle/program watcher armed right after `agent send` can fire at once on the previous turn's state. The supervising-workers skill already says not to arm `await-idle` for a peer you messaged (the reply is the completion edge); the skill text repeats it for the new signals | this spec |
 | D14 | Only client Stdin frames stamp `lastInput` (§ Input). Resize, Control frames and the server's own 7501 probe reply do not | this spec |
-| D15 | The one-key arms (TUI `w`/`W`, WebUI await-idle button, grid 🔔, task-sheet item) keep the default signal and get no picker. Choosing a signal is a command-line act on every surface | this spec (follows D1) |
+| ~~D15~~ | ~~The one-key arms keep the default signal and get no picker~~ — **reversed by Amendment A2**: they open one picker of five choices (four signals + the next progress line) | ~~this spec~~ → operator (A2) |
 | D16 | `Client.AwaitIdle` takes the signal as a positional parameter, so the compiler finds every caller (`cmd/harness-cli/session.go:696`, `tui/client.go:454`, `cmd/harness-webui-wasm/main.go:3855`) | this spec |
 | ~~D17~~ | ~~`signal_unavailable` exits 5~~ — **withdrawn** with the refusal (D10). No new status and no new exit code | this spec, withdrawn |
 
@@ -158,11 +158,11 @@ hand-written on each surface. `go generate ./cli/verb` regenerates
 | CLI arm (`cmd/harness-cli/session.go:677`) | pass the signal; the printed JSON gains `fired_by`, `lifecycle`, `program_state`, `program_kind` (wire names, `""` for unset/none); exit codes unchanged |
 | CLI `ls` / `kill` | `ls` text and JSON show the signal (D12); `kill` unchanged |
 | TUI cmdline (`tui/dispatch.go:604`) | pass `a.Signal` to `DoAwaitIdle` |
-| TUI keys `w` / `W` (`tui/actions.go:336`) | unchanged: they arm the default signal (D15) |
+| TUI keys `w` / `W` (`tui/actions.go:336`) | ~~unchanged: they arm the default signal (D15)~~ — A2: open the watch picker (`tui/watchpicker.go`) |
 | TUI fire result (`tui/app.go:1189`) | the result line names the leg and the state, e.g. `session is idle (program done)`; quiet keeps today's `last output …` wording |
 | TUI watcher modal (`tui/idlewatchersmodal.go:38`, `watcherWaitsFor`) | ~~`idle 2500ms` for quiet~~ — amended (A1): `idle quiet 2500ms`, `idle lifecycle`, `idle program`, `idle any 2500ms`, from `cli.AwaitWatcherWaitsFor` |
 | WebUI cmdline (`webui/static/cmdline.js:604-633`) | pass `signal`; print the new response fields; `watcherListText` (`:94`) shows the signal |
-| WebUI button / grid 🔔 / task sheet (`main.js:5029`, `:5748`, `:6186`) | unchanged: default signal (D15) |
+| WebUI button / grid 🔔 / task sheet (`main.js:5029`, `:5748`, `:6186`) | ~~unchanged: default signal (D15)~~ — A2: each opens the watch menu (`#watch-modal`) |
 | WebUI watcher list (`main.js:1588`, `task_models.js:104` `watcherWaitsFor`) | same wording as the TUI modal — amended (A1): printed from the row's `waits_for`, not respelled in JS |
 | WASM (`cmd/harness-webui-wasm/main.go:3822` `harnessAwaitIdle`, `:1929` snapshot rows, `:4972` list) | read `signal`; return `firedBy`, `lifecycle`, `programState`, `programKind` and `firedDetail` (`cli.AwaitIdleFiredDetail`); rows carry `signal` and `waits_for` / `waitsFor` (A1) |
 | Agent skill (`runner/agentskills/supervising-workers/SKILL.md:240-262`, and its mirrors under `.claude/skills/` and `.agents/skills/`) | document `--signal`, the reported state replacing "snapshot once after the fire" for lifecycle/program, that a source which never reports leaves the watcher armed (D10; use `any` when unsure), and the payload's new keys. The payload description at `:251` also gains the existing `last_output_at_unix_ms` it leaves out |
@@ -181,6 +181,33 @@ now one Go function, `cli.AwaitWatcherWaitsFor`, which the TUI calls and the
 wasm bridge puts on every watcher row; the page prints it. The fire's wording
 follows the same rule through `cli.AwaitIdleFiredDetail` (notify text, TUI
 result line, the bridge's `firedDetail`).
+
+### Amendment A2 (operator, 2026-11-08)
+
+D15 is reversed. After using it, the operator wanted the one-key arms to choose
+too, and asked that "進捗で通知" (await-progress) be folded into the same place,
+since both are "tell me once when something happens on this task".
+
+- **One question, five answers, the same order on both UIs:** quiet,
+  lifecycle, program, any, and the next progress line. A live session
+  (interactive or stream, Running or Detached) offers all five; any other task
+  that can still write offers only the progress line; a finished one offers
+  nothing.
+- **TUI:** `w` (fire lands here) / `W` (fire as an operator notification) open
+  `WatchPicker`; a digit picks, ↑↓ Enter picks, Esc cancels. The cursor starts
+  on the last pick, so repeating it is `w` Enter. `m` / `M` (await-progress)
+  are removed — their job is choice 5.
+- **WebUI:** the terminal tab's 🔔 and 📝 buttons become one 🔔 通知…, the
+  task sheet's two items one, and the grid's 🔔 the same menu
+  (`#watch-modal`). Every menu arm notifies, as the buttons did. The last pick
+  is remembered (localStorage) and focused. The choices and the bridge call
+  are `watchChoices` / `watchArm` in `task_models.js`.
+- **The CLI verbs stay separate** (`session await-idle`, `await-progress`):
+  only the UIs merge.
+- Why a picker rather than a remembered default (the alternative offered): a
+  watcher's signal changes what it waits for (D6) and can wait forever on a
+  source that never reports (D10), so the choice stays visible at the moment
+  of arming; remembering the last pick keeps the cost to one key.
 
 ## Rollout and verification
 

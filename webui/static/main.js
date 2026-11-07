@@ -5021,56 +5021,63 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     hideQuickReattach();
   });
 
-  // "🔔 idleで通知": arm a one-shot await-idle watcher (sink=notify) on the
-  // session the terminal is attached to. The fire arrives in the notification
-  // feed AND the server's --notify-hook egress (e.g. the phone), so this is
-  // the "tell me when it's done thinking" button before walking away.
+  // The one watch menu (🔔): pick what to be notified about — the session's
+  // output going quiet, the hooks' lifecycle, the program's status, any of
+  // those, or the task's next progress line. Every entry notifies: the fire
+  // reaches the notification feed AND the server's --notify-hook egress (e.g.
+  // the phone), so this is the "tell me later" button before walking away. The
+  // choices and the bridge call are watchChoices / watchArm (task_models.js);
+  // this only draws them. The last pick is remembered and focused, so
+  // repeating it is one more click.
+  const WATCH_LAST_KEY = "harness.watchChoice";
+  const watchModal = document.getElementById("watch-modal");
+  document.getElementById("watch-modal-cancel").addEventListener("click", () => watchModal.close());
+  const openWatchMenu = (t) => {
+    const choices = watchChoices(t);
+    if (!choices.length) {
+      appendCmdOutput(`watch ${t.id.slice(0, 12)}: a finished task has nothing left to watch`, true);
+      return;
+    }
+    let last = "";
+    try { last = localStorage.getItem(WATCH_LAST_KEY) || ""; } catch (_) { /* storage blocked */ }
+    document.getElementById("watch-modal-title").textContent = `${t.id.slice(0, 12)} — 何で知らせる?`;
+    const list = document.getElementById("watch-modal-list");
+    list.replaceChildren();
+    let focus = null;
+    for (const c of choices) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "watch-choice";
+      b.textContent = `${c.label}  (${c.key})`;
+      b.addEventListener("click", async (ev) => {
+        ev.preventDefault();
+        watchModal.close();
+        try { localStorage.setItem(WATCH_LAST_KEY, c.key); } catch (_) { /* storage blocked */ }
+        const arm = watchArm(c, t);
+        const verb = arm.fn === "awaitProgress" ? "await-progress" : "await-idle";
+        try {
+          const r = await window.harness[arm.fn](arm.opts);
+          appendCmdOutput(`${verb} ${t.id.slice(0, 12)} (${c.key}): ${r.status}${r.watcherId ? ` (watcher ${r.watcherId})` : ""}`, true);
+        } catch (e) {
+          appendCmdOutput(`${verb}: ${e.message}`, true);
+        }
+      });
+      list.appendChild(b);
+      if (!focus || c.key === last) focus = b;
+    }
+    if (!watchModal.open) watchModal.showModal();
+    focus.focus();
+  };
+  // The row a watch menu needs (kind, status, progressAt); a task the list
+  // has not drawn yet is taken as a live session with no progress yet.
+  const watchTaskFor = (id) => (lastTasks || []).find((t) => t.id === id) ||
+    { id, kind: "Interactive", status: "Running", progressAt: "0" };
+
   {
     const awaitIdleBtn = document.getElementById("await-idle-btn");
-    const origLabel = awaitIdleBtn.textContent;
-    let revertTimer = 0;
-    const flash = (text) => {
-      awaitIdleBtn.textContent = text;
-      clearTimeout(revertTimer);
-      revertTimer = setTimeout(() => { awaitIdleBtn.textContent = origLabel; }, 2500);
-    };
-    awaitIdleBtn.addEventListener("click", async () => {
-      if (!currentSessionTaskId) { flash("🔔 セッション未接続"); return; }
-      try {
-        const r = await window.harness.awaitIdle({ taskId: currentSessionTaskId, sink: "notify" });
-        flash(r.status === "armed" ? `🔔 armed #${r.watcherId} ✓` : `🔔 ${r.status}`);
-      } catch (e) {
-        console.error("awaitIdle:", e);
-        flash("🔔 error");
-      }
-    });
-  }
-
-  // "📝 進捗で通知": arm a one-shot await-progress watcher (sink=notify) on the
-  // attached session's task. The baseline is the row's progressAt — carried as
-  // a decimal string because a nanosecond stamp does not fit a JS number — so
-  // a line written since the list was drawn fires at once.
-  {
-    const btn = document.getElementById("await-progress-btn");
-    const origLabel = btn.textContent;
-    let revertTimer = 0;
-    const flash = (text) => {
-      btn.textContent = text;
-      clearTimeout(revertTimer);
-      revertTimer = setTimeout(() => { btn.textContent = origLabel; }, 2500);
-    };
-    btn.addEventListener("click", async () => {
-      if (!currentSessionTaskId) { flash("📝 セッション未接続"); return; }
-      const row = (lastTasks || []).find((t) => t.id === currentSessionTaskId);
-      try {
-        const r = await window.harness.awaitProgress({
-          taskId: currentSessionTaskId, since: row ? row.progressAt : "0", sink: "notify",
-        });
-        flash(r.status === "armed" ? `📝 armed #${r.watcherId} ✓` : `📝 ${r.status}`);
-      } catch (e) {
-        console.error("awaitProgress:", e);
-        flash("📝 error");
-      }
+    awaitIdleBtn.addEventListener("click", () => {
+      if (!currentSessionTaskId) { appendCmdOutput("watch: no session attached", true); return; }
+      openWatchMenu(watchTaskFor(currentSessionTaskId));
     });
   }
 
@@ -5742,15 +5749,8 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       notify.type = "button";
       notify.className = "grid-cell-btn";
       notify.textContent = "🔔";
-      notify.title = "idleで通知";
-      notify.addEventListener("click", async () => {
-        try {
-          const r = await window.harness.awaitIdle({ taskId: id, sink: "notify" });
-          appendCmdOutput(`await-idle ${id.slice(0, 12)}: ${r.status}${r.watcherId ? ` (watcher ${r.watcherId})` : ""}`, true);
-        } catch (e) {
-          appendCmdOutput(`await-idle: ${e.message}`, true);
-        }
-      });
+      notify.title = "通知… (何で起こすかを選ぶ)";
+      notify.addEventListener("click", () => openWatchMenu(watchTaskFor(id)));
       const dismiss = document.createElement("button");
       dismiss.type = "button";
       dismiss.className = "grid-cell-btn";
@@ -6179,16 +6179,6 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     idRow.append(idText, copyBtn);
     sheet.appendChild(idRow);
 
-    // The idle-notify item is shared by both live kinds: await-idle watches
-    // output quiescence, which a stream session has as much as a PTY one.
-    const addIdleNotify = () => addItem("🔔 idleで通知", "", async () => {
-      try {
-        const r = await window.harness.awaitIdle({ taskId: t.id, sink: "notify" });
-        appendCmdOutput(`await-idle ${t.id.slice(0, 12)}: ${r.status}${r.watcherId ? ` (watcher ${r.watcherId})` : ""}`, true);
-      } catch (e) {
-        appendCmdOutput(`await-idle: ${e.message}`, true);
-      }
-    });
     const liveSession = t.status === "Running" || t.status === "Detached";
 
     // Grid include/exclude toggle (default included), for both live kinds — the
@@ -6221,7 +6211,6 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     if (isStreamKind(t) && liveSession) {
       addItem("💬 チャット", "", () => openChatFor(t.id));
       addGridToggle();
-      addIdleNotify();
     }
 
     // Reattach / Preview / grid-include toggle / idle-notify — live interactive
@@ -6230,7 +6219,6 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       addItem("↪ Reattach", "", () => reattachTo(t.id));
       addItem("🔍 プレビュー", "", () => openSessionPreview(t.id));
       addGridToggle();
-      addIdleNotify();
     }
 
     // Working-set grids — NOT gated on this task being a live interactive
@@ -6243,20 +6231,10 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     // Two buttons, because the second is not a refinement of the first: it is
     // for when THIS session is already on screen in another terminal and its
     // workers are what is missing.
-    // await-progress on any task that can still write, oneshot included —
-    // the reason the verb is top-level rather than under `session`. The
-    // baseline is the row's progressAt (exact decimal string), so a line
-    // written since the list was drawn fires at once.
-    if (canArmProgress(t)) {
-      addItem("📝 進捗で通知", "", async () => {
-        try {
-          const r = await window.harness.awaitProgress({ taskId: t.id, since: t.progressAt || "0", sink: "notify" });
-          appendCmdOutput(`await-progress ${t.id.slice(0, 12)}: ${r.status}${r.watcherId ? ` (watcher ${r.watcherId})` : ""}`, true);
-        } catch (e) {
-          appendCmdOutput(`await-progress: ${e.message}`, true);
-        }
-      });
-    }
+    // The watch menu, for any task with something left to watch: a live
+    // session offers the idle signals, any task that can still write (oneshot
+    // included) its next progress line.
+    if (watchChoices(t).length) addItem("🔔 通知…", "", () => openWatchMenu(t));
 
     // Empty a stale line its task will not replace. The server checks cancel
     // and its scope; a refusal is reported like any other.

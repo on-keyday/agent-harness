@@ -3857,3 +3857,30 @@ done:    1 (`cli/verb/table.go` flag with OneOf; CLI/TUI/WebUI parse it), 7
 omitted: 4/6 (TUI `w`/`W`, WebUI button, grid bell, task sheet keep the
          default signal — spec D15: choosing one is a command-line act)
 missed:  —
+
+### 2026-11-08 — watch picker: `w`/`W` and 🔔 choose the signal, await-progress folded in
+
+Continuation of the `--signal` walk above (a new walk, per the rule): spec
+D15 reversed (Amendment A2). TUI `w`/`W` open `WatchPicker` (five choices);
+`m`/`M` removed. WebUI 🔔/📝 merged into one menu (`#watch-modal`) on the
+terminal tab, the grid cells and the task sheet.
+
+done:    3/4 (`w`/`W` rows; `m`/`M` rows removed — keys_test and the
+         overlay-coverage guard both fired and were answered), 5 (new
+         `WatchPicker`, ForwardPicker-shaped: digit / ↑↓ Enter / Esc; named by
+         both verbs' ModalSurfaces), 6 (one 🔔 通知… button, grid 🔔 and one
+         sheet item all open the same dialog; picker-modal shaped), 7 (no new
+         path; ModalSurfaces repointed from the removed button/handler), 29/30
+         (TUI cmdresult "watching for <signal>", WebUI appendCmdOutput naming
+         the verb, task and choice), 34a (the menu is buttons in a
+         picker-modal dialog, like the runner picker beside it), 35 (README:
+         the await-progress block and the TUI key list), 37 (spec Amendment
+         A2, D15 struck), 39 (spec Surfaces rows for the keys and buttons
+         struck and repointed)
+omitted: 32 (the five choice KEYS are spelled in Go and JS: they are the
+         AwaitIdleSignal wire words plus "progress", and a renamed signal key
+         is refused loudly at the bridge by cli.ParseAwaitIdleSignal; the
+         labels differ by language on purpose. The live-session predicate is
+         duplicated too — `watchLive` / `watchChoices` — a drift there shows
+         as a choice offered or missing, not a wrong arm)
+missed:  —

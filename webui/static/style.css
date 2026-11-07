@@ -1075,6 +1075,19 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
   font-size: 0.85rem;
   padding: 0.3rem 0.7rem;
 }
+/* The watch menu (🔔): one full-width button per choice, the same column at
+   phone width. */
+.watch-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  min-width: 0;
+}
+.watch-choice {
+  text-align: left;
+  padding: 0.45rem 0.7rem;
+  overflow-wrap: anywhere;
+}
 .runner-choice-load {
   flex: 0 0 auto;
   color: #9cdcfe;

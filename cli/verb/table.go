@@ -2871,8 +2871,8 @@ var Verbs = []VerbSpec{
 		WebUIDispatch: WebUIDispatch{Fn: "awaitIdle"},
 		SurfaceNotes:  map[Surface][]string{WebUI: {"fire when the session's output goes idle (default: prints here on fire; --notify: notification feed + hook)"}, TUI: {"fire when the session's output goes idle (default: result line here; --notify: operator notification)"}},
 		ModalSurfaces: []ModalSurface{
-			{Surface: TUI, At: "tui/actions.go:onAwaitIdle"},
-			{Surface: WebUI, At: "webui/index.html#await-idle-btn"},
+			{Surface: TUI, At: "tui/watchpicker.go:WatchPicker"},
+			{Surface: WebUI, At: "webui/index.html#watch-modal"},
 		},
 		Notes: []string{
 			"one-shot: fire when the session goes idle. --signal picks the reading: quiet (PTY output quiescent for --threshold-ms, the default), lifecycle (the agent hooks' state leaves working), program (the program's OSC 7501 state leaves working), any (the first of the three)",
@@ -2949,8 +2949,8 @@ var Verbs = []VerbSpec{
 			TUI:   {"fire when the task writes its next progress line (default: result line here; --notify: operator notification)"},
 		},
 		ModalSurfaces: []ModalSurface{
-			{Surface: TUI, At: "tui/actions.go:onAwaitProgress"},
-			{Surface: WebUI, At: "webui/index.html#await-progress-btn"},
+			{Surface: TUI, At: "tui/watchpicker.go:WatchPicker"},
+			{Surface: WebUI, At: "webui/index.html#watch-modal"},
 		},
 		Notes: []string{
 			"one-shot: fire when the task writes its progress line (set or clear); works on any task, oneshot included",

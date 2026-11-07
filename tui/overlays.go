@@ -40,6 +40,7 @@ var appOverlays = []overlay{
 	{func(a *App) bool { return a.authorityPicker.IsOpen() }, (*App).inAuthorityPicker},
 	{func(a *App) bool { return a.runnerPicker.IsOpen() }, (*App).inRunnerPicker},
 	{func(a *App) bool { return a.forwardPicker.IsOpen() }, (*App).inForwardPicker},
+	{func(a *App) bool { return a.watchPicker.IsOpen() }, (*App).inWatchPicker},
 	{func(a *App) bool { return a.portForwardModal.IsOpen() }, (*App).inPortForwardModal},
 	{func(a *App) bool { return a.rawModal.IsOpen() }, (*App).inRawModal},
 }
@@ -889,6 +890,17 @@ func (a *App) inRunnerPicker(msg tea.KeyMsg) tea.Cmd {
 		a.cmdresult.Append(WarnStyle.Render("runner pick cancelled"))
 	}
 	return cmd
+}
+
+// Watch picker intercepts keys when open: a pick arms the watcher it names.
+func (a *App) inWatchPicker(msg tea.KeyMsg) tea.Cmd {
+	taskID, sink, since := a.watchPicker.taskID, a.watchPicker.sink, a.watchPicker.progressAt
+	c, ok := a.watchPicker.Key(msg)
+	if !ok {
+		return nil
+	}
+	a.lastWatch = c.key
+	return a.armWatch(taskID, sink, c, since)
 }
 
 // Forward-stop picker intercepts keys when open (digit selects, Esc cancels).

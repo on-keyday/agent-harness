@@ -123,6 +123,32 @@ function canArmProgress(t) {
   return !["Succeeded", "Failed", "Cancelled"].includes(t.status);
 }
 
+// watchChoices is the one watch menu (🔔): what a task can be watched for.
+// The four await-idle signals need a live session; the next progress line
+// works on any task that can still write. The CLI keeps the two verbs apart;
+// the page asks one question — "wake me when what?". The TUI's `w`/`W`
+// picker offers the same five in the same order.
+const WATCH_CHOICES = [
+  { key: "quiet", label: "出力が止まったら", signal: "quiet" },
+  { key: "lifecycle", label: "hook が turn の終わりを報告したら", signal: "lifecycle" },
+  { key: "program", label: "program が状態で知らせたら", signal: "program" },
+  { key: "any", label: "どれか早いもの", signal: "any" },
+  { key: "progress", label: "次の進捗行が書かれたら", progress: true },
+];
+function watchChoices(t) {
+  const live = (t.kind === "Interactive" || t.kind === "Stream") &&
+    (t.status === "Running" || t.status === "Detached");
+  return WATCH_CHOICES.filter((c) => (c.progress ? canArmProgress(t) : live));
+}
+
+// watchArm is the bridge call a choice makes: the verb and its options. Every
+// menu arm notifies (the menu is the "tell me later" button); the progress
+// baseline is the row's progressAt, an exact decimal string.
+function watchArm(c, t) {
+  if (c.progress) return { fn: "awaitProgress", opts: { taskId: t.id, since: t.progressAt || "0", sink: "notify" } };
+  return { fn: "awaitIdle", opts: { taskId: t.id, sink: "notify", signal: c.signal } };
+}
+
 // canClearProgress: the sheet offers to empty a line only when there is one;
 // whether this operator may (cancel + scope) is the server's answer.
 function canClearProgress(t) {

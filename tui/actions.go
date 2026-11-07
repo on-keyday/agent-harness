@@ -328,54 +328,45 @@ func (a *App) onFilePicker(msg tea.KeyMsg) (tea.Cmd, bool) {
 	return cmd, true
 }
 
-// `w` arms an await-idle watcher on the selected task: the fire lands
-// as a result line in cmdresult when the session's output goes idle.
-// `W` routes the fire through the operator-notification egress
-// instead (notify feed + --notify-hook, e.g. the phone) — for when
-// you're about to walk away.
+// `w` / `W` open the watch picker on the selected task: what to wake on —
+// output quiet, the hooks' lifecycle, the program's status, any of them, or the
+// task's next progress line. `w` lands the fire here as a result line, `W`
+// routes it through the operator-notification egress (notify feed +
+// --notify-hook, e.g. the phone) — for when you are about to walk away.
 func (a *App) onAwaitIdle(msg tea.KeyMsg) (tea.Cmd, bool) {
-	taskID := a.tasks.SelectedID()
-	if taskID == "" {
-		a.cmdresult.Append(WarnStyle.Render("await-idle: no task selected"))
-		return nil, true
-	}
-	if a.client == nil {
-		a.cmdresult.Append(WarnStyle.Render("await-idle: not connected"))
+	t := a.tasks.SelectedTask()
+	if t == nil {
+		a.cmdresult.Append(WarnStyle.Render("watch: no task selected"))
 		return nil, true
 	}
 	sink := protocol.AwaitSink_Reply
 	if msg.String() == mainKeys.AwaitIdleNotify {
 		sink = protocol.AwaitSink_Notify
-	} else {
-		a.cmdresult.Append(fmt.Sprintf("await-idle %s: watching (result lands here when the session goes idle)…", shortTaskID(taskID)))
 	}
-	// The one-key arm keeps the default signal; choosing one is a command-line
-	// act (await-idle signal spec D15).
-	return DoAwaitIdle(a.appCtx, a.client, taskID, 0, sink, "", protocol.AwaitIdleSignal_Quiet), true
+	a.watchPicker.Open(a.tasks.SelectedID(), sink, watchChoices(watchLive(t)), a.lastWatch)
+	// The await-progress baseline is the row as drawn when the picker opened:
+	// a line written since then fires at once.
+	a.watchPicker.progressAt = t.ProgressAt
+	return nil, true
 }
 
-// `m` arms an await-progress watcher on the selected task: the fire lands as a
-// result line when the task writes its next progress line. The baseline is the
-// row's progress_at, so a line written since the row was drawn fires at once.
-// `M` routes the fire through the operator-notification egress instead.
-func (a *App) onAwaitProgress(msg tea.KeyMsg) (tea.Cmd, bool) {
-	t := a.tasks.SelectedTask()
-	if t == nil {
-		a.cmdresult.Append(WarnStyle.Render("await-progress: no task selected"))
-		return nil, true
-	}
+// armWatch arms what the watch picker chose.
+func (a *App) armWatch(taskID string, sink protocol.AwaitSink, c watchChoice, progressAt uint64) tea.Cmd {
 	if a.client == nil {
-		a.cmdresult.Append(WarnStyle.Render("await-progress: not connected"))
-		return nil, true
+		a.cmdresult.Append(WarnStyle.Render("watch: not connected"))
+		return nil
 	}
-	taskID := a.tasks.SelectedID()
-	sink := protocol.AwaitSink_Reply
-	if msg.String() == mainKeys.AwaitProgressNotify {
-		sink = protocol.AwaitSink_Notify
-	} else {
-		a.cmdresult.Append(fmt.Sprintf("await-progress %s: watching (result lands here on the next progress line)…", shortTaskID(taskID)))
+	short := shortTaskID(taskID)
+	if c.progress {
+		if sink == protocol.AwaitSink_Reply {
+			a.cmdresult.Append(fmt.Sprintf("await-progress %s: watching (result lands here on the next progress line)…", short))
+		}
+		return DoAwaitProgress(a.appCtx, a.client, taskID, progressAt, sink, "")
 	}
-	return DoAwaitProgress(a.appCtx, a.client, taskID, t.ProgressAt, sink, ""), true
+	if sink == protocol.AwaitSink_Reply {
+		a.cmdresult.Append(fmt.Sprintf("await-idle %s: watching for %s (result lands here when it fires)…", short, c.key))
+	}
+	return DoAwaitIdle(a.appCtx, a.client, taskID, 0, sink, "", c.signal)
 }
 
 // `X` empties the selected task's progress line — for a stale line its task

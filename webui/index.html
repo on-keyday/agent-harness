@@ -440,8 +440,7 @@
       <h2>Interactive</h2>
       <div class="actions">
         <button id="stop-streaming">Stop streaming</button>
-        <button id="await-idle-btn" title="現在のセッションがidleになったら通知を送る">🔔 idleで通知</button>
-        <button id="await-progress-btn" title="このタスクが次に進捗を書いたら通知を送る">📝 進捗で通知</button>
+        <button id="await-idle-btn" title="このタスクで何か起きたら通知を送る — 何で起こすかを選ぶ">🔔 通知…</button>
       </div>
       <div id="attached-task"></div>
       <button id="reattach-quick" hidden>↪ このセッションに再アタッチ</button>
@@ -627,6 +626,18 @@
     <menu class="picker-actions">
       <button type="button" id="board-member-apply">適用</button>
       <button type="button" id="board-member-cancel">キャンセル</button>
+    </menu>
+  </form>
+</dialog>
+<!-- The one watch menu (🔔): what to be notified about — an await-idle
+     signal or the next progress line. Body-level for the top-layer reason the
+     other picker dialogs are. -->
+<dialog id="watch-modal" class="picker-modal">
+  <form method="dialog" class="picker-form">
+    <h3 class="picker-title" id="watch-modal-title">何で知らせる?</h3>
+    <div id="watch-modal-list" class="watch-choices"></div>
+    <menu class="picker-actions">
+      <button type="button" id="watch-modal-cancel">Cancel</button>
     </menu>
   </form>
 </dialog>

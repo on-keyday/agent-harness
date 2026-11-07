@@ -191,7 +191,11 @@ type App struct {
 	// port-forward state
 	portForwardModal PortForwardModal
 	forwardPicker    ForwardPicker
-	activeForwards   map[int]*PortForwardSession // keyed by client-side unique id
+	// watchPicker asks `w`/`W` what to wake on; lastWatch is the last pick,
+	// where its cursor starts next time.
+	watchPicker    WatchPicker
+	lastWatch      string
+	activeForwards map[int]*PortForwardSession // keyed by client-side unique id
 	// pendingKeep holds, per client-side forward id, the workspace a start
 	// modal's keep will write into once that forward registers.
 	pendingKeep   map[int]string
@@ -2028,6 +2032,9 @@ func (a *App) View() string {
 	}
 	if a.forwardPicker.IsOpen() {
 		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.forwardPicker.View())
+	}
+	if a.watchPicker.IsOpen() {
+		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.watchPicker.View())
 	}
 	if a.workspacePicker.IsOpen() {
 		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.workspacePicker.View())
