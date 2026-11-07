@@ -59,7 +59,7 @@ func NewIdleWatchersModal() IdleWatchersModal {
 		{Title: "id", Width: 6},
 		{Title: "task", Width: 12},
 		{Title: "sink", Width: 30},
-		{Title: "waits for", Width: 12},
+		{Title: "waits for", Width: 18}, // "idle quiet 60000ms": the signal is always named
 		{Title: "armed", Width: 9},
 		{Title: "by", Width: 10},
 	}

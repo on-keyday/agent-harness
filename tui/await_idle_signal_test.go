@@ -43,3 +43,23 @@ func TestAwaitIdleResult_NamesLegAndState(t *testing.T) {
 		}
 	}
 }
+
+// The "waits for" column must hold the widest cell at the default threshold,
+// or `idle lifecycle` renders as `idle lifec…` (seen live, 2026-11-08). The
+// test checks the width against the values, not the values alone.
+func TestIdleWatchersModal_WaitsForFits(t *testing.T) {
+	m := NewIdleWatchersModal()
+	width := -1
+	for _, c := range m.baseCols {
+		if c.Title == "waits for" {
+			width = c.Width
+		}
+	}
+	for _, sig := range []protocol.AwaitIdleSignal{protocol.AwaitIdleSignal_Quiet, protocol.AwaitIdleSignal_Lifecycle,
+		protocol.AwaitIdleSignal_Program, protocol.AwaitIdleSignal_Any} {
+		w := protocol.AwaitIdleWatcherInfo{Condition: protocol.AwaitCondition_Idle, ThresholdMs: 2500, Signal: sig}
+		if cell := watcherWaitsFor(&w); len(cell) > width {
+			t.Errorf("%q is %d wide; the column is %d", cell, len(cell), width)
+		}
+	}
+}
