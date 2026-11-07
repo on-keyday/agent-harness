@@ -51,13 +51,19 @@ from before this rule, named by date only, are renamed once in date order,
 from `001`.
 
 - Inside running-parallel-workers it is `<records>/tours/`.
-- A standalone run uses the same directory when those records exist, so there
-  is one reaction history. To find them, look in the repository for
-  running-parallel-workers' conventions document. If it names a records
-  location, the tour directory is `<records>/tours/`.
-- Without records, ask the owner where to put it on the first run. On later
-  runs the owner names it again, since nothing in the repository may point to
-  it.
+- A standalone run looks for where the repository's own conventions put it.
+  Repositories differ: one has running-parallel-workers' conventions document
+  naming a records location (then `<records>/tours/`, so there is one reaction
+  history), one records the tour directory some other way, one records it
+  nowhere. Look; assume none of these.
+- If you keep a memory that persists across sessions, look there too. Once the
+  directory is known, record it there, so the next run finds it without asking.
+- If nothing names it, ask the owner. If it is named but you cannot read or
+  write it (a sandbox that does not mount it), say so and wait. Never pick a
+  directory yourself, not even one you can write to. Why: a run that found
+  nothing chose a directory it could write to and labelled its settings
+  "proposed", while the owner's tour directory, with two pages and settled
+  settings, sat where that run's sandbox could not see.
 
 `settings.md` holds two answers, settled with the owner on the first run (or
 copied from running-parallel-workers' conventions):
