@@ -1195,7 +1195,9 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.Status {
 		case protocol.AwaitIdleStatus_Fired:
 			line := "await-idle " + short + ": session is idle"
-			if msg.LastOutputAt > 0 {
+			if d := cli.AwaitIdleFiredDetail(msg.FiredBy, msg.Lifecycle, msg.ProgramState, msg.ProgramKind); d != "" {
+				line += " (" + d + ")"
+			} else if msg.LastOutputAt > 0 {
 				line += " (last output " + formatNanoTs(msg.LastOutputAt) + ")"
 			}
 			a.cmdresult.Append(OKStyle.Render(line))

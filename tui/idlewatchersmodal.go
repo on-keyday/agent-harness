@@ -34,12 +34,18 @@ func idleWatcherRow(w *protocol.AwaitIdleWatcherInfo, now time.Time) table.Row {
 }
 
 // watcherWaitsFor is the condition cell: the registry holds both await-idle
-// and await-progress watchers, and only the idle ones have a threshold.
+// and await-progress watchers. An idle watcher names its signal unless it is
+// the default quiet one, and shows its threshold when a quiet leg uses it.
 func watcherWaitsFor(w *protocol.AwaitIdleWatcherInfo) string {
-	if w.Condition == protocol.AwaitCondition_Progress {
+	switch {
+	case w.Condition == protocol.AwaitCondition_Progress:
 		return "progress"
+	case w.Signal == protocol.AwaitIdleSignal_Quiet:
+		return fmt.Sprintf("idle %dms", w.ThresholdMs)
+	case w.Signal == protocol.AwaitIdleSignal_Any:
+		return fmt.Sprintf("idle any %dms", w.ThresholdMs)
 	}
-	return fmt.Sprintf("idle %dms", w.ThresholdMs)
+	return "idle " + cli.AwaitIdleSignalString(w.Signal)
 }
 
 // IdleWatchersModal lists the armed await-idle watchers this operator can

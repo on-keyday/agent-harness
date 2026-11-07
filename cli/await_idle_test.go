@@ -113,3 +113,22 @@ func TestAwaitIdleWatcherLines_Signal(t *testing.T) {
 		t.Fatalf("json row signal = %v, want program", row["signal"])
 	}
 }
+
+func TestAwaitIdleFiredDetail(t *testing.T) {
+	for _, c := range []struct {
+		firedBy protocol.AwaitIdleSignal
+		lc      protocol.LifecycleState
+		ps      protocol.ProgramState
+		pk      protocol.ProgramKind
+		want    string
+	}{
+		{protocol.AwaitIdleSignal_Program, 0, protocol.ProgramState_Done, 0, "program done"},
+		{protocol.AwaitIdleSignal_Program, 0, protocol.ProgramState_Blocked, protocol.ProgramKind_Question, "program blocked:question"},
+		{protocol.AwaitIdleSignal_Lifecycle, protocol.LifecycleState_Error, 0, 0, "lifecycle error"},
+		{protocol.AwaitIdleSignal_Quiet, protocol.LifecycleState_Idle, protocol.ProgramState_Done, 0, ""},
+	} {
+		if got := AwaitIdleFiredDetail(c.firedBy, c.lc, c.ps, c.pk); got != c.want {
+			t.Errorf("AwaitIdleFiredDetail(%v,%v,%v,%v) = %q, want %q", c.firedBy, c.lc, c.ps, c.pk, got, c.want)
+		}
+	}
+}

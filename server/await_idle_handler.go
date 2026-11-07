@@ -205,14 +205,9 @@ func idleNotifyText(taskIDHex string, f IdleFire) string {
 	switch {
 	case f.Stopped:
 		return fmt.Sprintf("session %s ended", short)
-	case f.FiredBy == protocol.AwaitIdleSignal_Program:
-		state := cli.ProgramWord(f.ProgramState)
-		if f.ProgramState == protocol.ProgramState_Blocked && f.ProgramKind != protocol.ProgramKind_None {
-			state += ":" + cli.ProgramKindWord(f.ProgramKind)
-		}
-		return fmt.Sprintf("session %s idle (program %s)", short, state)
-	case f.FiredBy == protocol.AwaitIdleSignal_Lifecycle:
-		return fmt.Sprintf("session %s idle (lifecycle %s)", short, cli.LifecycleWord(f.Lifecycle))
+	case f.FiredBy != protocol.AwaitIdleSignal_Quiet:
+		return fmt.Sprintf("session %s idle (%s)", short,
+			cli.AwaitIdleFiredDetail(f.FiredBy, f.Lifecycle, f.ProgramState, f.ProgramKind))
 	default:
 		idle := time.Since(time.Unix(0, f.LastOutput))
 		return fmt.Sprintf("session %s idle (%ds since last output)", short, int(idle/time.Second))

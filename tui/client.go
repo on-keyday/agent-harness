@@ -443,6 +443,11 @@ type AwaitIdleResultMsg struct {
 	Status       protocol.AwaitIdleStatus
 	LastOutputAt uint64
 	WatcherID    uint64
+	// The leg that fired and what the session showed at decision time.
+	FiredBy      protocol.AwaitIdleSignal
+	Lifecycle    protocol.LifecycleState
+	ProgramState protocol.ProgramState
+	ProgramKind  protocol.ProgramKind
 	Err          error
 }
 
@@ -455,7 +460,8 @@ func DoAwaitIdle(ctx context.Context, c *cli.Client, taskID string, thresholdMs 
 		if err != nil {
 			return AwaitIdleResultMsg{TaskID: taskID, Err: err}
 		}
-		return AwaitIdleResultMsg{TaskID: taskID, Status: resp.Status, LastOutputAt: resp.LastOutputAt, WatcherID: resp.WatcherId}
+		return AwaitIdleResultMsg{TaskID: taskID, Status: resp.Status, LastOutputAt: resp.LastOutputAt, WatcherID: resp.WatcherId,
+			FiredBy: resp.FiredBy, Lifecycle: resp.Lifecycle, ProgramState: resp.ProgramState, ProgramKind: resp.ProgramKind}
 	}
 }
 

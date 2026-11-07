@@ -204,6 +204,24 @@ func ParseAwaitIdleSignal(word string) (protocol.AwaitIdleSignal, error) {
 	return 0, fmt.Errorf("unknown signal %q (want quiet, lifecycle, program or any)", word)
 }
 
+// AwaitIdleFiredDetail is what a fire saw, for the leg that fired: "program
+// done", "program blocked:permission", "lifecycle waiting". "" for the quiet
+// leg, whose surfaces keep their "last output" wording. One spelling for the
+// notification, the TUI result line and the WebUI.
+func AwaitIdleFiredDetail(firedBy protocol.AwaitIdleSignal, lc protocol.LifecycleState, ps protocol.ProgramState, pk protocol.ProgramKind) string {
+	switch firedBy {
+	case protocol.AwaitIdleSignal_Program:
+		state := ProgramWord(ps)
+		if ps == protocol.ProgramState_Blocked && pk != protocol.ProgramKind_None {
+			state += ":" + ProgramKindWord(pk)
+		}
+		return "program " + state
+	case protocol.AwaitIdleSignal_Lifecycle:
+		return "lifecycle " + LifecycleWord(lc)
+	}
+	return ""
+}
+
 // FilterWatchers keeps the rows of one condition: the registry, and so
 // await_list, is shared by await-idle and await-progress, and each verb's
 // `ls` shows its own.
