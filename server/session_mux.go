@@ -213,6 +213,19 @@ type SessionMux struct {
 	// ~every 100ms, an idle prompt emits nothing at all.
 	lastOutput atomic.Int64
 
+	// The stamps await-idle's lifecycle/program legs compare (await-idle
+	// signal spec D6, D7, D18), all server-clock unix nanos, 0 = never.
+	// muxStart floors every comparison: a state reported before this session
+	// began (lifecycle carried across a resume) is not this session's.
+	// lastInput is the last client Stdin frame forwarded to the runner —
+	// never a resize, a Control frame or the server's own 7501 probe reply.
+	// programAt is the last change of the root 7501 record's state or kind;
+	// programWorkingAt the last change TO working.
+	muxStart         int64
+	lastInput        atomic.Int64
+	programAt        atomic.Int64
+	programWorkingAt atomic.Int64
+
 	// mainMark is the ring append-index of the frame at which the session last
 	// returned to the primary screen (a full-screen app's alt-screen exit).
 	// On reattach, when the session is currently on the primary screen, replay
@@ -292,6 +305,7 @@ func NewSessionMux(parentCtx context.Context, taskID string, kind protocol.TaskK
 		// said, and the conventional terminal size is the honest answer to
 		// "what does this session believe it is" in that window.
 		screen:      vtgrid.New(80, 24),
+		muxStart:    time.Now().UnixNano(),
 		stopped:     make(chan struct{}),
 		viewers:     make(map[*viewerConn]struct{}),
 		onAttach:    hooks.OnAttach,
@@ -358,7 +372,9 @@ func (m *SessionMux) recordFrame(frameBytes []byte) {
 			if m.terminal {
 				m.modes.Feed(frameBytes[frame.FrameHeaderSize:])
 				m.screenMu.Lock()
+				before := m.screen.ProgramStatus()
 				_, _ = m.screen.Write(frameBytes[frame.FrameHeaderSize:])
+				m.stampProgramChange(before, m.screen.ProgramStatus())
 				probes := m.screen.TakeProgramStatusQueries()
 				m.screenMu.Unlock()
 				m.answerProgramStatusProbes(probes)
@@ -416,7 +432,9 @@ func (m *SessionMux) loadScreen(b []byte) {
 	}
 	m.modes.Feed(b)
 	m.screenMu.Lock()
+	before := m.screen.ProgramStatus()
 	_, _ = m.screen.Write(b)
+	m.stampProgramChange(before, m.screen.ProgramStatus())
 	// A probe in a loaded capture was asked of a previous server by a
 	// program that settled its answer long ago: drop it, never answer it.
 	_ = m.screen.TakeProgramStatusQueries()
@@ -841,6 +859,7 @@ func (m *SessionMux) forwardControlFrames(acc []byte) ([]byte, bool) {
 		if err := m.writeFrameToRunner(fb); err != nil {
 			return nil, false
 		}
+		m.stampInput(fb)
 		acc = acc[total:]
 	}
 	return carryTail(acc), true
@@ -899,6 +918,7 @@ func (m *SessionMux) forwardObserverFrames(v *viewerConn, acc []byte) ([]byte, b
 			if err := m.writeFrameToRunner(fb); err != nil {
 				return nil, false
 			}
+			m.stampInput(fb)
 		}
 		acc = acc[total:]
 	}
@@ -1130,6 +1150,40 @@ func (m *SessionMux) RingBufferLen() int { return m.ring.Len() }
 // LastOutputUnixNano returns the unix-nano timestamp of the most recent
 // Stdout/Stderr frame from the runner, or 0 if none has arrived yet.
 func (m *SessionMux) LastOutputUnixNano() int64 { return m.lastOutput.Load() }
+
+// MuxStartUnixNano is when this mux was created (server clock).
+func (m *SessionMux) MuxStartUnixNano() int64 { return m.muxStart }
+
+// LastInputUnixNano is when a client's Stdin frame was last forwarded to the
+// runner; 0 = never.
+func (m *SessionMux) LastInputUnixNano() int64 { return m.lastInput.Load() }
+
+// ProgramStamps reports when the root 7501 record last changed and when it
+// last changed to working; 0 = never.
+func (m *SessionMux) ProgramStamps() (at, workingAt int64) {
+	return m.programAt.Load(), m.programWorkingAt.Load()
+}
+
+// stampInput records a forwarded client Stdin frame. Every other frame type a
+// forwarder passes (Control: signals) is not input.
+func (m *SessionMux) stampInput(fb []byte) {
+	if len(fb) >= frame.FrameHeaderSize && frame.FrameType(fb[0]) == frame.FrameType_Stdin {
+		m.lastInput.Store(time.Now().UnixNano())
+	}
+}
+
+// stampProgramChange records a change of the root 7501 record's state or
+// kind. Called under screenMu with the status before and after one write.
+func (m *SessionMux) stampProgramChange(before, after vtgrid.ProgramStatus) {
+	if before.State == after.State && before.Kind == after.Kind {
+		return
+	}
+	now := time.Now().UnixNano()
+	m.programAt.Store(now)
+	if after.State == "working" {
+		m.programWorkingAt.Store(now)
+	}
+}
 
 // maxWireTitleBytes bounds the title a task row and a task event carry.
 const maxWireTitleBytes = 256

@@ -140,6 +140,12 @@ type TaskEntry struct {
 	Lifecycle           protocol.LifecycleState
 	LifecycleAt         int64
 	LifecycleReportedAt int64
+	// LifecycleWorkingAt is the server stamp of the last accepted `working`
+	// report. await-idle counts a non-working state after an input only if a
+	// `working` followed that input, which shuts out the previous turn's late
+	// async Stop hook (await-idle signal spec D6). Memory only and NOT in the
+	// progress snapshot: a restart makes a new mux, whose start floors it.
+	LifecycleWorkingAt int64
 }
 
 // TaskStore is the in-memory authority for task lifecycle.
@@ -417,6 +423,9 @@ func (s *TaskStore) SetLifecycle(id string, st protocol.LifecycleState, reported
 	t.Lifecycle = st
 	t.LifecycleAt = at
 	t.LifecycleReportedAt = reportedAt
+	if st == protocol.LifecycleState_Working {
+		t.LifecycleWorkingAt = at
+	}
 	return *t, protocol.LifecycleSetStatus_Ok
 }
 
