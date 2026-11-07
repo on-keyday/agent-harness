@@ -129,11 +129,12 @@ letting it cancel a finding would hide the thing the page is for.
    differently on two surfaces went on the page as drift, but an owner-marked
    spec row had decided that difference. The owner spent a round correcting
    the page instead of using it.
-7. **Read the code you will show, then write the page.** Use one or two items,
-   in the format below, in the owner's language and a polite register. Record
-   the commit the page describes. More items do not get more pushback; the
-   owner engages with one or two, and each item is long because it carries
-   its code. When it is written, open every location at its line and check
+7. **Read the code you will show, then write the page.** Use about three
+   items, in the format below, in the owner's language and a polite register.
+   If no more than one or two hold up after step 6, use those; never pad. When
+   the owner names a number, use theirs. Why: the first page of the source run
+   held three, and the owner pushed back on all three. Record the commit the
+   page describes. When it is written, open every location at its line and check
    that the quoted code is there. Why: a page author once wrote line 16 for
    code on line 18.
 8. **Hand it over and end the turn.** The owner may take a while.
@@ -250,5 +251,5 @@ author's assumptions.
 | Listing locations without quoting the code | The owner has nothing to read and must open every file | Stops in reading order, each with the code quoted |
 | Declining to show code because no decision anchors it | The owner cannot see the code they asked for | Showing code is always this skill's job; walk them through it |
 | Quiz questions with the answer held back | The owner feels tested | Ask intent or choice; show facts side by side |
-| Many items | Nothing gets questioned | One or two items, each with its walk |
+| A long, complete report | Nothing gets questioned | About three items, each with its walk; fewer only when no more hold up; the owner's number when they name one |
 | Committing the page | Local paths published | Keep it in the tour directory |

@@ -59,7 +59,7 @@ worth a second look.
 | D4 | Two further sources feed items. (a) Symptoms the owner has named, such as "many bugs where A and B disagreed"; the fix history can be grouped by kind to show them. (b) The reaction log of earlier pages (D12). Mechanical signals (counts of self-declared copies, file growth, identifiers named in comments but defined nowhere) are only search aids for these sources and are never a reason to list an item. They carry the author's assumptions about what debt looks like, and in the trial they produced one wrong item and one already-known item | operator (2026-11-06; selection by signals was rejected as carrying the model's prior) |
 | D5 | Questions ask what only the owner can answer: what they intended, or what they want done. A question whose answer the author already holds, posed so the owner has to guess, is never used. Facts are shown side by side so a difference is visible without a quiz | operator |
 | D6 | Every claim on the page is checked against the decision records and against the artifact itself before the page is shown. A difference counts as a finding only after confirming that no **owner** decision covers it (D15). A claim that cannot be checked is labelled as unchecked or left off | this spec (the trial's wrong item) |
-| D7 | A page holds about three items | this spec |
+| D7 | A page holds about three items. When no more than one or two hold up, it holds those, never padded. When the owner names a number, that number | this spec; operator (2026-11-07: about three by default, one or two when no more are found, the owner's number when given) |
 | D8 | Code locations are written so the owner can open them as they are, in their editor. In the trial that meant an absolute path with a line number in the owner's checkout. The form is settled once per repository: in running-parallel-workers' conventions, or by asking the owner on a standalone run. Because those paths are local, **the page is never committed** to the repository | operator (absolute `path:line` for the trial owner); this spec (settle per repository) |
 | D9 | The page uses the owner's language in a polite register | operator |
 | D10 | The skill is embedded (`runner/agentskills/codebase-tour/`) and mirrored under `.claude/skills/` and `.agents/skills/`, like running-parallel-workers. That skill names it, so every agent that gets running-parallel-workers must get this one too. Nothing specific to one repository goes in the skill text | this spec |
@@ -109,7 +109,7 @@ running-parallel-workers' trigger fires (§2).
    each statement. Drop anything an owner decision explains. Label anything
    that could not be checked. A difference that only an agent's decision
    explains stays on the page as that agent's decision (D15).
-7. **Write the page.** Use about three items (D7) in the format below, and
+7. **Write the page.** Use about three items, or as D7 allows, in the format below, and
    record the commit described.
 8. **Present it and stop.** Hand the page over and end the turn. The owner
    may take a while.
