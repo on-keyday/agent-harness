@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/signal"
 	"runtime"
@@ -35,8 +36,21 @@ func main() {
 	wsPath := flag.String("ws-path", "", "WebSocket URL path (env: HARNESS_WS_PATH; workspace: ws-path; default /ws)")
 	configPath := flag.String("config", "", "workspace config file (env: HARNESS_CONFIG; default ./.harness/config)")
 	wsName := flag.String("workspace", "", "workspace whose server-cid / ws-path / repo to use (see `workspace ls`)")
+	logLevel := flag.String("log-level", "", "slog level for this process: debug, info, warn or error (env: HARNESS_LOG_LEVEL; default warn)")
 	flag.Usage = usage
 	flag.Parse()
+
+	// The connection layers (objtrsf's objproto and transport, cli's own dial)
+	// log every connection's start and end at INFO. In a daemon that is a
+	// trail worth keeping; in a one-shot command it is two to four lines on
+	// every invocation, landing in an agent's context and in every hook's
+	// output. So this process starts at WARN, and the trail is one flag or one
+	// variable away. The server and the runner are other binaries and keep INFO.
+	lvl, err := parseLogLevel(cliopts.ResolveString(*logLevel, "HARNESS_LOG_LEVEL"))
+	if err != nil {
+		die(err)
+	}
+	slog.SetLogLoggerLevel(lvl)
 
 	wsFile, _, werr := workspace.Load(*configPath)
 	if werr != nil {
@@ -236,6 +250,19 @@ func forceExitWithStacks(label, reason string) {
 	os.Exit(130)
 }
 
+// parseLogLevel reads --log-level / HARNESS_LOG_LEVEL. Empty is the default,
+// WARN. Anything slog.Level accepts is accepted ("info", "WARN", "debug-4").
+func parseLogLevel(s string) (slog.Level, error) {
+	if s == "" {
+		return slog.LevelWarn, nil
+	}
+	var l slog.Level
+	if err := l.UnmarshalText([]byte(s)); err != nil {
+		return 0, fmt.Errorf("--log-level / HARNESS_LOG_LEVEL %q: want debug, info, warn or error", s)
+	}
+	return l, nil
+}
+
 func usage() { usageTo(os.Stderr) }
 
 func usageTo(w io.Writer) {
@@ -249,6 +276,7 @@ func usageTo(w io.Writer) {
 	fmt.Fprintln(w, "  --ws-path     HARNESS_WS_PATH     (workspace: ws-path; default /ws)")
 	fmt.Fprintln(w, "  --config      HARNESS_CONFIG      (default ./.harness/config; never read inside a task)")
 	fmt.Fprintln(w, "  --workspace   NAME                which workspace in that file supplies server-cid / ws-path / repo")
+	fmt.Fprintln(w, "  --log-level   HARNESS_LOG_LEVEL   (default warn; info adds each connection's start and end)")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Subcommands:")
 

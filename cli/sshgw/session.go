@@ -251,7 +251,7 @@ func (g *Gateway) runExec(ctx context.Context, ch ssh.Channel, taskID, cmdline s
 		kctx, kcancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer kcancel()
 		if err := g.client.ExecRunKillWith(kctx, id); err != nil {
-			slog.Info("ssh-gateway: could not stop the exec its client abandoned",
+			slog.Warn("ssh-gateway: could not stop the exec its client abandoned",
 				"exec_id", id, "task", taskID, "err", err)
 		}
 	}()

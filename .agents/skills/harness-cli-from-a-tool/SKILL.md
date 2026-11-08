@@ -71,10 +71,12 @@ topic that simply is not in `agent topics`.
 | `bytes` | whether the body you meant actually went out |
 | `seq` | keep it — retract and correlation both need it |
 
-**stderr is not the error channel.** harness-cli writes connection INFO lines
-there on completely successful calls, so "stderr is non-empty" is not failure
-— and `2>/dev/null` throws away the real diagnosis when there is one, because
-capability denials arrive on the same stream, mixed in with the INFO.
+**stderr is not the error channel.** harness-cli logs at WARN by default, so a
+successful call is usually silent there — but a warning can still land on one,
+and `HARNESS_LOG_LEVEL=info` (or `--log-level info`) adds every connection's
+start and end. So "stderr is non-empty" is not failure — and `2>/dev/null`
+throws away the real diagnosis when there is one, because capability denials
+arrive on the same stream.
 
 ```python
 r = subprocess.run([CLI, *args], input=body, capture_output=True, text=True, timeout=60)

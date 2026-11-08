@@ -74,7 +74,9 @@ func (g *Gateway) serveDirectTCPIP(ctx context.Context, user string, newCh ssh.N
 	// closing would reach the operator as a bare connection reset and read as
 	// the TARGET having refused them — a diagnosis pointing at the wrong host.
 	rc, err := cli.OpenRawForward(ctx, g.client, taskID, host, port, protocol.ClientEndpointKind_InProcessSshGateway, func(line string) {
-		slog.Info("ssh-gateway: " + line)
+		// The only lines are a forward ending from the far side (killed, or
+		// the server lost): WARN, so harness-cli's default level keeps them.
+		slog.Warn("ssh-gateway: " + line)
 	})
 	if err != nil {
 		_ = newCh.Reject(ssh.ConnectionFailed, fmt.Sprintf("ssh-gateway: %v", err))

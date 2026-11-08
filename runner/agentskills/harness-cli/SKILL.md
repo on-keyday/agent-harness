@@ -599,11 +599,12 @@ harness-cli agent unsubscribe --topic chat.<peer-id>   # remove stray
 
 ## Other conventions
 
-- **stderr is not the error channel; the exit code is.** `harness-cli` writes
-  connection INFO lines to stderr on completely successful calls, so a
-  non-empty stderr is not a failure — and `2>/dev/null` throws the real
-  diagnosis away, because a capability denial arrives on that same stream
-  mixed in with the INFO. There is now ONE denial wording —
+- **stderr is not the error channel; the exit code is.** `harness-cli` logs at
+  WARN by default, so a successful call is usually silent there — but a
+  warning can still land on a call that succeeded, and `--log-level info` /
+  `HARNESS_LOG_LEVEL=info` add every connection's start and end. A non-empty
+  stderr is not a failure, and `2>/dev/null` throws the real diagnosis away,
+  because a capability denial arrives on that same stream. There is now ONE denial wording —
   `permission denied: <kind> requires capability <cap>` — where there used to
   be one per surface, because every refusal is the same response carrying the
   missing bit rather than a status value each verb rendered its own way. Still
