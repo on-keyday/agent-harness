@@ -970,7 +970,7 @@ func (h cliVerbs) Lifecycle(a verb.LifecycleAction) error {
 	if fi, err := os.Stdin.Stat(); err == nil && fi.Mode()&os.ModeCharDevice == 0 {
 		stdin = os.Stdin
 	}
-	cli.ReportLifecycle(h.ctx, h.cid, a.State, a.Hook, stdin, os.Stderr)
+	cli.ReportLifecycle(h.ctx, h.cid, a.State, a.Hook, stdin, os.Stdout, os.Stderr)
 	return nil
 }
 

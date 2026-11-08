@@ -205,7 +205,7 @@ type hookEvent struct {
 }
 
 // hookEventFor reads the hook input for the agent the hook command names
-// (`--hook claude` or `--hook codex`). Which agent's JSON is never guessed from the
+// (`--hook claude`, `--hook codex`, or `--hook agy`). Which agent's JSON is never guessed from the
 // JSON: a nested agent inherits the env, and one agent can replay another's
 // hook config. No --hook (a hand-run command) or no stdin is no input.
 // Another agent is added here with its own reading.
@@ -216,6 +216,8 @@ func hookEventFor(hook string, stdin io.Reader) hookEvent {
 	switch hook {
 	case "claude", "codex":
 		return parseHookInput(stdin)
+	case "agy":
+		return parseAgyHookInput(stdin)
 	}
 	return hookEvent{}
 }
@@ -226,6 +228,24 @@ func parseHookInput(r io.Reader) hookEvent {
 	var ev hookEvent
 	if err := json.NewDecoder(io.LimitReader(r, 16<<20)).Decode(&ev); err != nil {
 		return hookEvent{}
+	}
+	return ev
+}
+
+// parseAgyHookInput reads Antigravity's hook stdin JSON.
+func parseAgyHookInput(r io.Reader) hookEvent {
+	var payload struct {
+		TerminationReason string `json:"terminationReason"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r, 16<<20)).Decode(&payload); err != nil {
+		return hookEvent{}
+	}
+	var ev hookEvent
+	switch {
+	case payload.TerminationReason == "ERROR":
+		ev.Name = "StopFailure"
+	case payload.TerminationReason != "":
+		ev.Name = "Stop"
 	}
 	return ev
 }
@@ -408,9 +428,16 @@ func recordSent(taskHex string, r hookResult, status protocol.LifecycleSetStatus
 // hook's stdin when there is one, folds the event into the task's state (see
 // hookState), skips a repeat of the last accepted report, and sends with a
 // short timeout. It never fails: it runs inside the agent's hook pipeline, so
-// a down server is one line on errw, not an error the agent sees. It writes
-// nothing to stdout.
-func ReportLifecycle(ctx context.Context, cid func() objproto.ConnectionID, word, hook string, stdin io.Reader, errw io.Writer) {
+// a down server is one line on errw, not an error the agent sees. For agy, it writes
+// the required response JSON to outw so the agent pipeline does not block.
+func ReportLifecycle(ctx context.Context, cid func() objproto.ConnectionID, word, hook string, stdin io.Reader, outw, errw io.Writer) {
+	if hook == "agy" && outw != nil {
+		if word == "waiting" {
+			defer fmt.Fprintln(outw, `{"decision":"allow"}`)
+		} else {
+			defer fmt.Fprintln(outw, `{}`)
+		}
+	}
 	argv, ok := ParseLifecycleState(word)
 	if !ok {
 		fmt.Fprintf(errw, "lifecycle: unknown state %q\n", word)

@@ -88,6 +88,18 @@ var codexHookEntries = []harnessHookEntry{
 	{Event: "SubagentStop", Command: "harness-cli lifecycle --hook codex idle", Async: true},
 }
 
+// agyHookEntries enumerates the lifecycle hooks for Antigravity (agy).
+// agy uses .agents/hooks.json where top-level keys are hook names (we use "harness").
+// Flat events (SessionStart, PreInvocation, Stop) store a list of handler objects directly.
+// Grouped events (PreToolUse, PostToolUse) store groups with matcher and hooks list.
+var agyHookEntries = []harnessHookEntry{
+	{Event: "SessionStart", Command: "harness-cli lifecycle --hook agy idle"},
+	{Event: "PreInvocation", Command: "harness-cli lifecycle --hook agy working"},
+	{Event: "PreToolUse", Matcher: "ask_question", Command: "harness-cli lifecycle --hook agy waiting"},
+	{Event: "PostToolUse", Matcher: "*", Command: "harness-cli lifecycle --hook agy working"},
+	{Event: "Stop", Command: "harness-cli lifecycle --hook agy idle"},
+}
+
 // harnessAllowEntry is the single permissions.allow entry the runner
 // injects so the agent can call harness-cli freely.
 const harnessAllowEntry = "Bash(harness-cli *)"
@@ -155,7 +167,7 @@ const harnessAllowEntry = "Bash(harness-cli *)"
 func WriteAgentSettings(worktreeDir string) error {
 	// One runtime's malformed configuration must not prevent the other
 	// runtime's hooks from being installed.
-	return errors.Join(writeClaudeSettings(worktreeDir), writeCodexHooks(worktreeDir))
+	return errors.Join(writeClaudeSettings(worktreeDir), writeCodexHooks(worktreeDir), writeAgyHooks(worktreeDir))
 }
 
 func writeClaudeSettings(worktreeDir string) error {
@@ -233,6 +245,151 @@ func writeCodexHooks(worktreeDir string) error {
 		return err
 	}
 	return os.WriteFile(path, out, 0o644)
+}
+
+// writeAgyHooks merges the runner's lifecycle hooks into .agents/hooks.json under
+// the "harness" top-level hook name. Other hook names and non-harness commands are preserved.
+func writeAgyHooks(worktreeDir string) error {
+	sub := filepath.Join(worktreeDir, ".agents")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		return err
+	}
+	path := filepath.Join(sub, "hooks.json")
+	root := map[string]any{}
+	if data, err := os.ReadFile(path); err == nil {
+		if err := json.Unmarshal(data, &root); err != nil || root == nil {
+			return fmt.Errorf("%s: malformed hook configuration", path)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+
+	harnessRaw, exists := root["harness"]
+	var harnessObj map[string]any
+	if exists {
+		var ok bool
+		harnessObj, ok = harnessRaw.(map[string]any)
+		if !ok {
+			return fmt.Errorf("%s: harness hook must be an object", path)
+		}
+	} else {
+		harnessObj = map[string]any{}
+	}
+
+	pruneAgyHookEntries(harnessObj, agyHookEntries)
+	mergeAgyHookEntries(harnessObj, agyHookEntries)
+
+	if len(harnessObj) == 0 {
+		delete(root, "harness")
+	} else {
+		root["harness"] = harnessObj
+	}
+
+	out, err := json.MarshalIndent(root, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, out, 0o644)
+}
+
+func isAgyGroupedEvent(event string) bool {
+	return event == "PreToolUse" || event == "PostToolUse"
+}
+
+func pruneAgyHookEntries(harnessObj map[string]any, entries []harnessHookEntry) {
+	current := make(map[string]struct{}, len(entries))
+	for _, e := range entries {
+		current[e.Command] = struct{}{}
+	}
+	for event, raw := range harnessObj {
+		if isAgyGroupedEvent(event) {
+			groups, _ := raw.([]any)
+			var keptGroups []any
+			for _, g := range groups {
+				group, _ := g.(map[string]any)
+				hs, _ := group["hooks"].([]any)
+				var keptHooks []any
+				for _, h := range hs {
+					hook, _ := h.(map[string]any)
+					cmd, _ := hook["command"].(string)
+					if strings.HasPrefix(cmd, harnessHookPrefix) {
+						if _, ok := current[cmd]; !ok {
+							continue
+						}
+					}
+					keptHooks = append(keptHooks, h)
+				}
+				if len(keptHooks) == 0 {
+					continue
+				}
+				group["hooks"] = keptHooks
+				keptGroups = append(keptGroups, group)
+			}
+			if len(keptGroups) == 0 {
+				delete(harnessObj, event)
+			} else {
+				harnessObj[event] = keptGroups
+			}
+		} else {
+			handlers, _ := raw.([]any)
+			var keptHandlers []any
+			for _, h := range handlers {
+				hook, _ := h.(map[string]any)
+				cmd, _ := hook["command"].(string)
+				if strings.HasPrefix(cmd, harnessHookPrefix) {
+					if _, ok := current[cmd]; !ok {
+						continue
+					}
+				}
+				keptHandlers = append(keptHandlers, h)
+			}
+			if len(keptHandlers) == 0 {
+				delete(harnessObj, event)
+			} else {
+				harnessObj[event] = keptHandlers
+			}
+		}
+	}
+}
+
+func mergeAgyHookEntries(harnessObj map[string]any, entries []harnessHookEntry) {
+	for _, entry := range entries {
+		if isAgyGroupedEvent(entry.Event) {
+			groups, _ := harnessObj[entry.Event].([]any)
+			if hookCommandPresent(groups, entry.Command) {
+				continue
+			}
+			hook := map[string]any{
+				"type":    "command",
+				"command": entry.Command,
+			}
+			group := map[string]any{
+				"matcher": entry.Matcher,
+				"hooks":   []any{hook},
+			}
+			groups = append(groups, group)
+			harnessObj[entry.Event] = groups
+		} else {
+			handlers, _ := harnessObj[entry.Event].([]any)
+			present := false
+			for _, h := range handlers {
+				hook, _ := h.(map[string]any)
+				if cmd, _ := hook["command"].(string); cmd == entry.Command {
+					present = true
+					break
+				}
+			}
+			if present {
+				continue
+			}
+			hook := map[string]any{
+				"type":    "command",
+				"command": entry.Command,
+			}
+			handlers = append(handlers, hook)
+			harnessObj[entry.Event] = handlers
+		}
+	}
 }
 
 // pruneStaleHarnessHooks removes hooks whose command starts with

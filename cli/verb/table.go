@@ -1968,10 +1968,10 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path:           []string{"lifecycle"},
-		NoModalSurface: "written by the Claude Code and Codex hooks the runner injects; an operator connection has no principal and is refused (spec 2026-10-27-task-lifecycle D12)",
+		NoModalSurface: "written by the Claude Code, Codex, and Antigravity hooks the runner injects; an operator connection has no principal and is refused (spec 2026-10-27-task-lifecycle D12)",
 		Notes: []string{
 			"report THIS task's lifecycle state; written by hooks, not called by hand or by the agent",
-			"silent on stdout and exits 0 even on failure, so a hook never disturbs the agent; failures go to stderr",
+			"silent on stdout (or returns expected JSON for agy) and exits 0 even on failure, so a hook never disturbs the agent; failures go to stderr",
 		},
 		Action:          "LifecycleAction",
 		CmdlineSurfaces: CLI,
@@ -1979,9 +1979,9 @@ var Verbs = []VerbSpec{
 			OneOfArg: []string{"working", "waiting", "idle", "error"}}},
 		Flags: []Flag{
 			{Name: "hook", Type: FlagString, Default: "", Field: "Hook",
-				Help: "the agent whose hook runs this (claude or codex): read that agent's event JSON on stdin; without it the state word alone is reported"},
+				Help: "the agent whose hook runs this (claude, codex, or agy): read that agent's event JSON on stdin; without it the state word alone is reported"},
 		},
-		Examples: []string{"lifecycle waiting", "lifecycle --hook claude idle", "lifecycle --hook codex idle"},
+		Examples: []string{"lifecycle waiting", "lifecycle --hook claude idle", "lifecycle --hook codex idle", "lifecycle --hook agy idle"},
 	},
 	{
 		Path:           []string{"agent", "send"},

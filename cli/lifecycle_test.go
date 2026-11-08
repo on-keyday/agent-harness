@@ -1,8 +1,11 @@
 package cli
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 func lifecycleTask(st protocol.LifecycleState, ageMs uint64, status protocol.TaskStatus) protocol.TaskInfo {
@@ -176,6 +180,15 @@ func TestHookEventFor(t *testing.T) {
 	if ev := hookEventFor("codex", strings.NewReader(`{"hook_event_name":"SubagentStart","agent_id":"agent-1","turn_id":"turn-1"}`)); ev.Name != "SubagentStart" || ev.AgentID != "agent-1" {
 		t.Errorf("codex = %+v, want SubagentStart for agent-1", ev)
 	}
+	if ev := hookEventFor("agy", strings.NewReader(`{"terminationReason":"ERROR"}`)); ev.Name != "StopFailure" {
+		t.Errorf("agy ERROR = %+v, want StopFailure", ev)
+	}
+	if ev := hookEventFor("agy", strings.NewReader(`{"terminationReason":"NO_TOOL_CALL"}`)); ev.Name != "Stop" {
+		t.Errorf("agy NO_TOOL_CALL = %+v, want Stop", ev)
+	}
+	if ev := hookEventFor("agy", strings.NewReader(`{"toolCall":{"name":"ask_question"}}`)); ev.Name != "" {
+		t.Errorf("agy toolCall = %+v, want empty event so argv state is used", ev)
+	}
 	if ev := hookEventFor("unknown", strings.NewReader(in)); ev != (hookEvent{}) {
 		t.Errorf("unknown runtime = %+v, want stdin ignored", ev)
 	}
@@ -296,5 +309,22 @@ func TestTaskLine_Program(t *testing.T) {
 	dead.SetLiveTerminal(false)
 	if line := taskLine(dead, nil); strings.Contains(line, "program=") {
 		t.Errorf("no live terminal = %q, want no program=", line)
+	}
+}
+
+func TestReportLifecycle_AgyOutput(t *testing.T) {
+	ctx := context.Background()
+	fakeCID := func() objproto.ConnectionID { return objproto.ConnectionID{} }
+
+	var outWaiting bytes.Buffer
+	ReportLifecycle(ctx, fakeCID, "waiting", "agy", strings.NewReader(`{}`), &outWaiting, io.Discard)
+	if got := strings.TrimSpace(outWaiting.String()); got != `{"decision":"allow"}` {
+		t.Errorf("agy waiting stdout = %q, want %q", got, `{"decision":"allow"}`)
+	}
+
+	var outIdle bytes.Buffer
+	ReportLifecycle(ctx, fakeCID, "idle", "agy", strings.NewReader(`{}`), &outIdle, io.Discard)
+	if got := strings.TrimSpace(outIdle.String()); got != `{}` {
+		t.Errorf("agy idle stdout = %q, want %q", got, `{}`)
 	}
 }

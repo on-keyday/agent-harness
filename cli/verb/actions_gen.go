@@ -451,7 +451,7 @@ type GridAction struct {
 // LifecycleAction is built by: lifecycle.
 type LifecycleAction struct {
 	ActionMarker
-	// the agent whose hook runs this (claude or codex): read that agent's event JSON on stdin; without it …
+	// the agent whose hook runs this (claude, codex, or agy): read that agent's event JSON on stdin; witho…
 	Hook  string
 	State string
 }
