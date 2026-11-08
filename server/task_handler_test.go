@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"strings"
 	"testing"
 	"time"
 
@@ -658,6 +659,34 @@ func TestHandleOpenInteractiveNoRunnerForRepo(t *testing.T) {
 	resp, _ := h.handleOpenInteractive("", nil, req, protocol.ClientKind_Unspecified, protocol.TaskID{}, protocol.Capability_All)
 	if resp.Status != protocol.OpenInteractiveStatus_NoRunnerForRepo {
 		t.Fatalf("status=%v want NoRunnerForRepo", resp.Status)
+	}
+	if !strings.Contains(string(resp.ErrorMsg), "/x/repo") {
+		t.Fatalf("error_msg=%q does not name the repo no runner serves", resp.ErrorMsg)
+	}
+}
+
+// On resume the request carries no repo -- the server takes the task's
+// recorded one -- so a client composing the message from its own argument
+// printed `no idle runner for repo ""`. The server names the repo it looked
+// up, since only it knows which one that was.
+func TestHandleOpenInteractiveResumeNoRunnerNamesTaskRepo(t *testing.T) {
+	h := newTestHandler(t)
+	now := time.Now()
+	taskIDHex := h.Tasks.Create("/gone/repo", "orig", protocol.TaskKind_Interactive, protocol.ClientKind_Tui, protocol.TaskID{}, "A", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()}, "")
+	h.Tasks.Assign(taskIDHex, testRunnerID("A"), "/wt", false)
+	h.Tasks.Finish(taskIDHex, 0, nil)
+	// A runner is connected, but none of its roots covers the task's repo.
+	h.Registry.Add(&RunnerEntry{ID: tcid("B"), Identity: testRunnerID("B"), Hostname: "h", AllowedRoots: []string{"/other"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
+
+	var tid protocol.TaskID
+	raw, _ := hex.DecodeString(taskIDHex)
+	copy(tid.Id[:], raw)
+	resp, _ := h.handleOpenInteractive("", nil, &protocol.OpenInteractiveRequest{ResumeTaskId: tid}, protocol.ClientKind_Tui, protocol.TaskID{}, protocol.Capability_All)
+	if resp.Status != protocol.OpenInteractiveStatus_NoRunnerForRepo {
+		t.Fatalf("status=%v want NoRunnerForRepo", resp.Status)
+	}
+	if !strings.Contains(string(resp.ErrorMsg), "/gone/repo") {
+		t.Fatalf("error_msg=%q does not name the resumed task's repo", resp.ErrorMsg)
 	}
 }
 

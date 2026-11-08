@@ -165,7 +165,7 @@ func (c *Client) Interactive(ctx context.Context, repo string, opts SessionOpts)
 	switch oiResp.Status {
 	case protocol.OpenInteractiveStatus_Ok:
 	case protocol.OpenInteractiveStatus_NoRunnerForRepo:
-		return "", fmt.Errorf("no idle runner for repo %q", repo)
+		return "", fmt.Errorf("no connected runner serves repo %q", repo)
 	case protocol.OpenInteractiveStatus_ProfileUnavailable:
 		if opts.AgentProfile != "" {
 			return "", fmt.Errorf("profile_unavailable: agent profile %q is advertised by no runner serving repo %q", opts.AgentProfile, repo)

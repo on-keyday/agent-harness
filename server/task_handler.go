@@ -1669,8 +1669,16 @@ func isZeroTaskID(t protocol.TaskID) bool {
 // lifecycle by sending TaskStarted (worktree dir filled in) and TaskFinished
 // (exit code from claude) over the regular RunnerControl path.
 func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req *protocol.OpenInteractiveRequest, origin protocol.ClientKind, creator protocol.TaskID, creatorCaps protocol.Capability) (protocol.OpenInteractiveResponse, *protocol.RunnerCandidatesBody) {
+	// repo is the one the runner search uses: req.RepoPath on a fresh open,
+	// the task's recorded repo on a resume (whose request carries none). The
+	// log names it once it is known, so a resume refusal does not read repo="".
+	var repo string
 	errResp := func(status protocol.OpenInteractiveStatus) (protocol.OpenInteractiveResponse, *protocol.RunnerCandidatesBody) {
-		slog.Error("handleOpenInteractive: rejecting request", "status", status.String(), "repo", string(req.RepoPath), "selector", req.Selector)
+		logRepo := repo
+		if logRepo == "" {
+			logRepo = string(req.RepoPath)
+		}
+		slog.Error("handleOpenInteractive: rejecting request", "status", status.String(), "repo", logRepo, "selector", req.Selector)
 		return protocol.OpenInteractiveResponse{Status: status}, nil
 	}
 
@@ -1695,7 +1703,6 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 	if req.ResumeExact() && !resuming {
 		return errResp(protocol.OpenInteractiveStatus_ResumeExactMismatch)
 	}
-	var repo string
 	var existingTaskIDHex string
 	args := req.ExtraArgs.AsStrings()
 	var exactRec *TaskEntry
@@ -1750,7 +1757,18 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 	case len(cands) == 0 && req.Selector.Kind != protocol.RunnerSelectorKind_Any:
 		return errResp(protocol.OpenInteractiveStatus_PinnedNotFound)
 	case len(cands) == 0:
-		return errResp(protocol.OpenInteractiveStatus_NoRunnerForRepo)
+		// Named here because only the server knows which repo it searched: a
+		// resume request carries none, and a client that composed the message
+		// from its own argument printed `no idle runner for repo ""`. "Idle"
+		// was wrong too -- Candidates ignores capacity; an empty list means no
+		// connected runner has a root covering the repo.
+		resp, body := errResp(protocol.OpenInteractiveStatus_NoRunnerForRepo)
+		msg := "no connected runner serves " + repo
+		if resuming {
+			msg += ", the repo task " + existingTaskIDHex[:8] + " was recorded with"
+		}
+		resp.SetErrorMsg([]byte(msg))
+		return resp, body
 	}
 	if exactRec != nil && req.Selector.Kind == protocol.RunnerSelectorKind_Any {
 		// Profile first, as the submit path does: a last runner that no longer

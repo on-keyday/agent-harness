@@ -133,7 +133,7 @@ func openInteractiveStatusError(repo, agentProfile string, status protocol.OpenI
 	case protocol.OpenInteractiveStatus_Ok:
 		return nil
 	case protocol.OpenInteractiveStatus_NoRunnerForRepo:
-		return fmt.Errorf("interactive no_runner_for_repo: no idle runner for repo %q", repo)
+		return fmt.Errorf("interactive no_runner_for_repo: no connected runner serves repo %q", repo)
 	case protocol.OpenInteractiveStatus_ProfileUnavailable:
 		if agentProfile != "" {
 			return fmt.Errorf("interactive profile_unavailable: agent profile %q is advertised by no runner serving repo %q", agentProfile, repo)
