@@ -329,3 +329,51 @@ too: a `u32` mask written before the change must still decode after it.
 was not to fold the link into existing bits to save one, since that would change
 what existing grants mean. Widening is its own change with its own rollout, and
 the remaining bits leave time to do it deliberately.
+
+---
+
+## "Operator" is the absence of a principal, not a recorded identity
+
+**What.** The server decides whether a connection is the operator by finding
+no principal task for it. `lookupPrincipal` (`server/task_handler.go:289-293`)
+is a map read, `h.principals[connID]`. A connection that has no entry in the map
+gets the zero `TaskID`. `callerCaps` (`server/capabilities.go:189`) answers
+`Capability_All` for that zero. So "authenticated as the operator" and "missing
+from the map" are the same value, and a miss is a grant. The task record uses
+the same encoding: an all-zero `creator_task_id` means "created by the operator"
+(`TaskInfo`, `runner/protocol/message.bgn`).
+
+**Evidence** (2026-11-09):
+
+```
+$ grep -rn 'lookupPrincipal(.*)\.Id [!=]= (\[16\]byte{})\|pid.Id == (\[16\]byte{})' server --include=*.go | grep -v _test | wc -l
+12
+```
+
+All 12 sites were read.
+
+- Two of them reserve a verb to the operator: `caps set` and `caps set-parent`.
+- The other sites do one of two things:
+  - apply "the operator is the root and holds everything", or
+  - refuse something a principal-less connection has no task for (progress,
+    lifecycle).
+
+Authentication itself is explicit. The handshake keys an agent's binder to its
+ticket and an operator client's binder to the operator PSK
+(`server/psk.go:186, 263`). Only the authorization lookup afterwards reads
+absence as operator. A principal whose task record is gone fails CLOSED: it
+gets `Capability_None`.
+
+**Not established.** Whether any path lets an agent connection reach
+`TaskHandler` without a `principals` entry: before the hello is recorded, on
+reconnect, or through the runner proxy. This entry records the shape: a missed
+registration fails open. It does not record a known exploit.
+
+**The likely shape of the fix.** Record the principal at authentication as an
+explicit value, "operator" or "task X". Refuse a connection that has no record.
+
+**Why deferred.** Found while designing spawn limits
+(`2026-11-09-spawn-limits-design.md`). That design adds no branch on operator
+identity, so it does not depend on this change. Changing how every handler
+resolves its caller is its own change and needs its own verification across
+connection paths.
