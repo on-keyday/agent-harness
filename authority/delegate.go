@@ -16,11 +16,16 @@ import (
 //
 // DelegateScope never carries Overrides: the bound is one ceiling for every
 // bit, and a per-capability bound is deliberately not expressible.
+//
+// SpawnDepth and MaxDescendants are the task's spawn limits (spawn_limit.go);
+// their zero value is unbounded.
 type Grant struct {
-	Caps          protocol.Capability
-	Scope         Scope
-	DelegateCaps  protocol.Capability
-	DelegateScope Scope
+	Caps           protocol.Capability
+	Scope          Scope
+	DelegateCaps   protocol.Capability
+	DelegateScope  Scope
+	SpawnDepth     protocol.SpawnLimit
+	MaxDescendants protocol.SpawnLimit
 }
 
 // Granter is one task about to write a Grant onto another, measured twice:
@@ -156,13 +161,15 @@ func (g *Granter) ChildBound(reqCaps protocol.Capability, req Scope, childHex st
 // ClampDescendant re-imposes g's whole grant on a descendant d after g's
 // bound was rewritten: caps and scope as a cascade clamps them today, then
 // the ceiling, then d's own bound inside g's. A cascade has no caller to
-// refuse, so an id outside the ceiling is dropped. g must not be nil.
+// refuse, so an id outside the ceiling is dropped. d's spawn limits are
+// carried over unchanged: no cascade changes them. g must not be nil.
 func (g *Granter) ClampDescendant(d Grant, dHex string) Grant {
 	caps := d.Caps & g.held.Caps & g.held.DelegateCaps
 	scope, _ := g.ceiling(ClampUnder(d.Scope, caps, g.own), "scope", true)
 	bound, _ := g.ceiling(d.DelegateScope, "delegate-scope", true)
 	bound.ExcludeSelf = bound.ExcludeSelf || !g.coversChild(dHex)
-	return Grant{Caps: caps, Scope: scope, DelegateCaps: d.DelegateCaps & g.held.DelegateCaps, DelegateScope: bound}
+	return Grant{Caps: caps, Scope: scope, DelegateCaps: d.DelegateCaps & g.held.DelegateCaps, DelegateScope: bound,
+		SpawnDepth: d.SpawnDepth, MaxDescendants: d.MaxDescendants}
 }
 
 // coversChild reports whether a task is among the action ids g may hand
