@@ -46,6 +46,12 @@ func WhatIfChange(a verb.CapsWhatIfAction) authority.Change {
 		if a.DelegateScope != nil {
 			bound = *a.DelegateScope
 		}
+		if a.SpawnDepth != nil {
+			s.SpawnDepth = *a.SpawnDepth
+		}
+		if a.MaxDescendants != nil {
+			s.MaxDescendants = *a.MaxDescendants
+		}
 		s.Scope = authority.ScopeFromWire(scope, a.Overrides)
 		s.DelegateScope = authority.ScopeFromWire(bound, nil)
 		return s
@@ -91,13 +97,15 @@ func scopeWithOverrides(s authority.Scope) string {
 	return l
 }
 
-// grantParts are a grant's four halves under the keys ls prints them with.
-func grantParts(g authority.Grant) [4][2]string {
-	return [4][2]string{
+// grantParts are a grant's halves under the keys ls prints them with.
+func grantParts(g authority.Grant) [6][2]string {
+	return [6][2]string{
 		{"caps", CapsLabel(g.Caps)},
 		{"scope", scopeWithOverrides(g.Scope)},
 		{"delegate", CapsLabel(g.DelegateCaps)},
 		{"delegate-scope", ScopeLabel(g.DelegateScope.ToWire())},
+		{"spawn-depth", authority.LimitLabel(g.SpawnDepth)},
+		{"max-descendants", authority.LimitLabel(g.MaxDescendants)},
 	}
 }
 
@@ -183,6 +191,13 @@ func WhatIfCommand(c authority.Change) string {
 		}
 		if l := ScopeLabel(c.DelegateScope.ToWire()); l != ScopeLabel(protocol.TaskScope{}) {
 			tok = append(tok, "--delegate-scope", l)
+		}
+		// Unbounded is the default of both, so only a limit is named.
+		if c.SpawnDepth.Limited() {
+			tok = append(tok, "--spawn-depth", authority.LimitLabel(c.SpawnDepth))
+		}
+		if c.MaxDescendants.Limited() {
+			tok = append(tok, "--max-descendants", authority.LimitLabel(c.MaxDescendants))
 		}
 	case authority.Reparent:
 		tok = []string{"harness-cli", "caps", "set-parent", c.Target}

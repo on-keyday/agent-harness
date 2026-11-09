@@ -2634,6 +2634,9 @@ var Verbs = []VerbSpec{
 			if b.Set["scope-for"] && !b.Set["scope"] && !b.Bool("spawn") {
 				return fmt.Errorf("caps what-if: --scope-for needs --scope (a narrowing has no base to narrow unless this call names one)")
 			}
+			if (b.Set["spawn-depth"] || b.Set["max-descendants"]) && !b.Bool("spawn") {
+				return fmt.Errorf("caps what-if: --spawn-depth / --max-descendants predict a spawn's child; pass --spawn")
+			}
 			return nil
 		},
 		Flags: []Flag{
@@ -2652,6 +2655,12 @@ var Verbs = []VerbSpec{
 			{Name: "delegate-scope", Type: FlagString, Default: "", Field: "DelegateScope",
 				FieldType: "*protocol.TaskScope", Convert: "parseScopeFlag",
 				Help: "the delegation bound's scope; omitted = keep it (a spawn: subtree)"},
+			{Name: "spawn-depth", Type: FlagString, Default: "", Field: "SpawnDepth",
+				FieldType: "*protocol.SpawnLimit", Convert: "parseSpawnLimitFlag",
+				Help: "with --spawn: the spawn depth the child would request (N or unbounded; default: one less than the task's)"},
+			{Name: "max-descendants", Type: FlagString, Default: "", Field: "MaxDescendants",
+				FieldType: "*protocol.SpawnLimit", Convert: "parseSpawnLimitFlag",
+				Help: "with --spawn: the descendant limit the child would get (N or unbounded)"},
 			{Name: "cascade", Type: FlagBool, Default: false, Field: "Cascade",
 				Help: "the re-grant also clamps every descendant, as caps set --cascade"},
 			{Name: "spawn", Type: FlagBool, Default: false, Field: "Spawn",

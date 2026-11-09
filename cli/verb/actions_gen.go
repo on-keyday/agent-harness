@@ -199,6 +199,10 @@ type CapsWhatIfAction struct {
 	DelegateCaps *protocol.Capability
 	// the delegation bound's scope; omitted = keep it (a spawn: subtree)
 	DelegateScope *protocol.TaskScope
+	// with --spawn: the spawn depth the child would request (N or unbounded; default: one less than the ta…
+	SpawnDepth *protocol.SpawnLimit
+	// with --spawn: the descendant limit the child would get (N or unbounded)
+	MaxDescendants *protocol.SpawnLimit
 	// the re-grant also clamps every descendant, as caps set --cascade
 	Cascade bool
 	// a child the task would create with these flags, granted as the server grants a spawn
@@ -3245,6 +3249,20 @@ func init() {
 				}
 				a.DelegateScope = v
 			}
+			if b.Set["spawn-depth"] {
+				v, err := parseSpawnLimitFlag(b.Str("spawn-depth"))
+				if err != nil {
+					return nil, fmt.Errorf("caps what-if: --spawn-depth: %w", err)
+				}
+				a.SpawnDepth = v
+			}
+			if b.Set["max-descendants"] {
+				v, err := parseSpawnLimitFlag(b.Str("max-descendants"))
+				if err != nil {
+					return nil, fmt.Errorf("caps what-if: --max-descendants: %w", err)
+				}
+				a.MaxDescendants = v
+			}
 			a.Cascade = b.Bool("cascade")
 			a.Spawn = b.Bool("spawn")
 			a.ParentID = b.Str("parent")
@@ -3292,6 +3310,20 @@ func init() {
 				}
 				a.DelegateScope = v
 			}
+			if b.Set["spawn-depth"] {
+				v, err := parseSpawnLimitFlag(b.Str("spawn-depth"))
+				if err != nil {
+					return nil, fmt.Errorf("caps what-if: --spawn-depth: %w", err)
+				}
+				a.SpawnDepth = v
+			}
+			if b.Set["max-descendants"] {
+				v, err := parseSpawnLimitFlag(b.Str("max-descendants"))
+				if err != nil {
+					return nil, fmt.Errorf("caps what-if: --max-descendants: %w", err)
+				}
+				a.MaxDescendants = v
+			}
 			a.Cascade = b.Bool("cascade")
 			a.Spawn = b.Bool("spawn")
 			a.ParentID = b.Str("parent")
@@ -3337,6 +3369,20 @@ func init() {
 					return nil, fmt.Errorf("caps what-if: --delegate-scope: %w", err)
 				}
 				a.DelegateScope = v
+			}
+			if b.Set["spawn-depth"] {
+				v, err := parseSpawnLimitFlag(b.Str("spawn-depth"))
+				if err != nil {
+					return nil, fmt.Errorf("caps what-if: --spawn-depth: %w", err)
+				}
+				a.SpawnDepth = v
+			}
+			if b.Set["max-descendants"] {
+				v, err := parseSpawnLimitFlag(b.Str("max-descendants"))
+				if err != nil {
+					return nil, fmt.Errorf("caps what-if: --max-descendants: %w", err)
+				}
+				a.MaxDescendants = v
 			}
 			a.Cascade = b.Bool("cascade")
 			a.Spawn = b.Bool("spawn")

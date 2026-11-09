@@ -8,11 +8,13 @@ import (
 )
 
 func (t Task) grant() Grant {
-	return Grant{Caps: t.Caps, Scope: t.Scope, DelegateCaps: t.DelegateCaps, DelegateScope: t.DelegateScope}
+	return Grant{Caps: t.Caps, Scope: t.Scope, DelegateCaps: t.DelegateCaps, DelegateScope: t.DelegateScope,
+		SpawnDepth: t.SpawnDepth, MaxDescendants: t.MaxDescendants}
 }
 
 func (t *Task) setGrant(g Grant) {
 	t.Caps, t.Scope, t.DelegateCaps, t.DelegateScope = g.Caps, g.Scope, g.DelegateCaps, g.DelegateScope
+	t.SpawnDepth, t.MaxDescendants = g.SpawnDepth, g.MaxDescendants
 }
 
 // CascadeClamp is what `caps set --cascade` writes onto one descendant d of
@@ -58,6 +60,10 @@ type Spawn struct {
 	Scope         Scope
 	DelegateCaps  protocol.Capability
 	DelegateScope Scope
+	// The spawn limits the child requests (zero = unbounded). Only the
+	// written values are predicted: whether the creation would pass the
+	// descendant limits depends on tasks a confined listing may not show.
+	SpawnDepth, MaxDescendants protocol.SpawnLimit
 }
 
 // Reparent is `caps set-parent`: Target moves under NewParent ("" = the
@@ -175,7 +181,8 @@ func apply(before []Task, c Change) ([]Task, error) {
 		if err != nil {
 			return nil, err
 		}
-		after = append(after, Task{ID: PhantomID, Creator: c.Creator, Caps: caps, Scope: scope, DelegateCaps: dcaps, DelegateScope: dscope})
+		after = append(after, Task{ID: PhantomID, Creator: c.Creator, Caps: caps, Scope: scope, DelegateCaps: dcaps, DelegateScope: dscope,
+			SpawnDepth: g.ChildSpawnDepth(c.SpawnDepth), MaxDescendants: c.MaxDescendants})
 	case Reparent:
 		i, ok := index[c.Target]
 		if !ok {

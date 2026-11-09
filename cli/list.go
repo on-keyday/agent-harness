@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/objtrsf/trsf"
@@ -306,6 +308,10 @@ func taskLine(t protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo) st
 	// supervisor that may hand down nothing is exactly what an operator scans
 	// this row for.
 	caps += "  delegate=" + CapsLabel(t.DelegateCaps) + " delegate-scope=" + ScopeLabel(t.DelegateScope)
+	// The spawn limits and the subtree's record count, unbounded included:
+	// "no limit here" is what an operator checks before handing out spawn.
+	caps += "  spawn-depth=" + authority.LimitLabel(t.SpawnDepth) + " max-descendants=" + authority.LimitLabel(t.MaxDescendants) +
+		" descendants=" + strconv.FormatUint(uint64(t.Descendants), 10)
 	// Who wrote that authority. Always printed, `unknown` included, for the
 	// reason scope is.
 	caps += "  granter=" + AuthorityLabel(t)
@@ -509,15 +515,19 @@ type taskJSON struct {
 	// The delegation bound, in the forms caps and scope use.
 	DelegateCaps  string `json:"delegate_caps"`
 	DelegateScope string `json:"delegate_scope"`
-	CreatedBy     string `json:"created_by,omitempty"`
-	Prompt        string `json:"prompt"`
-	ExitCode      int32  `json:"exit_code"`
-	ErrorMessage  string `json:"error_message,omitempty"`
-	CreatedAt     uint64 `json:"created_at"`
-	StartedAt     uint64 `json:"started_at"`
-	EndedAt       uint64 `json:"ended_at"`
-	LastOutputAt  uint64 `json:"last_output_at"`
-	OutputIdleMs  uint64 `json:"output_idle_ms"`
+	// The spawn limits: the number, or null for unbounded (0 is a limit).
+	SpawnDepth     *uint32 `json:"spawn_depth"`
+	MaxDescendants *uint32 `json:"max_descendants"`
+	Descendants    uint32  `json:"descendants"`
+	CreatedBy      string  `json:"created_by,omitempty"`
+	Prompt         string  `json:"prompt"`
+	ExitCode       int32   `json:"exit_code"`
+	ErrorMessage   string  `json:"error_message,omitempty"`
+	CreatedAt      uint64  `json:"created_at"`
+	StartedAt      uint64  `json:"started_at"`
+	EndedAt        uint64  `json:"ended_at"`
+	LastOutputAt   uint64  `json:"last_output_at"`
+	OutputIdleMs   uint64  `json:"output_idle_ms"`
 	// The self-reported progress line and its server stamp / age, and the
 	// live window title. All present at zero: progress_at == 0 is "never
 	// written", live_terminal false is "no title to report".
@@ -636,6 +646,9 @@ func newTaskJSON(t *protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo
 		ScopeByCap:     ResolvedScopeByCap(t.Capabilities, t.Scope, t.Overrides),
 		DelegateCaps:   CapsLabel(t.DelegateCaps),
 		DelegateScope:  ScopeLabel(t.DelegateScope),
+		SpawnDepth:     LimitJSON(t.SpawnDepth),
+		MaxDescendants: LimitJSON(t.MaxDescendants),
+		Descendants:    t.Descendants,
 		CreatedBy:      taskIDHexOrEmpty(t.CreatorTaskId.Id[:]),
 		Prompt:         string(t.Prompt),
 		ExitCode:       t.ExitCode,
@@ -921,4 +934,14 @@ func taskIDStr(b []byte) string {
 		out = append(out, tab[v>>4], tab[v&0xf])
 	}
 	return string(out)
+}
+
+// LimitJSON is a spawn limit in the machine form: the number, or nil (JSON
+// null) for unbounded, since 0 is a real limit.
+func LimitJSON(l protocol.SpawnLimit) *uint32 {
+	if !l.Limited() {
+		return nil
+	}
+	v := l.Value()
+	return &v
 }

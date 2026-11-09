@@ -22,6 +22,7 @@ func AuthorityTasks(tasks []protocol.TaskInfo) []authority.Task {
 			DelegateCaps:  t.DelegateCaps,
 			Scope:         authority.ScopeFromWire(t.Scope, t.Overrides),
 			DelegateScope: authority.ScopeFromWire(t.DelegateScope, nil),
+			SpawnDepth:    t.SpawnDepth, MaxDescendants: t.MaxDescendants,
 		}
 		if t.CreatorTaskId.Id != ([16]byte{}) {
 			at.Creator = hex.EncodeToString(t.CreatorTaskId.Id[:])

@@ -128,7 +128,7 @@ func CapDescription(c protocol.Capability) string {
 	case protocol.Capability_Notify:
 		return "send operator notifications"
 	case protocol.Capability_Prune:
-		return "prune terminal tasks"
+		return "prune terminal tasks; over a limited subtree it frees places, and pruning an ended task in the middle lifts the limits for the tasks below it"
 	case protocol.Capability_RunnerAdmin:
 		return "runner administration: server dial-runner, and the dial records the server keeps dialing (runner dial add, runner dial ls, runner dial rm)"
 	case protocol.Capability_RunnerEnroll:
@@ -267,7 +267,19 @@ func WriteCaps(w io.Writer, asJSON bool) error {
 		"bits, and lets you name your own and your descendants' ids. `whoami`\n"+
 		"shows yours. An id refused as \"outside what you may delegate\" is the\n"+
 		"operator's to widen: `caps set <id> --delegate-caps … --delegate-scope …`\n"+
-		"(with --cascade, also clamps the task's descendants to the new bound).\n")
+		"(with --cascade, also clamps the task's descendants to the new bound).\n"+
+		"\nSPAWN LIMITS\n"+
+		"--spawn-depth N|unbounded: how many more generations may be created\n"+
+		"below a task. A child gets min(what it asks for, yours - 1); at 0 a task\n"+
+		"creates nothing. --max-descendants N|unbounded: how many tasks a\n"+
+		"task's subtree may hold, itself excluded, ended ones included until\n"+
+		"pruned. Every ancestor's limit is checked when a task is created, so a\n"+
+		"child's larger number does not widen its parent's. Both default to\n"+
+		"unbounded. Ending or cancelling a task frees no place: reuse one by\n"+
+		"resuming it; a place is freed when the task is pruned. `whoami` shows\n"+
+		"yours and the room left; `caps set` changes them on one task, and\n"+
+		"--cascade never does.\n"+
+		"Grant only what the work needs: an agent given spawn with limits is bounded only while it lacks prune over its subtree.\n")
 	return err
 }
 

@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strconv"
 
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
 )
@@ -109,9 +111,10 @@ func WriteWhoAmI(out io.Writer, resp protocol.WhoAmIResponse, asJSON bool) error
 		// it), so a script can compare it against a sha without parsing the
 		// "unknown …" prose the text form prints.
 		_, err = fmt.Fprintf(out,
-			"{\"operator\":%t,\"principal_task_id\":%q,\"creator_task_id\":%q,\"capabilities\":%q,\"scope\":%q,\"scope_by_cap\":%s,\"delegate_caps\":%q,\"delegate_scope\":%q,\"server_revision\":%q,\"server_dirty\":%t}\n",
+			"{\"operator\":%t,\"principal_task_id\":%q,\"creator_task_id\":%q,\"capabilities\":%q,\"scope\":%q,\"scope_by_cap\":%s,\"delegate_caps\":%q,\"delegate_scope\":%q,\"spawn_depth\":%s,\"max_descendants\":%s,\"descendants\":%d,\"spawn_room\":%s,\"server_revision\":%q,\"server_dirty\":%t}\n",
 			operator, taskHex, creatorHex, CapsLabel(resp.Capabilities), ScopeLabel(resp.Scope), byCap,
 			CapsLabel(resp.DelegateCaps), ScopeLabel(resp.DelegateScope),
+			limitJSONText(resp.SpawnDepth), limitJSONText(resp.MaxDescendants), resp.Descendants, limitJSONText(resp.SpawnRoom),
 			string(resp.ServerRevision), resp.ServerDirty())
 		return err
 	}
@@ -127,6 +130,10 @@ func WriteWhoAmI(out io.Writer, resp protocol.WhoAmIResponse, asJSON bool) error
 	// What this caller may hand to the tasks it spawns — the line to read
 	// before promising a worker a bit.
 	caps += "  delegate=" + CapsLabel(resp.DelegateCaps) + " delegate-scope=" + ScopeLabel(resp.DelegateScope)
+	// The spawn limits and how many more tasks this caller may create now --
+	// the number to check before promising to start workers.
+	caps += "  spawn-depth=" + authority.LimitLabel(resp.SpawnDepth) + " max-descendants=" + authority.LimitLabel(resp.MaxDescendants) +
+		" descendants=" + strconv.FormatUint(uint64(resp.Descendants), 10) + " room=" + authority.LimitLabel(resp.SpawnRoom)
 	if operator {
 		_, err := fmt.Fprintf(out, "operator  %s\nserver=%s\n", caps, ServerRevisionLabel(resp))
 		return err
@@ -138,4 +145,12 @@ func WriteWhoAmI(out io.Writer, resp protocol.WhoAmIResponse, asJSON bool) error
 	_, err := fmt.Fprintf(out, "task=%s%s  %s\nserver=%s\n",
 		hex.EncodeToString(resp.PrincipalTaskId.Id[:]), by, caps, ServerRevisionLabel(resp))
 	return err
+}
+
+// limitJSONText is LimitJSON written into hand-built JSON: the number or null.
+func limitJSONText(l protocol.SpawnLimit) string {
+	if !l.Limited() {
+		return "null"
+	}
+	return strconv.FormatUint(uint64(l.Value()), 10)
 }

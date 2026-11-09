@@ -11,9 +11,10 @@ import (
 // store, so both answer with the same rules. Creator is "" for a task an
 // operator created.
 type Task struct {
-	ID, Creator          string
-	Caps, DelegateCaps   protocol.Capability
-	Scope, DelegateScope Scope
+	ID, Creator                string
+	Caps, DelegateCaps         protocol.Capability
+	Scope, DelegateScope       Scope
+	SpawnDepth, MaxDescendants protocol.SpawnLimit
 }
 
 // ReachResult is one task's reach over a listing. Act are the listed tasks it
