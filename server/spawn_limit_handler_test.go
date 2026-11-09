@@ -148,3 +148,35 @@ func TestListCarriesDescendants(t *testing.T) {
 	}
 	t.Fatal("P not listed")
 }
+
+// An agent resuming a task re-grants its descendant limit only downward: the
+// limit it would otherwise widen may be the very one bounding it. A is ended
+// and holds max_descendants=1; its child R (spawn, resume, scope naming A) is
+// refused a spawn, resumes A asking for unbounded, and must still be refused.
+func TestResumeRegrantCannotWidenAncestorLimit(t *testing.T) {
+	h := newTestHandler(t)
+	openRunner(t, h)
+	a := h.Tasks.Create("/r", "a", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli, protocol.TaskID{}, "",
+		protocol.RunnerSelector{}, nil, authority.Grant{MaxDescendants: authority.LimitOf(1)}, "")
+	h.Tasks.Assign(a, testRunnerID("R"), "/wt/a", false)
+	h.Tasks.Finish(a, 0, nil)
+	r := h.Tasks.Create("/r", "r", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent, hexToTaskID(t, a), "",
+		protocol.RunnerSelector{}, nil, authority.Grant{Caps: delegHeld, Scope: authority.Scope{IDs: []string{a}}}, "")
+	cid := bindPrincipal(t, h, r)
+
+	if resp, _ := h.handleSubmit(cid, submitReq(delegReq{}), protocol.ClientKind_Agent, h.lookupPrincipal(cid), delegHeld); resp.Status != protocol.SubmitStatus_SpawnLimit {
+		t.Fatalf("spawn under a full A: %v, want spawn_limit", resp.Status)
+	}
+	req := submitReq(delegReq{})
+	req.ResumeTaskId = hexToTaskID(t, a)
+	req.SetMaxDescendantsPresent(true) // the zero value: unbounded
+	if resp, _ := h.handleSubmit(cid, req, protocol.ClientKind_Agent, h.lookupPrincipal(cid), delegHeld); resp.Status != protocol.SubmitStatus_Ok {
+		t.Fatalf("resume of A: %v %s", resp.Status, resp.ErrorMsg)
+	}
+	if e, _ := h.Tasks.Get(a); !sameSpawnLimit(e.MaxDescendants, authority.LimitOf(1)) {
+		t.Errorf("an agent's resume widened A's limit to %s", authority.LimitLabel(e.MaxDescendants))
+	}
+	if resp, _ := h.handleSubmit(cid, submitReq(delegReq{}), protocol.ClientKind_Agent, h.lookupPrincipal(cid), delegHeld); resp.Status != protocol.SubmitStatus_SpawnLimit {
+		t.Errorf("spawn after the resume: %v, want spawn_limit", resp.Status)
+	}
+}

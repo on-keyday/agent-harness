@@ -1239,9 +1239,12 @@ replays unbounded. A refusal is `spawn_limit` with the reason, e.g.
 `spawn limit: your parent's descendant limit is reached (3/3); resume an
 existing task, or ask the operator to prune or raise the limit`. A resume
 creates no record and is never refused by either limit, which is how an
-agent reuses a place. Nothing depends on who asks: an operator-created task
-has no ancestors, so no limit applies to it, and an operator creating a
-task inside a full subtree is refused like anyone else.
+agent reuses a place; a resume by a task that re-grants `--max-descendants`
+can only tighten it, so an agent cannot lift the limit bounding it by
+resuming its ancestor. Nothing depends on who asks: an operator-created
+task has no ancestors, so no limit applies to its creation. `caps
+set-parent` can still move tasks into a full subtree, leaving it over its
+limit until places are freed.
 
 ```bash
 bin/harness-cli submit --repo /abs/repo --caps spawn,resume,cancel --delegate-caps spawn \

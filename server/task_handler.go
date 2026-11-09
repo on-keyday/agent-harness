@@ -1339,11 +1339,20 @@ func (h *TaskHandler) grantFor(g *authority.Granter, r grantRequest, idHex strin
 		DelegateCaps: fresh || r.DelegateCapsPresent, DelegateScope: fresh || r.DelegateScopePresent,
 		SpawnDepth: fresh || r.SpawnDepthPresent, MaxDescendants: fresh || r.MaxDescendantsPresent,
 	}
-	// The spawn limits (spawn_limit.go): the depth only shrinks down a chain;
-	// the descendant limit is written as asked, since every ancestor's own is
-	// checked on each creation anyway.
+	// The spawn limits (spawn_limit.go): the depth only shrinks down a chain.
+	// On a fresh task the descendant limit is written as asked, since every
+	// ancestor's own is checked on each creation anyway. On a resume by a
+	// task it only tightens: the task resumed may be an ancestor of the
+	// resumer, whose limit is the one bounding it, and widening it would let
+	// an agent lift its own bound. A nil granter is the root and writes as
+	// asked, as it does for every other half.
 	u.To.SpawnDepth = g.ChildSpawnDepth(r.SpawnDepth)
 	u.To.MaxDescendants = r.MaxDescendants
+	if !fresh && g != nil {
+		if rec, ok := h.Tasks.Get(idHex); ok {
+			u.To.MaxDescendants = authority.MinLimit(r.MaxDescendants, rec.MaxDescendants)
+		}
+	}
 	if fresh {
 		u.To.Caps = g.ChildCaps(r.Caps)
 	} else {

@@ -290,6 +290,14 @@ follows.
 - **The WebUI bridge** takes each limit as the flags' grammar string
   (`"unbounded"` or a number; `""` is unbounded), parsed by
   `verb.ParseSpawnLimit` like every other surface.
+- **Correction to D9 (final review).** A resume that re-grants
+  `max_descendants` by a task writes `min(requested, recorded)`, not the
+  request. As first written, D9 let an agent resume its own ended ancestor
+  with `--max-descendants unbounded` and lift the limit bounding it —
+  contradicting § The intended use ("it cannot free a place itself"). D6's
+  "every ancestor is checked anyway" does not hold when the resumed task IS
+  the ancestor. A root (operator) resume writes as requested, as for every
+  other grant half. Pinned by `TestResumeRegrantCannotWidenAncestorLimit`.
 - **The wasm snapshot** carries each limit as one object `{label, limited,
   value}` (`spawnDepth`, `maxDescendants`) plus `descendants`, not the flat
   `spawnDepthLimited` / `maxDescendantsLimited` names § Surfaces listed.
