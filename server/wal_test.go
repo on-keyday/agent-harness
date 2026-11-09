@@ -190,6 +190,10 @@ func TestWALEventJSONRoundTripCopiesEveryField(t *testing.T) {
 		DelegateScopeExcludeSelf:    true,
 		DelegateScopeIDs:            []string{"00112233445566778899aabbccddeeff"},
 		DelegateScopeVisIDs:         []string{"ffeeddccbbaa99887766554433221100"},
+		SpawnDepth:                  2,
+		SpawnDepthLimited:           true,
+		MaxDescendants:              5,
+		MaxDescendantsLimited:       true,
 		Ts:                          1234567890,
 		Selector:                    sel,
 	}

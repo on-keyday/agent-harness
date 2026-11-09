@@ -50,6 +50,12 @@ type TaskEntry struct {
 	// before the bound existed included.
 	DelegateCaps  protocol.Capability
 	DelegateScope authority.Scope
+	// SpawnDepth and MaxDescendants are the spawn limits
+	// (docs/superpowers/specs/2026-11-09-spawn-limits-design.md), checked by
+	// CreateWithinLimits. The zero values are unbounded -- a task recorded
+	// before the limits existed included.
+	SpawnDepth     protocol.SpawnLimit
+	MaxDescendants protocol.SpawnLimit
 	// AuthoritySource, AuthorityActor and AuthorityAt are who last wrote this
 	// task's authority — its caps, its scope or its parent link — and when.
 	// The zero values are a task recorded before provenance existed.
@@ -232,24 +238,38 @@ func newTaskID() string {
 // pass "" when the bound runner advertised no profiles (legacy runner).
 func (s *TaskStore) Create(repo, prompt string, kind protocol.TaskKind, origin protocol.ClientKind, creatorTaskID protocol.TaskID, boundRunnerID string, selector protocol.RunnerSelector, extraArgs []string, g authority.Grant, agentProfile string) string {
 	s.mu.Lock()
+	id := s.createLocked(repo, prompt, kind, origin, creatorTaskID, boundRunnerID, selector, extraArgs, g, agentProfile)
+	onCreate := s.OnCreate
+	s.mu.Unlock()
+	if onCreate != nil {
+		onCreate(id)
+	}
+	return id
+}
+
+// createLocked inserts a task and writes its task_created record. Caller holds
+// s.mu and fires OnCreate after releasing it.
+func (s *TaskStore) createLocked(repo, prompt string, kind protocol.TaskKind, origin protocol.ClientKind, creatorTaskID protocol.TaskID, boundRunnerID string, selector protocol.RunnerSelector, extraArgs []string, g authority.Grant, agentProfile string) string {
 	id := newTaskID()
 	s.tasks[id] = &TaskEntry{
-		ID:            id,
-		RepoPath:      repo,
-		Prompt:        prompt,
-		Kind:          kind,
-		OriginKind:    origin,
-		CreatorTaskID: creatorTaskID,
-		Capabilities:  g.Caps,
-		Scope:         g.Scope,
-		DelegateCaps:  g.DelegateCaps,
-		DelegateScope: g.DelegateScope,
-		AgentProfile:  agentProfile,
-		Status:        protocol.TaskStatus_Queued,
-		CreatedAt:     time.Now(),
-		BoundRunnerID: boundRunnerID,
-		Selector:      selector,
-		ExtraArgs:     extraArgs,
+		ID:             id,
+		RepoPath:       repo,
+		Prompt:         prompt,
+		Kind:           kind,
+		OriginKind:     origin,
+		CreatorTaskID:  creatorTaskID,
+		Capabilities:   g.Caps,
+		Scope:          g.Scope,
+		DelegateCaps:   g.DelegateCaps,
+		DelegateScope:  g.DelegateScope,
+		SpawnDepth:     g.SpawnDepth,
+		MaxDescendants: g.MaxDescendants,
+		AgentProfile:   agentProfile,
+		Status:         protocol.TaskStatus_Queued,
+		CreatedAt:      time.Now(),
+		BoundRunnerID:  boundRunnerID,
+		Selector:       selector,
+		ExtraArgs:      extraArgs,
 	}
 	if creatorTaskID.Id == ([16]byte{}) {
 		s.tasks[id].stampAuthority(AuthorityWrite{Source: protocol.AuthoritySource_OperatorSpawn})
@@ -278,15 +298,11 @@ func (s *TaskStore) Create(repo, prompt string, kind protocol.TaskKind, origin p
 		}
 		applyScopeToWAL(g.Scope, &ev)
 		applyDelegationToWAL(g.DelegateCaps, g.DelegateScope, &ev)
+		applyLimitsToWAL(g.SpawnDepth, g.MaxDescendants, &ev)
 		s.tasks[id].applyAuthorityToWAL(&ev)
 		if err := s.wal.Write(ev); err != nil {
 			slog.Error("WAL write failed", "op", "task_created", "task_id", id, "err", err)
 		}
-	}
-	onCreate := s.OnCreate
-	s.mu.Unlock()
-	if onCreate != nil {
-		onCreate(id)
 	}
 	return id
 }
@@ -296,11 +312,24 @@ func (s *TaskStore) Create(repo, prompt string, kind protocol.TaskKind, origin p
 // halves re-grant independently, as the presence bits on the wire do.
 type GrantUpdate struct {
 	Caps, Scope, DelegateCaps, DelegateScope bool
+	SpawnDepth, MaxDescendants               bool
 	To                                       authority.Grant
 }
 
 // Any reports whether the update writes anything.
-func (u GrantUpdate) Any() bool { return u.Caps || u.Scope || u.DelegateCaps || u.DelegateScope }
+func (u GrantUpdate) Any() bool {
+	return u.Caps || u.Scope || u.DelegateCaps || u.DelegateScope || u.SpawnDepth || u.MaxDescendants
+}
+
+// applyLimits writes the spawn limits u names.
+func (e *TaskEntry) applyLimits(u GrantUpdate) {
+	if u.SpawnDepth {
+		e.SpawnDepth = u.To.SpawnDepth
+	}
+	if u.MaxDescendants {
+		e.MaxDescendants = u.To.MaxDescendants
+	}
+}
 
 // applyBound writes the delegation-bound halves u names.
 func (e *TaskEntry) applyBound(u GrantUpdate) {
@@ -314,7 +343,8 @@ func (e *TaskEntry) applyBound(u GrantUpdate) {
 
 // Grant is the entry's authority as one value.
 func (e TaskEntry) Grant() authority.Grant {
-	return authority.Grant{Caps: e.Capabilities, Scope: e.Scope, DelegateCaps: e.DelegateCaps, DelegateScope: e.DelegateScope}
+	return authority.Grant{Caps: e.Capabilities, Scope: e.Scope, DelegateCaps: e.DelegateCaps, DelegateScope: e.DelegateScope,
+		SpawnDepth: e.SpawnDepth, MaxDescendants: e.MaxDescendants}
 }
 
 // AuthorityWrite is who is writing a task's authority: the kind of write and
@@ -372,6 +402,7 @@ func (s *TaskStore) writeCapsChangedLocked(e *TaskEntry) {
 	}
 	applyScopeToWAL(e.Scope, &ev)
 	applyDelegationToWAL(e.DelegateCaps, e.DelegateScope, &ev)
+	applyLimitsToWAL(e.SpawnDepth, e.MaxDescendants, &ev)
 	e.applyAuthorityToWAL(&ev)
 	if err := s.wal.Write(ev); err != nil {
 		slog.Error("WAL write failed", "op", "task_caps_changed", "task_id", id, "err", err)
@@ -496,6 +527,7 @@ func (s *TaskStore) SetCaps(id string, u GrantUpdate, by AuthorityWrite) (TaskEn
 		e.Scope = u.To.Scope
 	}
 	e.applyBound(u)
+	e.applyLimits(u)
 	e.stampAuthority(by)
 	s.writeCapsChangedLocked(e)
 	snapshot := *e
@@ -690,6 +722,7 @@ func (s *TaskStore) Resume(id, prompt string, extraArgs []string, selector proto
 			e.Scope = u.To.Scope
 		}
 		e.applyBound(u)
+		e.applyLimits(u)
 		// One event carries the post-change state of BOTH halves, whichever was
 		// asked for: replay applies what the record says, so writing only the
 		// changed half would leave the other reading as its zero on restart.
@@ -1293,6 +1326,7 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 			}
 			s.tasks[ev.TaskID].authorityFromWAL(ev)
 			s.tasks[ev.TaskID].DelegateCaps, s.tasks[ev.TaskID].DelegateScope = delegationFromWAL(ev)
+			s.tasks[ev.TaskID].SpawnDepth, s.tasks[ev.TaskID].MaxDescendants = limitsFromWAL(ev)
 			s.order = append(s.order, ev.TaskID)
 		case "task_assigned":
 			if t, ok := s.tasks[ev.TaskID]; ok {
@@ -1390,6 +1424,7 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 				t.Capabilities = protocol.Capability(ev.Capabilities)
 				t.Scope = scopeFromWAL(ev)
 				t.DelegateCaps, t.DelegateScope = delegationFromWAL(ev)
+				t.SpawnDepth, t.MaxDescendants = limitsFromWAL(ev)
 				t.authorityFromWAL(ev)
 			}
 		case "task_parent_changed":

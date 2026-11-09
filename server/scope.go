@@ -78,6 +78,23 @@ func applyDelegationToWAL(caps protocol.Capability, s authority.Scope, ev *WALEv
 	ev.DelegateScopeVisIDs = s.VisIDs
 }
 
+// applyLimitsToWAL / limitsFromWAL are the projection of the two spawn
+// limits. The zero values (an absent key) read back as unbounded.
+func applyLimitsToWAL(depth, max protocol.SpawnLimit, ev *WALEvent) {
+	ev.SpawnDepth, ev.SpawnDepthLimited = depth.Value(), depth.Limited()
+	ev.MaxDescendants, ev.MaxDescendantsLimited = max.Value(), max.Limited()
+}
+
+func limitsFromWAL(ev WALEvent) (depth, max protocol.SpawnLimit) {
+	if ev.SpawnDepthLimited {
+		depth = authority.LimitOf(ev.SpawnDepth)
+	}
+	if ev.MaxDescendantsLimited {
+		max = authority.LimitOf(ev.MaxDescendants)
+	}
+	return depth, max
+}
+
 func delegationFromWAL(ev WALEvent) (protocol.Capability, authority.Scope) {
 	return protocol.Capability(ev.DelegateCaps), authority.Scope{
 		Base:           protocol.ScopeBase(ev.DelegateScopeBase),

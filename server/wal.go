@@ -84,6 +84,13 @@ type WALEvent struct {
 	DelegateScopeExcludeSelf    bool     `json:"delegate_scope_exclude_self,omitempty"`
 	DelegateScopeIDs            []string `json:"delegate_scope_ids,omitempty"`
 	DelegateScopeVisIDs         []string `json:"delegate_scope_vis_ids,omitempty"`
+	// The spawn limits (TaskEntry.SpawnDepth / MaxDescendants), on the same
+	// two events. A legacy record carries none of these keys, and every zero
+	// is unbounded.
+	SpawnDepth            uint32 `json:"spawn_depth,omitempty"`
+	SpawnDepthLimited     bool   `json:"spawn_depth_limited,omitempty"`
+	MaxDescendants        uint32 `json:"max_descendants,omitempty"`
+	MaxDescendantsLimited bool   `json:"max_descendants_limited,omitempty"`
 	// AgentProfile is the resolved agent profile name for this task (see
 	// TaskEntry.AgentProfile). Written on task_created events; legacy
 	// entries default to "" (zero). Also reused by task_resumed events.
@@ -171,6 +178,10 @@ type walEventJSON struct {
 	DelegateScopeExcludeSelf    bool               `json:"delegate_scope_exclude_self,omitempty"`
 	DelegateScopeIDs            []string           `json:"delegate_scope_ids,omitempty"`
 	DelegateScopeVisIDs         []string           `json:"delegate_scope_vis_ids,omitempty"`
+	SpawnDepth                  uint32             `json:"spawn_depth,omitempty"`
+	SpawnDepthLimited           bool               `json:"spawn_depth_limited,omitempty"`
+	MaxDescendants              uint32             `json:"max_descendants,omitempty"`
+	MaxDescendantsLimited       bool               `json:"max_descendants_limited,omitempty"`
 	AgentProfile                string             `json:"agent_profile,omitempty"`
 	SkillsInjected              bool               `json:"skills_injected,omitempty"`
 	WorktreeDir                 string             `json:"worktree_dir,omitempty"`
@@ -220,6 +231,10 @@ func (e WALEvent) MarshalJSON() ([]byte, error) {
 		DelegateScopeExcludeSelf:    e.DelegateScopeExcludeSelf,
 		DelegateScopeIDs:            e.DelegateScopeIDs,
 		DelegateScopeVisIDs:         e.DelegateScopeVisIDs,
+		SpawnDepth:                  e.SpawnDepth,
+		SpawnDepthLimited:           e.SpawnDepthLimited,
+		MaxDescendants:              e.MaxDescendants,
+		MaxDescendantsLimited:       e.MaxDescendantsLimited,
 		AgentProfile:                e.AgentProfile,
 		SkillsInjected:              e.SkillsInjected,
 		WorktreeDir:                 e.WorktreeDir,
@@ -274,6 +289,10 @@ func (e *WALEvent) UnmarshalJSON(b []byte) error {
 	e.DelegateScopeExcludeSelf = j.DelegateScopeExcludeSelf
 	e.DelegateScopeIDs = j.DelegateScopeIDs
 	e.DelegateScopeVisIDs = j.DelegateScopeVisIDs
+	e.SpawnDepth = j.SpawnDepth
+	e.SpawnDepthLimited = j.SpawnDepthLimited
+	e.MaxDescendants = j.MaxDescendants
+	e.MaxDescendantsLimited = j.MaxDescendantsLimited
 	e.AgentProfile = j.AgentProfile
 	e.SkillsInjected = j.SkillsInjected
 	e.WorktreeDir = j.WorktreeDir
