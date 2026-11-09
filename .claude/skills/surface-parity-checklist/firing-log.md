@@ -3884,3 +3884,55 @@ omitted: 32 (the five choice KEYS are spelled in Go and JS: they are the
          duplicated too — `watchLive` / `watchChoices` — a drift there shows
          as a choice offered or missing, not a wrong arm)
 missed:  —
+
+### 2026-11-09 — `prune --force` removed (walk SKIPPED at the time)
+
+An option REMOVED from a verb family (`380aba71`). No walk ran: removal read
+as "less surface", and the trigger wording is "adding". What a walk would have
+found, recorded after the fact: 1 (table row and examples), 5/6 none, 8 (the
+wasm `harness.prune` opts lost `force`), 24 (the force path is gone; the age
+sweep never had it), 33 (`--force` / `-f` now error on every cmdline instead
+of being accepted — `TestParsePruneRefusesForce`, the differential corpus),
+35 (README had no `prune --force`), 36 (supervising-workers, mirrored).
+missed:  — (nothing found missing; the skip is the fact being recorded)
+
+### 2026-11-09 — spawn limits: `spawn_depth`, `max_descendants`, `descendants`, `spawn_room`
+
+Two request/grant fields on spawn, resume and `caps set`; three TaskInfo /
+WhoAmI fields; one status. Spec `2026-11-09-spawn-limits-design.md`.
+
+done:    1 (`--spawn-depth` / `--max-descendants` in `spawnFlags`, `caps set`,
+         `caps set-defaults`, `scope`, `caps what-if`), 2 (exact conflicts;
+         what-if refuses the limits without `--spawn`), 5 (TUI picker: a
+         limits section, digits per rune in the batched-KeyRunes loop,
+         backspace, space = unbounded/0), 6 (WebUI compose + re-grant
+         `<details>` with two inputs), 9 (TUI `sessionSpawnDepth` /
+         `sessionMaxDescendants`; WebUI `spawnLimits`, read by `sessionReq`),
+         11 (`spawn-depth=… max-descendants=… descendants=…` on every row),
+         12/14 (`spawn_depth` / `max_descendants` null-when-unbounded,
+         `descendants`; `session ls` shares `newTaskJSON`), 13 (both branches,
+         `room=`), 15 (SPAWN LIMITS section; `prune` description names what it
+         does to limits), 17 (`spawn limits:` line), 20 (row meta), 22/23
+         (snapshot `{label, limited, value}` per limit, `descendants`), 24
+         (fresh: written; resume: only behind a presence bit, never checked;
+         `caps set`: target only; `--cascade`: never; set-defaults: fresh
+         spawns only; what-if: `--spawn` only), 25 (presence bits from
+         reserved bits), 26 (`TestResumeNeverSendsSessionDefaultLimits`, the
+         mjs resume case), 27 (`buildSubmitRequest` /
+         `buildOpenInteractiveRequest`), 28 (four WAL keys, omitted = unbounded
+         = pre-change behaviour), 28a (`grep SessionOpts{`: tui 1, harness-cli
+         1, wasm 2 — all set; `cli/submit.go`'s empty literal is the no-option
+         convenience), 29/30 (TUI cmdresult and WebUI appendCmdOutput name the
+         limit and value), 31 (unbounded printed, never elided), 32
+         (`authority.LimitLabel` / `verb.ParseSpawnLimit`, the bridge calls
+         the Go parser), 33 (a bad value errors on every surface), 34a (a
+         number has no existing control kind; numeric text input, parsed in
+         Go), 35 (README `### Spawn limits`), 36 (supervising-workers,
+         mirrored), 37 (spec Amendment), 39 (spec Surfaces table walked row by
+         row; the wasm snapshot ships `{label, limited, value}` objects, not
+         the table's flat `spawnDepthLimited` names — recorded in the
+         Amendment)
+omitted: 16 (TUI task table: width-bound, as the delegation bound), 21 (WebUI
+         task sheet repeats no authority field), `caps audit` / `reach`
+         (bits and target sets; neither limit is either)
+missed:  —

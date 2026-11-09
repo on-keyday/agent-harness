@@ -1220,6 +1220,50 @@ That only applies point-to-point (the message sat on the replier's own
 publish the others may not have read. `agent send --no-retire-on-reply`
 opts a message out.
 
+### Spawn limits
+
+`spawn` alone puts no number on what a task may create. Two limits, both
+checked by the server whenever a task is created, do:
+
+- `--spawn-depth N|unbounded` — how many more generations may be created
+  below the task. A child gets `min(what it asks for, yours − 1)`, so the
+  limit only shrinks down a chain; at `0` a task creates nothing.
+- `--max-descendants N|unbounded` — how many tasks the task's subtree may
+  hold, itself excluded. Every record counts, ended ones too, until it is
+  pruned: ending or cancelling a task frees no place. Each ancestor's limit
+  is checked on every creation, so a child given a larger number does not
+  widen its parent's.
+
+Both default to unbounded, and a task recorded before the limits existed
+replays unbounded. A refusal is `spawn_limit` with the reason, e.g.
+`spawn limit: your parent's descendant limit is reached (3/3); resume an
+existing task, or ask the operator to prune or raise the limit`. A resume
+creates no record and is never refused by either limit, which is how an
+agent reuses a place. Nothing depends on who asks: an operator-created task
+has no ancestors, so no limit applies to it, and an operator creating a
+task inside a full subtree is refused like anyone else.
+
+```bash
+bin/harness-cli submit --repo /abs/repo --caps spawn,resume,cancel --delegate-caps spawn \
+    --spawn-depth 2 --max-descendants 3 --task "supervise"
+bin/harness-cli caps set <task-id> --max-descendants 5   # raise it live, on this task only
+```
+
+`caps set` changes either limit on the target only; `--cascade` never
+changes a limit. They show as `spawn-depth=… max-descendants=…
+descendants=…` on every `ls` row (unbounded included) and in `whoami` with
+`room=…`, the places left under every limited ancestor; `spawn_depth` /
+`max_descendants` (`null` = unbounded) and `descendants` in the JSON forms;
+a line in the TUI `d` popup; the WebUI task row. They are edited in the TUI
+`a` picker, the WebUI compose form and re-grant dialog, and with `caps
+set-defaults --spawn-depth / --max-descendants`.
+
+**Prune is how a place is freed, and it lifts limits too.** Pruning an
+ended task in the middle of a tree removes the parent link its descendants
+are counted through, so they leave every ancestor's count. Grant only what
+the work needs: an agent given spawn with limits is bounded only while it
+lacks prune over its subtree.
+
 ### Board reach
 
 With no capability, a task **publishes** to its own `chat.<short-id>` (and

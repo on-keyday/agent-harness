@@ -260,3 +260,36 @@ Before landing: `make` targets, `scripts/wire-skew-check.sh`.
 - **`prune` frees places, and pruning an ended intermediate task lifts limits**
   for the records below it (D10). The intended use grants agents no `prune`.
 - **Tightening `spawn_depth` does not reach existing descendants** (D13).
+
+## Amendment — as implemented (2026-11-09)
+
+Where this spec was silent, or named a shape the code could not take, the
+implementation (`docs/superpowers/plans/2026-11-09-spawn-limits.md`) decided as
+follows.
+
+- **One wire format, `SpawnLimit { limited :u1, reserved :u7, value :u24 }`**,
+  replaces § Wire's separate value fields and `*_limited` bits, for both limits
+  everywhere. `value` is u24 so the format is 4 bytes: embedded as a 3-byte
+  format right after a bit-field group, it made brgen stop merging that group
+  into one byte (`OpenInteractiveRequest`'s flag byte came out as one `uint8`
+  per bit and `SetDelegateScopePresent` disappeared). Both limits therefore
+  range 0–16777215, not § Terms' 0–255 / 0–65535.
+- **Presence bits** take `SubmitRequest`'s and `SetCapsRequest`'s two reserved
+  bits. In `OpenInteractiveRequest` the two limits sit before the flag byte,
+  and the two presence bits share it with `delegate_scope_present`
+  (`reserved2 :u5`).
+- **`TaskStore.CreateWithinLimits`** is the checked creation, and the only one
+  production code calls (`TestOnlyCreateWithinLimitsInProduction`);
+  `TaskStore.Create` stays unchecked for tests that build trees directly.
+- **`TaskInfo.descendants`** is filled by the list handler from one
+  `DescendantCounts()` per request; `toTaskInfo` does not take it.
+- **`caps what-if --spawn`** takes `--spawn-depth` / `--max-descendants` and
+  predicts the child's written values only. It does not simulate the
+  descendant-limit refusal, which depends on tasks a confined listing may not
+  show.
+- **The WebUI bridge** takes each limit as the flags' grammar string
+  (`"unbounded"` or a number; `""` is unbounded), parsed by
+  `verb.ParseSpawnLimit` like every other surface.
+- **The wasm snapshot** carries each limit as one object `{label, limited,
+  value}` (`spawnDepth`, `maxDescendants`) plus `descendants`, not the flat
+  `spawnDepthLimited` / `maxDescendantsLimited` names § Surfaces listed.

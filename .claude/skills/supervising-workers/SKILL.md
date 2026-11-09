@@ -442,6 +442,17 @@ and the scope forms (`--json` for the machine-readable form).
   --delegate-caps … / --delegate-scope …`, so ask, do not retry. A child's own
   bound (`--delegate-caps` / `--delegate-scope` on the spawn) is clamped to
   yours.
+- **Spawn limits bound how many tasks you may create.** `whoami` prints
+  `spawn-depth=… max-descendants=… descendants=… room=…`; `room` is how many
+  more you may create now, under every limited ancestor. Check it before
+  promising to start workers. Every task you create counts until it is
+  pruned: ending or cancelling a worker frees no place. On a `spawn_limit`
+  refusal, in this order: resume a worker you already have (`session new -d
+  --resume <id>`, which creates nothing); if none can serve, ask the operator
+  to prune or to raise the limit. Holding `prune` yourself is not a licence:
+  ask the operator and prune only once approved — an unapproved prune can be
+  undone with `restore`, but it is not the expected path. Never retry the
+  same spawn as is. A child's `--spawn-depth` is at most yours minus one.
 - **Omitted ⇒ none.** No `--caps` flag means the child gets NOTHING: it is a
   data-plane-only worker (agentboard within its base set + its own logs/ls) and every
   control-plane verb answers `permission denied`. Name what it needs —
