@@ -771,6 +771,7 @@ func (h cliVerbs) CapsSet(a verb.SetCapsAction) error {
 		opts.Overrides = a.Overrides
 	}
 	opts.DelegateCaps, opts.DelegateScope = a.DelegateCaps, a.DelegateScope
+	opts.SpawnDepth, opts.MaxDescendants = a.SpawnDepth, a.MaxDescendants
 	res, err := cli.SetCaps(h.ctx, h.cid(), opts)
 	if err != nil {
 		return err

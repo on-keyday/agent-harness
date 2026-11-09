@@ -31,6 +31,13 @@ func spawnOpts(a verb.SpawnAction) cli.SessionOpts {
 	if a.DelegateScope != nil {
 		dscope = *a.DelegateScope
 	}
+	var depth, maxDesc protocol.SpawnLimit
+	if a.SpawnDepth != nil {
+		depth = *a.SpawnDepth
+	}
+	if a.MaxDescendants != nil {
+		maxDesc = *a.MaxDescendants
+	}
 	sel, err := cli.BuildSelector(cli.SelectorOpts{Runner: a.Runner, Host: a.Host, IP: a.IP})
 	if err != nil {
 		die(err)
@@ -43,7 +50,10 @@ func spawnOpts(a verb.SpawnAction) cli.SessionOpts {
 		DelegateCaps:       dcaps, DelegateScope: dscope,
 		DelegateCapsPresent:  a.ResumeTaskID != "" && a.DelegateCapsPresent,
 		DelegateScopePresent: a.ResumeTaskID != "" && a.DelegateScopePresent,
-		ResumeConversation:   a.ResumeConversation, AgentProfile: a.Agent,
+		SpawnDepth:           depth, MaxDescendants: maxDesc,
+		SpawnDepthPresent:     a.ResumeTaskID != "" && a.SpawnDepthPresent,
+		MaxDescendantsPresent: a.ResumeTaskID != "" && a.MaxDescendantsPresent,
+		ResumeConversation:    a.ResumeConversation, AgentProfile: a.Agent,
 		ResumeExact: a.Exact,
 	}
 }

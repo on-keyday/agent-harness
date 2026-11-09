@@ -52,6 +52,9 @@ func buildSubmitRequest(repo, prompt string, opts SessionOpts) protocol.SubmitRe
 	sub.DelegateCaps, sub.DelegateScope = opts.DelegateCaps, opts.DelegateScope
 	sub.SetDelegateCapsPresent(opts.DelegateCapsPresent)
 	sub.SetDelegateScopePresent(opts.DelegateScopePresent)
+	sub.SpawnDepth, sub.MaxDescendants = opts.SpawnDepth, opts.MaxDescendants
+	sub.SetSpawnDepthPresent(opts.SpawnDepthPresent)
+	sub.SetMaxDescendantsPresent(opts.MaxDescendantsPresent)
 	sub.SetResumeExact(opts.ResumeExact)
 	return sub
 }
@@ -96,6 +99,8 @@ func submitStatusError(ctx context.Context, tr trsf.Transport, s *protocol.Submi
 	case protocol.SubmitStatus_ResumeExactMismatch:
 		return fmt.Errorf("submit resume_exact_mismatch: an exact resume takes the task's recorded settings; drop the setting flags or drop --exact (%s)",
 			strings.TrimSpace(string(s.ErrorMsg)))
+	case protocol.SubmitStatus_SpawnLimit:
+		return fmt.Errorf("submit spawn_limit: %s", strings.TrimSpace(string(s.ErrorMsg)))
 	case protocol.SubmitStatus_InternalError:
 		msg := strings.TrimSpace(string(s.ErrorMsg))
 		if msg != "" {

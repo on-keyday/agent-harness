@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/cli/verb"
 	"go/ast"
 	"go/parser"
@@ -109,6 +110,11 @@ func TestAuthorityOptsCarriesEveryAuthorityField(t *testing.T) {
 		DelegateScope:        protocol.TaskScope{Base: protocol.ScopeBase_None},
 		DelegateCapsPresent:  true,
 		DelegateScopePresent: true,
+
+		SpawnDepth:            authority.LimitOf(2),
+		MaxDescendants:        authority.LimitOf(5),
+		SpawnDepthPresent:     true,
+		MaxDescendantsPresent: true,
 	}
 
 	// Every field must actually be non-zero, or "it survived" is vacuous for

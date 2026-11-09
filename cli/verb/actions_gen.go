@@ -748,6 +748,10 @@ type SetCapsAction struct {
 	DelegateCaps *protocol.Capability
 	// the most scope it may give them (--scope's grammar); with --cascade, also clamps its descendants to …
 	DelegateScope *protocol.TaskScope
+	// new spawn depth (N or unbounded), on this task only -- --cascade never changes it; omitted = keep it
+	SpawnDepth *protocol.SpawnLimit
+	// new descendant limit (N or unbounded), on this task only; omitted = keep it
+	MaxDescendants *protocol.SpawnLimit
 	// also clamp every descendant to the new authority — without this a revoked task can still act throu…
 	Cascade bool
 	// on a narrowing, leave the affected tasks' connections open
@@ -768,6 +772,10 @@ type SetDefaultsAction struct {
 	DelegateCaps *protocol.Capability
 	// delegate scope future spawns carry by default; omitted = leave it as it is
 	DelegateScope *protocol.TaskScope
+	// spawn depth (N or unbounded) future spawns carry by default; omitted = leave it as it is
+	SpawnDepth *protocol.SpawnLimit
+	// descendant limit (N or unbounded) future spawns carry by default; omitted = leave it as it is
+	MaxDescendants *protocol.SpawnLimit
 }
 
 // SetParentAction is built by: caps set-parent.
@@ -813,6 +821,14 @@ type SpawnAction struct {
 	DelegateScopePresent bool
 	// the most scope it may give them, in --scope's grammar (default subtree)
 	DelegateScope *protocol.TaskScope
+	// whether --spawn-depth was typed, which its zero value cannot say
+	SpawnDepthPresent bool
+	// generations that may still be created below the new task: N or unbounded (default: one less than you…
+	SpawnDepth *protocol.SpawnLimit
+	// whether --max-descendants was typed, which its zero value cannot say
+	MaxDescendantsPresent bool
+	// tasks the new task's subtree may hold, ended ones included until pruned: N or unbounded (default unb…
+	MaxDescendants *protocol.SpawnLimit
 	// extra CLI arg to forward to the agent (repeatable; appended after the runner-global --agent-args)
 	ExtraArgs []string
 	// pin to a specific runner by ConnectionID (the id= value from `ls`)
@@ -2317,6 +2333,22 @@ func init() {
 				}
 				a.DelegateScope = v
 			}
+			a.SpawnDepthPresent = b.Set["spawn-depth"]
+			if b.Set["spawn-depth"] {
+				v, err := parseSpawnLimitFlag(b.Str("spawn-depth"))
+				if err != nil {
+					return nil, fmt.Errorf("submit: --spawn-depth: %w", err)
+				}
+				a.SpawnDepth = v
+			}
+			a.MaxDescendantsPresent = b.Set["max-descendants"]
+			if b.Set["max-descendants"] {
+				v, err := parseSpawnLimitFlag(b.Str("max-descendants"))
+				if err != nil {
+					return nil, fmt.Errorf("submit: --max-descendants: %w", err)
+				}
+				a.MaxDescendants = v
+			}
 			a.ExtraArgs = stringsOf(b.Custom["agent-arg"])
 			a.Runner = b.Str("runner")
 			a.Host = b.Str("host")
@@ -2373,6 +2405,22 @@ func init() {
 					return nil, fmt.Errorf("submit: --delegate-scope: %w", err)
 				}
 				a.DelegateScope = v
+			}
+			a.SpawnDepthPresent = b.Set["spawn-depth"]
+			if b.Set["spawn-depth"] {
+				v, err := parseSpawnLimitFlag(b.Str("spawn-depth"))
+				if err != nil {
+					return nil, fmt.Errorf("submit: --spawn-depth: %w", err)
+				}
+				a.SpawnDepth = v
+			}
+			a.MaxDescendantsPresent = b.Set["max-descendants"]
+			if b.Set["max-descendants"] {
+				v, err := parseSpawnLimitFlag(b.Str("max-descendants"))
+				if err != nil {
+					return nil, fmt.Errorf("submit: --max-descendants: %w", err)
+				}
+				a.MaxDescendants = v
 			}
 			a.ExtraArgs = stringsOf(b.Custom["agent-arg"])
 			a.Runner = b.Str("runner")
@@ -2431,6 +2479,22 @@ func init() {
 				}
 				a.DelegateScope = v
 			}
+			a.SpawnDepthPresent = b.Set["spawn-depth"]
+			if b.Set["spawn-depth"] {
+				v, err := parseSpawnLimitFlag(b.Str("spawn-depth"))
+				if err != nil {
+					return nil, fmt.Errorf("submit: --spawn-depth: %w", err)
+				}
+				a.SpawnDepth = v
+			}
+			a.MaxDescendantsPresent = b.Set["max-descendants"]
+			if b.Set["max-descendants"] {
+				v, err := parseSpawnLimitFlag(b.Str("max-descendants"))
+				if err != nil {
+					return nil, fmt.Errorf("submit: --max-descendants: %w", err)
+				}
+				a.MaxDescendants = v
+			}
 			a.ExtraArgs = stringsOf(b.Custom["agent-arg"])
 			a.Runner = b.Str("runner")
 			a.Host = b.Str("host")
@@ -2487,6 +2551,22 @@ func init() {
 					return nil, fmt.Errorf("session new: --delegate-scope: %w", err)
 				}
 				a.DelegateScope = v
+			}
+			a.SpawnDepthPresent = b.Set["spawn-depth"]
+			if b.Set["spawn-depth"] {
+				v, err := parseSpawnLimitFlag(b.Str("spawn-depth"))
+				if err != nil {
+					return nil, fmt.Errorf("session new: --spawn-depth: %w", err)
+				}
+				a.SpawnDepth = v
+			}
+			a.MaxDescendantsPresent = b.Set["max-descendants"]
+			if b.Set["max-descendants"] {
+				v, err := parseSpawnLimitFlag(b.Str("max-descendants"))
+				if err != nil {
+					return nil, fmt.Errorf("session new: --max-descendants: %w", err)
+				}
+				a.MaxDescendants = v
 			}
 			a.ExtraArgs = stringsOf(b.Custom["agent-arg"])
 			a.Runner = b.Str("runner")
@@ -2546,6 +2626,22 @@ func init() {
 					return nil, fmt.Errorf("session new: --delegate-scope: %w", err)
 				}
 				a.DelegateScope = v
+			}
+			a.SpawnDepthPresent = b.Set["spawn-depth"]
+			if b.Set["spawn-depth"] {
+				v, err := parseSpawnLimitFlag(b.Str("spawn-depth"))
+				if err != nil {
+					return nil, fmt.Errorf("session new: --spawn-depth: %w", err)
+				}
+				a.SpawnDepth = v
+			}
+			a.MaxDescendantsPresent = b.Set["max-descendants"]
+			if b.Set["max-descendants"] {
+				v, err := parseSpawnLimitFlag(b.Str("max-descendants"))
+				if err != nil {
+					return nil, fmt.Errorf("session new: --max-descendants: %w", err)
+				}
+				a.MaxDescendants = v
 			}
 			a.ExtraArgs = stringsOf(b.Custom["agent-arg"])
 			a.Runner = b.Str("runner")
@@ -2981,6 +3077,20 @@ func init() {
 				}
 				a.DelegateScope = v
 			}
+			if b.Set["spawn-depth"] {
+				v, err := parseSpawnLimitFlag(b.Str("spawn-depth"))
+				if err != nil {
+					return nil, fmt.Errorf("caps set: --spawn-depth: %w", err)
+				}
+				a.SpawnDepth = v
+			}
+			if b.Set["max-descendants"] {
+				v, err := parseSpawnLimitFlag(b.Str("max-descendants"))
+				if err != nil {
+					return nil, fmt.Errorf("caps set: --max-descendants: %w", err)
+				}
+				a.MaxDescendants = v
+			}
 			a.Cascade = b.Bool("cascade")
 			a.KeepConns = b.Bool("keep-conns")
 			if len(b.Args) > 0 {
@@ -3024,6 +3134,20 @@ func init() {
 					return nil, fmt.Errorf("caps set: --delegate-scope: %w", err)
 				}
 				a.DelegateScope = v
+			}
+			if b.Set["spawn-depth"] {
+				v, err := parseSpawnLimitFlag(b.Str("spawn-depth"))
+				if err != nil {
+					return nil, fmt.Errorf("caps set: --spawn-depth: %w", err)
+				}
+				a.SpawnDepth = v
+			}
+			if b.Set["max-descendants"] {
+				v, err := parseSpawnLimitFlag(b.Str("max-descendants"))
+				if err != nil {
+					return nil, fmt.Errorf("caps set: --max-descendants: %w", err)
+				}
+				a.MaxDescendants = v
 			}
 			a.Cascade = b.Bool("cascade")
 			a.KeepConns = b.Bool("keep-conns")
@@ -3261,6 +3385,20 @@ func init() {
 				}
 				a.DelegateScope = v
 			}
+			if b.Set["spawn-depth"] {
+				v, err := parseSpawnLimitFlag(b.Str("spawn-depth"))
+				if err != nil {
+					return nil, fmt.Errorf("caps set-defaults: --spawn-depth: %w", err)
+				}
+				a.SpawnDepth = v
+			}
+			if b.Set["max-descendants"] {
+				v, err := parseSpawnLimitFlag(b.Str("max-descendants"))
+				if err != nil {
+					return nil, fmt.Errorf("caps set-defaults: --max-descendants: %w", err)
+				}
+				a.MaxDescendants = v
+			}
 			return a, nil
 		},
 		"caps set-defaults\x00webui": func(b Bound) (Action, error) {
@@ -3299,6 +3437,20 @@ func init() {
 					return nil, fmt.Errorf("caps set-defaults: --delegate-scope: %w", err)
 				}
 				a.DelegateScope = v
+			}
+			if b.Set["spawn-depth"] {
+				v, err := parseSpawnLimitFlag(b.Str("spawn-depth"))
+				if err != nil {
+					return nil, fmt.Errorf("caps set-defaults: --spawn-depth: %w", err)
+				}
+				a.SpawnDepth = v
+			}
+			if b.Set["max-descendants"] {
+				v, err := parseSpawnLimitFlag(b.Str("max-descendants"))
+				if err != nil {
+					return nil, fmt.Errorf("caps set-defaults: --max-descendants: %w", err)
+				}
+				a.MaxDescendants = v
 			}
 			return a, nil
 		},
@@ -3339,6 +3491,20 @@ func init() {
 				}
 				a.DelegateScope = v
 			}
+			if b.Set["spawn-depth"] {
+				v, err := parseSpawnLimitFlag(b.Str("spawn-depth"))
+				if err != nil {
+					return nil, fmt.Errorf("scope: --spawn-depth: %w", err)
+				}
+				a.SpawnDepth = v
+			}
+			if b.Set["max-descendants"] {
+				v, err := parseSpawnLimitFlag(b.Str("max-descendants"))
+				if err != nil {
+					return nil, fmt.Errorf("scope: --max-descendants: %w", err)
+				}
+				a.MaxDescendants = v
+			}
 			return a, nil
 		},
 		"scope\x00webui": func(b Bound) (Action, error) {
@@ -3377,6 +3543,20 @@ func init() {
 					return nil, fmt.Errorf("scope: --delegate-scope: %w", err)
 				}
 				a.DelegateScope = v
+			}
+			if b.Set["spawn-depth"] {
+				v, err := parseSpawnLimitFlag(b.Str("spawn-depth"))
+				if err != nil {
+					return nil, fmt.Errorf("scope: --spawn-depth: %w", err)
+				}
+				a.SpawnDepth = v
+			}
+			if b.Set["max-descendants"] {
+				v, err := parseSpawnLimitFlag(b.Str("max-descendants"))
+				if err != nil {
+					return nil, fmt.Errorf("scope: --max-descendants: %w", err)
+				}
+				a.MaxDescendants = v
 			}
 			return a, nil
 		},

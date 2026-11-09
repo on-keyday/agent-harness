@@ -82,6 +82,14 @@ type SessionOpts struct {
 	DelegateScope        protocol.TaskScope
 	DelegateCapsPresent  bool
 	DelegateScopePresent bool
+	// SpawnDepth and MaxDescendants are the spawn limits written onto the
+	// task. The zero value is unbounded, and an unbounded SpawnDepth on a
+	// fresh spawn gets the creator's minus one server-side. On a resume each
+	// is written only behind its presence bit, like the bound.
+	SpawnDepth            protocol.SpawnLimit
+	MaxDescendants        protocol.SpawnLimit
+	SpawnDepthPresent     bool
+	MaxDescendantsPresent bool
 	// Detached opens the session without attaching the caller: the server
 	// creates no client stream, so the caller never holds the control seat
 	// (which needs exec_control). The initial size then travels in the request,
@@ -110,6 +118,9 @@ func buildOpenInteractiveRequest(repoPath string, opts SessionOpts) protocol.Ope
 	oi.DelegateCaps, oi.DelegateScope = opts.DelegateCaps, opts.DelegateScope
 	oi.SetDelegateCapsPresent(opts.DelegateCapsPresent)
 	oi.SetDelegateScopePresent(opts.DelegateScopePresent)
+	oi.SpawnDepth, oi.MaxDescendants = opts.SpawnDepth, opts.MaxDescendants
+	oi.SetSpawnDepthPresent(opts.SpawnDepthPresent)
+	oi.SetMaxDescendantsPresent(opts.MaxDescendantsPresent)
 	oi.SetEventStream(opts.EventStream)
 	oi.SetResumeExact(opts.ResumeExact)
 	if opts.Detached {

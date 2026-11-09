@@ -29,8 +29,12 @@ type SetCapsOpts struct {
 	// bound; a cascade naming neither clamps caps and scope only.
 	DelegateCaps  *protocol.Capability
 	DelegateScope *protocol.TaskScope
-	Cascade       bool
-	KeepConns     bool
+	// SpawnDepth / MaxDescendants rewrite a spawn limit on the target only;
+	// nil keeps it. A cascade never changes either.
+	SpawnDepth     *protocol.SpawnLimit
+	MaxDescendants *protocol.SpawnLimit
+	Cascade        bool
+	KeepConns      bool
 }
 
 // CapsPtr wraps a Capability for SetCapsOpts.Caps, whose pointer still encodes
@@ -51,8 +55,9 @@ type SetCapsResult struct {
 // principal task — an in-task agent gets SetCapsStatus_NotOperator however it
 // asks. Long-lived embedders (TUI/WebUI) call this form.
 func SetCapsWith(ctx context.Context, c taskControlClient, opts SetCapsOpts) (SetCapsResult, error) {
-	if opts.Caps == nil && opts.Scope == nil && opts.DelegateCaps == nil && opts.DelegateScope == nil {
-		return SetCapsResult{}, fmt.Errorf("set-caps: nothing to change (pass --caps, --scope, --delegate-caps or --delegate-scope)")
+	if opts.Caps == nil && opts.Scope == nil && opts.DelegateCaps == nil && opts.DelegateScope == nil &&
+		opts.SpawnDepth == nil && opts.MaxDescendants == nil {
+		return SetCapsResult{}, fmt.Errorf("set-caps: nothing to change (pass --caps, --scope, --delegate-caps, --delegate-scope, --spawn-depth or --max-descendants)")
 	}
 	tid, err := parseTaskIDHex(opts.TaskID)
 	if err != nil {
@@ -77,6 +82,14 @@ func SetCapsWith(ctx context.Context, c taskControlClient, opts SetCapsOpts) (Se
 	if opts.DelegateScope != nil {
 		body.DelegateScope = *opts.DelegateScope
 		body.SetDelegateScopePresent(true)
+	}
+	if opts.SpawnDepth != nil {
+		body.SpawnDepth = *opts.SpawnDepth
+		body.SetSpawnDepthPresent(true)
+	}
+	if opts.MaxDescendants != nil {
+		body.MaxDescendants = *opts.MaxDescendants
+		body.SetMaxDescendantsPresent(true)
 	}
 	body.SetCascade(opts.Cascade)
 	body.SetKeepConns(opts.KeepConns)

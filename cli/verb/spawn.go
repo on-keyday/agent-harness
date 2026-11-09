@@ -71,6 +71,13 @@ func spawnFlags(k spawnKind) []Flag {
 		{Name: "delegate-scope", Type: FlagString, Default: "", Field: "DelegateScope",
 			FieldType: "*protocol.TaskScope", Convert: "parseScopeFlag", PresenceField: "DelegateScopePresent",
 			Help: "the most scope it may give them, in --scope's grammar (default subtree)"},
+		// The spawn limits, each with its own presence like the bound.
+		{Name: "spawn-depth", Type: FlagString, Default: "", Field: "SpawnDepth",
+			FieldType: "*protocol.SpawnLimit", Convert: "parseSpawnLimitFlag", PresenceField: "SpawnDepthPresent",
+			Help: "generations that may still be created below the new task: N or unbounded (default: one less than yours)"},
+		{Name: "max-descendants", Type: FlagString, Default: "", Field: "MaxDescendants",
+			FieldType: "*protocol.SpawnLimit", Convert: "parseSpawnLimitFlag", PresenceField: "MaxDescendantsPresent",
+			Help: "tasks the new task's subtree may hold, ended ones included until pruned: N or unbounded (default unbounded)"},
 		{
 			Name: "agent-arg", Type: FlagString, Custom: argListValue, Field: "ExtraArgs",
 			Help: "extra CLI arg to forward to the agent (repeatable; appended after the runner-global --agent-args)",
@@ -116,7 +123,7 @@ func spawnRules(k spawnKind) ([]Rule, []Requirement) {
 	}}
 	// --exact takes the task's recorded settings, so every flag that sets one
 	// contradicts it. The prompt as trailing words is refused in Validate.
-	exactConflicts := []string{"agent", "agent-arg", "caps", "scope", "scope-for", "delegate-caps", "delegate-scope"}
+	exactConflicts := []string{"agent", "agent-arg", "caps", "scope", "scope-for", "delegate-caps", "delegate-scope", "spawn-depth", "max-descendants"}
 	if k == spawnSubmit {
 		exactConflicts = append(exactConflicts, "task")
 	}

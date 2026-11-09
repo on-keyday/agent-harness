@@ -89,6 +89,13 @@ type Authority struct {
 	DelegateScope        protocol.TaskScope
 	DelegateCapsPresent  bool
 	DelegateScopePresent bool
+	// SpawnDepth / MaxDescendants are the spawn limits the spawned task gets
+	// (zero = unbounded); the presence bits re-grant each on a resume, set
+	// only when the command line named that flag.
+	SpawnDepth            protocol.SpawnLimit
+	MaxDescendants        protocol.SpawnLimit
+	SpawnDepthPresent     bool
+	MaxDescendantsPresent bool
 }
 
 // sessionRequest is the half of a session or submit request that is NOT the
@@ -156,6 +163,11 @@ func (a Authority) opts(r sessionRequest) cli.SessionOpts {
 		DelegateScope:        a.DelegateScope,
 		DelegateCapsPresent:  a.DelegateCapsPresent,
 		DelegateScopePresent: a.DelegateScopePresent,
+
+		SpawnDepth:            a.SpawnDepth,
+		MaxDescendants:        a.MaxDescendants,
+		SpawnDepthPresent:     a.SpawnDepthPresent,
+		MaxDescendantsPresent: a.MaxDescendantsPresent,
 	}
 }
 

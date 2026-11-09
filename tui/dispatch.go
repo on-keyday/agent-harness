@@ -75,6 +75,7 @@ func (h tuiVerbs) CapsSet(v verb.SetCapsAction) tea.Cmd {
 	return DoSetCaps(a.client, cli.SetCapsOpts{
 		TaskID: full, Caps: v.Caps, Scope: v.Scope, Overrides: v.Overrides,
 		DelegateCaps: v.DelegateCaps, DelegateScope: v.DelegateScope,
+		SpawnDepth: v.SpawnDepth, MaxDescendants: v.MaxDescendants,
 		Cascade: v.Cascade, KeepConns: v.KeepConns,
 	})
 }

@@ -297,6 +297,14 @@ func (a App) spawnAuthority(v verb.SpawnAction, caps protocol.Capability) Author
 		auth.DelegateScope = *v.DelegateScope
 		auth.DelegateScopePresent = resumeTaskID != ""
 	}
+	if v.SpawnDepth != nil {
+		auth.SpawnDepth = *v.SpawnDepth
+		auth.SpawnDepthPresent = resumeTaskID != "" && v.SpawnDepthPresent
+	}
+	if v.MaxDescendants != nil {
+		auth.MaxDescendants = *v.MaxDescendants
+		auth.MaxDescendantsPresent = resumeTaskID != "" && v.MaxDescendantsPresent
+	}
 	// The scope half is one unit: naming EITHER --scope or --scope-for makes
 	// the whole half explicit, so a resume re-grants both together. Letting
 	// --scope-for alone ride the session default's scope would write an
