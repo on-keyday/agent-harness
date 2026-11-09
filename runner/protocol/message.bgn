@@ -1142,6 +1142,13 @@ format TaskInfo:
     # write onto the tasks it grants to.
     delegate_caps  :Capability
     delegate_scope :TaskScope
+    # The task's spawn limits (SubmitRequest.spawn_depth / max_descendants),
+    # and descendants: the records in its subtree now, itself excluded, under
+    # the current parent links -- every record, whatever its status, including
+    # ones the reader cannot see (a number, never an id).
+    spawn_depth     :SpawnLimit
+    max_descendants :SpawnLimit
+    descendants     :u32
 
 format ListResult:
     # Server-initiated send-stream id; client reads ListResultBody bytes
@@ -1233,7 +1240,11 @@ format SubmitRequest:
     # bound. Independent of each other and of the caps / scope bits.
     delegate_caps_present  :u1
     delegate_scope_present :u1
-    reserved :u2
+    # resume only: 1 = write spawn_depth / max_descendants onto the resumed
+    # task; 0 = keep the recorded one. Ignored on create, where both always
+    # apply and their zero is unbounded.
+    spawn_depth_present     :u1
+    max_descendants_present :u1
     # resume_task_id, when all-zero, means "create a new task". When non-zero,
     # the server looks up that TaskID, validates it is in a terminal state
     # (Succeeded / Failed / Cancelled), and re-queues it under the SAME id so
@@ -1262,6 +1273,13 @@ format SubmitRequest:
     # ceiling for every capability.
     delegate_caps  :Capability
     delegate_scope :TaskScope
+    # The spawn limits written onto the new task. spawn_depth: how many more
+    # generations may be created below it; the task gets min(this, the
+    # creator's spawn_depth - 1). max_descendants: how many records its
+    # subtree may hold, itself excluded; written as requested. Both are checked
+    # against the creator and its ancestors when a task is created.
+    spawn_depth     :SpawnLimit
+    max_descendants :SpawnLimit
 
 # SubmitStatus indicates the outcome of a SubmitRequest.
 enum SubmitStatus:
@@ -1289,6 +1307,9 @@ enum SubmitStatus:
     # recorded kind is not the one this path opens, or there was no
     # resume_task_id. error_msg names which.
     resume_exact_mismatch = "resume_exact_mismatch"
+    # A spawn limit refused the creation: the creator's spawn_depth is 0, or
+    # an ancestor's max_descendants is reached. error_msg names which.
+    spawn_limit         = "spawn_limit"
 
 # SubmitResponse replaces the old bare task_id with a status + optional error.
 format SubmitResponse:
@@ -2348,9 +2369,15 @@ format OpenInteractiveRequest:
     # delegate_caps / delegate_scope: same semantics as SubmitRequest's.
     delegate_caps  :Capability
     delegate_scope :TaskScope
+    # spawn_depth / max_descendants: same semantics as SubmitRequest's.
+    spawn_depth     :SpawnLimit
+    max_descendants :SpawnLimit
     # resume only: same semantics as SubmitRequest.delegate_scope_present.
     delegate_scope_present :u1
-    reserved2 :u7
+    # resume only: same semantics as SubmitRequest's.
+    spawn_depth_present     :u1
+    max_descendants_present :u1
+    reserved2 :u5
     # X11 block is on the wire ONLY when x11_enabled == 1 (no invisible bytes
     # when disabled).
     if x11_enabled == 1:
@@ -2386,6 +2413,8 @@ enum OpenInteractiveStatus:
     # The caller may open this task but may not hold its control seat: the
     # target is outside its exec_control scope. Open with detached = 1.
     detach_required       = "detach_required"
+    # See SubmitStatus.spawn_limit; error_msg names which limit.
+    spawn_limit           = "spawn_limit"
 
 # One RUNNER offered when a spawn is ambiguous: more than one (runner, agent
 # profile) choice matched. profiles lists the agents the caller may pick on
@@ -2555,6 +2584,14 @@ format WhoAmIResponse:
     # capabilities are.
     delegate_caps  :Capability
     delegate_scope :TaskScope
+    # The caller's spawn limits and its subtree's record count, as on
+    # TaskInfo. spawn_room: how many more tasks it may create now -- the
+    # minimum, over itself and its ancestors with a limited max_descendants,
+    # of max_descendants - descendants. An operator's are all unbounded.
+    spawn_depth     :SpawnLimit
+    max_descendants :SpawnLimit
+    descendants     :u32
+    spawn_room      :SpawnLimit
 # await_idle: one-shot idle-edge watch on an interactive session's PTY output.
 # Fires when now - last_output >= threshold (byte-level quiescence; measured
 # claude busy-side max gap is ~0.5s, so the 2500ms default has wide margin),
@@ -3157,11 +3194,16 @@ format SetCapsRequest:
                                  # With cascade, either bit also clamps every
                                  # descendant to the target's new bound; a
                                  # cascade with neither clamps caps and scope only.
-    reserved      :u2
+    spawn_depth_present     :u1  # 1 = write spawn_depth on the target only;
+    max_descendants_present :u1  # 1 = write max_descendants on the target only.
+                                 # A cascade never changes either limit.
     # The delegation bound to write (SubmitRequest.delegate_caps). No
     # attenuation: the operator may grant any bound.
     delegate_caps  :Capability
     delegate_scope :TaskScope
+    # The spawn limits to write (SubmitRequest.spawn_depth).
+    spawn_depth     :SpawnLimit
+    max_descendants :SpawnLimit
 
 format SetCapsResponse:
     status       :SetCapsStatus
@@ -4482,6 +4524,21 @@ enum ScopeBase:
 # and session. Clamping a child's scope at spawn ranks bases by permissiveness
 # (none < subtree < global), NOT by numeric value, and an unrecognised byte
 # from a newer peer ranks as none so the failure is closed.
+# SpawnLimit is one of a task's two spawn limits (spawn_depth,
+# max_descendants; docs/superpowers/specs/2026-11-09-spawn-limits-design.md).
+# limited = 0 is unbounded, and value is then 0; the zero value is therefore
+# "unbounded", which is the default on every request and what a record from
+# before the limits replays as.
+#
+# value is u24 rather than u16 so the format is 4 bytes: a 3-byte format
+# embedded right after a bit-field group made brgen stop merging that group
+# into one byte (OpenInteractiveRequest's flag byte came out as one uint8 per
+# bit). The wider range costs nothing.
+format SpawnLimit:
+    limited  :u1
+    reserved :u7
+    value    :u24
+
 format TaskScope:
     base             :ScopeBase
     # Visibility rank. Read only when vis_base_present is 1, and MUST be 0 when
