@@ -6,6 +6,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/cli/verb"
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -989,10 +990,19 @@ func (h tuiVerbs) CapsWhatIf(v verb.CapsWhatIfAction) tea.Cmd {
 // flags exist for the half of the time the operator already knows the mask.
 func (h tuiVerbs) CapsSetDefaults(v verb.SetDefaultsAction) tea.Cmd {
 	a := h.a
-	if v.Caps == nil && v.Scope == nil && v.Overrides == nil && v.DelegateCaps == nil && v.DelegateScope == nil {
+	if v.Caps == nil && v.Scope == nil && v.Overrides == nil && v.DelegateCaps == nil && v.DelegateScope == nil &&
+		v.SpawnDepth == nil && v.MaxDescendants == nil {
 		a.authorityPicker.SetSize(a.width, a.height)
 		a.authorityPicker.OpenSession(a.authority(), a.tasks.Rows())
 		return nil
+	}
+	if v.SpawnDepth != nil {
+		a.sessionSpawnDepth = *v.SpawnDepth
+		a.cmdresult.Append(OKStyle.Render("spawn-depth set: ") + authority.LimitLabel(a.sessionSpawnDepth))
+	}
+	if v.MaxDescendants != nil {
+		a.sessionMaxDescendants = *v.MaxDescendants
+		a.cmdresult.Append(OKStyle.Render("max-descendants set: ") + authority.LimitLabel(a.sessionMaxDescendants))
 	}
 	if v.DelegateCaps != nil {
 		a.sessionDelegateCaps = *v.DelegateCaps

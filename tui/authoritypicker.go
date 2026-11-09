@@ -6,6 +6,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-runewidth"
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
@@ -43,6 +44,13 @@ type AuthorityPickerModel struct {
 	overrides []protocol.ScopeOverride
 	cascade   bool
 	keepConns bool
+
+	// The spawn limits, each a number or unbounded: typed digits set the
+	// value on its row, backspace removes one, space toggles unbounded / 0.
+	// limitsOpened is their label when the picker opened, so a re-grant
+	// sends them only if they changed.
+	spawnDepth, maxDescendants protocol.SpawnLimit
+	limitsOpened               string
 
 	w, h int
 }
@@ -118,6 +126,8 @@ const (
 	rowParentRoot // parent mode: detach to the operator root
 	rowParentSwap // parent mode: swap with the current parent
 	rowSection    // a heading; never selectable
+	rowSpawnDepth
+	rowMaxDescendants
 )
 
 type pickerRow struct {
@@ -144,6 +154,7 @@ func (m *AuthorityPickerModel) section(r pickerRow) *pickerScope {
 func (m *AuthorityPickerModel) OpenRegrant(target protocol.TaskInfo, tasks []protocol.TaskInfo) {
 	m.reset(PickerModeRegrant, target.Capabilities, target.Scope)
 	m.setDeleg(target.DelegateCaps, target.DelegateScope)
+	m.setLimits(target.SpawnDepth, target.MaxDescendants)
 	m.overrides = target.Overrides
 	m.targetHex = FormatTaskID(target.Id)
 	m.buildRows(tasks)
@@ -153,8 +164,68 @@ func (m *AuthorityPickerModel) OpenRegrant(target protocol.TaskInfo, tasks []pro
 func (m *AuthorityPickerModel) OpenSession(defaults Authority, tasks []protocol.TaskInfo) {
 	m.reset(PickerModeSession, defaults.Caps, defaults.Scope)
 	m.setDeleg(defaults.DelegateCaps, defaults.DelegateScope)
+	m.setLimits(defaults.SpawnDepth, defaults.MaxDescendants)
 	m.overrides = defaults.Overrides
 	m.buildRows(tasks)
+}
+
+func (m *AuthorityPickerModel) setLimits(depth, max protocol.SpawnLimit) {
+	m.spawnDepth, m.maxDescendants = depth, max
+	m.limitsOpened = m.limitsLabel()
+}
+
+func (m *AuthorityPickerModel) limitsLabel() string {
+	return authority.LimitLabel(m.spawnDepth) + " " + authority.LimitLabel(m.maxDescendants)
+}
+
+// Limits returns the two spawn limits and whether either differs from what
+// the picker opened with.
+func (m *AuthorityPickerModel) Limits() (depth, max protocol.SpawnLimit, changed bool) {
+	return m.spawnDepth, m.maxDescendants, m.limitsLabel() != m.limitsOpened
+}
+
+// limitAt is the limit the cursor row edits, nil off a limit row.
+func (m *AuthorityPickerModel) limitAt() *protocol.SpawnLimit {
+	if len(m.rows) == 0 {
+		return nil
+	}
+	switch m.rows[m.cursor].kind {
+	case rowSpawnDepth:
+		return &m.spawnDepth
+	case rowMaxDescendants:
+		return &m.maxDescendants
+	}
+	return nil
+}
+
+// TypeDigit appends d to the cursor row's limit; an unbounded one starts at
+// 0. A no-op off a limit row, and past the largest value a limit carries.
+func (m *AuthorityPickerModel) TypeDigit(d rune) {
+	l := m.limitAt()
+	if l == nil || d < '0' || d > '9' {
+		return
+	}
+	v := uint64(0)
+	if l.Limited() {
+		v = uint64(l.Value())
+	}
+	if v = v*10 + uint64(d-'0'); v > 1<<24-1 {
+		return
+	}
+	*l = authority.LimitOf(uint32(v))
+}
+
+// Backspace drops the cursor row's last digit; from 0 it goes to unbounded.
+func (m *AuthorityPickerModel) Backspace() {
+	l := m.limitAt()
+	if l == nil || !l.Limited() {
+		return
+	}
+	if l.Value() == 0 {
+		*l = authority.Unbounded()
+		return
+	}
+	*l = authority.LimitOf(l.Value() / 10)
 }
 
 func (m *AuthorityPickerModel) setDeleg(caps protocol.Capability, scope protocol.TaskScope) {
@@ -224,6 +295,7 @@ func (m *AuthorityPickerModel) reset(mode AuthorityPickerMode, caps protocol.Cap
 	m.overrides = nil
 	m.cascade = false
 	m.keepConns = false
+	m.spawnDepth, m.maxDescendants, m.limitsOpened = authority.Unbounded(), authority.Unbounded(), ""
 }
 
 func (m *AuthorityPickerModel) buildRows(tasks []protocol.TaskInfo) {
@@ -234,6 +306,10 @@ func (m *AuthorityPickerModel) buildRows(tasks []protocol.TaskInfo) {
 	m.rows = append(m.rows, pickerRow{kind: rowSection,
 		label: "— delegation: what this task may hand to the tasks it creates —"})
 	m.appendSection(tasks, true)
+	m.rows = append(m.rows, pickerRow{kind: rowSection,
+		label: "— spawn limits: type digits · backspace · space = unbounded/0 —"})
+	m.rows = append(m.rows, pickerRow{kind: rowSpawnDepth, label: "spawn depth"})
+	m.rows = append(m.rows, pickerRow{kind: rowMaxDescendants, label: "max descendants"})
 	if m.mode == PickerModeRegrant {
 		m.rows = append(m.rows, pickerRow{kind: rowCascade, label: "--cascade (clamp descendants too)"})
 		m.rows = append(m.rows, pickerRow{kind: rowKeepConns, label: "--keep-conns (do not drop their connections)"})
@@ -403,6 +479,12 @@ func (m *AuthorityPickerModel) Toggle() {
 		m.cascade = !m.cascade
 	case rowKeepConns:
 		m.keepConns = !m.keepConns
+	case rowSpawnDepth, rowMaxDescendants:
+		if l := m.limitAt(); l.Limited() {
+			*l = authority.Unbounded()
+		} else {
+			*l = authority.LimitOf(0)
+		}
 	}
 }
 
@@ -573,7 +655,7 @@ func (m *AuthorityPickerModel) View() string {
 			if s.caps&r.bit == r.bit {
 				line = "[x] "
 			}
-		case rowBase, rowVisBase, rowSection:
+		case rowBase, rowVisBase, rowSection, rowSpawnDepth, rowMaxDescendants:
 			line = "    "
 		case rowTask:
 			if m.mode == PickerModeParent {
@@ -624,6 +706,10 @@ func (m *AuthorityPickerModel) View() string {
 				see = s.visBase.String()
 			}
 			label = "see:  " + see
+		case rowSpawnDepth:
+			label = "spawn depth: " + authority.LimitLabel(m.spawnDepth)
+		case rowMaxDescendants:
+			label = "max descendants: " + authority.LimitLabel(m.maxDescendants)
 		}
 		line = fit(line + label)
 		switch {

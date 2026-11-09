@@ -262,6 +262,11 @@ type App struct {
 	// Zero is the server's default bound: the children delegate nothing.
 	sessionDelegateCaps  protocol.Capability
 	sessionDelegateScope protocol.TaskScope
+	// sessionSpawnDepth / sessionMaxDescendants are the default spawn limits
+	// for spawns from this session (`caps set-defaults --spawn-depth …`).
+	// Zero is unbounded. A resume never re-grants them.
+	sessionSpawnDepth     protocol.SpawnLimit
+	sessionMaxDescendants protocol.SpawnLimit
 }
 
 // resolveSpawnCaps picks the capability mask for one spawn and says whether the
@@ -327,7 +332,8 @@ func (a App) spawnAuthority(v verb.SpawnAction, caps protocol.Capability) Author
 // Its presence bits are all false: on a resume it re-grants nothing.
 func (a *App) authority() Authority {
 	return Authority{Caps: a.sessionCaps, Scope: a.sessionScope, Overrides: a.sessionOverrides,
-		DelegateCaps: a.sessionDelegateCaps, DelegateScope: a.sessionDelegateScope}
+		DelegateCaps: a.sessionDelegateCaps, DelegateScope: a.sessionDelegateScope,
+		SpawnDepth: a.sessionSpawnDepth, MaxDescendants: a.sessionMaxDescendants}
 }
 
 // NotifyResultMsg carries the result of a notify send command.

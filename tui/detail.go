@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/vtgrid"
@@ -274,6 +275,8 @@ func formatTaskDetail(t protocol.TaskInfo, runnerByID map[string]protocol.Runner
 	}
 	fmt.Fprintf(&sb, "delegate:      %s\n", cli.CapsLabel(t.DelegateCaps))
 	fmt.Fprintf(&sb, "delegate-scope: %s\n", cli.ScopeLabel(t.DelegateScope))
+	fmt.Fprintf(&sb, "spawn limits:  depth=%s max-descendants=%s descendants=%d\n",
+		authority.LimitLabel(t.SpawnDepth), authority.LimitLabel(t.MaxDescendants), t.Descendants)
 	fmt.Fprintf(&sb, "granter:       %s\n", cli.AuthorityLabel(t))
 	fmt.Fprintf(&sb, "repo:          %s\n", string(t.RepoPath))
 	if len(t.WorktreeDir) > 0 {

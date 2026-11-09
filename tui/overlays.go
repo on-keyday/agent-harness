@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/cli/verb"
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -773,6 +774,10 @@ func (a *App) inAuthorityPicker(msg tea.KeyMsg) tea.Cmd {
 	case msg.Type == tea.KeySpace:
 		a.authorityPicker.Toggle()
 		return nil
+	case msg.Type == tea.KeyBackspace:
+		// Only the spawn-limit rows take it: their value is typed.
+		a.authorityPicker.Backspace()
+		return nil
 	case msg.Type == tea.KeyRunes:
 		// Fast key-repeat (and paste) batches runes into ONE KeyMsg,
 		// so compare per rune, not msg.String() — a "jjj" burst is
@@ -796,6 +801,9 @@ func (a *App) inAuthorityPicker(msg tea.KeyMsg) tea.Cmd {
 				a.authorityPicker.SetAllCaps(true)
 			case 'N':
 				a.authorityPicker.SetAllCaps(false)
+			case '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
+				// A spawn limit's value, typed on its row; a no-op elsewhere.
+				a.authorityPicker.TypeDigit(r)
 			}
 		}
 		return nil
@@ -828,6 +836,7 @@ func (a *App) inAuthorityPicker(msg tea.KeyMsg) tea.Cmd {
 		// per-capability narrowings, because they travel with the scope
 		// under one presence bit and an empty list would erase them.
 		overrides := a.authorityPicker.Overrides()
+		depth, maxDesc, limitsChanged := a.authorityPicker.Limits()
 		mode, target := a.authorityPicker.Mode(), a.authorityPicker.TargetID()
 		a.authorityPicker.Close()
 		if mode == PickerModeSession {
@@ -845,11 +854,13 @@ func (a *App) inAuthorityPicker(msg tea.KeyMsg) tea.Cmd {
 				a.sessionOverrides = overrides
 			}
 			a.sessionDelegateCaps, a.sessionDelegateScope = dcaps, dscope
+			a.sessionSpawnDepth, a.sessionMaxDescendants = depth, maxDesc
 			label := capsLabel(a.sessionCaps) + "  scope=" + cli.ScopeLabel(a.sessionScope)
 			if ov := cli.OverridesLabel(a.sessionOverrides); ov != "" {
 				label += " +" + ov
 			}
 			label += "  delegate=" + capsLabel(dcaps) + " delegate-scope=" + cli.ScopeLabel(dscope)
+			label += "  spawn-depth=" + authority.LimitLabel(depth) + " max-descendants=" + authority.LimitLabel(maxDesc)
 			a.cmdresult.Append(OKStyle.Render("defaults set: ") + label)
 			return nil
 		}
@@ -873,6 +884,10 @@ func (a *App) inAuthorityPicker(msg tea.KeyMsg) tea.Cmd {
 		// unchanged default bound would clamp them to nothing.
 		if dchanged {
 			opts.DelegateCaps, opts.DelegateScope = &dcaps, &dscope
+		}
+		// Likewise the limits: sent only when edited, on the target only.
+		if limitsChanged {
+			opts.SpawnDepth, opts.MaxDescendants = &depth, &maxDesc
 		}
 		return DoSetCaps(a.client, opts)
 	}
