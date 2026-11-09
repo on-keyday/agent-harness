@@ -52,10 +52,14 @@ func (h *TaskHandler) handleSetCaps(conn ConnHandle, requestID uint32, cid strin
 		return
 	}
 
+	// The spawn limits are written on the target only: the cascade below
+	// never sets their bits, so no descendant's limits change (spec D13).
 	u := GrantUpdate{
 		Caps: req.CapsPresent(), Scope: req.ScopePresent(),
 		DelegateCaps: req.DelegateCapsPresent(), DelegateScope: req.DelegateScopePresent(),
-		To: authority.Grant{Caps: req.Caps, DelegateCaps: req.DelegateCaps},
+		SpawnDepth: req.SpawnDepthPresent(), MaxDescendants: req.MaxDescendantsPresent(),
+		To: authority.Grant{Caps: req.Caps, DelegateCaps: req.DelegateCaps,
+			SpawnDepth: req.SpawnDepth, MaxDescendants: req.MaxDescendants},
 	}
 	if req.ScopePresent() {
 		newScope := authority.ScopeFromWire(req.Scope, req.Overrides)
