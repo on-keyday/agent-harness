@@ -13,7 +13,6 @@ import (
 // trees directly, so a production call to it would create tasks past every
 // limit and nothing else would notice.
 func TestOnlyCreateWithinLimitsInProduction(t *testing.T) {
-	t.Skip("until the handlers move to CreateWithinLimits (plan Task 4)")
 	files, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)

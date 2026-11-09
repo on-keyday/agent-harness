@@ -942,12 +942,19 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		scope := authority.Scope{Base: protocol.ScopeBase_Global}
 		// Likewise its delegation bound is unbounded, as its caps are all.
 		delegCaps, delegScope := protocol.Capability_All, authority.Scope{Base: protocol.ScopeBase_Global}
+		// The root's spawn limits are all unbounded, the zero values.
+		var spawnDepth, maxDesc, room protocol.SpawnLimit
+		var descendants uint32
 		if pid.Id != ([16]byte{}) {
 			delegCaps, delegScope = protocol.Capability_None, authority.Scope{Base: protocol.ScopeBase_None}
-			if t, ok := h.Tasks.Get(hex.EncodeToString(pid.Id[:])); ok {
+			selfHex := hex.EncodeToString(pid.Id[:])
+			if t, ok := h.Tasks.Get(selfHex); ok {
 				creator = t.CreatorTaskID
 				scope = t.Scope
 				delegCaps, delegScope = t.DelegateCaps, t.DelegateScope
+				spawnDepth, maxDesc = t.SpawnDepth, t.MaxDescendants
+				descendants = h.Tasks.DescendantCounts()[selfHex]
+				room = h.Tasks.SpawnRoom(selfHex)
 			}
 		}
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_Whoami, RequestId: req.Header.RequestId}
@@ -960,6 +967,10 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			OverridesLen:    uint8(len(scope.Overrides)),
 			DelegateCaps:    delegCaps,
 			DelegateScope:   delegScope.ToWire(),
+			SpawnDepth:      spawnDepth,
+			MaxDescendants:  maxDesc,
+			Descendants:     descendants,
+			SpawnRoom:       room,
 		}
 		// Which commit THIS server is running. Ungated with the rest of the
 		// answer: a build id is not authority, and the caller who most needs it
@@ -1258,7 +1269,12 @@ func (h *TaskHandler) handleSubmit(cid string, req *protocol.SubmitRequest, orig
 	}
 	bound := combos[0].Entry
 	resolved := combos[0].Profile
-	taskIDHex := h.Tasks.Create(repo, string(req.Prompt), protocol.TaskKind_Oneshot, origin, creator, bound.ID.String(), req.Selector, req.ExtraArgs.AsStrings(), grant.To, resolved)
+	taskIDHex, err := h.Tasks.CreateWithinLimits(repo, string(req.Prompt), protocol.TaskKind_Oneshot, origin, creator, bound.ID.String(), req.Selector, req.ExtraArgs.AsStrings(), grant.To, resolved)
+	if err != nil {
+		resp := protocol.SubmitResponse{Status: protocol.SubmitStatus_SpawnLimit}
+		resp.SetErrorMsg([]byte(err.Error()))
+		return resp, nil
+	}
 	h.Tasks.SetResumeConversation(taskIDHex, req.ResumeConversation())
 	var tid protocol.TaskID
 	raw, _ := hex.DecodeString(taskIDHex)
@@ -1276,6 +1292,9 @@ type grantRequest struct {
 	DelegateScope authority.Scope
 
 	CapsPresent, ScopePresent, DelegateCapsPresent, DelegateScopePresent bool
+
+	SpawnDepth, MaxDescendants               protocol.SpawnLimit
+	SpawnDepthPresent, MaxDescendantsPresent bool
 }
 
 func submitGrantRequest(req *protocol.SubmitRequest) grantRequest {
@@ -1284,6 +1303,8 @@ func submitGrantRequest(req *protocol.SubmitRequest) grantRequest {
 		DelegateCaps: req.DelegateCaps, DelegateScope: authority.ScopeFromWire(req.DelegateScope, nil),
 		CapsPresent: req.ResumeCapsOverride(), ScopePresent: req.ScopePresent(),
 		DelegateCapsPresent: req.DelegateCapsPresent(), DelegateScopePresent: req.DelegateScopePresent(),
+		SpawnDepth: req.SpawnDepth, MaxDescendants: req.MaxDescendants,
+		SpawnDepthPresent: req.SpawnDepthPresent(), MaxDescendantsPresent: req.MaxDescendantsPresent(),
 	}
 }
 
@@ -1293,6 +1314,8 @@ func openGrantRequest(req *protocol.OpenInteractiveRequest) grantRequest {
 		DelegateCaps: req.DelegateCaps, DelegateScope: authority.ScopeFromWire(req.DelegateScope, nil),
 		CapsPresent: req.ResumeCapsOverride(), ScopePresent: req.ScopePresent(),
 		DelegateCapsPresent: req.DelegateCapsPresent(), DelegateScopePresent: req.DelegateScopePresent(),
+		SpawnDepth: req.SpawnDepth, MaxDescendants: req.MaxDescendants,
+		SpawnDepthPresent: req.SpawnDepthPresent(), MaxDescendantsPresent: req.MaxDescendantsPresent(),
 	}
 }
 
@@ -1314,7 +1337,13 @@ func (h *TaskHandler) grantFor(g *authority.Granter, r grantRequest, idHex strin
 	u := GrantUpdate{
 		Caps: fresh || r.CapsPresent, Scope: fresh || r.ScopePresent,
 		DelegateCaps: fresh || r.DelegateCapsPresent, DelegateScope: fresh || r.DelegateScopePresent,
+		SpawnDepth: fresh || r.SpawnDepthPresent, MaxDescendants: fresh || r.MaxDescendantsPresent,
 	}
+	// The spawn limits (spawn_limit.go): the depth only shrinks down a chain;
+	// the descendant limit is written as asked, since every ancestor's own is
+	// checked on each creation anyway.
+	u.To.SpawnDepth = g.ChildSpawnDepth(r.SpawnDepth)
+	u.To.MaxDescendants = r.MaxDescendants
 	if fresh {
 		u.To.Caps = g.ChildCaps(r.Caps)
 	} else {
@@ -1396,6 +1425,7 @@ func (h *TaskHandler) handleSubmitResume(cid string, req *protocol.SubmitRequest
 			Prompt: prompt, ExtraArgs: args, AgentProfile: string(req.AgentProfile),
 			CapsOverride: req.ResumeCapsOverride(), ScopePresent: req.ScopePresent(),
 			DelegateCapsPresent: req.DelegateCapsPresent(), DelegateScopePresent: req.DelegateScopePresent(),
+			SpawnDepthPresent: req.SpawnDepthPresent(), MaxDescendantsPresent: req.MaxDescendantsPresent(),
 			Kind: protocol.TaskKind_Oneshot,
 		}, rec); field != "" {
 			return exactMismatchResponse(field), nil
@@ -1502,7 +1532,10 @@ type exactFields struct {
 	// The delegation bound's two halves: a re-grant like caps and scope.
 	DelegateCapsPresent  bool
 	DelegateScopePresent bool
-	Kind                 protocol.TaskKind
+	// The spawn limits: a re-grant too.
+	SpawnDepthPresent     bool
+	MaxDescendantsPresent bool
+	Kind                  protocol.TaskKind
 }
 
 // exactMismatch names the first setting an exact resume request carries, or the
@@ -1525,6 +1558,10 @@ func exactMismatch(req exactFields, rec TaskEntry) string {
 		return "--delegate-caps"
 	case req.DelegateScopePresent:
 		return "--delegate-scope"
+	case req.SpawnDepthPresent:
+		return "--spawn-depth"
+	case req.MaxDescendantsPresent:
+		return "--max-descendants"
 	case req.Kind != rec.Kind:
 		return "kind (the task was recorded as " + rec.Kind.String() + ")"
 	}
@@ -1732,6 +1769,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 				ExtraArgs: args, AgentProfile: string(req.AgentProfile),
 				CapsOverride: req.ResumeCapsOverride(), ScopePresent: req.ScopePresent(),
 				DelegateCapsPresent: req.DelegateCapsPresent(), DelegateScopePresent: req.DelegateScopePresent(),
+				SpawnDepthPresent: req.SpawnDepthPresent(), MaxDescendantsPresent: req.MaxDescendantsPresent(),
 				Kind: interactiveKind(req),
 			}, rec); field != "" {
 				resp, body := errResp(protocol.OpenInteractiveStatus_ResumeExactMismatch)
@@ -1868,7 +1906,13 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 		// resolved is the (runner,profile) combo's profile — the server-chosen
 		// profile the runner must exec with (empty only when the sole candidate
 		// advertises no profile, i.e. a legacy runner → its AgentBin default).
-		taskIDHex = h.Tasks.Create(repo, "", interactiveKind(req), origin, creator, runner.ID.String(), req.Selector, req.ExtraArgs.AsStrings(), grant.To, resolved)
+		created, err := h.Tasks.CreateWithinLimits(repo, "", interactiveKind(req), origin, creator, runner.ID.String(), req.Selector, req.ExtraArgs.AsStrings(), grant.To, resolved)
+		if err != nil {
+			resp, body := errResp(protocol.OpenInteractiveStatus_SpawnLimit)
+			resp.SetErrorMsg([]byte(err.Error()))
+			return resp, body
+		}
+		taskIDHex = created
 		h.Tasks.SetResumeConversation(taskIDHex, req.ResumeConversation())
 	}
 	var tid protocol.TaskID
@@ -2296,8 +2340,10 @@ func (h *TaskHandler) handleList(conn ConnHandle, requestID uint32, connID strin
 		}
 	}
 	taskInfos := make([]protocol.TaskInfo, len(filteredTasks))
+	descendants := h.Tasks.DescendantCounts()
 	for i, t := range filteredTasks {
 		taskInfos[i] = toTaskInfo(t)
+		taskInfos[i].Descendants = descendants[t.ID]
 		// Before the live-session enrichment below, never after: the parent row
 		// keeps its live signals — busy/idle AND the observer counts, which the
 		// enrichment writes after this runs — because that liveness is what the
@@ -2624,6 +2670,8 @@ func toTaskInfo(t TaskEntry) protocol.TaskInfo {
 		Overrides:      t.Scope.OverridesToWire(),
 		DelegateCaps:   t.DelegateCaps,
 		DelegateScope:  t.DelegateScope.ToWire(),
+		SpawnDepth:     t.SpawnDepth,
+		MaxDescendants: t.MaxDescendants,
 		OverridesLen:   uint8(len(t.Scope.Overrides)),
 		CreatedAt:      uint64(t.CreatedAt.UnixNano()),
 	}

@@ -75,6 +75,8 @@ func TestToTaskInfoMapsEveryField(t *testing.T) {
 		},
 		DelegateCaps:    protocol.Capability_FileRead,
 		DelegateScope:   authority.Scope{Base: protocol.ScopeBase_None},
+		SpawnDepth:      authority.LimitOf(2),
+		MaxDescendants:  authority.LimitOf(5),
 		AgentProfile:    "codex",
 		Status:          protocol.TaskStatus_Running,
 		AssignedTo:      testRunnerID("ws:127.0.0.1:8539-1"),
@@ -123,6 +125,9 @@ func TestToTaskInfoMapsEveryField(t *testing.T) {
 		"ProgramKind":   "filled by the list handler from the live SessionMux, not from TaskEntry",
 		"ProgramMsgLen": "filled by the list handler from the live SessionMux, not from TaskEntry",
 		"ProgramMsg":    "filled by the list handler from the live SessionMux, not from TaskEntry",
+		// Counted at List time over the whole store, like ExecCount: a
+		// property of the tree, not of one entry.
+		"Descendants": "filled by the list handler from TaskStore.DescendantCounts, not from TaskEntry",
 	})
 	// The reflect sweep above CANNOT see bit-packed fields: is_attached and
 	// skills_injected share one unexported byte, so setting either makes the
@@ -267,9 +272,13 @@ func TestWhoamiResponseMapsEveryField(t *testing.T) {
 			VisBase: protocol.ScopeBase_Global, VisBasePresent: true, ExcludeSelf: true,
 			VisIDs:    []string{"aabbccddeeff00112233445566778899"},
 			Overrides: []authority.ScopeOverride{{Caps: protocol.Capability_Spawn, Base: protocol.ScopeBase_None}},
-		}, DelegateCaps: protocol.Capability_FileRead, DelegateScope: authority.Scope{Base: protocol.ScopeBase_None}},
+		}, DelegateCaps: protocol.Capability_FileRead, DelegateScope: authority.Scope{Base: protocol.ScopeBase_None},
+			SpawnDepth: authority.LimitOf(2), MaxDescendants: authority.LimitOf(5)},
 
 		"")
+	// One task under the principal, so descendants and the room are non-zero.
+	h.Tasks.Create("/r", "ggc", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
+		hexToTaskID(t, child), "", protocol.RunnerSelector{}, nil, authority.Grant{}, "")
 
 	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9960-1")}
 	if h.principals == nil {
