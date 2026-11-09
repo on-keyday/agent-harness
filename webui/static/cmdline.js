@@ -410,7 +410,7 @@ async function runVerbCommandDispatch(tokens, ctx) {
       // spelled the task listing `list` while the others said `ls`.
       const b = parseOrHelp(ctx, tokens, {});
       if (b.args.length > 0) {
-        out = await ctx.harness.prune({ taskIds: b.args, force: !!b.flags.force });
+        out = await ctx.harness.prune({ taskIds: b.args });
       } else {
         out = await ctx.harness.prune({ before: b.flags.before });
       }

@@ -182,7 +182,7 @@ func TestRestorableListsWhatAPruneForgot(t *testing.T) {
 
 	s.MarkFailed(a, "x")
 	s.MarkFailed(b, "x")
-	s.PruneByIDs(nil, []string{a, b}, false, logs)
+	s.PruneByIDs(nil, []string{a, b}, logs)
 
 	rows := RestorableFromWAL(events(), s.Live)
 	if len(rows) != 2 {
@@ -254,7 +254,7 @@ func TestRestoreScopeSeesThroughTheHoleAPruneLeft(t *testing.T) {
 	// Prune the grandchild, so it is gone from the live store and its edge
 	// exists only in the WAL.
 	h.Tasks.MarkFailed(g, "done")
-	if n, _, _ := h.Tasks.PruneByIDs(nil, []string{g}, false, ""); n != 1 {
+	if n, _, _ := h.Tasks.PruneByIDs(nil, []string{g}, ""); n != 1 {
 		t.Fatalf("PruneByIDs removed %d, want 1", n)
 	}
 

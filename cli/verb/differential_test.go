@@ -19,17 +19,15 @@ import (
 // other family's parser was deleted with no such proof, which is how the drops
 // this file's siblings now pin -- exec ls's filter, --x11-display's default,
 // approve's suggestion index -- shipped green.
-func legacyPrune(args []string) (time.Duration, []string, bool, error) {
+func legacyPrune(args []string) (time.Duration, []string, error) {
 	fs := flag.NewFlagSet("prune", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	before := fs.Duration("before", 7*24*time.Hour, "")
-	force := fs.Bool("force", false, "")
-	fs.BoolVar(force, "f", false, "")
 	taskIDs, err := ParsePermuted(fs, args)
 	if err != nil {
-		return 0, nil, false, err
+		return 0, nil, err
 	}
-	return *before, taskIDs, *force, nil
+	return *before, taskIDs, nil
 }
 
 // pruneCorpus is every prune form the three surfaces document or test:
@@ -41,11 +39,16 @@ var pruneCorpus = [][]string{
 	// its log -- after which `submit --resume <id>` answers resume_not_found.
 	// This test asserts the migration changed NO behaviour, so the one place
 	// it deliberately did says so here.
+	//
+	// --force / -f were removed later (2026-11-09): the server never forgets
+	// a live task, so the reference parser here no longer has them either,
+	// and both sides must refuse them.
 	{"--before=1h"},
 	{"--before", "1h"},
 	{"--force", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 	{"-f", "deadbeefdeadbeefdeadbeefdeadbeef"},
 	{"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "--force"},
+	{"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "--before", "1h"},
 	{"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
 	{"--before", "30m", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 }
@@ -60,7 +63,7 @@ func TestPruneDeclarationMatchesLegacy(t *testing.T) {
 		t.Fatal("prune is not in the table")
 	}
 	for _, args := range pruneCorpus {
-		wantBefore, wantIDs, wantForce, wantErr := legacyPrune(args)
+		wantBefore, wantIDs, wantErr := legacyPrune(args)
 
 		fs := sp.NewFlagSet(flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
@@ -84,9 +87,6 @@ func TestPruneDeclarationMatchesLegacy(t *testing.T) {
 		}
 		if got.Before != wantBefore {
 			t.Errorf("%q: Before = %v, legacy %v", args, got.Before, wantBefore)
-		}
-		if got.Force != wantForce {
-			t.Errorf("%q: Force = %v, legacy %v", args, got.Force, wantForce)
 		}
 		if !reflect.DeepEqual(nilAsEmpty(got.TaskIDs), nilAsEmpty(wantIDs)) {
 			t.Errorf("%q: TaskIDs = %q, legacy %q", args, got.TaskIDs, wantIDs)

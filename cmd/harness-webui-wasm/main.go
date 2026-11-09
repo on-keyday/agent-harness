@@ -3290,12 +3290,12 @@ func harnessWatch(this js.Value, args []js.Value) any {
 
 // harnessPrune asks the server to forget tasks, mirroring `harness-cli prune`'s
 // two modes. With taskIds empty it runs in time mode (terminal tasks older than
-// `before` are removed; force ignored). With taskIds non-empty it runs in id
-// mode (before ignored; each id must be full 32-hex; active tasks are skipped
-// unless force). Resolves with the cli.Prune human-readable summary text.
+// `before` are removed). With taskIds non-empty it runs in id mode (before
+// ignored; each id must be full 32-hex; active tasks are always skipped).
+// Resolves with the cli.Prune human-readable summary text.
 //
-//	harness.prune({before: "168h"}) -> Promise<string>                       // time mode
-//	harness.prune({taskIds: ["<32hex>", ...], force: true}) -> Promise<string> // id mode
+//	harness.prune({before: "168h"}) -> Promise<string>             // time mode
+//	harness.prune({taskIds: ["<32hex>", ...]}) -> Promise<string>  // id mode
 //
 // harnessRestore puts back task records a prune forgot, rebuilt from the
 // server's WAL. Operator-only, enforced server-side.
@@ -3343,7 +3343,6 @@ func harnessPrune(this js.Value, args []js.Value) any {
 				return
 			}
 			taskIDs := jsArrayToStringSlice(args[0].Get("taskIds"))
-			force := args[0].Get("force").Truthy()
 			// before is only consulted in time mode; skip parsing (which would
 			// reject an empty/absent value) when ids were supplied.
 			var before time.Duration
@@ -3355,7 +3354,7 @@ func harnessPrune(this js.Value, args []js.Value) any {
 				}
 			}
 			var buf bytesBuffer
-			if err := c.Prune(rootCtx, before, taskIDs, force, &buf); err != nil {
+			if err := c.Prune(rootCtx, before, taskIDs, &buf); err != nil {
 				rejectErr(reject, fmt.Errorf("prune: %w", err))
 				return
 			}

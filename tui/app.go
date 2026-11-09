@@ -1260,8 +1260,8 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.IDMode {
 			a.cmdresult.Append(OKStyle.Render(fmt.Sprintf("pruned %d, skipped %d (active=%d, missing=%d)",
 				msg.Removed, msg.SkippedActive+msg.SkippedMissing, msg.SkippedActive, msg.SkippedMissing)))
-			if msg.SkippedActive > 0 && !msg.Forced {
-				a.cmdresult.Append(WarnStyle.Render("prune: pass --force to also drop active (Queued/Running/Detached) tasks"))
+			if msg.SkippedActive > 0 {
+				a.cmdresult.Append(WarnStyle.Render(cli.PruneActiveHint))
 			}
 		} else {
 			a.cmdresult.Append(OKStyle.Render(fmt.Sprintf("pruned %d task(s)", msg.Removed)))

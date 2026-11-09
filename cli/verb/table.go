@@ -29,7 +29,7 @@ var Verbs = []VerbSpec{
 		Notes: []string{
 			"ask the server to forget tasks",
 			"no ids: terminal tasks older than --before",
-			"with ids: only those (refuses active tasks unless --force)",
+			"with ids: only those; an active task is never forgotten (cancel it first)",
 		},
 		CmdlineSurfaces: CLI | TUI | WebUI,
 		Action:          "PruneAction",
@@ -53,19 +53,12 @@ var Verbs = []VerbSpec{
 				Name: "before", Type: FlagDuration, Default: 7 * 24 * time.Hour, Field: "Before",
 				Help: "forget terminal tasks older than this (ignored when TASK_IDs are passed)",
 			},
-			{
-				Name: "force", Aliases: []string{"f"}, Type: FlagBool, Default: false, Field: "Force",
-				Help: "with TASK_IDs: also forget tasks the server still considers active (Queued/Running/Detached)",
-			},
 		},
 		Examples: []string{
 			// No bare `prune` here any more: the widest form is the one that
 			// has to be typed out.
 			"prune --before 24h",
-			"prune --force aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-			// The flag AFTER the ids, which is the form stdlib parsing drops
-			// and the reason this verb permutes.
-			"prune aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --force",
+			"prune aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		},
 	},
 	// --- file ---

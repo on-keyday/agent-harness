@@ -402,10 +402,11 @@ people's:
   ids it forgets every terminal task older than `--before` (default 168h)
   within your scope. If your scope is `global`, that is still everyone's tasks:
   do not run the bare/age form.
-- `--force` also forgets **non-terminal** tasks (Queued / Running / Detached).
-  Those are live or resumable, so `--force` is destructive and hard to reverse
-  — use it only with an explicit, current reason (e.g. the user asked you to
-  clear specific stale Detached workers), never as a reflex to get past a skip.
+- A **non-terminal** task (Queued / Running / Detached / Held) is never
+  forgotten, whoever asks: its record is what lets anyone cancel, list or bound
+  it, and its agent would keep running without one. Prune skips it and counts
+  it as active. To clear one, `cancel` it first (that needs `cancel` over it),
+  then prune.
 - After verification / probe work, prune the throwaway tasks you spawned so
   `ls` stays readable.
 
@@ -629,7 +630,7 @@ Because a submitted task gives you no live channel, you observe it from outside:
 harness-cli logs [-f|--follow] <TASK_ID>   # dump log history; -f streams live until the task is terminal
 harness-cli watch                          # stream status events for what your `ls` shows (runners only if it lists them)
 harness-cli cancel <TASK_ID>               # cancel a queued/running task
-harness-cli prune [--before DUR] [-f] [TASK_ID ...]   # ask the server to forget terminal tasks
+harness-cli prune [--before DUR] [TASK_ID ...]   # ask the server to forget terminal tasks
 ```
 
 **`logs` and `watch` only cover one-shot (`submit`) tasks.** A submitted task's

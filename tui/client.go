@@ -44,7 +44,6 @@ type PruneResultMsg struct {
 	IDMode         bool
 	SkippedActive  uint32
 	SkippedMissing uint32
-	Forced         bool
 	Err            error
 }
 
@@ -406,11 +405,11 @@ func DoGetTaskLogGen(c *cli.Client, taskID string, gen int) tea.Cmd {
 }
 
 // DoPruneTasks asks the server to forget tasks. With taskIDs empty it runs in
-// time mode (terminal tasks older than `before` are removed; force ignored).
+// time mode (terminal tasks older than `before` are removed).
 // With taskIDs non-empty it runs in id mode (`before` ignored; each id must be
-// full 32-hex; active tasks are skipped unless force). Mirrors
+// full 32-hex; active tasks are always skipped). Mirrors
 // (*cli.Client).Prune's two modes.
-func DoPruneTasks(c *cli.Client, before time.Duration, taskIDs []string, force bool) tea.Cmd {
+func DoPruneTasks(c *cli.Client, before time.Duration, taskIDs []string) tea.Cmd {
 	idMode := len(taskIDs) > 0
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -418,9 +417,8 @@ func DoPruneTasks(c *cli.Client, before time.Duration, taskIDs []string, force b
 		cutoff := time.Time{}
 		if !idMode {
 			cutoff = time.Now().Add(-before)
-			force = false
 		}
-		res, err := c.PruneTasks(ctx, cutoff, taskIDs, force)
+		res, err := c.PruneTasks(ctx, cutoff, taskIDs)
 		if err != nil {
 			return PruneResultMsg{IDMode: idMode, Err: err}
 		}
@@ -429,7 +427,6 @@ func DoPruneTasks(c *cli.Client, before time.Duration, taskIDs []string, force b
 			IDMode:         idMode,
 			SkippedActive:  res.SkippedActive,
 			SkippedMissing: res.SkippedMissing,
-			Forced:         force,
 		}
 	}
 }

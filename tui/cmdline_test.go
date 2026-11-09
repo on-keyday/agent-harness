@@ -177,14 +177,11 @@ func TestParsePruneFlags(t *testing.T) {
 func TestParsePruneByID(t *testing.T) {
 	id1 := "0123456789abcdef0123456789abcdef"
 	id2 := "fedcba9876543210fedcba9876543210"
-	got, err := ParseCommand(`prune --force `+id1+` `+id2, "/cwd")
+	got, err := ParseCommand(`prune `+id1+` `+id2, "/cwd")
 	if err != nil {
 		t.Fatal(err)
 	}
 	a := got.(verb.PruneAction)
-	if !a.Force {
-		t.Errorf("Force=false, want true")
-	}
 	if len(a.TaskIDs) != 2 || a.TaskIDs[0] != id1 || a.TaskIDs[1] != id2 {
 		t.Errorf("TaskIDs=%v, want [%s %s]", a.TaskIDs, id1, id2)
 	}
@@ -194,14 +191,14 @@ func TestParsePruneByID(t *testing.T) {
 	}
 }
 
-func TestParsePruneShortForceFlag(t *testing.T) {
-	got, err := ParseCommand(`prune -f deadbeefdeadbeefdeadbeefdeadbeef`, "/cwd")
-	if err != nil {
-		t.Fatal(err)
-	}
-	a := got.(verb.PruneAction)
-	if !a.Force || len(a.TaskIDs) != 1 {
-		t.Errorf("got Force=%v TaskIDs=%v, want Force=true, 1 id", a.Force, a.TaskIDs)
+// prune has no --force: the server never forgets a live task, so a flag that
+// asked it to would be accepted and do nothing. Refused instead.
+func TestParsePruneRefusesForce(t *testing.T) {
+	const id = "deadbeefdeadbeefdeadbeefdeadbeef"
+	for _, line := range []string{"prune -f " + id, "prune --force " + id, "prune " + id + " --force"} {
+		if _, err := ParseCommand(line, "/cwd"); err == nil {
+			t.Errorf("%q parsed; want an unknown-flag error", line)
+		}
 	}
 }
 
@@ -1486,13 +1483,13 @@ func TestCmdlineExecTapRejectsBadChan(t *testing.T) {
 
 // TestPruneFlagAfterIDsIsRead pins the one behaviour the declaration changes
 // on this surface. The old parsePrune had no arity check and used stdlib
-// Parse, so `prune <id> --force` put "--force" into TaskIDs and left Force
-// false; cli/prune.go then rejected it as a bad task id, making it a confusing
-// error rather than a destructive one. Permuting is what the CLI always did,
-// and the TUI now matches.
+// Parse, so a flag written after the ids (then `prune <id> --force`) went into
+// TaskIDs; cli/prune.go then rejected it as a bad task id, making it a
+// confusing error rather than a destructive one. Permuting is what the CLI
+// always did, and the TUI now matches.
 func TestPruneFlagAfterIDsIsRead(t *testing.T) {
 	const id = "deadbeefdeadbeefdeadbeefdeadbeef"
-	got, err := ParseCommand("prune "+id+" --force", "/cwd")
+	got, err := ParseCommand("prune "+id+" --before 1h", "/cwd")
 	if err != nil {
 		t.Fatalf("ParseCommand: %v", err)
 	}
@@ -1500,8 +1497,8 @@ func TestPruneFlagAfterIDsIsRead(t *testing.T) {
 	if !ok {
 		t.Fatalf("got %T, want verb.PruneAction", got)
 	}
-	if !act.Force {
-		t.Error("--force written after the id was dropped")
+	if act.Before != time.Hour {
+		t.Errorf("--before written after the id was dropped: Before = %v", act.Before)
 	}
 	if len(act.TaskIDs) != 1 || act.TaskIDs[0] != id {
 		t.Errorf("TaskIDs = %q, want [%s]", act.TaskIDs, id)

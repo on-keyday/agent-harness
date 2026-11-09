@@ -262,7 +262,7 @@ func (h cliVerbs) NotifyWatch(a verb.CatalogAction) error {
 }
 
 func (h cliVerbs) Prune(a verb.PruneAction) error {
-	return cli.Prune(h.ctx, h.cid(), a.Before, a.TaskIDs, a.Force, os.Stdout)
+	return cli.Prune(h.ctx, h.cid(), a.Before, a.TaskIDs, os.Stdout)
 }
 
 func (h cliVerbs) Restore(a verb.RestoreAction) error {

@@ -22,7 +22,7 @@ func TestPruneIsScopedToTheCaller(t *testing.T) {
 		for i := range req.TaskIds {
 			ids = append(ids, hexOf(req.TaskIds[i]))
 		}
-		return h.Tasks.PruneByIDs(allowed, ids, req.Force != 0, dir)
+		return h.Tasks.PruneByIDs(allowed, ids, dir)
 	}
 	// Make the descendant and the stranger terminal so both are prunable.
 	for _, id := range []string{g, u} {

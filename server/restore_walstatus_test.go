@@ -122,7 +122,7 @@ func TestRestorableReportsOkWhenTheWALWasActuallyRead(t *testing.T) {
 
 	// And once something IS pruned, the same call reports it -- so Ok is not
 	// a synonym for "empty".
-	s.PruneByIDs(nil, []string{id}, false, filepath.Join(dir, "logs"))
+	s.PruneByIDs(nil, []string{id}, filepath.Join(dir, "logs"))
 	rows, status = restorableFromPath(path, s.Live, nil)
 	if status != protocol.RestoreWALStatus_Ok || len(rows) != 1 {
 		t.Fatalf("after a prune: status=%v rows=%d, want Ok and 1", status, len(rows))

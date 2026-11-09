@@ -507,9 +507,7 @@ type ProgressAction struct {
 type PruneAction struct {
 	ActionMarker
 	// forget terminal tasks older than this (ignored when TASK_IDs are passed)
-	Before time.Duration
-	// with TASK_IDs: also forget tasks the server still considers active (Queued/Running/Detached)
-	Force   bool
+	Before  time.Duration
 	TaskIDs []string
 }
 
@@ -872,7 +870,6 @@ func init() {
 		"prune\x00cli": func(b Bound) (Action, error) {
 			a := PruneAction{}
 			a.Before = durationOf(b.Flags["before"])
-			a.Force = b.Bool("force")
 			if len(b.Args) > 0 {
 				a.TaskIDs = b.Args[0:]
 			}
@@ -881,7 +878,6 @@ func init() {
 		"prune\x00tui": func(b Bound) (Action, error) {
 			a := PruneAction{}
 			a.Before = durationOf(b.Flags["before"])
-			a.Force = b.Bool("force")
 			if len(b.Args) > 0 {
 				a.TaskIDs = b.Args[0:]
 			}
@@ -890,7 +886,6 @@ func init() {
 		"prune\x00webui": func(b Bound) (Action, error) {
 			a := PruneAction{}
 			a.Before = durationOf(b.Flags["before"])
-			a.Force = b.Bool("force")
 			if len(b.Args) > 0 {
 				a.TaskIDs = b.Args[0:]
 			}

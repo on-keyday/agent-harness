@@ -1448,12 +1448,14 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 	}
 }
 
-// PruneByIDs removes the tasks listed in ids. When force is false, only
-// terminal-status tasks are removed; active tasks (Queued/Running/Detached)
-// are left alone and counted in skippedActive. Ids not present in the store
+// PruneByIDs removes the tasks listed in ids. Only terminal-status tasks are
+// removed; a task that is not terminal is left alone and counted in
+// skippedActive. Forgetting a live task's record would leave its agent
+// running on a runner with nothing the server could cancel, list or bound it
+// by, so there is no override: cancel it first. Ids not present in the store
 // are counted in skippedMissing. Log files are deleted via the same path as
 // PruneTerminal.
-func (s *TaskStore) PruneByIDs(allowed map[string]bool, ids []string, force bool, logDir string) (removed, skippedActive, skippedMissing int) {
+func (s *TaskStore) PruneByIDs(allowed map[string]bool, ids []string, logDir string) (removed, skippedActive, skippedMissing int) {
 	s.mu.Lock()
 	pruned := make([]string, 0, len(ids))
 	toRemove := make(map[string]struct{}, len(ids))
@@ -1475,7 +1477,7 @@ func (s *TaskStore) PruneByIDs(allowed map[string]bool, ids []string, force bool
 		case protocol.TaskStatus_Succeeded, protocol.TaskStatus_Failed, protocol.TaskStatus_Cancelled:
 			terminal = true
 		}
-		if !terminal && !force {
+		if !terminal {
 			skippedActive++
 			continue
 		}

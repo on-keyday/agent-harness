@@ -334,12 +334,12 @@ func TestTaskStoreListLimit(t *testing.T) {
 func TestTaskStore_PruneByIDsFiresOnPrune(t *testing.T) {
 	s := NewTaskStore()
 	id := s.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()}, "")
-	s.MarkFailed(id, "done") // terminal, so prune (force=false) removes it
+	s.MarkFailed(id, "done") // terminal, so prune removes it
 
 	var pruned []string
 	s.OnPrune = func(pid string) { pruned = append(pruned, pid) }
 
-	removed, _, _ := s.PruneByIDs(nil, []string{id}, false, "")
+	removed, _, _ := s.PruneByIDs(nil, []string{id}, "")
 	if removed != 1 {
 		t.Fatalf("removed=%d want 1", removed)
 	}
@@ -360,7 +360,7 @@ func TestTaskStore_PruneSkipsActiveNoOnPrune(t *testing.T) {
 	fired := false
 	s.OnPrune = func(string) { fired = true }
 
-	removed, skippedActive, _ := s.PruneByIDs(nil, []string{id}, false, "")
+	removed, skippedActive, _ := s.PruneByIDs(nil, []string{id}, "")
 	if removed != 0 || skippedActive != 1 {
 		t.Fatalf("removed=%d skippedActive=%d want 0/1", removed, skippedActive)
 	}
@@ -567,13 +567,13 @@ func TestTaskStorePruneByIDs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Pass 1: force=false should refuse the active task and report missing.
-	removed, active, missing := s.PruneByIDs(nil, []string{idActive, idTerminal, missingID}, false, logDir)
+	// Pass 1: the active task is refused and the missing id reported.
+	removed, active, missing := s.PruneByIDs(nil, []string{idActive, idTerminal, missingID}, logDir)
 	if removed != 1 || active != 1 || missing != 1 {
-		t.Fatalf("PruneByIDs(force=false): removed=%d active=%d missing=%d, want 1/1/1", removed, active, missing)
+		t.Fatalf("PruneByIDs: removed=%d active=%d missing=%d, want 1/1/1", removed, active, missing)
 	}
 	if _, ok := s.Get(idActive); !ok {
-		t.Errorf("active task should be retained without --force")
+		t.Errorf("active task should be retained")
 	}
 	if _, ok := s.Get(idTerminal); ok {
 		t.Errorf("terminal task should be pruned")
@@ -582,13 +582,21 @@ func TestTaskStorePruneByIDs(t *testing.T) {
 		t.Errorf("unrelated task should be retained")
 	}
 
-	// Pass 2: force=true should now remove the active one too.
-	removed, active, missing = s.PruneByIDs(nil, []string{idActive}, true, logDir)
-	if removed != 1 || active != 0 || missing != 0 {
-		t.Fatalf("PruneByIDs(force=true): removed=%d active=%d missing=%d, want 1/0/0", removed, active, missing)
+	// Pass 2: forgetting a live task leaves its agent running with no record
+	// the server could manage it by, so prune never does it; cancel first.
+	removed, active, missing = s.PruneByIDs(nil, []string{idActive}, logDir)
+	if removed != 0 || active != 1 || missing != 0 {
+		t.Fatalf("PruneByIDs(active): removed=%d active=%d missing=%d, want 0/1/0", removed, active, missing)
 	}
-	if _, ok := s.Get(idActive); ok {
-		t.Errorf("active task should be force-pruned")
+	if _, ok := s.Get(idActive); !ok {
+		t.Errorf("a live task was pruned")
+	}
+
+	// Pass 3: cancelled, it is terminal and prunes like any other.
+	s.Cancel(idActive)
+	removed, active, missing = s.PruneByIDs(nil, []string{idActive}, logDir)
+	if removed != 1 || active != 0 || missing != 0 {
+		t.Fatalf("PruneByIDs(cancelled): removed=%d active=%d missing=%d, want 1/0/0", removed, active, missing)
 	}
 	if got := len(s.List(0)); got != 1 {
 		t.Errorf("List(0) length=%d, want 1 (only %s remains)", got, idKeep)

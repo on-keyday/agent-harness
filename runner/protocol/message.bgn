@@ -1306,7 +1306,9 @@ format PruneTasksRequest:
                       # ignored when task_ids_len > 0
     task_ids_len :u16
     task_ids :[task_ids_len]TaskID    # when non-empty: prune only these ids, ignoring before_ts
-    force :u8                          # 1 = also prune ids whose tasks are still active (Queued/Running/Detached)
+    # A task that is not terminal is never pruned, whoever asks: forgetting a
+    # live task's record leaves its agent running with nothing the server
+    # could cancel, list or bound it by. Cancel it first; it then prunes.
 
 # RestoreTasks puts back what a prune forgot. The ids are required: there is no
 # "restore everything" form, because the WAL holds every task the server has

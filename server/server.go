@@ -335,7 +335,7 @@ func New(cfg Config) *Server {
 			for i := range req.TaskIds {
 				ids = append(ids, hex.EncodeToString(req.TaskIds[i].Id[:]))
 			}
-			return s.tasks.PruneByIDs(allowed, ids, req.Force != 0, logsDir)
+			return s.tasks.PruneByIDs(allowed, ids, logsDir)
 		},
 		// The undo half of PruneFn. It re-reads the WAL from disk each time
 		// rather than holding the events in memory: a restore is rare, the

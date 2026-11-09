@@ -30,11 +30,11 @@ var _ verb.TUIDispatch[tea.Cmd] = tuiVerbs{}
 func (h tuiVerbs) Prune(v verb.PruneAction) tea.Cmd {
 	a := h.a
 	if len(v.TaskIDs) > 0 {
-		a.cmdresult.Append(fmt.Sprintf("prune: asking server to forget %d task id(s) (force=%t)", len(v.TaskIDs), v.Force))
+		a.cmdresult.Append(fmt.Sprintf("prune: asking server to forget %d task id(s)", len(v.TaskIDs)))
 	} else {
 		a.cmdresult.Append(fmt.Sprintf("prune: cutoff = %s; asking server to forget terminal tasks", cli.FormatPruneCutoff(v.Before)))
 	}
-	return DoPruneTasks(a.client, v.Before, v.TaskIDs, v.Force)
+	return DoPruneTasks(a.client, v.Before, v.TaskIDs)
 }
 
 func (h tuiVerbs) Cancel(v verb.CancelAction) tea.Cmd {
