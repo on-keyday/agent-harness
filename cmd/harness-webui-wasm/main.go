@@ -719,7 +719,36 @@ func boundFromOpts(opts js.Value) (bound cli.SessionOpts, err error) {
 	if v := opts.Get("delegateScopePresent"); v.Type() == js.TypeBoolean {
 		bound.DelegateScopePresent = v.Bool()
 	}
+	// The spawn limits, in the flags' grammar ("unbounded" or a number);
+	// "" or absent is unbounded, the default.
+	if bound.SpawnDepth, err = limitFromOpts(opts, "spawnDepth"); err != nil {
+		return bound, fmt.Errorf("spawn-depth: %w", err)
+	}
+	if bound.MaxDescendants, err = limitFromOpts(opts, "maxDescendants"); err != nil {
+		return bound, fmt.Errorf("max-descendants: %w", err)
+	}
+	if v := opts.Get("spawnDepthPresent"); v.Type() == js.TypeBoolean {
+		bound.SpawnDepthPresent = v.Bool()
+	}
+	if v := opts.Get("maxDescendantsPresent"); v.Type() == js.TypeBoolean {
+		bound.MaxDescendantsPresent = v.Bool()
+	}
 	return bound, nil
+}
+
+// limitFromOpts reads one spawn limit given as the flags' grammar; "" or an
+// absent key is unbounded.
+func limitFromOpts(opts js.Value, key string) (protocol.SpawnLimit, error) {
+	if v := opts.Get(key); v.Type() == js.TypeString && v.String() != "" {
+		return verb.ParseSpawnLimit(v.String())
+	}
+	return protocol.SpawnLimit{}, nil
+}
+
+// limitJS is a spawn limit for the snapshot: the label, and the raw pair the
+// dialogs prefill from.
+func limitJS(l protocol.SpawnLimit) map[string]any {
+	return map[string]any{"label": authority.LimitLabel(l), "limited": l.Limited(), "value": float64(l.Value())}
 }
 
 // harnessScopeSpec serializes an edited scope to the --scope grammar via
@@ -832,6 +861,21 @@ func harnessSetCaps(this js.Value, args []js.Value) any {
 					return
 				}
 				sc.DelegateScope = &parsed
+			}
+			// The spawn limits, each written only when the key is given, on
+			// the target only.
+			for _, k := range []struct {
+				key string
+				dst **protocol.SpawnLimit
+			}{{"spawnDepth", &sc.SpawnDepth}, {"maxDescendants", &sc.MaxDescendants}} {
+				if v := opts.Get(k.key); v.Type() == js.TypeString && v.String() != "" {
+					l, lerr := verb.ParseSpawnLimit(v.String())
+					if lerr != nil {
+						rejectErr(reject, fmt.Errorf("setCaps: %s: %w", k.key, lerr))
+						return
+					}
+					*k.dst = &l
+				}
 			}
 			if v := opts.Get("cascade"); v.Type() == js.TypeBoolean {
 				sc.Cascade = v.Bool()
@@ -1435,6 +1479,17 @@ func harnessParseAuthority(this js.Value, args []js.Value) any {
 		out["delegateScopeIds"] = scopeIDStrings(sc)
 		out["delegateScopeVisIds"] = scopeVisIDStrings(sc)
 	}
+	// The spawn limits' defaults: the normalized grammar and a label.
+	for _, k := range []string{"spawnDepth", "maxDescendants"} {
+		if v := o.Get(k); v.Type() == js.TypeString && v.String() != "" {
+			l, err := verb.ParseSpawnLimit(v.String())
+			if err != nil {
+				return js.ValueOf(map[string]any{"error": k + ": " + err.Error()})
+			}
+			out[k] = authority.LimitLabel(l)
+			out[k+"Label"] = authority.LimitLabel(l)
+		}
+	}
 	return js.ValueOf(out)
 }
 
@@ -1535,6 +1590,8 @@ func harnessSubmit(this js.Value, args []js.Value) any {
 				ResumeExact:  resumeExact,
 				DelegateCaps: bound.DelegateCaps, DelegateScope: bound.DelegateScope,
 				DelegateCapsPresent: bound.DelegateCapsPresent, DelegateScopePresent: bound.DelegateScopePresent,
+				SpawnDepth: bound.SpawnDepth, MaxDescendants: bound.MaxDescendants,
+				SpawnDepthPresent: bound.SpawnDepthPresent, MaxDescendantsPresent: bound.MaxDescendantsPresent,
 			})
 			if err != nil {
 				if rejectAmbiguous(reject, err) {
@@ -1809,6 +1866,11 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					"delegateScopeVisBase":     visBaseString(t.DelegateScope),
 					"delegateScopeIds":         scopeIDStrings(t.DelegateScope),
 					"delegateScopeVisIds":      scopeVisIDStrings(t.DelegateScope),
+					// The spawn limits: label + raw pair each, and the
+					// subtree's record count.
+					"spawnDepth":     limitJS(t.SpawnDepth),
+					"maxDescendants": limitJS(t.MaxDescendants),
+					"descendants":    float64(t.Descendants),
 					// agentProfile is the named profile this task last ran under
 					// (empty = runner default); the resume action sheet's agent
 					// dropdown defaults to this (multi-agent-profile design §4b).
@@ -3500,6 +3562,8 @@ func harnessStartInteractive(this js.Value, args []js.Value) any {
 				EventStream:  eventStream,
 				DelegateCaps: bound.DelegateCaps, DelegateScope: bound.DelegateScope,
 				DelegateCapsPresent: bound.DelegateCapsPresent, DelegateScopePresent: bound.DelegateScopePresent,
+				SpawnDepth: bound.SpawnDepth, MaxDescendants: bound.MaxDescendants,
+				SpawnDepthPresent: bound.SpawnDepthPresent, MaxDescendantsPresent: bound.MaxDescendantsPresent,
 			}
 			// c.Interactive itself declines to mount the xterm when
 			// EventStream is set (cli/open_interactive_wasm.go): this kind has

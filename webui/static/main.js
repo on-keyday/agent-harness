@@ -326,6 +326,10 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // the tasks it creates. A resume re-grants it only from a typed
   // --delegate-caps / --delegate-scope, never from this panel.
   const spawnDeleg = newScopeState();
+  // The spawn limits a fresh spawn from this page carries, in the flags'
+  // grammar; "" is unbounded (the default). A resume never re-grants them
+  // unless the command line typed one.
+  const spawnLimits = { depth: "", max: "" };
   // Mirrors protocol.IsPTYKind / IsSessionKind (runner/protocol/task_kind.go).
   // Two kinds are sessions; only one drives a TERMINAL, so every site has to
   // say which question it is asking — a bare `kind === "Interactive"` reads as
@@ -368,7 +372,8 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
                         agentArgs = [], resumeTaskId = "", resumeConversation = false,
                         eventStream = false, resumeExact = false,
                         caps = null, scope = null, scopeFor = null,
-                        delegateCaps = null, delegateScope = null }) {
+                        delegateCaps = null, delegateScope = null,
+                        spawnDepth = null, maxDescendants = null }) {
     // An exact resume takes the task's recorded agent, args, caps and scope,
     // and the server refuses a request that carries any of them, so none of
     // the Compose state rides along.
@@ -404,6 +409,12 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       delegateScope: delegateScope !== null ? delegateScope : scopeStateSpec(spawnDeleg),
       delegateCapsPresent: !!resumeTaskId && !resumeExact && delegateCaps !== null,
       delegateScopePresent: !!resumeTaskId && !resumeExact && delegateScope !== null,
+      // The spawn limits, by the bound's rule: a typed flag wins and only a
+      // typed flag re-grants on a resume.
+      spawnDepth: spawnDepth !== null ? spawnDepth : spawnLimits.depth,
+      maxDescendants: maxDescendants !== null ? maxDescendants : spawnLimits.max,
+      spawnDepthPresent: !!resumeTaskId && !resumeExact && spawnDepth !== null,
+      maxDescendantsPresent: !!resumeTaskId && !resumeExact && maxDescendants !== null,
       resumeExact,
     };
     if (runner) req.runner = runner;
@@ -3134,7 +3145,8 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     // recompute the spec -- writing spawnScope directly would show the
     // operator their scope and lose it the next time a radio moved.
     spawnDefaults: () => ({ caps: spawnCaps, capsLabel: capsLabelFor(spawnCaps), scope: spawnScope,
-      delegateCapsLabel: capsLabelFor(spawnDeleg.caps), delegateScope: scopeStateSpec(spawnDeleg) }),
+      delegateCapsLabel: capsLabelFor(spawnDeleg.caps), delegateScope: scopeStateSpec(spawnDeleg),
+      spawnDepth: spawnLimits.depth || "unbounded", maxDescendants: spawnLimits.max || "unbounded" }),
     setSpawnDefaults: (d) => setSpawnDefaults(d),
   };
 
@@ -3976,6 +3988,10 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     renderSpawnDeleg();
     const delegDetails = document.getElementById("spawn-deleg-details");
     if (delegDetails) delegDetails.addEventListener("toggle", () => { if (delegDetails.open) renderSpawnDeleg(); });
+    for (const [id, key] of [["spawn-depth", "depth"], ["spawn-max-desc", "max"]]) {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener("input", () => { spawnLimits[key] = el.value.trim(); });
+    }
   }
 
   // ---- per-capability overrides -----------------------------------------
@@ -4312,6 +4328,13 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       ids: d.delegateScopeIds, visIds: d.delegateScopeVisIds,
     });
     if (typeof d.delegateCaps === "number" || typeof d.delegateScopeBase === "string") renderSpawnDeleg();
+    // The limits drive their inputs, so the panel shows what a spawn carries.
+    for (const [k, key, id] of [["spawnDepth", "depth", "spawn-depth"], ["maxDescendants", "max", "spawn-max-desc"]]) {
+      if (typeof d[k] !== "string") continue;
+      spawnLimits[key] = d[k] === "unbounded" ? "" : d[k];
+      const el = document.getElementById(id);
+      if (el) el.value = spawnLimits[key];
+    }
   }
 
   // ---- delegation bound ----------------------------------------------------
@@ -4582,6 +4605,13 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     });
     regrantDelegOpened = delegKey(regrantDeleg);
     buildScopeControls(document.getElementById("regrant-deleg"), regrantDeleg, t.id, () => {});
+    // The limits prefill from the row; "" is unbounded. Sent only if edited.
+    for (const [id, lim] of [["regrant-spawn-depth", t.spawnDepth], ["regrant-max-desc", t.maxDescendants]]) {
+      const el = document.getElementById(id);
+      if (!el) continue;
+      el.value = lim && lim.limited ? String(lim.value) : "";
+      el.dataset.opened = el.value;
+    }
     document.getElementById("regrant-cascade").checked = false;
     document.getElementById("regrant-keep-conns").checked = false;
     updateRegrantEcho();
@@ -4671,6 +4701,14 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
         req.delegateCaps = regrantDeleg.caps;
         req.delegateScope = scopeStateSpec(regrantDeleg);
       }
+      const limitMsgs = [];
+      for (const [id, key, flag] of [["regrant-spawn-depth", "spawnDepth", "spawn-depth"],
+                                     ["regrant-max-desc", "maxDescendants", "max-descendants"]]) {
+        const el = document.getElementById(id);
+        if (!el || el.value.trim() === el.dataset.opened) continue;
+        req[key] = el.value.trim() || "unbounded";
+        limitMsgs.push(flag + "=" + req[key]);
+      }
       regrantModal.close();
       // Results go to the Command output like the other task-sheet actions
       // (see the ✕ Cancel handler) — setStatus is the CONNECTION indicator,
@@ -4683,6 +4721,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
         let msg = "caps set " + regrantTaskId.slice(0, 8) +
           ": caps=" + capsLabelFor(regrantBits) + "  scope=" + req.scope;
         if (delegChanged) msg += "  delegate=" + capsLabelFor(req.delegateCaps) + " delegate-scope=" + req.delegateScope;
+        if (limitMsgs.length) msg += "  " + limitMsgs.join(" ");
         const extra = res.affected.length - 1;
         if (extra > 0) msg += `  (+${extra} descendant(s) clamped)`;
         if (res.connsClosed > 0) msg += ", " + res.connsClosed + " connection(s) closed";
@@ -6033,6 +6072,10 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       if (t.scopeFor) metaText += `  +${t.scopeFor}`;
       // The bound, always — the default too, as ls prints it.
       if (t.delegateCaps !== undefined) metaText += `  delegate=${t.delegateCaps} delegate-scope=${t.delegateScope}`;
+      // The spawn limits and the subtree's record count, unbounded included.
+      if (t.spawnDepth !== undefined) {
+        metaText += `  spawn-depth=${t.spawnDepth.label} max-descendants=${t.maxDescendants.label} descendants=${t.descendants}`;
+      }
       // Who last granted that authority, last in the authority group as on an
       // ls row (cli.AuthorityLabel, rendered in Go; `unknown` included).
       if (t.authority) metaText += `  granter=${t.authority}`;

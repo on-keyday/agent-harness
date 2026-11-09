@@ -204,6 +204,8 @@ async function runVerbCommandDispatch(tokens, ctx) {
         scopeFor: scopeFor && scopeFor.length ? scopeFor : null,
         delegateCaps: b.set && b.set["delegate-caps"] ? b.flags["delegate-caps"] : null,
         delegateScope: b.set && b.set["delegate-scope"] ? b.flags["delegate-scope"] : null,
+        spawnDepth: b.set && b.set["spawn-depth"] ? b.flags["spawn-depth"] : null,
+        maxDescendants: b.set && b.set["max-descendants"] ? b.flags["max-descendants"] : null,
         resumeTaskId,
         resumeConversation: !!b.flags["resume-conversation"],
         resumeExact: !!b.flags.exact,
@@ -259,13 +261,16 @@ async function runVerbCommandDispatch(tokens, ctx) {
           scopeFor: b.flags["scope-for"] || [],
           delegateCaps: b.flags["delegate-caps"] || "",
           delegateScope: b.flags["delegate-scope"] || "",
+          spawnDepth: b.flags["spawn-depth"] || "",
+          maxDescendants: b.flags["max-descendants"] || "",
         };
-        if (!raw.caps && !raw.scope && !raw.delegateCaps && !raw.delegateScope) {
+        if (!raw.caps && !raw.scope && !raw.delegateCaps && !raw.delegateScope && !raw.spawnDepth && !raw.maxDescendants) {
           // Naming nothing is a question. The TUI opens its picker; here the
           // panel is already on screen, so the answer is the current value.
           const d = ctx.spawnDefaults();
           out = "caps: " + d.capsLabel + "\nscope: " + (d.scope || "subtree (default)") +
-            "\ndelegate: " + d.delegateCapsLabel + "\ndelegate-scope: " + d.delegateScope;
+            "\ndelegate: " + d.delegateCapsLabel + "\ndelegate-scope: " + d.delegateScope +
+            "\nspawn-depth: " + d.spawnDepth + "\nmax-descendants: " + d.maxDescendants;
           break;
         }
         const parsed = ctx.harness.parseAuthority(raw);
@@ -276,6 +281,8 @@ async function runVerbCommandDispatch(tokens, ctx) {
         if (parsed.scopeLabel !== undefined) lines.push("scope set: " + parsed.scopeLabel);
         if (parsed.delegateCapsLabel !== undefined) lines.push("delegate set: " + parsed.delegateCapsLabel);
         if (parsed.delegateScopeLabel !== undefined) lines.push("delegate-scope set: " + parsed.delegateScopeLabel);
+        if (parsed.spawnDepthLabel !== undefined) lines.push("spawn-depth set: " + parsed.spawnDepthLabel);
+        if (parsed.maxDescendantsLabel !== undefined) lines.push("max-descendants set: " + parsed.maxDescendantsLabel);
         out = lines.join("\n");
         break;
       }
