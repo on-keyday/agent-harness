@@ -52,5 +52,6 @@ This repository's conventions for parallel work are in <path>; read it in full.
 - If the owner talks to you directly, send the parent what the owner said, verbatim, with the `date`, at once; then act on it.
 - When the design is written down, send where it is and the list of owner decisions.
 - When the work is done, send the branch tip commit, check results, review findings you set aside, and the decisions you want put to the owner.
+- Include durable learning candidates with source task/commit, verification result and applicable environment; label hypotheses and unresolved conflicts. The parent integrates shared memory (see `harness-cli skill memory-maintenance references/learning-report.md`).
 - Reply with: harness-cli agent send --topic chat.<parent short id> --in-reply-to <seq> --data '<JSON>'
 ```

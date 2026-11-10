@@ -50,6 +50,35 @@ function loadJS() {
 
 const page = loadJS();
 
+test("wiki indexes show their own name without an auto-memory startup budget", () => {
+  const ctx = loadJS();
+  ctx.fixture = { indexName: "_index.md", indexLimited: false, indexBytes: 30000, indexLines: 250,
+    checks: { unreachable: [], orphans: [], dangling: [], missing_line: [], missing_file: [], similar: [] } };
+  const html = vm.runInContext(`P = fixture; D = {indexLimit:24400, indexLimitLines:200,
+    indexTarget:17100, indexTargetLines:140}; warnBlock()`, ctx);
+  assert.match(html, /_index\.md/);
+  assert.doesNotMatch(html, /MEMORY\.md|200|目標/);
+  vm.runInContext('P.indexName = "MEMORY.md"; P.indexLimited = true', ctx);
+  assert.match(ctx.warnBlock(), /200/);
+});
+
+test("an index link opens the referenced wiki index with its full path", () => {
+  const ctx = loadJS();
+  ctx.fixture = { indexName: "MEMORY.md", indexLimited: true, indexBytes: 30, indexLines: 1,
+    indexSources: {
+      "MEMORY.md": {raw:"- [Wiki](_index.md)", rows:[{line:1, file:"_index.md", target:"_index.md", title:"Wiki", hook:""}]},
+      "_index.md": {raw:"[[a]] — When to read A", rows:[{line:1, file:"a.md", target:"a.md", title:"a", hook:"When to read A", hookHtml:"When to read A"}]}
+    }, memories: [] };
+  vm.runInContext('P = fixture; D = {indexLimit:24400, indexLimitLines:200}; renderIndexView("")', ctx);
+  let html = ctx.document.getElementById("detail").innerHTML;
+  assert.match(html, /data-goto="_index\.md"/);
+  vm.runInContext('goto("_index.md")', ctx);
+  html = ctx.document.getElementById("detail").innerHTML;
+  assert.match(html, /<h2>_index\.md<\/h2>/);
+  assert.match(html, /When to read A/);
+  assert.doesNotMatch(html, /常時読み込み/);
+});
+
 // A small graph with one isolated node, so placement of the unconnected is
 // covered rather than assumed.
 const EDGES = [[0, 1], [1, 2], [2, 0], [3, 1]];

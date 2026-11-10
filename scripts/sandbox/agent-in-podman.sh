@@ -91,6 +91,10 @@ HOME_DIR="${HOME:-/home/$(id -un)}"
 #                       agent, resumes them. Exits 2 for any other agent, outside
 #                       a linked worktree, and when the window cannot be built.
 #                       See "History window" below.
+#   --memory-seed=DIR   expose this selected memory/wiki directory read-only at
+#                       /run/harness-memory, named by HARNESS_MEMORY_DIR. Its
+#                       MEMORY.md or _index.md is the entry point. Independent
+#                       of auth/history mode; no host config is added by it.
 #   --image-agent      run the image's own copy of the agent instead of bridging
 #                       the host binary in (see "Host binary bridge" below). Only
 #                       claude has an image copy. --image-claude is accepted as a
@@ -141,6 +145,7 @@ mount_auth=0
 token_auth=0
 inject_auth=0
 history_window=0
+memory_seed=""
 image_agent=0
 allow_userns=0
 no_default_domains=0
@@ -165,6 +170,11 @@ for a in "$@"; do
     --token-auth)       token_auth=1 ;;
     --inject-auth)      inject_auth=1 ;;
     --history-window)   history_window=1 ;;
+    --memory-seed=?*)
+      [ -z "$memory_seed" ] || { echo "[agent-in-podman] --memory-seed may be given only once" >&2; exit 2; }
+      memory_seed="${a#*=}" ;;
+    --memory-seed|--memory-seed=)
+      echo "[agent-in-podman] --memory-seed needs a value: --memory-seed=DIR" >&2; exit 2 ;;
     --image-agent|--image-claude) image_agent=1 ;;
     --allow-userns)     allow_userns=1 ;;
     --no-default-domains) no_default_domains=1 ;;
@@ -175,6 +185,23 @@ for a in "$@"; do
 done
 [ "$want_agent" = 1 ] && { echo "[agent-in-podman] --sandbox-agent needs a value" >&2; exit 2; }
 if [ "${#ARGS[@]}" -gt 0 ]; then set -- "${ARGS[@]}"; else set --; fi
+
+# Explicit, read-only input for this task. Validate before creating per-run
+# auth/history roots; a typo must not become an empty mount or vanish silently.
+declare -a MEMORY=()
+memory_mode=none
+if [ -n "$memory_seed" ]; then
+  memory_refuse() { echo "[agent-in-podman] --memory-seed: $1" >&2; exit 2; }
+  [ -d "$memory_seed" ] || memory_refuse "not a directory: $memory_seed"
+  memory_seed=$(readlink -f -- "$memory_seed")
+  case "$memory_seed" in
+    *:*|*$'\n'*) memory_refuse "directory path contains a colon or newline" ;;
+  esac
+  [ -f "$memory_seed/MEMORY.md" ] || [ -f "$memory_seed/_index.md" ] ||
+    memory_refuse "directory needs MEMORY.md or _index.md: $memory_seed"
+  MEMORY=( -v "$memory_seed:/run/harness-memory:ro" --env HARNESS_MEMORY_DIR=/run/harness-memory )
+  memory_mode="seed:$memory_seed"
+fi
 
 # A contradictory pair is refused rather than settled by order: these flags
 # arrive from a slot's recorded --agent-args AND a task's --agent-arg, and with
@@ -953,7 +980,10 @@ if [ "$bridge_cli" = 1 ]; then
   hcli=$(command -v harness-cli 2>/dev/null)
   [ -n "$hcli" ] && CLI+=( -v "$(readlink -f "$hcli"):/usr/local/bin/harness-cli:ro" )
   while IFS='=' read -r name _; do
-    case "$name" in HARNESS_*) CLI+=( --env "$name" ) ;; esac
+    case "$name" in
+      HARNESS_MEMORY_DIR) ;; # a host path is not a container memory mount
+      HARNESS_*) CLI+=( --env "$name" ) ;;
+    esac
   done < <(env)
 fi
 
@@ -1100,7 +1130,7 @@ if [ "$allow_userns" != 1 ]; then
 fi
 
 # One-line summary of the chosen modes → the runner log (token VALUE never shown).
-echo "[agent-in-podman] agent=$AGENT auth=$auth_mode firewall=$fw_mode harness-cli=$([ "$bridge_cli" = 1 ] && echo on || echo off) bin=$agent_src image=$IMAGE history=$history_mode userns=$userns_mode$([ "$no_default_domains" = 1 ] && echo " default-domains=off")${allow_extra:+ allow+=$allow_extra}${proxy_log:+ proxy-log=$proxy_log}" >&2
+echo "[agent-in-podman] agent=$AGENT auth=$auth_mode firewall=$fw_mode harness-cli=$([ "$bridge_cli" = 1 ] && echo on || echo off) bin=$agent_src image=$IMAGE history=$history_mode memory=$memory_mode userns=$userns_mode$([ "$no_default_domains" = 1 ] && echo " default-domains=off")${allow_extra:+ allow+=$allow_extra}${proxy_log:+ proxy-log=$proxy_log}" >&2
 
 # Container lifecycle. We MUST `exec` podman so it stays the foreground owner of
 # the TTY — otherwise interactive keystrokes never reach claude. But with exec,
@@ -1238,5 +1268,6 @@ exec podman run --rm -i "${TTY[@]}" \
   "${FW[@]}" \
   "${HOSTBIN[@]}" \
   "${MOUNTS[@]}" \
+  "${MEMORY[@]}" \
   "$IMAGE" \
   /usr/local/bin/sandbox-agent-launch.sh "$@"

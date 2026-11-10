@@ -392,5 +392,10 @@ in repository terms only.
 - **Auto-memory written by children** (where the runtime has it): in the source
   run parent and children shared one memory directory and children duplicated the
   parent's memories. A child reports what it learned; the parent decides.
+  Use the `memory-maintenance` skill's learning report for useful candidates:
+  source task/commit, what was checked and its result, applicable environment,
+  and whether the claim is verified, a hypothesis or an unresolved conflict.
+  The parent verifies related notes before integrating candidates with one
+  writer; the next assignment receives relevant notes through a small index.
 - **The owner's private environment** — other machines, and the tools and
   arrangements around the repository.
