@@ -30,7 +30,7 @@ func limitFixture(t *testing.T, depth, max protocol.SpawnLimit, n int) (h *TaskH
 	return h, p, bindPrincipal(t, h, p), runner, kids
 }
 
-const ownFullText = "spawn limit: your own descendant limit is reached (1/1); resume an existing task, or ask the operator to prune or raise the limit"
+const ownFullText = "your own descendant limit is reached (1/1); resume an existing task, or ask the operator to prune or raise the limit"
 
 func TestSubmitRefusedBySpawnLimit(t *testing.T) {
 	h, _, cid, _, _ := limitFixture(t, authority.Unbounded(), authority.LimitOf(1), 1)
@@ -178,5 +178,46 @@ func TestResumeRegrantCannotWidenAncestorLimit(t *testing.T) {
 	}
 	if resp, _ := h.handleSubmit(cid, submitReq(delegReq{}), protocol.ClientKind_Agent, h.lookupPrincipal(cid), delegHeld); resp.Status != protocol.SubmitStatus_SpawnLimit {
 		t.Errorf("spawn after the resume: %v, want spawn_limit", resp.Status)
+	}
+}
+
+// A creation the limits refuse is refused before runner resolution: a full
+// or depth-0 agent hears spawn_limit, not no_runner or a runner picker.
+func TestSpawnLimitBeforeRunnerResolution(t *testing.T) {
+	h := newTestHandler(t) // no runner registered
+	p := h.Tasks.Create("/r", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli, protocol.TaskID{}, "",
+		protocol.RunnerSelector{}, nil, authority.Grant{Caps: delegHeld, SpawnDepth: authority.LimitOf(0)}, "")
+	cid := bindPrincipal(t, h, p)
+	if resp, _ := h.handleSubmit(cid, submitReq(delegReq{}), protocol.ClientKind_Agent, h.lookupPrincipal(cid), delegHeld); resp.Status != protocol.SubmitStatus_SpawnLimit {
+		t.Errorf("submit: %v, want spawn_limit", resp.Status)
+	}
+	if resp, _ := h.handleOpenInteractive(cid, nil, detachedOpen(0, 0), protocol.ClientKind_Agent, h.lookupPrincipal(cid), delegHeld); resp.Status != protocol.OpenInteractiveStatus_SpawnLimit {
+		t.Errorf("open: %v, want spawn_limit", resp.Status)
+	}
+}
+
+// Through the handler, generation by generation: operator→A(3)→B→C→D, and D
+// may create nothing.
+func TestHandlerDepthChain(t *testing.T) {
+	h := newTestHandler(t)
+	openRunner(t, h)
+	cur := h.Tasks.Create("/r", "a", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli, protocol.TaskID{}, "",
+		protocol.RunnerSelector{}, nil, authority.Grant{Caps: delegHeld, DelegateCaps: delegHeld, SpawnDepth: authority.LimitOf(3)}, "")
+	for gen, want := range []uint32{2, 1, 0} {
+		cid := bindPrincipal(t, h, cur)
+		req := submitReq(delegReq{caps: delegHeld, dcaps: delegHeld})
+		resp, _ := h.handleSubmit(cid, req, protocol.ClientKind_Agent, h.lookupPrincipal(cid), delegHeld)
+		if resp.Status != protocol.SubmitStatus_Ok {
+			t.Fatalf("generation %d: %v %s", gen+1, resp.Status, resp.ErrorMsg)
+		}
+		e := entryOf(t, h, resp.TaskId)
+		if !sameSpawnLimit(e.SpawnDepth, authority.LimitOf(want)) {
+			t.Fatalf("generation %d depth %s, want %d", gen+1, authority.LimitLabel(e.SpawnDepth), want)
+		}
+		cur = e.ID
+	}
+	cid := bindPrincipal(t, h, cur)
+	if resp, _ := h.handleSubmit(cid, submitReq(delegReq{}), protocol.ClientKind_Agent, h.lookupPrincipal(cid), delegHeld); resp.Status != protocol.SubmitStatus_SpawnLimit {
+		t.Errorf("D at depth 0: %v, want spawn_limit", resp.Status)
 	}
 }

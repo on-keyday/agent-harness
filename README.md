@@ -1236,8 +1236,8 @@ checked by the server whenever a task is created, do:
 
 Both default to unbounded, and a task recorded before the limits existed
 replays unbounded. A refusal is `spawn_limit` with the reason, e.g.
-`spawn limit: your parent's descendant limit is reached (3/3); resume an
-existing task, or ask the operator to prune or raise the limit`. A resume
+`submit spawn_limit: your parent's descendant limit is reached (3/3); resume
+an existing task, or ask the operator to prune or raise the limit`. A resume
 creates no record and is never refused by either limit, which is how an
 agent reuses a place; a resume by a task that re-grants `--max-descendants`
 can only tighten it, so an agent cannot lift the limit bounding it by

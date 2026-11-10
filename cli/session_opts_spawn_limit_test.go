@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -35,11 +34,11 @@ func TestSessionOptsCarryLimits(t *testing.T) {
 // A spawn refused by a limit reports the server's text: which limit, and the
 // numbers.
 func TestSubmitSpawnLimitCarriesServerText(t *testing.T) {
-	msg := "spawn limit: your own descendant limit is reached (1/1); resume an existing task, or ask the operator to prune or raise the limit"
+	msg := "your own descendant limit is reached (1/1); resume an existing task, or ask the operator to prune or raise the limit"
 	s := &protocol.SubmitResponse{Status: protocol.SubmitStatus_SpawnLimit}
 	s.SetErrorMsg([]byte(msg))
 	err := submitStatusError(t.Context(), nil, s)
-	if err == nil || !strings.Contains(err.Error(), "spawn_limit") || !strings.Contains(err.Error(), msg) {
-		t.Errorf("err = %v, want spawn_limit and the server text", err)
+	if err == nil || err.Error() != "submit spawn_limit: "+msg {
+		t.Errorf("err = %v, want \"submit spawn_limit: \" + the server text, once", err)
 	}
 }

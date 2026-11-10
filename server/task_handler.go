@@ -953,8 +953,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 				scope = t.Scope
 				delegCaps, delegScope = t.DelegateCaps, t.DelegateScope
 				spawnDepth, maxDesc = t.SpawnDepth, t.MaxDescendants
-				descendants = h.Tasks.DescendantCounts()[selfHex]
-				room = h.Tasks.SpawnRoom(selfHex)
+				descendants, room = h.Tasks.SpawnStatus(selfHex)
 			}
 		}
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_Whoami, RequestId: req.Header.RequestId}
@@ -1237,6 +1236,14 @@ func (h *TaskHandler) handleSubmit(cid string, req *protocol.SubmitRequest, orig
 	grant, err := h.grantFor(h.granter(cid, creatorCaps), submitGrantRequest(req), "")
 	if err != nil {
 		resp := protocol.SubmitResponse{Status: protocol.SubmitStatus_ScopeNotPermitted}
+		resp.SetErrorMsg([]byte(err.Error()))
+		return resp, nil
+	}
+	// The spawn limits, also before runner resolution, so a creation they
+	// refuse is not first answered no_runner or a runner picker. Advisory:
+	// CreateWithinLimits re-checks under the lock that inserts.
+	if err := h.Tasks.CheckSpawnLimits(creator); err != nil {
+		resp := protocol.SubmitResponse{Status: protocol.SubmitStatus_SpawnLimit}
 		resp.SetErrorMsg([]byte(err.Error()))
 		return resp, nil
 	}
@@ -1748,6 +1755,14 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 	resuming := !isZeroTaskID(req.ResumeTaskId)
 	if req.ResumeExact() && !resuming {
 		return errResp(protocol.OpenInteractiveStatus_ResumeExactMismatch)
+	}
+	// As in handleSubmit: the spawn limits before runner resolution, advisory.
+	if !resuming {
+		if err := h.Tasks.CheckSpawnLimits(creator); err != nil {
+			resp, body := errResp(protocol.OpenInteractiveStatus_SpawnLimit)
+			resp.SetErrorMsg([]byte(err.Error()))
+			return resp, body
+		}
 	}
 	var existingTaskIDHex string
 	args := req.ExtraArgs.AsStrings()

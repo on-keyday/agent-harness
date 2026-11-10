@@ -14,7 +14,9 @@ import (
 // excluded. Both are checked when a task is created, against the creator and
 // every ancestor present in the store, under the store's lock.
 
-// SpawnLimitError is a creation a spawn limit refused. Depth: the creator's
+// SpawnLimitError is a creation a spawn limit refused. Its text carries no
+// "spawn limit" prefix: it travels as error_msg beside the spawn_limit
+// status, and every client prints the status first. Depth: the creator's
 // spawn_depth is 0. Otherwise the ancestor Distance levels above the creator
 // (0 = the creator itself) holds Count records against a limit of Max.
 type SpawnLimitError struct {
@@ -25,7 +27,7 @@ type SpawnLimitError struct {
 
 func (e *SpawnLimitError) Error() string {
 	if e.Depth {
-		return "spawn limit: your spawn depth is 0, so this task may create no tasks"
+		return "your spawn depth is 0, so this task may create no tasks"
 	}
 	var whose string
 	switch e.Distance {
@@ -36,7 +38,7 @@ func (e *SpawnLimitError) Error() string {
 	default:
 		whose = fmt.Sprintf("an ancestor's (%d levels up)", e.Distance)
 	}
-	return fmt.Sprintf("spawn limit: %s descendant limit is reached (%d/%d); resume an existing task, or ask the operator to prune or raise the limit",
+	return fmt.Sprintf("%s descendant limit is reached (%d/%d); resume an existing task, or ask the operator to prune or raise the limit",
 		whose, e.Count, e.Max)
 }
 
@@ -50,6 +52,14 @@ func (s *TaskStore) CreateWithinLimits(repo, prompt string, kind protocol.TaskKi
 		s.mu.Unlock()
 		return "", err
 	}
+	// The child's depth against the creator's as it stands now: the caller
+	// computed g from a read taken before this lock, and a caps set in
+	// between must not leave the child deeper than creator - 1.
+	if creatorTaskID.Id != ([16]byte{}) {
+		if c, ok := s.tasks[hex.EncodeToString(creatorTaskID.Id[:])]; ok {
+			g.SpawnDepth = authority.MinLimit(g.SpawnDepth, authority.DecLimit(c.SpawnDepth))
+		}
+	}
 	id := s.createLocked(repo, prompt, kind, origin, creatorTaskID, boundRunnerID, selector, extraArgs, g, agentProfile)
 	onCreate := s.OnCreate
 	s.mu.Unlock()
@@ -57,6 +67,15 @@ func (s *TaskStore) CreateWithinLimits(repo, prompt string, kind protocol.TaskKi
 		onCreate(id)
 	}
 	return id, nil
+}
+
+// CheckSpawnLimits is the check alone, for refusing early (before runner
+// resolution). It is advisory: only CreateWithinLimits' own check, under the
+// lock that inserts, decides.
+func (s *TaskStore) CheckSpawnLimits(creator protocol.TaskID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.checkSpawnLimitsLocked(creator)
 }
 
 // checkSpawnLimitsLocked refuses a creation by creator. An all-zero creator
@@ -139,14 +158,16 @@ func (s *TaskStore) DescendantCounts() map[string]uint32 {
 	return s.descendantCountsLocked()
 }
 
-// SpawnRoom is how many more tasks id may create now: the minimum, over id
-// and its ancestors with a limited max_descendants, of max - descendants,
-// floored at 0. Unbounded when none of them is limited.
-func (s *TaskStore) SpawnRoom(id string) protocol.SpawnLimit {
+// SpawnStatus is id's descendant count and its room -- how many more tasks
+// it may create now: the minimum, over id and its ancestors with a limited
+// max_descendants, of max - descendants, floored at 0; unbounded when none is
+// limited. One hold of the lock, so whoami's two numbers cannot disagree.
+func (s *TaskStore) SpawnStatus(id string) (descendants uint32, room protocol.SpawnLimit) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	counts := s.descendantCountsLocked()
-	room := authority.Unbounded()
+	descendants = counts[id]
+	room = authority.Unbounded()
 	for _, a := range s.ancestorsLocked(id) {
 		if m := a.MaxDescendants; m.Limited() {
 			left := uint32(0)
@@ -156,5 +177,5 @@ func (s *TaskStore) SpawnRoom(id string) protocol.SpawnLimit {
 			room = authority.MinLimit(room, authority.LimitOf(left))
 		}
 	}
-	return room
+	return descendants, room
 }

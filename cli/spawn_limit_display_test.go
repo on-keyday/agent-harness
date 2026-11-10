@@ -81,10 +81,19 @@ func TestCapsCatalogHasSpawnLimits(t *testing.T) {
 	if i < 0 {
 		t.Fatalf("catalog has no SPAWN LIMITS section:\n%s", s)
 	}
+	// Compared as words: the prose is wrapped, and where it breaks is not
+	// the claim.
+	section := strings.Join(strings.Fields(s[i:]), " ")
 	for _, want := range []string{"--spawn-depth", "--max-descendants", "resum",
 		"Grant only what the work needs: an agent given spawn with limits is bounded only while it lacks prune over its subtree."} {
-		if !strings.Contains(s[i:], want) {
+		if !strings.Contains(section, want) {
 			t.Errorf("SPAWN LIMITS section lacks %q", want)
+		}
+	}
+	// Wrapped like the DELEGATION prose above it.
+	for _, line := range strings.Split(s[i:], "\n") {
+		if len(line) > 76 {
+			t.Errorf("SPAWN LIMITS line is %d bytes, wider than the rest of the catalog prose: %q", len(line), line)
 		}
 	}
 	if !strings.Contains(s, "over a limited subtree it frees places, and pruning an ended task in the middle lifts the limits for the tasks below it") {

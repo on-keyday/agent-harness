@@ -54,7 +54,7 @@ func TestCreateWithinLimitsDepth(t *testing.T) {
 	if len(s.List(0)) != before {
 		t.Error("a refused creation added a row")
 	}
-	if err.Error() != "spawn limit: your spawn depth is 0, so this task may create no tasks" {
+	if err.Error() != "your spawn depth is 0, so this task may create no tasks" {
 		t.Errorf("text = %q", err.Error())
 	}
 	one := mustChild(t, s, "", authority.LimitOf(1), authority.Unbounded())
@@ -71,7 +71,7 @@ func TestCreateWithinLimitsDescendants(t *testing.T) {
 
 	_, err := limitedChild(s, a, authority.Unbounded(), authority.Unbounded())
 	wantLimitErr(t, err, SpawnLimitError{Distance: 0, Count: 2, Max: 2})
-	if err.Error() != "spawn limit: your own descendant limit is reached (2/2); resume an existing task, or ask the operator to prune or raise the limit" {
+	if err.Error() != "your own descendant limit is reached (2/2); resume an existing task, or ask the operator to prune or raise the limit" {
 		t.Errorf("text = %q", err.Error())
 	}
 
@@ -83,7 +83,7 @@ func TestCreateWithinLimitsDescendants(t *testing.T) {
 	// A child creating counts against its parent's limit.
 	_, err = limitedChild(s, c1, authority.Unbounded(), authority.Unbounded())
 	wantLimitErr(t, err, SpawnLimitError{Distance: 1, Count: 2, Max: 2})
-	if err.Error() != "spawn limit: your parent's descendant limit is reached (2/2); resume an existing task, or ask the operator to prune or raise the limit" {
+	if err.Error() != "your parent's descendant limit is reached (2/2); resume an existing task, or ask the operator to prune or raise the limit" {
 		t.Errorf("text = %q", err.Error())
 	}
 
@@ -102,7 +102,7 @@ func TestCreateWithinLimitsDistanceText(t *testing.T) {
 	d := mustChild(t, s, c, authority.Unbounded(), authority.Unbounded())
 	_, err := limitedChild(s, d, authority.Unbounded(), authority.Unbounded())
 	wantLimitErr(t, err, SpawnLimitError{Distance: 3, Count: 3, Max: 3})
-	if err.Error() != "spawn limit: an ancestor's (3 levels up) descendant limit is reached (3/3); resume an existing task, or ask the operator to prune or raise the limit" {
+	if err.Error() != "an ancestor's (3 levels up) descendant limit is reached (3/3); resume an existing task, or ask the operator to prune or raise the limit" {
 		t.Errorf("text = %q", err.Error())
 	}
 }
@@ -228,11 +228,70 @@ func TestDescendantCountsAndSpawnRoom(t *testing.T) {
 	if counts[a] != 2 || counts[c] != 1 {
 		t.Errorf("counts a=%d c=%d, want 2 1", counts[a], counts[c])
 	}
-	if got := s.SpawnRoom(c); !sameSpawnLimit(got, authority.LimitOf(1)) {
+	if _, got := s.SpawnStatus(c); !sameSpawnLimit(got, authority.LimitOf(1)) {
 		t.Errorf("room under a full-ish A = %s, want 1", authority.LimitLabel(got))
 	}
 	free := mustChild(t, s, "", authority.Unbounded(), authority.Unbounded())
-	if got := s.SpawnRoom(free); got.Limited() {
+	if _, got := s.SpawnStatus(free); got.Limited() {
 		t.Errorf("room with no limit anywhere = %s, want unbounded", authority.LimitLabel(got))
+	}
+}
+
+// The child's depth is decided under the same lock as the check: a grant
+// computed from a creator depth read earlier (here: unbounded) is clamped to
+// the creator's depth as it stands when the task is inserted.
+func TestCreateWithinLimitsClampsDepthUnderLock(t *testing.T) {
+	s := NewTaskStore()
+	p := mustChild(t, s, "", authority.LimitOf(1), authority.Unbounded())
+	c := mustChild(t, s, p, authority.Unbounded(), authority.Unbounded())
+	if e, _ := s.Get(c); !sameSpawnLimit(e.SpawnDepth, authority.LimitOf(0)) {
+		t.Errorf("child of a depth-1 creator written with depth %s, want 0", authority.LimitLabel(e.SpawnDepth))
+	}
+}
+
+// --swap moves links only; neither task's spawn_depth changes (D5).
+func TestSwapKeepsSpawnDepth(t *testing.T) {
+	s := NewTaskStore()
+	p := mustChild(t, s, "", authority.LimitOf(3), authority.Unbounded())
+	c := mustChild(t, s, p, authority.LimitOf(1), authority.Unbounded())
+	if _, _, err := s.SwapWithParent(c); err != nil {
+		t.Fatal(err)
+	}
+	ep, _ := s.Get(p)
+	ec, _ := s.Get(c)
+	if !sameSpawnLimit(ep.SpawnDepth, authority.LimitOf(3)) || !sameSpawnLimit(ec.SpawnDepth, authority.LimitOf(1)) {
+		t.Errorf("after swap: parent %s child %s, want 3 and 1", authority.LimitLabel(ep.SpawnDepth), authority.LimitLabel(ec.SpawnDepth))
+	}
+}
+
+// Pruning an ended task in the middle frees its place AND its descendants'
+// (D10): they are counted through the link the prune removes.
+func TestPruneIntermediateFreesSubtree(t *testing.T) {
+	s := NewTaskStore()
+	a := mustChild(t, s, "", authority.Unbounded(), authority.LimitOf(3))
+	b := mustChild(t, s, a, authority.Unbounded(), authority.Unbounded())
+	mustChild(t, s, b, authority.Unbounded(), authority.Unbounded())
+	mustChild(t, s, b, authority.Unbounded(), authority.Unbounded())
+	if _, err := limitedChild(s, a, authority.Unbounded(), authority.Unbounded()); err == nil {
+		t.Fatal("A at 3/3 created a fourth")
+	}
+	s.Finish(b, 0, nil)
+	if n, _, _ := s.PruneByIDs(nil, []string{b}, ""); n != 1 {
+		t.Fatal("prune of ended B failed")
+	}
+	if got := s.DescendantCounts()[a]; got != 0 {
+		t.Errorf("A counts %d after pruning B, want 0", got)
+	}
+	mustChild(t, s, a, authority.Unbounded(), authority.Unbounded())
+}
+
+// whoami's count and room come from one look at the store.
+func TestSpawnStatusOneSnapshot(t *testing.T) {
+	s := NewTaskStore()
+	a := mustChild(t, s, "", authority.Unbounded(), authority.LimitOf(3))
+	mustChild(t, s, a, authority.Unbounded(), authority.Unbounded())
+	n, room := s.SpawnStatus(a)
+	if n != 1 || !sameSpawnLimit(room, authority.LimitOf(2)) {
+		t.Errorf("SpawnStatus = %d, %s; want 1, 2", n, authority.LimitLabel(room))
 	}
 }

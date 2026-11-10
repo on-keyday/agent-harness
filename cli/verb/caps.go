@@ -279,7 +279,8 @@ func WriteCaps(w io.Writer, asJSON bool) error {
 		"resuming it; a place is freed when the task is pruned. `whoami` shows\n"+
 		"yours and the room left; `caps set` changes them on one task, and\n"+
 		"--cascade never does.\n"+
-		"Grant only what the work needs: an agent given spawn with limits is bounded only while it lacks prune over its subtree.\n")
+		"Grant only what the work needs: an agent given spawn with limits is\n"+
+		"bounded only while it lacks prune over its subtree.\n")
 	return err
 }
 
