@@ -298,6 +298,17 @@ follows.
   "every ancestor is checked anyway" does not hold when the resumed task IS
   the ancestor. A root (operator) resume writes as requested, as for every
   other grant half. Pinned by `TestResumeRegrantCannotWidenAncestorLimit`.
+- **The check also runs before runner resolution** (`TaskStore.CheckSpawnLimits`),
+  so a refused creation is not first answered `no_runner` or a runner picker.
+  It is advisory; the check under the inserting lock decides. Under that lock
+  the child's `spawn_depth` is clamped again to the creator's current depth
+  − 1, so a `caps set` between the grant and the insert cannot leave the
+  child deeper (`TestCreateWithinLimitsClampsDepthUnderLock`).
+- **The refusal text carries no "spawn limit" prefix**; clients print the
+  status first (`submit spawn_limit: your own descendant limit is reached
+  (3/3); …`), so the reason reads once.
+- **whoami** reads the count and the room in one hold of the store lock
+  (`TaskStore.SpawnStatus`).
 - **The wasm snapshot** carries each limit as one object `{label, limited,
   value}` (`spawnDepth`, `maxDescendants`) plus `descendants`, not the flat
   `spawnDepthLimited` / `maxDescendantsLimited` names § Surfaces listed.
