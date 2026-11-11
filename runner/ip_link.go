@@ -171,13 +171,12 @@ func (s *Session) sendForwardEnded(forwardID uint64, detail string) {
 // the connection ends -- the server reads that as runner_gone and ends those
 // forwards, and a reconnect builds a fresh Session that holds none of them.
 func (s *Session) releaseForwardState() {
-	if s.rforwards != nil {
-		s.rforwards.closeAll()
-	}
+	// The -R and link registries through their accessors, so one not created
+	// yet is created closed: a listener or device still being opened must not
+	// land after this.
+	s.rforwardListeners().closeAll()
 	if s.udpForwards != nil {
 		s.udpForwards.closeAll()
 	}
-	// Through the accessor, so a registry not created yet is created closed:
-	// a link whose setup is still opening its device must not land after this.
 	s.ipLinkRegistry().closeAll()
 }

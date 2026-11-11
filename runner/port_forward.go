@@ -24,15 +24,24 @@ type bidiStreamCreator interface {
 type remoteForwardListeners struct {
 	mu sync.Mutex
 	m  map[uint64]net.Listener
+	// closed is set by closeAll: the connection holding these listeners has
+	// ended, and a listener registered after that would be owned by nothing.
+	closed bool
 }
 
-func (r *remoteForwardListeners) add(id uint64, ln net.Listener) {
+// add registers ln, and reports false when the registry was already released
+// -- the caller then owns ln and must close it.
+func (r *remoteForwardListeners) add(id uint64, ln net.Listener) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.closed {
+		return false
+	}
 	if r.m == nil {
 		r.m = map[uint64]net.Listener{}
 	}
 	r.m[id] = ln
+	return true
 }
 
 func (r *remoteForwardListeners) close(id uint64) {
@@ -53,17 +62,19 @@ func (r *remoteForwardListeners) closeAll() {
 	r.mu.Lock()
 	lns := r.m
 	r.m = nil
+	r.closed = true
 	r.mu.Unlock()
 	for _, ln := range lns {
 		_ = ln.Close()
 	}
 }
 
-// rforwardListeners lazily returns the session's listener registry.
+// rforwardListeners returns the session's listener registry, created once.
+// Asked concurrently from the open path, the close dispatch (for every
+// ClosePortForward, whatever its protocol) and RunHandle.Close, so the
+// creation is guarded rather than a bare nil check.
 func (s *Session) rforwardListeners() *remoteForwardListeners {
-	if s.rforwards == nil {
-		s.rforwards = &remoteForwardListeners{}
-	}
+	s.rforwardsOnce.Do(func() { s.rforwards = &remoteForwardListeners{} })
 	return s.rforwards
 }
 
@@ -133,7 +144,13 @@ func (s *Session) startRemoteForward(ctx context.Context, req *protocol.RunnerOp
 		s.sendSetupResult(req.ForwardId, false, err.Error())
 		return
 	}
-	s.rforwardListeners().add(req.ForwardId, ln)
+	if !s.rforwardListeners().add(req.ForwardId, ln) {
+		// The connection ended while the listener was being opened. Nothing
+		// would ever close a listener registered on this session now.
+		_ = ln.Close()
+		s.sendSetupResult(req.ForwardId, false, "connection ended during setup")
+		return
+	}
 	s.sendSetupResult(req.ForwardId, true, "")
 	log.Info("remote_forward: listening", "forward_id", req.ForwardId, "addr", ln.Addr().String())
 }
@@ -266,6 +283,9 @@ func (s *Session) registerUDPForward(req *protocol.RunnerOpenPortForwardRequest)
 		return
 	}
 	target := targetAddr(string(req.RemoteHost), req.RemotePort)
-	s.udpForwardRegistry().add(req.ForwardId, target, s.Sender)
+	if s.udpForwardRegistry().add(req.ForwardId, target, s.Sender) == nil {
+		log.Info("udp forward: not registered, the connection has ended", "fwd", req.ForwardId)
+		return
+	}
 	log.Info("udp forward: registered", "fwd", req.ForwardId, "target", target)
 }

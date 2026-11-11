@@ -78,6 +78,9 @@ type udpForwards struct {
 	// because the two are not variations on a type: one dials per flow and the
 	// other listens once, and a forward id belongs to exactly one of them.
 	remotes map[uint64]*udpRemoteForward
+	// closed is set by closeAll: the connection holding these registrations
+	// has ended, and a socket registered after that would be owned by nothing.
+	closed bool
 
 	// done closes when closeAll releases the registry, which also ends sweep:
 	// the ctx sweep runs on outlives the connection (see connect.go).
@@ -97,6 +100,7 @@ func (u *udpForwards) closeAll() {
 	u.mu.Lock()
 	locals, remotes := u.m, u.remotes
 	u.m, u.remotes = nil, nil
+	u.closed = true
 	u.mu.Unlock()
 	for _, f := range locals {
 		f.closeAll()
@@ -112,9 +116,14 @@ func (u *udpForwards) closeAll() {
 	}
 }
 
+// add records a -L registration, and returns nil when the registry was already
+// released.
 func (u *udpForwards) add(id uint64, target string, send datagramSender) *udpForward {
 	u.mu.Lock()
 	defer u.mu.Unlock()
+	if u.closed {
+		return nil
+	}
 	if u.m == nil {
 		u.m = map[uint64]*udpForward{}
 	}
@@ -130,10 +139,15 @@ func (u *udpForwards) get(id uint64) (*udpForward, bool) {
 	return f, ok
 }
 
-// addRemote records a -R registration and its listening socket.
+// addRemote records a -R registration and its listening socket, and returns
+// nil when the registry was already released -- the caller then owns conn and
+// must close it.
 func (u *udpForwards) addRemote(id uint64, conn *net.UDPConn, send datagramSender) *udpRemoteForward {
 	u.mu.Lock()
 	defer u.mu.Unlock()
+	if u.closed {
+		return nil
+	}
 	if u.remotes == nil {
 		u.remotes = map[uint64]*udpRemoteForward{}
 	}
@@ -581,6 +595,13 @@ func (s *Session) startUDPRemoteForward(req *protocol.RunnerOpenPortForwardReque
 		return
 	}
 	rem := s.udpForwardRegistry().addRemote(req.ForwardId, conn, s.Sender)
+	if rem == nil {
+		// The connection ended while the socket was being bound. Nothing would
+		// ever close a socket registered on this session now.
+		_ = conn.Close()
+		s.sendSetupResult(req.ForwardId, false, "connection ended during setup")
+		return
+	}
 	s.sendSetupResult(req.ForwardId, true, "")
 	log.Info("udp remote forward: listening", "fwd", req.ForwardId, "addr", conn.LocalAddr().String())
 	go rem.readLoop(log)

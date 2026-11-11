@@ -360,8 +360,9 @@ type Session struct {
 	creator bidiStreamCreator
 	// rforwards tracks active remote port-forward listeners by forwardId so a
 	// ClosePortForward request can shut them down. Lazily created (see
-	// remoteForwardListeners / port_forward.go).
-	rforwards *remoteForwardListeners
+	// rforwardListeners / port_forward.go).
+	rforwards     *remoteForwardListeners
+	rforwardsOnce sync.Once
 	// udpForwards tracks udp -L registrations and the per-flow sockets dialled
 	// under each. Separate from rforwards because it holds a different thing
 	// for a different direction: those are listeners this runner opened for -R,
