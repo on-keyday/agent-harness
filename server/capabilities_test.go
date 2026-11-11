@@ -1173,8 +1173,7 @@ func TestResumeCapsOverride(t *testing.T) {
 
 		// Operator caller: not in h.principals → callerCaps = Capability_All.
 		// override=true, requested=FileRead → intersect(All, FileRead) = FileRead.
-		if _, err := h.Tasks.Resume(id, "", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli, GrantUpdate{Caps: true, Scope: false, To: authority.Grant{Caps: protocol.Capability_All & protocol.Capability_FileRead, Scope: authority.Scope{}}},
-			protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
+		if _, err := h.Tasks.Resume(id, "", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli, GrantUpdate{Caps: true, Scope: false, To: authority.Grant{Caps: protocol.Capability_All & protocol.Capability_FileRead, Scope: authority.Scope{}}}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}, false); err != nil {
 			t.Fatalf("Resume: %v", err)
 		}
 		e, ok := h.Tasks.Get(id)
@@ -1199,8 +1198,7 @@ func TestResumeCapsOverride(t *testing.T) {
 		markTerminalForTest(t, h, id)
 
 		// override=false → Capabilities must stay wantCaps regardless of newCaps arg.
-		if _, err := h.Tasks.Resume(id, "", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli, GrantUpdate{Caps: false, Scope: false, To: authority.Grant{Caps: protocol.Capability_None, Scope: authority.Scope{}}},
-			protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
+		if _, err := h.Tasks.Resume(id, "", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli, GrantUpdate{Caps: false, Scope: false, To: authority.Grant{Caps: protocol.Capability_None, Scope: authority.Scope{}}}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}, false); err != nil {
 			t.Fatalf("Resume: %v", err)
 		}
 		e, ok := h.Tasks.Get(id)
@@ -1246,8 +1244,7 @@ func TestResumeCapsOverride(t *testing.T) {
 		// intersect(agentCaps, All) = agentCaps (agent cannot widen).
 		callerCaps := h.callerCaps(agentConnID)
 		newCaps := callerCaps & protocol.Capability_All
-		if _, err := h.Tasks.Resume(targetID, "", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Agent, GrantUpdate{Caps: true, Scope: false, To: authority.Grant{Caps: newCaps, Scope: authority.Scope{}}},
-			protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
+		if _, err := h.Tasks.Resume(targetID, "", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Agent, GrantUpdate{Caps: true, Scope: false, To: authority.Grant{Caps: newCaps, Scope: authority.Scope{}}}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}, false); err != nil {
 			t.Fatalf("Resume: %v", err)
 		}
 		e, ok := h.Tasks.Get(targetID)
@@ -1262,8 +1259,7 @@ func TestResumeCapsOverride(t *testing.T) {
 		// FileWrite is NOT in agentCaps → intersect(agentCaps, FileWrite) = None.
 		markTerminalForTest(t, h, targetID)
 		newCaps2 := callerCaps & protocol.Capability_FileWrite
-		if _, err := h.Tasks.Resume(targetID, "", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Agent, GrantUpdate{Caps: true, Scope: false, To: authority.Grant{Caps: newCaps2, Scope: authority.Scope{}}},
-			protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
+		if _, err := h.Tasks.Resume(targetID, "", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Agent, GrantUpdate{Caps: true, Scope: false, To: authority.Grant{Caps: newCaps2, Scope: authority.Scope{}}}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}, false); err != nil {
 			t.Fatalf("Resume2: %v", err)
 		}
 		e2, _ := h.Tasks.Get(targetID)
@@ -1668,8 +1664,7 @@ func TestResumeKeepsOverridesUnlessScopePresent(t *testing.T) {
 	st.Finish(id, 0, nil)
 
 	// scopeOverride = false: the stored scope, overrides and all, is kept.
-	if _, err := st.Resume(id, "p2", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli, GrantUpdate{Caps: false, Scope: false, To: authority.Grant{Caps: protocol.Capability_None, Scope: authority.Scope{}}},
-		protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
+	if _, err := st.Resume(id, "p2", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli, GrantUpdate{Caps: false, Scope: false, To: authority.Grant{Caps: protocol.Capability_None, Scope: authority.Scope{}}}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}, false); err != nil {
 		t.Fatalf("resume: %v", err)
 	}
 	got, _ := st.Get(id)
@@ -1680,9 +1675,7 @@ func TestResumeKeepsOverridesUnlessScopePresent(t *testing.T) {
 	// scopeOverride = true with an empty list: the only way to clear them, the
 	// same shape as writing an empty ids list.
 	st.Finish(id, 0, nil)
-	if _, err := st.Resume(id, "p3", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli, GrantUpdate{Caps: false, Scope: true, To: authority.Grant{Caps: protocol.Capability_None, Scope: authority.Scope{Base: protocol.ScopeBase_Subtree}}},
-
-		protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
+	if _, err := st.Resume(id, "p3", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli, GrantUpdate{Caps: false, Scope: true, To: authority.Grant{Caps: protocol.Capability_None, Scope: authority.Scope{Base: protocol.ScopeBase_Subtree}}}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}, false); err != nil {
 		t.Fatalf("resume: %v", err)
 	}
 	got, _ = st.Get(id)

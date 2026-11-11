@@ -175,9 +175,7 @@ func TestLimitsSurviveReplay(t *testing.T) {
 
 	b := mustChild(t, s, "", authority.LimitOf(3), authority.Unbounded())
 	s.Finish(b, 0, nil)
-	if _, err := s.Resume(b, "p2", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli,
-		GrantUpdate{SpawnDepth: true, MaxDescendants: true, To: authority.Grant{SpawnDepth: authority.LimitOf(1), MaxDescendants: authority.LimitOf(9)}},
-		protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
+	if _, err := s.Resume(b, "p2", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli, GrantUpdate{SpawnDepth: true, MaxDescendants: true, To: authority.Grant{SpawnDepth: authority.LimitOf(1), MaxDescendants: authority.LimitOf(9)}}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}, false); err != nil {
 		t.Fatalf("resume: %v", err)
 	}
 

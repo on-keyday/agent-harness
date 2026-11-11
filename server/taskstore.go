@@ -656,7 +656,7 @@ func (e ResumeError) Error() string {
 // mode it was invoked as (submit → Oneshot, open_interactive → Interactive)
 // and which profile was resolved for this open, independent of the values
 // the task was originally Created with.
-func (s *TaskStore) Resume(id, prompt string, extraArgs []string, selector protocol.RunnerSelector, boundRunnerID string, resumerKind protocol.ClientKind, u GrantUpdate, newKind protocol.TaskKind, agentProfile string, resumer protocol.TaskID) (TaskEntry, error) {
+func (s *TaskStore) Resume(id, prompt string, extraArgs []string, selector protocol.RunnerSelector, boundRunnerID string, resumerKind protocol.ClientKind, u GrantUpdate, newKind protocol.TaskKind, agentProfile string, resumer protocol.TaskID, resumeConversation bool) (TaskEntry, error) {
 	s.mu.Lock()
 	e, ok := s.tasks[id]
 	if !ok {
@@ -688,7 +688,7 @@ func (s *TaskStore) Resume(id, prompt string, extraArgs []string, selector proto
 	e.ErrorMsg = nil
 	e.Prompt = prompt
 	e.ExtraArgs = extraArgs
-	e.ResumeConversation = false
+	e.ResumeConversation = resumeConversation
 	e.Selector = selector
 	e.BoundRunnerID = boundRunnerID
 	e.ResumedByKind = resumerKind
@@ -709,6 +709,9 @@ func (s *TaskStore) Resume(id, prompt string, extraArgs []string, selector proto
 			ResumedByKind: uint8(resumerKind),
 			Kind:          uint8(newKind),
 			AgentProfile:  agentProfile,
+			// Per-open like the prompt: a resume still Queued when the server
+			// restarts must come back asking for the same conversation.
+			ResumeConversation: resumeConversation,
 		}); err != nil {
 			slog.Error("WAL write failed", "op", "task_resumed", "task_id", id, "err", err)
 		}
@@ -1418,6 +1421,7 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 				t.ResumedByKind = protocol.ClientKind(ev.ResumedByKind)
 				t.Kind = protocol.TaskKind(ev.Kind)
 				t.AgentProfile = ev.AgentProfile
+				t.ResumeConversation = ev.ResumeConversation
 			}
 		case "task_caps_changed":
 			if t, ok := s.tasks[ev.TaskID]; ok {

@@ -900,7 +900,7 @@ func TestResumeRecordsResumedByKind(t *testing.T) {
 	id := s.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli, protocol.TaskID{}, "runner1", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()}, "")
 	s.Assign(id, testRunnerID("runner1"), "/wt", false)
 	s.Finish(id, 0, nil)
-	if _, err := s.Resume(id, "p2", nil, protocol.RunnerSelector{}, "runner1", protocol.ClientKind_Agent, GrantUpdate{Caps: false, Scope: false, To: authority.Grant{Caps: protocol.Capability_None, Scope: authority.Scope{}}}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
+	if _, err := s.Resume(id, "p2", nil, protocol.RunnerSelector{}, "runner1", protocol.ClientKind_Agent, GrantUpdate{Caps: false, Scope: false, To: authority.Grant{Caps: protocol.Capability_None, Scope: authority.Scope{}}}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}, false); err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
 	got, _ := s.Get(id)
@@ -948,7 +948,7 @@ func TestWALReplayRestoresAttribution(t *testing.T) {
 	s.Finish(id, 0, nil)
 
 	// Resume with resumer kind = ClientKind_Tui.
-	if _, err := s.Resume(id, "agent-prompt-v2", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Tui, GrantUpdate{Caps: false, Scope: false, To: authority.Grant{Caps: protocol.Capability_None, Scope: authority.Scope{}}}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
+	if _, err := s.Resume(id, "agent-prompt-v2", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Tui, GrantUpdate{Caps: false, Scope: false, To: authority.Grant{Caps: protocol.Capability_None, Scope: authority.Scope{}}}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}, false); err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
 
@@ -999,7 +999,7 @@ func TestCreateRecordsCreatorTaskID(t *testing.T) {
 	}
 	s.Assign(id, testRunnerID("runner1"), "/wt", false)
 	s.Finish(id, 0, nil)
-	if _, err := s.Resume(id, "p2", nil, protocol.RunnerSelector{}, "runner1", protocol.ClientKind_Agent, GrantUpdate{Caps: false, Scope: false, To: authority.Grant{Caps: protocol.Capability_None, Scope: authority.Scope{}}}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
+	if _, err := s.Resume(id, "p2", nil, protocol.RunnerSelector{}, "runner1", protocol.ClientKind_Agent, GrantUpdate{Caps: false, Scope: false, To: authority.Grant{Caps: protocol.Capability_None, Scope: authority.Scope{}}}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}, false); err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
 	got3, _ := s.Get(id)
@@ -1079,8 +1079,7 @@ func TestTaskCapsChangedReplayEvents(t *testing.T) {
 
 	// Resume with caps override to FileRead (override-to-None is also tested below).
 	newCaps := protocol.Capability_FileRead
-	if _, err := s.Resume(id, "p2", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli, GrantUpdate{Caps: true, Scope: false, To: authority.Grant{Caps: newCaps, Scope: authority.Scope{}}},
-		protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
+	if _, err := s.Resume(id, "p2", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli, GrantUpdate{Caps: true, Scope: false, To: authority.Grant{Caps: newCaps, Scope: authority.Scope{}}}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}, false); err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
 
@@ -1159,8 +1158,7 @@ func TestResumeSwitchesKindAndReplays(t *testing.T) {
 	s.Assign(id, testRunnerID("runner-x"), "/wt/x", false)
 	s.Finish(id, 0, nil)
 
-	if _, err := s.Resume(id, "prompt", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli, GrantUpdate{Caps: false, Scope: false, To: authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}}},
-		protocol.TaskKind_Oneshot, "codex", protocol.TaskID{}); err != nil {
+	if _, err := s.Resume(id, "prompt", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli, GrantUpdate{Caps: false, Scope: false, To: authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}}}, protocol.TaskKind_Oneshot, "codex", protocol.TaskID{}, false); err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
 

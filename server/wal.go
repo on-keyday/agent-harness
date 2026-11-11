@@ -95,6 +95,10 @@ type WALEvent struct {
 	// TaskEntry.AgentProfile). Written on task_created events; legacy
 	// entries default to "" (zero). Also reused by task_resumed events.
 	AgentProfile string `json:"agent_profile,omitempty"`
+	// ResumeConversation is TaskEntry.ResumeConversation, written on
+	// task_resumed events. Legacy entries default to false (a fresh
+	// conversation), which is what a restart did before this field existed.
+	ResumeConversation bool `json:"resume_conversation,omitempty"`
 	// SkillsInjected records whether the runner this task was ASSIGNED to
 	// declares it injects .claude/{settings.json,skills} + .agents/skills.
 	// Written on task_assigned; legacy entries default to false, which reads
@@ -183,6 +187,7 @@ type walEventJSON struct {
 	MaxDescendants              uint32             `json:"max_descendants,omitempty"`
 	MaxDescendantsLimited       bool               `json:"max_descendants_limited,omitempty"`
 	AgentProfile                string             `json:"agent_profile,omitempty"`
+	ResumeConversation          bool               `json:"resume_conversation,omitempty"`
 	SkillsInjected              bool               `json:"skills_injected,omitempty"`
 	WorktreeDir                 string             `json:"worktree_dir,omitempty"`
 	ExitCode                    *int32             `json:"exit_code,omitempty"`
@@ -236,6 +241,7 @@ func (e WALEvent) MarshalJSON() ([]byte, error) {
 		MaxDescendants:              e.MaxDescendants,
 		MaxDescendantsLimited:       e.MaxDescendantsLimited,
 		AgentProfile:                e.AgentProfile,
+		ResumeConversation:          e.ResumeConversation,
 		SkillsInjected:              e.SkillsInjected,
 		WorktreeDir:                 e.WorktreeDir,
 		ExitCode:                    e.ExitCode,
@@ -294,6 +300,7 @@ func (e *WALEvent) UnmarshalJSON(b []byte) error {
 	e.MaxDescendants = j.MaxDescendants
 	e.MaxDescendantsLimited = j.MaxDescendantsLimited
 	e.AgentProfile = j.AgentProfile
+	e.ResumeConversation = j.ResumeConversation
 	e.SkillsInjected = j.SkillsInjected
 	e.WorktreeDir = j.WorktreeDir
 	e.ExitCode = j.ExitCode

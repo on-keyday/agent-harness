@@ -171,6 +171,7 @@ func TestWALEventJSONRoundTripCopiesEveryField(t *testing.T) {
 			ExcludeSelf: true, IDs: []string{"00112233445566778899aabbccddeeff"},
 		}},
 		AgentProfile:                "codex",
+		ResumeConversation:          true,
 		SkillsInjected:              true,
 		WorktreeDir:                 "/wt",
 		ExitCode:                    &ec,

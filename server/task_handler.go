@@ -1508,7 +1508,7 @@ func (h *TaskHandler) handleSubmitResume(cid string, req *protocol.SubmitRequest
 	// AgentProfile) — persisting it here closes the Task 4/6 gap where
 	// handleSubmitResume computed `resolved` but never wrote it back through
 	// Tasks.Resume.
-	if _, err := h.Tasks.Resume(idHex, prompt, args, req.Selector, bound.ID.String(), origin, grant, protocol.TaskKind_Oneshot, resolved, h.lookupPrincipal(cid)); err != nil {
+	if _, err := h.Tasks.Resume(idHex, prompt, args, req.Selector, bound.ID.String(), origin, grant, protocol.TaskKind_Oneshot, resolved, h.lookupPrincipal(cid), req.ResumeConversation()); err != nil {
 		switch err {
 		case ResumeErrNotFound:
 			return protocol.SubmitResponse{Status: protocol.SubmitStatus_ResumeNotFound}, nil
@@ -1520,7 +1520,6 @@ func (h *TaskHandler) handleSubmitResume(cid string, req *protocol.SubmitRequest
 			return resp, nil
 		}
 	}
-	h.Tasks.SetResumeConversation(idHex, req.ResumeConversation())
 	return protocol.SubmitResponse{Status: protocol.SubmitStatus_Ok, TaskId: req.ResumeTaskId}, nil
 }
 
@@ -1912,7 +1911,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 		// persisting it here closes the Task 6 gap where handleOpenInteractive
 		// threaded `resolved` to OpenExec but never wrote it back through
 		// Tasks.Resume.
-		if _, err := h.Tasks.Resume(existingTaskIDHex, "", args, req.Selector, runner.ID.String(), origin, grant, interactiveKind(req), resolved, h.lookupPrincipal(cid)); err != nil {
+		if _, err := h.Tasks.Resume(existingTaskIDHex, "", args, req.Selector, runner.ID.String(), origin, grant, interactiveKind(req), resolved, h.lookupPrincipal(cid), req.ResumeConversation()); err != nil {
 			switch err {
 			case ResumeErrNotFound:
 				return errResp(protocol.OpenInteractiveStatus_ResumeNotFound)
@@ -1923,7 +1922,6 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 			}
 		}
 		taskIDHex = existingTaskIDHex
-		h.Tasks.SetResumeConversation(taskIDHex, req.ResumeConversation())
 	} else {
 		// The TaskKind_Interactive value is the authoritative marker — empty
 		// prompt is incidental.

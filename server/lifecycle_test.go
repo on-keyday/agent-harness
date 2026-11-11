@@ -86,9 +86,7 @@ func TestLifecycleSet_ResumeResetsReporterStamp(t *testing.T) {
 		t.Fatalf("first: %v", st)
 	}
 	s.Finish(id, 0, nil)
-	if _, err := s.Resume(id, "p2", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli,
-		GrantUpdate{To: authority.Grant{Caps: protocol.Capability_None, Scope: authority.Scope{}}},
-		protocol.TaskKind_Interactive, "", protocol.TaskID{}); err != nil {
+	if _, err := s.Resume(id, "p2", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli, GrantUpdate{To: authority.Grant{Caps: protocol.Capability_None, Scope: authority.Scope{}}}, protocol.TaskKind_Interactive, "", protocol.TaskID{}, false); err != nil {
 		t.Fatalf("resume: %v", err)
 	}
 	if _, st := s.SetLifecycle(id, protocol.LifecycleState_Working, 50, 2000); st != protocol.LifecycleSetStatus_Ok {

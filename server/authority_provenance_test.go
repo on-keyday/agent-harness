@@ -71,8 +71,7 @@ func TestProvenanceResume(t *testing.T) {
 	id := createTask(s, protocol.TaskID{})
 	resumer := taskIDFromHex(createTask(s, protocol.TaskID{}))
 	s.Finish(id, 0, nil)
-	if _, err := s.Resume(id, "p2", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Agent, GrantUpdate{Caps: true, Scope: false, To: authority.Grant{Caps: protocol.Capability_FileRead, Scope: authority.Scope{}}},
-		protocol.TaskKind_Oneshot, "", resumer); err != nil {
+	if _, err := s.Resume(id, "p2", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Agent, GrantUpdate{Caps: true, Scope: false, To: authority.Grant{Caps: protocol.Capability_FileRead, Scope: authority.Scope{}}}, protocol.TaskKind_Oneshot, "", resumer, false); err != nil {
 		t.Fatalf("resume: %v", err)
 	}
 	wantProvenance(t, s, id, protocol.AuthoritySource_Resume, resumer)
@@ -80,8 +79,7 @@ func TestProvenanceResume(t *testing.T) {
 	// A resume that keeps the recorded authority writes nothing.
 	kept, _ := s.Get(id)
 	s.Finish(id, 0, nil)
-	if _, err := s.Resume(id, "p3", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli, GrantUpdate{Caps: false, Scope: false, To: authority.Grant{Caps: 0, Scope: authority.Scope{}}},
-		protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
+	if _, err := s.Resume(id, "p3", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli, GrantUpdate{Caps: false, Scope: false, To: authority.Grant{Caps: 0, Scope: authority.Scope{}}}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}, false); err != nil {
 		t.Fatalf("resume: %v", err)
 	}
 	if e, _ := s.Get(id); e.AuthoritySource != kept.AuthoritySource || e.AuthorityActor != kept.AuthorityActor || !e.AuthorityAt.Equal(kept.AuthorityAt) {

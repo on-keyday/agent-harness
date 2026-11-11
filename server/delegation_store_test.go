@@ -58,9 +58,7 @@ func TestBoundSurvivesReplay(t *testing.T) {
 
 	b := createWithBound(s, protocol.Capability_FileRead, authority.Scope{})
 	s.Finish(b, 0, nil)
-	if _, err := s.Resume(b, "p2", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli,
-		GrantUpdate{DelegateScope: true, To: authority.Grant{DelegateScope: authority.Scope{Base: protocol.ScopeBase_None, ExcludeSelf: true}}},
-		protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
+	if _, err := s.Resume(b, "p2", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli, GrantUpdate{DelegateScope: true, To: authority.Grant{DelegateScope: authority.Scope{Base: protocol.ScopeBase_None, ExcludeSelf: true}}}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}, false); err != nil {
 		t.Fatalf("resume: %v", err)
 	}
 
