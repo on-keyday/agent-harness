@@ -125,9 +125,6 @@ func (h *TaskHandler) openBackground(b backgroundOpen) protocol.OpenInteractiveR
 		taskIDHex = created
 		h.Tasks.SetResumeConversation(taskIDHex, req.ResumeConversation())
 	}
-	if h.wakeDeadlines != nil {
-		h.wakeDeadlines()
-	}
 	if h.OnChange != nil {
 		h.OnChange() // Tick: place it now if a runner can take it
 	}

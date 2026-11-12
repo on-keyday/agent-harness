@@ -210,6 +210,11 @@ type TaskStore struct {
 	// gets published is the value this call wrote under the lock.
 	OnHold    func(id string)
 	OnReadopt func(id string, status protocol.TaskStatus)
+	// OnDeadlineSet fires, outside the lock, after a write that sets a
+	// background deadline: a queue deadline at create or resume, a run
+	// deadline at Assign or at a switch to background. The deadline watcher
+	// sleeps until the earliest one it knows, so a new one must wake it.
+	OnDeadlineSet func()
 }
 
 // SetWAL attaches a WAL to which subsequent mutations append. nil disables WAL hooks.
@@ -768,6 +773,7 @@ func (s *TaskStore) Resume(id, prompt string, extraArgs []string, selector proto
 	if onCreate != nil {
 		onCreate(id)
 	}
+	s.deadlineSet(snapshot.QueueDeadlineAt != 0)
 	return snapshot, nil
 }
 
@@ -848,10 +854,12 @@ func (s *TaskStore) Assign(id string, runner protocol.RunnerID, worktreeDir stri
 		}
 		onAssign = s.OnAssign
 	}
+	deadline := e.DeadlineAt != 0
 	s.mu.Unlock()
 	if onAssign != nil {
 		onAssign(id, runner.Hex(), worktreeDir)
 	}
+	s.deadlineSet(deadline)
 }
 
 // Finish marks the task terminal. exit==0 → Succeeded; non-zero → Failed.
@@ -1728,6 +1736,14 @@ func (e *TaskEntry) runSpecFromWAL(ev WALEvent) {
 // to foreground clears it. Refused for a Queued task (Tick never places a
 // foreground one, so it would never start), a terminal one, and a oneshot.
 func (s *TaskStore) SwitchRunMode(id string, mode protocol.RunMode, cond RunConditions, now int64) (TaskEntry, error) {
+	e, err := s.switchRunModeLocked(id, mode, cond, now)
+	if err == nil {
+		s.deadlineSet(e.DeadlineAt != 0)
+	}
+	return e, err
+}
+
+func (s *TaskStore) switchRunModeLocked(id string, mode protocol.RunMode, cond RunConditions, now int64) (TaskEntry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	e, ok := s.tasks[id]
@@ -1798,4 +1814,18 @@ func (s *TaskStore) BackgroundDeadlines(now int64) (due []DeadlineHit, next int6
 		}
 	}
 	return due, next
+}
+
+// deadlineSet calls OnDeadlineSet when a write set a deadline. Called without
+// s.mu held.
+func (s *TaskStore) deadlineSet(set bool) {
+	if !set {
+		return
+	}
+	s.mu.RLock()
+	f := s.OnDeadlineSet
+	s.mu.RUnlock()
+	if f != nil {
+		f()
+	}
 }

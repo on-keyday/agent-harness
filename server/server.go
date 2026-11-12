@@ -999,6 +999,17 @@ func (s *Server) serve(ctx context.Context, ep objproto.Endpoint, mux *http.Serv
 		go s.watchHeldDeadlines(ctx)
 	}
 
+	// Background deadlines and queueing periods (pillar A, A-D13): one
+	// watcher, woken whenever the store sets a deadline.
+	deadlineWake := make(chan struct{}, 1)
+	s.tasks.OnDeadlineSet = func() {
+		select {
+		case deadlineWake <- struct{}{}:
+		default:
+		}
+	}
+	go runDeadlineWatcher(ctx, s.tasks, deadlineWake, s.taskHandler.endBackgroundRun)
+
 	// Coalesces the port-forward counters into forwards.status. One goroutine
 	// for the whole server: the quantity moves per byte, so it can only be
 	// published on a clock, and a per-forward publisher would have to

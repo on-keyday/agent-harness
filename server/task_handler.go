@@ -58,9 +58,9 @@ type TaskHandler struct {
 	// before the response is sent.
 	OnTaskLifecycle func(taskHex string)
 
-	// wakeDeadlines wakes the background deadline watcher after a write that
-	// sets a deadline (pillar A, A-D13). Nil-safe.
-	wakeDeadlines func()
+	// runWatchSet holds the background run watchers (run_watch.go).
+	runWatchOnce sync.Once
+	runWatchSet  *runWatchers
 
 	// OnSessionObservers fires when a session's observer set changes (a viewer
 	// or cowriter attached or left). Those attaches move no task status by

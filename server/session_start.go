@@ -238,7 +238,3 @@ func (h *TaskHandler) StartQueuedSession(runnerID objproto.ConnectionID, taskID 
 	}
 	return nil
 }
-
-// armRunWatcher arms the background run's condition watcher on its mux.
-// Pillar A2 Task 3 stub; Task 5 replaces it within the same landing.
-func (h *TaskHandler) armRunWatcher(taskID string, mux *SessionMux) {}

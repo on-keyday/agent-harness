@@ -290,3 +290,28 @@ func TestEvaluateIdle_ReportsTheLifecycleItDecidedOn(t *testing.T) {
 		}
 	}
 }
+
+// reportCounts is the one rule await-idle and the background run evaluator
+// share: whether a non-working report ends the turn.
+func TestReportCounts(t *testing.T) {
+	cases := []struct {
+		name                                    string
+		stateAt, workingAt, floor, base, lastIn int64
+		requireWork                             bool
+		want                                    bool
+	}{
+		{"at the floor does not count", ms(100), 0, ms(100), ms(100), 0, false, false},
+		{"after the floor, no input, await-idle's case", ms(101), 0, ms(100), ms(100), 0, false, true},
+		{"after input, no working after it", ms(1300), ms(900), ms(1000), ms(100), ms(1000), false, false},
+		{"after input, working after it", ms(1300), ms(1100), ms(1000), ms(100), ms(1000), false, true},
+		{"requireWork: no working since base", ms(300), ms(50), ms(100), ms(100), 0, true, false},
+		{"requireWork: working at the report itself", ms(300), ms(300), ms(100), ms(100), 0, true, false},
+		{"requireWork: working since base, before the report", ms(300), ms(200), ms(100), ms(100), 0, true, true},
+		{"requireWork: input after base needs a later working", ms(900), ms(200), ms(500), ms(100), ms(500), true, false},
+	}
+	for _, c := range cases {
+		if got := reportCounts(c.stateAt, c.workingAt, c.floor, c.base, c.lastIn, c.requireWork); got != c.want {
+			t.Errorf("%s: reportCounts = %v, want %v", c.name, got, c.want)
+		}
+	}
+}

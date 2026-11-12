@@ -59,12 +59,31 @@ func legSatisfied(nonWorking bool, stateAt, workingAt int64, s idleStamps) bool 
 	if !nonWorking {
 		return false
 	}
-	floor := max(s.LastInput, s.MuxStart)
-	inputSinceStart := s.LastInput > s.MuxStart
-	if stateAt > floor && (!inputSinceStart || workingAt > s.LastInput) {
+	if reportCounts(stateAt, workingAt, max(s.LastInput, s.MuxStart), s.MuxStart, s.LastInput, false) {
 		return true
 	}
 	return s.LastOutput != 0 && s.Now-max(s.LastInput, s.LastOutput) >= s.Threshold.Nanoseconds()
+}
+
+// reportCounts is the one rule await-idle (legSatisfied) and the background
+// run evaluator (evaluateRun) share: whether a non-working state reported at
+// stateAt counts as the end of a turn. It must have been reported after
+// floor; when there was input after base, a `working` (at workingAt) must
+// have followed that input — which shuts out the previous turn's late async
+// Stop hook (await-idle D6); and, with requireWork, a `working` since base
+// must have preceded the report (G16: a run that never worked has not ended
+// a turn).
+func reportCounts(stateAt, workingAt, floor, base, lastInput int64, requireWork bool) bool {
+	if stateAt <= floor {
+		return false
+	}
+	if lastInput > base && workingAt <= lastInput {
+		return false
+	}
+	if requireWork && (workingAt == 0 || workingAt < base || workingAt >= stateAt) {
+		return false
+	}
+	return true
 }
 
 func lifecycleNonWorking(st protocol.LifecycleState) bool {

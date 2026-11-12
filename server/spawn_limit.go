@@ -61,11 +61,13 @@ func (s *TaskStore) CreateWithinLimits(repo, prompt string, kind protocol.TaskKi
 		}
 	}
 	id := s.createLocked(repo, prompt, kind, origin, creatorTaskID, boundRunnerID, selector, extraArgs, g, agentProfile, run)
+	queueDeadline := s.tasks[id].QueueDeadlineAt != 0
 	onCreate := s.OnCreate
 	s.mu.Unlock()
 	if onCreate != nil {
 		onCreate(id)
 	}
+	s.deadlineSet(queueDeadline)
 	return id, nil
 }
 
