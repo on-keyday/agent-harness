@@ -97,7 +97,7 @@ the author chose it while writing; those rows are the ones to check.
 | G21 | **Records belong to a run, not to a task.** A run is one open of a task: its creation, and each resume after it (`TaskStore.Resume`, `server/taskstore.go:659`). Today a resumed task's output is appended to the same `<id>.log` (`LogStore.Append` opens it `O_APPEND`, `server/logstore.go:26-38`) with no boundary between runs, so runs mix (operator, 2026-11-12). The task log, the PTY record (G11) and transcript bindings (G18) are each kept per run, and listed, fetched and deleted (G20) per run. The run's identity (e.g. a per-task sequence persisted in the WAL) is left to the pillar spec | operator (runs mix today), this spec (per-run keying) |
 | G22 | **The `task.<id>.log` path is removed with G7.** Its only producer is the oneshot `handleAssign` (`runner/session.go:660`); its consumers are the CLI `logs` verb (`cli/logs.go`, CLI-only, `cli/verb/table.go:2276`), the TUI log pane (`tui/events.go:192`), the server's file store (`server/logtap.go` → `LogStore`) and its authorization (`server/pubsub_authz.go`). The per-run PTY record (G11, G21) and transcripts (G18) hold what it held, more faithfully. Raw PTY bytes include redraws, so reading a record later needs rendering (replaying it through the server's screen model, or showing the transcript); how is pillar A's spec. Whether the runner also writes diagnostic lines into the task log, which would need a new home, is not checked here | operator |
 | G23 | **The TUI's permanent log pane is not kept.** It takes too much of the screen for what it shows (operator, 2026-11-12). Records are viewed on demand; what the freed space is used for is decided in pillar A's spec | operator (the pane is too large), this spec (on demand) |
-| G24 | **A task's mode is fixed for its life, and a human attaching does not pause its conditions.** The two modes have different lifecycles; a background task stays one until a condition ends it. Background tasks are run so that no permission prompt appears (O1 is settled inside that premise), so there is no approval to protect while a human is attached. Consequence, accepted: a human who attaches and types into a background task is cut at the next turn end or the deadline. Blocked-too-long (G4) stays, as the detector for the premise failing: its end reason (G5) tells the operator a prompt appeared | operator |
+| G24 | **A task's mode is fixed for its life, and a human attaching does not pause its conditions.** The two modes have different lifecycles; a background task stays one until a condition or a human ends it. **A human can cancel a background task at any time**, queued or running (`TaskStore.Cancel` accepts `Queued`, `Running`, `Detached` and `Held`, `server/taskstore.go:877-880`); the end reason records it (G5). Background tasks are run so that no permission prompt appears, so there is no approval to protect while a human is attached. How a run avoids prompts is the agent's own argv, not a harness setting: the profile's `agentArgs` or the task's `extra_args` (`OpenInteractiveRequest.extra_args`, merged after the runner's baseline, `runner/extraargs.go`), where each agent has its own flag (`scripts/agent_presets.py` `_SANDBOX_AGENT_ARGS`). Consequence, accepted: a human who attaches and types into a background task is cut at the next turn end or the deadline. Blocked-too-long (G4) stays, as the detector for the premise failing: its end reason (G5) tells the operator a prompt appeared | operator |
 | G25 | **Foreground and background share a runner's slots** (`--max-tasks`); no slot is reserved for either. A human's open while background tasks fill the runner is refused `RunnerBusy` as today; a background task waits in the queue while humans fill it. Reserving slots would be a priority, which the anti-goals exclude, and every background task's deadline bounds how long a human waits. Accepted cost: on a one-slot runner, a long-deadline recurring job locks humans out of that runner for its length | operator |
 | G26 | **A background task is queued even when no runner can take it now.** Whoever starts it (a schedule firing, or a human or agent opening in background mode) only puts it in the queue; placement happens when a candidate (G17) appears with a free slot. Today a submit with no candidate is refused `NoRunner` (`server/task_handler.go:1255-1259`); with exact roots (G9) that would silently drop every firing that lands while the repo's runner restarts. Foreground keeps `NoRunner`. A typo'd repo is caught when a schedule is created: creation is refused unless at least one candidate exists then | operator (enqueue only), this spec (check at schedule creation) |
 | G27 | **The queue is managed by the operator; nothing in it expires by itself.** A queued task waits until it is placed or someone cancels it (`TaskStore.Cancel` already accepts `Queued`, `server/taskstore.go:880`). The deadline (G4) does not run while queued. Every surface shows why a queued task is waiting — no candidate runner connected, or candidates all busy — since that is what tells the operator whether it has gone stale | operator (manual cancel, no expiry, deadline from run start), this spec (wait reason on every surface) |
@@ -180,8 +180,9 @@ What the pillar spec must settle, and the facts it builds on:
   detached session's PTY is 0×0 until a client sends a size
   (`.claude/skills/dummy-harness/SKILL.md`, "Driving harness-tui"). Background
   opens need a default size (`session new` already has `--rows/--cols`).
-- **Nobody is watching to approve anything.** The spec decides the default
-  permission mode and capabilities of a background task (open question O1).
+- **Nobody is watching to approve anything.** Avoiding prompts is the agent's
+  argv (G24), so the harness adds no permission-mode setting. The spec decides
+  the default capabilities of a background task (open question O1).
 - **The PTY record (G11, G21, G22)** is built here, server-side, per run, with
   the per-session switch. Its volume is the cost: an agent TUI repaints its
   spinner about every 100 ms while working (`server/await_idle_handler.go:15-18`),
@@ -199,7 +200,7 @@ What the pillar spec must settle, and the facts it builds on:
 
 - Schedule definitions are persisted on the server and survive its restart.
 - Each firing creates a background task (G8) carrying the schedule's prompt,
-  repo, profile, selector and conditions.
+  repo, profile, selector, extra agent args (G24) and conditions.
 - A firing while the previous run is still queued or running is skipped
   (G28); a firing with no runner available is queued, not refused (G26).
 - Open for the pillar spec: whether firings missed while the server was down
@@ -274,7 +275,7 @@ Settled in the pillar specs; listed here so none is decided by default.
 
 | # | Question | Pillar |
 | --- | --- | --- |
-| O1 | Default permission mode and capabilities of a background task. Bounded by G24: the mode must not prompt | A |
+| O1 | Default capabilities (`requested_caps`) of a background task, and of the tasks a schedule fires. Avoiding prompts is not part of this question: it is the agent's argv (G24) | A |
 | O3 | Firings missed while the server was down: run once, or skip | S |
 | O4 | May agents create schedules, and with whose authority do those tasks run | S |
 | O5 | Cache fetched transcripts on the server, trading server storage for availability while a runner is down | B |
