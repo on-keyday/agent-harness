@@ -599,7 +599,7 @@ func TestSchedulerSkipsTaskCancelledMidWalk(t *testing.T) {
 	NewScheduler(reg, store, func(_ objproto.ConnectionID, tID string) error {
 		sent = append(sent, tID)
 		if tID == a {
-			store.Cancel(b) // the operator cancels b while Tick is mid-walk
+			store.Cancel(b, protocol.EndReason_Cancelled, protocol.TaskID{}) // the operator cancels b while Tick is mid-walk
 		}
 		return nil
 	}).Tick()

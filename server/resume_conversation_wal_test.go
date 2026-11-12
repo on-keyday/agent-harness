@@ -25,7 +25,7 @@ func TestResumeConversationSurvivesWALReplay(t *testing.T) {
 	noChange := GrantUpdate{To: authority.Grant{Caps: protocol.Capability_None, Scope: authority.Scope{}}}
 	resume := func(id string, conv bool) {
 		t.Helper()
-		if _, err := s.Resume(id, "again", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli, noChange, protocol.TaskKind_Oneshot, "", protocol.TaskID{}, conv); err != nil {
+		if _, err := s.Resume(id, "again", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli, noChange, protocol.TaskKind_Oneshot, "", protocol.TaskID{}, conv, RunSpec{}); err != nil {
 			t.Fatalf("Resume: %v", err)
 		}
 	}
@@ -89,7 +89,7 @@ func TestResumeConversationSetBeforeOnCreate(t *testing.T) {
 		e, _ := s.Get(id)
 		seen, fired = e.ResumeConversation, true
 	}
-	if _, err := s.Resume(id, "again", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli, GrantUpdate{To: authority.Grant{Caps: protocol.Capability_None, Scope: authority.Scope{}}}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}, true); err != nil {
+	if _, err := s.Resume(id, "again", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli, GrantUpdate{To: authority.Grant{Caps: protocol.Capability_None, Scope: authority.Scope{}}}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}, true, RunSpec{}); err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
 	if !fired {

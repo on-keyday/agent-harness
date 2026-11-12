@@ -96,7 +96,7 @@ func TestDispatcherOnCancel_NoRunner(t *testing.T) {
 // TestDispatcherOnCancel_WiredViaTaskStoreCallback verifies that the server.go
 // wiring causes a Cancel on the TaskStore to invoke Dispatcher.OnCancel, which
 // in turn sends a CancelTask to the running runner. This tests the full chain:
-// tasks.Cancel(id) → tasks.OnCancel callback → d.OnCancel(id) → runner.
+// tasks.Cancel(id, protocol.EndReason_Cancelled, protocol.TaskID{}) → tasks.OnCancel callback → d.OnCancel(id) → runner.
 func TestDispatcherOnCancel_WiredViaTaskStoreCallback(t *testing.T) {
 	reg := NewRegistry()
 	tasks := NewTaskStore()
@@ -128,7 +128,7 @@ func TestDispatcherOnCancel_WiredViaTaskStoreCallback(t *testing.T) {
 	}
 
 	// Trigger cancel via TaskStore.
-	tasks.Cancel(taskID)
+	tasks.Cancel(taskID, protocol.EndReason_Cancelled, protocol.TaskID{})
 
 	if cancelEvents != 1 {
 		t.Errorf("expected OnCancel callback called once, got %d", cancelEvents)

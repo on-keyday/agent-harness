@@ -442,7 +442,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		// that does not exist.
 		result := protocol.CancelResult_NoSuchTask
 		if h.inScope(cid, protocol.Capability_Cancel, taskID) {
-			h.Tasks.Cancel(taskID)
+			h.Tasks.Cancel(taskID, protocol.EndReason_Cancelled, h.lookupPrincipal(cid))
 			result = protocol.CancelResult_Ok
 		}
 
@@ -1283,7 +1283,7 @@ func (h *TaskHandler) handleSubmit(cid string, req *protocol.SubmitRequest, orig
 	}
 	bound := combos[0].Entry
 	resolved := combos[0].Profile
-	taskIDHex, err := h.Tasks.CreateWithinLimits(repo, string(req.Prompt), protocol.TaskKind_Oneshot, origin, creator, bound.ID.String(), req.Selector, req.ExtraArgs.AsStrings(), grant.To, resolved)
+	taskIDHex, err := h.Tasks.CreateWithinLimits(repo, string(req.Prompt), protocol.TaskKind_Oneshot, origin, creator, bound.ID.String(), req.Selector, req.ExtraArgs.AsStrings(), grant.To, resolved, RunSpec{})
 	if err != nil {
 		resp := protocol.SubmitResponse{Status: protocol.SubmitStatus_SpawnLimit}
 		resp.SetErrorMsg([]byte(err.Error()))
@@ -1515,7 +1515,7 @@ func (h *TaskHandler) handleSubmitResume(cid string, req *protocol.SubmitRequest
 	// AgentProfile) — persisting it here closes the Task 4/6 gap where
 	// handleSubmitResume computed `resolved` but never wrote it back through
 	// Tasks.Resume.
-	if _, err := h.Tasks.Resume(idHex, prompt, args, req.Selector, bound.ID.String(), origin, grant, protocol.TaskKind_Oneshot, resolved, h.lookupPrincipal(cid), req.ResumeConversation()); err != nil {
+	if _, err := h.Tasks.Resume(idHex, prompt, args, req.Selector, bound.ID.String(), origin, grant, protocol.TaskKind_Oneshot, resolved, h.lookupPrincipal(cid), req.ResumeConversation(), RunSpec{}); err != nil {
 		switch err {
 		case ResumeErrNotFound:
 			return protocol.SubmitResponse{Status: protocol.SubmitStatus_ResumeNotFound}, nil
@@ -1918,7 +1918,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 		// persisting it here closes the Task 6 gap where handleOpenInteractive
 		// threaded `resolved` to OpenExec but never wrote it back through
 		// Tasks.Resume.
-		if _, err := h.Tasks.Resume(existingTaskIDHex, "", args, req.Selector, runner.ID.String(), origin, grant, interactiveKind(req), resolved, h.lookupPrincipal(cid), req.ResumeConversation()); err != nil {
+		if _, err := h.Tasks.Resume(existingTaskIDHex, "", args, req.Selector, runner.ID.String(), origin, grant, interactiveKind(req), resolved, h.lookupPrincipal(cid), req.ResumeConversation(), RunSpec{}); err != nil {
 			switch err {
 			case ResumeErrNotFound:
 				return errResp(protocol.OpenInteractiveStatus_ResumeNotFound)
@@ -1935,7 +1935,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 		// resolved is the (runner,profile) combo's profile — the server-chosen
 		// profile the runner must exec with (empty only when the sole candidate
 		// advertises no profile, i.e. a legacy runner → its AgentBin default).
-		created, err := h.Tasks.CreateWithinLimits(repo, "", interactiveKind(req), origin, creator, runner.ID.String(), req.Selector, req.ExtraArgs.AsStrings(), grant.To, resolved)
+		created, err := h.Tasks.CreateWithinLimits(repo, "", interactiveKind(req), origin, creator, runner.ID.String(), req.Selector, req.ExtraArgs.AsStrings(), grant.To, resolved, RunSpec{})
 		if err != nil {
 			resp, body := errResp(protocol.OpenInteractiveStatus_SpawnLimit)
 			resp.SetErrorMsg([]byte(err.Error()))
@@ -2146,7 +2146,9 @@ func (h *TaskHandler) sessionHooks() SessionHooks {
 func (h *TaskHandler) afterMuxStopped(taskIDHex string, runnerID objproto.ConnectionID) {
 	h.Sessions.Remove(taskIDHex) // defensive — handles race where OnStop fired before Sessions.Add
 	if t, ok := h.Tasks.Get(taskIDHex); ok && t.Status == protocol.TaskStatus_Running {
-		h.Tasks.Cancel(taskIDHex)
+		// The runner stream ended while the task still read Running: the
+		// session is over without a cancel, so the process ended it.
+		h.Tasks.Cancel(taskIDHex, protocol.EndReason_ProcessExit, protocol.TaskID{})
 	}
 	terminal := true
 	if t, ok := h.Tasks.Get(taskIDHex); ok {
@@ -2736,6 +2738,12 @@ func toTaskInfo(t TaskEntry) protocol.TaskInfo {
 	info.Lifecycle = t.Lifecycle
 	info.LifecycleAt = uint64(t.LifecycleAt)
 	info.LifecycleAgeMs = progressAgeMs(t.LifecycleAt)
+	info.RunMode = t.RunMode
+	info.EndReason = t.EndReason
+	info.CancelledBy = t.CancelledBy
+	info.DeadlineNs = uint64(t.DeadlineAt)
+	info.QueueDeadlineNs = uint64(t.QueueDeadlineAt)
+	info.Conditions = t.Cond.Wire()
 	info.AuthoritySource = t.AuthoritySource
 	info.AuthorityActor = t.AuthorityActor
 	if !t.AuthorityAt.IsZero() {

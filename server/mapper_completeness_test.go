@@ -98,6 +98,12 @@ func TestToTaskInfoMapsEveryField(t *testing.T) {
 		AuthoritySource: protocol.AuthoritySource_Cascade,
 		AuthorityActor:  protocol.TaskID{Id: [16]byte{0x3f}},
 		AuthorityAt:     now.Add(-time.Second),
+		RunMode:         protocol.RunMode_Background,
+		Cond:            RunConditions{Deadline: time.Hour, TurnEnd: protocol.TurnEndSignal_Quiet, Quiet: time.Minute, Blocked: time.Minute, QueueTimeout: time.Minute},
+		DeadlineAt:      now.UnixNano(),
+		QueueDeadlineAt: now.UnixNano(),
+		EndReason:       protocol.EndReason_Deadline,
+		CancelledBy:     protocol.TaskID{Id: [16]byte{0x4e}},
 	}
 	info := toTaskInfo(e)
 	assertNoZeroFields(t, info, map[string]string{
@@ -106,16 +112,8 @@ func TestToTaskInfoMapsEveryField(t *testing.T) {
 		"LastOutputAt": "filled by the list handler from live session state, not from TaskEntry",
 		// Computed when a listing is built, from Registry.Candidates (A-D14);
 		// there is nothing on the entry to copy.
-		"WaitReason": "computed by the list handler from the registry, not from TaskEntry",
-		// TEMPORARY (pillar A2 Task 1): the wire fields exist before the
-		// TaskEntry fields they map; Task 2 adds those and removes these lines.
-		"RunMode":         "A2 Task 2 maps it",
-		"EndReason":       "A2 Task 2 maps it",
-		"CancelledBy":     "A2 Task 2 maps it",
-		"DeadlineNs":      "A2 Task 2 maps it",
-		"QueueDeadlineNs": "A2 Task 2 maps it",
-		"Conditions":      "A2 Task 2 maps it",
-		"OutputIdleMs":    "filled by the list handler from live session state, not from TaskEntry",
+		"WaitReason":   "computed by the list handler from the registry, not from TaskEntry",
+		"OutputIdleMs": "filled by the list handler from live session state, not from TaskEntry",
 		// Same family as the two above: read off the live SessionMux at List
 		// time. Deliberately not stored — the observer set of an ended session
 		// is not a fact that survives it, so there is nothing for a mapper from

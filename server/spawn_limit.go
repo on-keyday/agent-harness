@@ -46,7 +46,7 @@ func (e *SpawnLimitError) Error() string {
 // hold of s.mu so two creations cannot take the same last place. It is the
 // only creation production code uses (TestOnlyCreateWithinLimitsInProduction);
 // Create stays unchecked for tests that build trees directly.
-func (s *TaskStore) CreateWithinLimits(repo, prompt string, kind protocol.TaskKind, origin protocol.ClientKind, creatorTaskID protocol.TaskID, boundRunnerID string, selector protocol.RunnerSelector, extraArgs []string, g authority.Grant, agentProfile string) (string, error) {
+func (s *TaskStore) CreateWithinLimits(repo, prompt string, kind protocol.TaskKind, origin protocol.ClientKind, creatorTaskID protocol.TaskID, boundRunnerID string, selector protocol.RunnerSelector, extraArgs []string, g authority.Grant, agentProfile string, run RunSpec) (string, error) {
 	s.mu.Lock()
 	if err := s.checkSpawnLimitsLocked(creatorTaskID); err != nil {
 		s.mu.Unlock()
@@ -60,7 +60,7 @@ func (s *TaskStore) CreateWithinLimits(repo, prompt string, kind protocol.TaskKi
 			g.SpawnDepth = authority.MinLimit(g.SpawnDepth, authority.DecLimit(c.SpawnDepth))
 		}
 	}
-	id := s.createLocked(repo, prompt, kind, origin, creatorTaskID, boundRunnerID, selector, extraArgs, g, agentProfile)
+	id := s.createLocked(repo, prompt, kind, origin, creatorTaskID, boundRunnerID, selector, extraArgs, g, agentProfile, run)
 	onCreate := s.OnCreate
 	s.mu.Unlock()
 	if onCreate != nil {

@@ -94,7 +94,7 @@ func TestRestartCancelsDetached(t *testing.T) {
 	// Simulate the restart loop from Run.
 	for _, task := range s.tasks.List(0) {
 		if task.Status == protocol.TaskStatus_Detached {
-			s.tasks.Cancel(task.ID)
+			s.tasks.Cancel(task.ID, protocol.EndReason_Cancelled, protocol.TaskID{})
 		}
 	}
 

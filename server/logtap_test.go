@@ -98,7 +98,7 @@ func TestResumedTaskLogNotDuplicated(t *testing.T) {
 		"")
 
 	ts.Finish(id, 0, nil)
-	if _, err := ts.Resume(id, "again", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Tui, GrantUpdate{Caps: false, Scope: false, To: authority.Grant{Caps: 0, Scope: authority.Scope{}}}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}, false); err != nil {
+	if _, err := ts.Resume(id, "again", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Tui, GrantUpdate{Caps: false, Scope: false, To: authority.Grant{Caps: 0, Scope: authority.Scope{}}}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}, false, RunSpec{}); err != nil {
 		t.Fatal(err)
 	}
 

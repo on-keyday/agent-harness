@@ -152,6 +152,22 @@ type TaskEntry struct {
 	// async Stop hook (await-idle signal spec D6). Memory only and NOT in the
 	// progress snapshot: a restart makes a new mux, whose start floors it.
 	LifecycleWorkingAt int64
+
+	// Run mode (pillar A, docs/superpowers/specs/2026-11-13-pillar-a-run-modes-design.md).
+	// RunMode is the task's current one (A-D1); Cond the current run's
+	// conditions (A-D7), written by each create, resume and mode switch and
+	// never carried from an earlier run. DeadlineAt / QueueDeadlineAt are
+	// absolute unix nanos, 0 = none: the run deadline resolves at Assign (or
+	// at a switch to background), the queue deadline when the task is queued.
+	RunMode         protocol.RunMode
+	Cond            RunConditions
+	DeadlineAt      int64
+	QueueDeadlineAt int64
+	ModeSwitchedAt  int64
+	// EndReason is why the latest run ended (A-D11); CancelledBy who
+	// cancelled it when EndReason == cancelled (zero = the operator).
+	EndReason   protocol.EndReason
+	CancelledBy protocol.TaskID
 }
 
 // TaskStore is the in-memory authority for task lifecycle.
@@ -238,7 +254,7 @@ func newTaskID() string {
 // pass "" when the bound runner advertised no profiles (legacy runner).
 func (s *TaskStore) Create(repo, prompt string, kind protocol.TaskKind, origin protocol.ClientKind, creatorTaskID protocol.TaskID, boundRunnerID string, selector protocol.RunnerSelector, extraArgs []string, g authority.Grant, agentProfile string) string {
 	s.mu.Lock()
-	id := s.createLocked(repo, prompt, kind, origin, creatorTaskID, boundRunnerID, selector, extraArgs, g, agentProfile)
+	id := s.createLocked(repo, prompt, kind, origin, creatorTaskID, boundRunnerID, selector, extraArgs, g, agentProfile, RunSpec{})
 	onCreate := s.OnCreate
 	s.mu.Unlock()
 	if onCreate != nil {
@@ -249,8 +265,9 @@ func (s *TaskStore) Create(repo, prompt string, kind protocol.TaskKind, origin p
 
 // createLocked inserts a task and writes its task_created record. Caller holds
 // s.mu and fires OnCreate after releasing it.
-func (s *TaskStore) createLocked(repo, prompt string, kind protocol.TaskKind, origin protocol.ClientKind, creatorTaskID protocol.TaskID, boundRunnerID string, selector protocol.RunnerSelector, extraArgs []string, g authority.Grant, agentProfile string) string {
+func (s *TaskStore) createLocked(repo, prompt string, kind protocol.TaskKind, origin protocol.ClientKind, creatorTaskID protocol.TaskID, boundRunnerID string, selector protocol.RunnerSelector, extraArgs []string, g authority.Grant, agentProfile string, run RunSpec) string {
 	id := newTaskID()
+	now := time.Now()
 	s.tasks[id] = &TaskEntry{
 		ID:             id,
 		RepoPath:       repo,
@@ -266,11 +283,12 @@ func (s *TaskStore) createLocked(repo, prompt string, kind protocol.TaskKind, or
 		MaxDescendants: g.MaxDescendants,
 		AgentProfile:   agentProfile,
 		Status:         protocol.TaskStatus_Queued,
-		CreatedAt:      time.Now(),
+		CreatedAt:      now,
 		BoundRunnerID:  boundRunnerID,
 		Selector:       selector,
 		ExtraArgs:      extraArgs,
 	}
+	s.tasks[id].applyRunSpec(run, now.UnixNano())
 	if creatorTaskID.Id == ([16]byte{}) {
 		s.tasks[id].stampAuthority(AuthorityWrite{Source: protocol.AuthoritySource_OperatorSpawn})
 	} else {
@@ -296,6 +314,7 @@ func (s *TaskStore) createLocked(repo, prompt string, kind protocol.TaskKind, or
 			Capabilities:  uint32(g.Caps),
 			AgentProfile:  agentProfile,
 		}
+		s.tasks[id].runSpecToWAL(&ev)
 		applyScopeToWAL(g.Scope, &ev)
 		applyDelegationToWAL(g.DelegateCaps, g.DelegateScope, &ev)
 		applyLimitsToWAL(g.SpawnDepth, g.MaxDescendants, &ev)
@@ -656,7 +675,7 @@ func (e ResumeError) Error() string {
 // mode it was invoked as (submit → Oneshot, open_interactive → Interactive)
 // and which profile was resolved for this open, independent of the values
 // the task was originally Created with.
-func (s *TaskStore) Resume(id, prompt string, extraArgs []string, selector protocol.RunnerSelector, boundRunnerID string, resumerKind protocol.ClientKind, u GrantUpdate, newKind protocol.TaskKind, agentProfile string, resumer protocol.TaskID, resumeConversation bool) (TaskEntry, error) {
+func (s *TaskStore) Resume(id, prompt string, extraArgs []string, selector protocol.RunnerSelector, boundRunnerID string, resumerKind protocol.ClientKind, u GrantUpdate, newKind protocol.TaskKind, agentProfile string, resumer protocol.TaskID, resumeConversation bool, run RunSpec) (TaskEntry, error) {
 	s.mu.Lock()
 	e, ok := s.tasks[id]
 	if !ok {
@@ -697,9 +716,12 @@ func (s *TaskStore) Resume(id, prompt string, extraArgs []string, selector proto
 	// The resumed run may report from another runner host whose clock is
 	// behind this one's; its first lifecycle report must not read as stale.
 	e.LifecycleReportedAt = 0
+	// The run mode and conditions are the request's alone (A-D7): nothing of
+	// the previous run's carries over, its end included.
+	e.applyRunSpec(run, time.Now().UnixNano())
 
 	if s.wal != nil {
-		if err := s.wal.Write(WALEvent{
+		ev := WALEvent{
 			Type:          "task_resumed",
 			TaskID:        id,
 			Prompt:        prompt,
@@ -712,7 +734,9 @@ func (s *TaskStore) Resume(id, prompt string, extraArgs []string, selector proto
 			// Per-open like the prompt: a resume still Queued when the server
 			// restarts must come back asking for the same conversation.
 			ResumeConversation: resumeConversation,
-		}); err != nil {
+		}
+		e.runSpecToWAL(&ev)
+		if err := s.wal.Write(ev); err != nil {
 			slog.Error("WAL write failed", "op", "task_resumed", "task_id", id, "err", err)
 		}
 	}
@@ -799,8 +823,13 @@ func (s *TaskStore) Assign(id string, runner protocol.RunnerID, worktreeDir stri
 	// nobody is running in.
 	e.SkillsInjected = skillsInjected
 	if !wasDetached {
-		// Initial dispatch: record StartedAt.
+		// Initial dispatch: record StartedAt. A background run's deadline
+		// counts from here, on the server clock (A-D10).
 		e.StartedAt = &now
+		if e.RunMode == protocol.RunMode_Background && e.Cond.Deadline > 0 {
+			e.DeadlineAt = now.Add(e.Cond.Deadline).UnixNano()
+		}
+		e.QueueDeadlineAt = 0
 	} else {
 		// Re-attach: clear the detached-at timestamp and mark as attached.
 		e.DetachedAt = 0
@@ -813,7 +842,7 @@ func (s *TaskStore) Assign(id string, runner protocol.RunnerID, worktreeDir stri
 		// task_assigned would overwrite StartedAt on WAL replay, and the
 		// OnAssign hook would publish a duplicate TaskAssigned pubsub event.
 		if s.wal != nil {
-			if err := s.wal.Write(WALEvent{Type: "task_assigned", TaskID: id, RunnerID: runner.Hex(), WorktreeDir: worktreeDir, SkillsInjected: skillsInjected, Ts: now.UnixNano()}); err != nil {
+			if err := s.wal.Write(WALEvent{Type: "task_assigned", TaskID: id, RunnerID: runner.Hex(), WorktreeDir: worktreeDir, SkillsInjected: skillsInjected, DeadlineNs: e.DeadlineAt, Ts: now.UnixNano()}); err != nil {
 				slog.Error("WAL write failed", "op", "task_assigned", "task_id", id, "err", err)
 			}
 		}
@@ -856,6 +885,17 @@ func (s *TaskStore) Finish(id string, exit int32, errorMsg []byte) {
 	} else {
 		finalStatus = protocol.TaskStatus_Failed
 	}
+	// A cancel already said why the run ended; the runner's report after it
+	// only says how the process answered (A-D11). Otherwise -1 is the runner's
+	// own refusal or failure (finishWithError), anything else the process.
+	if e.Status != protocol.TaskStatus_Cancelled {
+		if exit == -1 {
+			e.EndReason = protocol.EndReason_Failed
+		} else {
+			e.EndReason = protocol.EndReason_ProcessExit
+		}
+	}
+	e.DeadlineAt, e.QueueDeadlineAt = 0, 0
 	e.Status = finalStatus
 	e.IsAttached = false
 	exitCopy := exit
@@ -863,7 +903,7 @@ func (s *TaskStore) Finish(id string, exit int32, errorMsg []byte) {
 	e.ErrorMsg = errorMsg
 	e.EndedAt = &now
 	if s.wal != nil {
-		if err := s.wal.Write(WALEvent{Type: "task_finished", TaskID: id, ExitCode: &exitCopy, DiffInfo: errorMsg, Ts: now.UnixNano()}); err != nil {
+		if err := s.wal.Write(WALEvent{Type: "task_finished", TaskID: id, ExitCode: &exitCopy, DiffInfo: errorMsg, EndReason: uint8(e.EndReason), Ts: now.UnixNano()}); err != nil {
 			slog.Error("WAL write failed", "op", "task_finished", "task_id", id, "err", err)
 		}
 	}
@@ -878,7 +918,7 @@ func (s *TaskStore) Finish(id string, exit int32, errorMsg []byte) {
 // task is already Succeeded or Failed, the call is a no-op; if it is already
 // Cancelled, only OnCancelRepeated fires.
 // Allowed source states: Queued, Running, and Detached (non-terminal states).
-func (s *TaskStore) Cancel(id string) {
+func (s *TaskStore) Cancel(id string, reason protocol.EndReason, by protocol.TaskID) {
 	now := time.Now()
 	s.mu.Lock()
 	e, ok := s.tasks[id]
@@ -906,8 +946,15 @@ func (s *TaskStore) Cancel(id string) {
 	e.Status = protocol.TaskStatus_Cancelled
 	e.IsAttached = false
 	e.EndedAt = &now
+	e.EndReason = reason
+	e.CancelledBy = by
+	e.DeadlineAt, e.QueueDeadlineAt = 0, 0
 	if s.wal != nil {
-		if err := s.wal.Write(WALEvent{Type: "task_cancelled", TaskID: id, Ts: now.UnixNano()}); err != nil {
+		ev := WALEvent{Type: "task_cancelled", TaskID: id, EndReason: uint8(reason), Ts: now.UnixNano()}
+		if by.Id != ([16]byte{}) {
+			ev.CancelledBy = hex.EncodeToString(by.Id[:])
+		}
+		if err := s.wal.Write(ev); err != nil {
 			slog.Error("WAL write failed", "op", "task_cancelled", "task_id", id, "err", err)
 		}
 	}
@@ -972,8 +1019,10 @@ func (s *TaskStore) MarkFailed(id, reason string) {
 	e.IsAttached = false
 	e.EndedAt = &now
 	e.ErrorMsg = []byte(reason)
+	e.EndReason = protocol.EndReason_Failed
+	e.DeadlineAt, e.QueueDeadlineAt = 0, 0
 	if s.wal != nil {
-		if err := s.wal.Write(WALEvent{Type: "task_failed", TaskID: id, Reason: reason, Ts: now.UnixNano()}); err != nil {
+		if err := s.wal.Write(WALEvent{Type: "task_failed", TaskID: id, Reason: reason, EndReason: uint8(protocol.EndReason_Failed), Ts: now.UnixNano()}); err != nil {
 			slog.Error("WAL write failed", "op", "task_failed", "task_id", id, "err", err)
 		}
 	}
@@ -1084,11 +1133,13 @@ func (s *TaskStore) FailHeld(id, reason string) {
 	e.ErrorMsg = []byte(reason)
 	e.HoldID = ""
 	e.HoldDeadline = 0
+	e.EndReason = protocol.EndReason_Failed
+	e.DeadlineAt, e.QueueDeadlineAt = 0, 0
 	wal := s.wal
 	onFinish := s.OnFinish
 	s.mu.Unlock()
 	if wal != nil {
-		if err := wal.Write(WALEvent{Type: "task_failed", TaskID: id, Reason: reason, Ts: now.UnixNano()}); err != nil {
+		if err := wal.Write(WALEvent{Type: "task_failed", TaskID: id, Reason: reason, EndReason: uint8(protocol.EndReason_Failed), Ts: now.UnixNano()}); err != nil {
 			slog.Error("WAL write failed", "op", "task_failed", "task_id", id, "err", err)
 		}
 	}
@@ -1297,6 +1348,7 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 			s.tasks[ev.TaskID].authorityFromWAL(ev)
 			s.tasks[ev.TaskID].DelegateCaps, s.tasks[ev.TaskID].DelegateScope = delegationFromWAL(ev)
 			s.tasks[ev.TaskID].SpawnDepth, s.tasks[ev.TaskID].MaxDescendants = limitsFromWAL(ev)
+			s.tasks[ev.TaskID].runSpecFromWAL(ev)
 			s.order = append(s.order, ev.TaskID)
 		case "task_assigned":
 			if t, ok := s.tasks[ev.TaskID]; ok {
@@ -1312,6 +1364,8 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 				t.SkillsInjected = ev.SkillsInjected
 				ts := time.Unix(0, ev.Ts)
 				t.StartedAt = &ts
+				t.DeadlineAt = ev.DeadlineNs
+				t.QueueDeadlineAt = 0
 			}
 		case "task_finished":
 			if t, ok := s.tasks[ev.TaskID]; ok {
@@ -1325,6 +1379,8 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 				t.ErrorMsg = ev.DiffInfo
 				ts := time.Unix(0, ev.Ts)
 				t.EndedAt = &ts
+				t.EndReason = protocol.EndReason(ev.EndReason)
+				t.DeadlineAt, t.QueueDeadlineAt = 0, 0
 			}
 		case "task_held":
 			// A held task is alive on a runner that has no server to report
@@ -1350,6 +1406,12 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 				t.Status = protocol.TaskStatus_Cancelled
 				ts := time.Unix(0, ev.Ts)
 				t.EndedAt = &ts
+				t.EndReason = protocol.EndReason(ev.EndReason)
+				t.CancelledBy = protocol.TaskID{}
+				if raw, err := hex.DecodeString(ev.CancelledBy); err == nil && len(raw) == 16 {
+					copy(t.CancelledBy.Id[:], raw)
+				}
+				t.DeadlineAt, t.QueueDeadlineAt = 0, 0
 			}
 		case "task_failed":
 			// MarkFailed events: move task to Failed and store reason in DiffInfo.
@@ -1358,6 +1420,15 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 				ts := time.Unix(0, ev.Ts)
 				t.EndedAt = &ts
 				t.ErrorMsg = []byte(ev.Reason)
+				t.EndReason = protocol.EndReason(ev.EndReason)
+				t.DeadlineAt, t.QueueDeadlineAt = 0, 0
+			}
+		case "task_mode_changed":
+			if t, ok := s.tasks[ev.TaskID]; ok {
+				t.RunMode = protocol.RunMode(ev.RunMode)
+				t.Cond = conditionsFromWAL(ev)
+				t.DeadlineAt = ev.DeadlineNs
+				t.ModeSwitchedAt = ev.SwitchedAtNs
 			}
 		case "task_resumed":
 			// Resume on replay: reset the existing TaskEntry to Queued under
@@ -1389,6 +1460,7 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 				t.Kind = protocol.TaskKind(ev.Kind)
 				t.AgentProfile = ev.AgentProfile
 				t.ResumeConversation = ev.ResumeConversation
+				t.runSpecFromWAL(ev)
 			}
 		case "task_caps_changed":
 			if t, ok := s.tasks[ev.TaskID]; ok {
@@ -1450,6 +1522,8 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 			now := time.Now()
 			t.EndedAt = &now
 			t.ErrorMsg = []byte("server_restart")
+			t.EndReason = protocol.EndReason_Failed
+			t.DeadlineAt, t.QueueDeadlineAt = 0, 0
 		}
 	}
 }
@@ -1619,4 +1693,109 @@ func (s *TaskStore) List(limit int) []TaskEntry {
 		result[i] = *s.tasks[id]
 	}
 	return result
+}
+
+// applyRunSpec writes a create's or a resume's run mode and conditions, and
+// clears every per-run fact of an earlier run (A-D7: nothing is reused).
+func (e *TaskEntry) applyRunSpec(run RunSpec, now int64) {
+	e.RunMode = run.Mode
+	e.Cond = run.Cond
+	e.DeadlineAt, e.QueueDeadlineAt, e.ModeSwitchedAt = 0, 0, 0
+	e.EndReason, e.CancelledBy = protocol.EndReason_None, protocol.TaskID{}
+	if run.Mode == protocol.RunMode_Background && run.Cond.QueueTimeout > 0 {
+		e.QueueDeadlineAt = now + int64(run.Cond.QueueTimeout)
+	}
+}
+
+func (e *TaskEntry) runSpecToWAL(ev *WALEvent) {
+	ev.RunMode = uint8(e.RunMode)
+	e.Cond.toWAL(ev)
+	ev.QueueDeadlineNs = e.QueueDeadlineAt
+}
+
+// runSpecFromWAL is applyRunSpec on replay: the record carries the resolved
+// queue deadline rather than recomputing it from the replay clock.
+func (e *TaskEntry) runSpecFromWAL(ev WALEvent) {
+	e.RunMode = protocol.RunMode(ev.RunMode)
+	e.Cond = conditionsFromWAL(ev)
+	e.QueueDeadlineAt = ev.QueueDeadlineNs
+	e.DeadlineAt, e.ModeSwitchedAt = 0, 0
+	e.EndReason, e.CancelledBy = protocol.EndReason_None, protocol.TaskID{}
+}
+
+// SwitchRunMode switches a running session task between foreground and
+// background (A-D19). A switch to background resolves the deadline from now;
+// to foreground clears it. Refused for a Queued task (Tick never places a
+// foreground one, so it would never start), a terminal one, and a oneshot.
+func (s *TaskStore) SwitchRunMode(id string, mode protocol.RunMode, cond RunConditions, now int64) (TaskEntry, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.tasks[id]
+	if !ok {
+		return TaskEntry{}, ErrSwitchNotFound
+	}
+	if e.Kind != protocol.TaskKind_Interactive && e.Kind != protocol.TaskKind_Stream {
+		return *e, ErrSwitchNotSession
+	}
+	switch e.Status {
+	case protocol.TaskStatus_Queued:
+		return *e, ErrSwitchQueued
+	case protocol.TaskStatus_Running, protocol.TaskStatus_Detached, protocol.TaskStatus_Held:
+	default:
+		return *e, ErrSwitchNotActive
+	}
+	e.RunMode = mode
+	e.ModeSwitchedAt = now
+	if mode == protocol.RunMode_Background {
+		e.Cond = cond
+		e.DeadlineAt = 0
+		if cond.Deadline > 0 {
+			e.DeadlineAt = now + int64(cond.Deadline)
+		}
+	} else {
+		e.Cond = RunConditions{Rows: e.Cond.Rows, Cols: e.Cond.Cols}
+		e.DeadlineAt = 0
+	}
+	if s.wal != nil {
+		ev := WALEvent{Type: "task_mode_changed", TaskID: id, RunMode: uint8(e.RunMode), DeadlineNs: e.DeadlineAt, SwitchedAtNs: now, Ts: now}
+		e.Cond.toWAL(&ev)
+		if err := s.wal.Write(ev); err != nil {
+			slog.Error("WAL write failed", "op", "task_mode_changed", "task_id", id, "err", err)
+		}
+	}
+	return *e, nil
+}
+
+// BackgroundDeadlines reports every background deadline at or before now —
+// the run deadline of a Running, Detached or Held task, the queue deadline of
+// a Queued one — and the earliest still ahead (0 = none). Terminal tasks have
+// none: every path that ends a run clears both deadlines.
+func (s *TaskStore) BackgroundDeadlines(now int64) (due []DeadlineHit, next int64) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	consider := func(id string, at int64, reason protocol.EndReason) {
+		if at == 0 {
+			return
+		}
+		if at <= now {
+			due = append(due, DeadlineHit{ID: id, Reason: reason})
+			return
+		}
+		if next == 0 || at < next {
+			next = at
+		}
+	}
+	for _, id := range s.order {
+		e, ok := s.tasks[id]
+		if !ok || e.RunMode != protocol.RunMode_Background {
+			continue
+		}
+		switch e.Status {
+		case protocol.TaskStatus_Queued:
+			consider(id, e.QueueDeadlineAt, protocol.EndReason_QueueTimeout)
+		case protocol.TaskStatus_Running, protocol.TaskStatus_Detached, protocol.TaskStatus_Held:
+			consider(id, e.DeadlineAt, protocol.EndReason_Deadline)
+		}
+	}
+	return due, next
 }

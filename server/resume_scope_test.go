@@ -25,7 +25,7 @@ func TestResumeScopePresence(t *testing.T) {
 
 		markTerminalForTest(t, h, id)
 
-		if _, err := h.Tasks.Resume(id, "", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli, GrantUpdate{Caps: true, Scope: false, To: authority.Grant{Caps: protocol.Capability_FileRead, Scope: authority.Scope{}}}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}, false); err != nil {
+		if _, err := h.Tasks.Resume(id, "", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli, GrantUpdate{Caps: true, Scope: false, To: authority.Grant{Caps: protocol.Capability_FileRead, Scope: authority.Scope{}}}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}, false, RunSpec{}); err != nil {
 			t.Fatalf("Resume: %v", err)
 		}
 		e, _ := h.Tasks.Get(id)
@@ -45,7 +45,7 @@ func TestResumeScopePresence(t *testing.T) {
 
 		markTerminalForTest(t, h, id)
 
-		if _, err := h.Tasks.Resume(id, "", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli, GrantUpdate{Caps: false, Scope: true, To: authority.Grant{Caps: protocol.Capability_None, Scope: authority.Scope{Base: protocol.ScopeBase_Global}}}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}, false); err != nil {
+		if _, err := h.Tasks.Resume(id, "", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli, GrantUpdate{Caps: false, Scope: true, To: authority.Grant{Caps: protocol.Capability_None, Scope: authority.Scope{Base: protocol.ScopeBase_Global}}}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}, false, RunSpec{}); err != nil {
 			t.Fatalf("Resume: %v", err)
 		}
 		e, _ := h.Tasks.Get(id)

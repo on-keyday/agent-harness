@@ -175,7 +175,7 @@ func TestTaskStoreCancel(t *testing.T) {
 	s := NewTaskStore()
 	id := s.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()}, "")
 
-	s.Cancel(id)
+	s.Cancel(id, protocol.EndReason_Cancelled, protocol.TaskID{})
 
 	entry, ok := s.Get(id)
 	if !ok {
@@ -189,7 +189,7 @@ func TestTaskStoreCancel(t *testing.T) {
 	}
 
 	// Idempotent: second Cancel must not panic and status stays Cancelled.
-	s.Cancel(id)
+	s.Cancel(id, protocol.EndReason_Cancelled, protocol.TaskID{})
 	entry2, _ := s.Get(id)
 	if entry2.Status != protocol.TaskStatus_Cancelled {
 		t.Fatalf("expected Status=Cancelled after second Cancel, got %v", entry2.Status)
@@ -206,7 +206,7 @@ func TestTaskStoreFinishAsymmetricIdempotency(t *testing.T) {
 	t.Run("overwrites_Cancelled", func(t *testing.T) {
 		s := NewTaskStore()
 		id := s.Create("/repo", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()}, "")
-		s.Cancel(id)
+		s.Cancel(id, protocol.EndReason_Cancelled, protocol.TaskID{})
 		s.Finish(id, 0, nil)
 		entry, _ := s.Get(id)
 		if entry.Status != protocol.TaskStatus_Succeeded {
@@ -251,7 +251,7 @@ func TestTaskStoreTerminalClearsIsAttached(t *testing.T) {
 	}{
 		{"Finish_zero", func(s *TaskStore, id string) { s.Finish(id, 0, nil) }},
 		{"Finish_nonzero", func(s *TaskStore, id string) { s.Finish(id, 1, nil) }},
-		{"Cancel", func(s *TaskStore, id string) { s.Cancel(id) }},
+		{"Cancel", func(s *TaskStore, id string) { s.Cancel(id, protocol.EndReason_Cancelled, protocol.TaskID{}) }},
 		{"MarkFailed", func(s *TaskStore, id string) { s.MarkFailed(id, "x") }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -367,7 +367,7 @@ func TestTaskStoreCancelRunning(t *testing.T) {
 	if got, _ := s.Get(id); got.Status != protocol.TaskStatus_Running {
 		t.Fatalf("expected Running, got %v", got.Status)
 	}
-	s.Cancel(id)
+	s.Cancel(id, protocol.EndReason_Cancelled, protocol.TaskID{})
 	got, _ := s.Get(id)
 	if got.Status != protocol.TaskStatus_Cancelled {
 		t.Fatalf("expected Cancelled after cancelling a Running task, got %v", got.Status)
@@ -497,7 +497,7 @@ func TestTaskStorePruneTerminal(t *testing.T) {
 
 	// 4: cancelled long ago (should be pruned)
 	idOldCancel := s.Create("/r", "old-cancel", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()}, "")
-	s.Cancel(idOldCancel)
+	s.Cancel(idOldCancel, protocol.EndReason_Cancelled, protocol.TaskID{})
 	*s.tasks[idOldCancel].EndedAt = oldTime
 
 	cutoff := time.Now().Add(-24 * time.Hour)
@@ -583,7 +583,7 @@ func TestTaskStorePruneByIDs(t *testing.T) {
 	}
 
 	// Pass 3: cancelled, it is terminal and prunes like any other.
-	s.Cancel(idActive)
+	s.Cancel(idActive, protocol.EndReason_Cancelled, protocol.TaskID{})
 	removed, active, missing = s.PruneByIDs(nil, []string{idActive}, logDir)
 	if removed != 1 || active != 0 || missing != 0 {
 		t.Fatalf("PruneByIDs(cancelled): removed=%d active=%d missing=%d, want 1/0/0", removed, active, missing)
@@ -773,7 +773,7 @@ func TestTaskStore_DetachedTransitions(t *testing.T) {
 		id := createSessionTask(ts)
 		ts.SetDetached(id) //nolint:errcheck
 
-		ts.Cancel(id)
+		ts.Cancel(id, protocol.EndReason_Cancelled, protocol.TaskID{})
 		info, _ := ts.Get(id)
 		if info.Status != protocol.TaskStatus_Cancelled {
 			t.Fatalf("expected Cancelled, got %v", info.Status)
@@ -890,7 +890,7 @@ func TestResumeRecordsResumedByKind(t *testing.T) {
 	id := s.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli, protocol.TaskID{}, "runner1", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()}, "")
 	s.Assign(id, testRunnerID("runner1"), "/wt", false)
 	s.Finish(id, 0, nil)
-	if _, err := s.Resume(id, "p2", nil, protocol.RunnerSelector{}, "runner1", protocol.ClientKind_Agent, GrantUpdate{Caps: false, Scope: false, To: authority.Grant{Caps: protocol.Capability_None, Scope: authority.Scope{}}}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}, false); err != nil {
+	if _, err := s.Resume(id, "p2", nil, protocol.RunnerSelector{}, "runner1", protocol.ClientKind_Agent, GrantUpdate{Caps: false, Scope: false, To: authority.Grant{Caps: protocol.Capability_None, Scope: authority.Scope{}}}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}, false, RunSpec{}); err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
 	got, _ := s.Get(id)
@@ -938,7 +938,7 @@ func TestWALReplayRestoresAttribution(t *testing.T) {
 	s.Finish(id, 0, nil)
 
 	// Resume with resumer kind = ClientKind_Tui.
-	if _, err := s.Resume(id, "agent-prompt-v2", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Tui, GrantUpdate{Caps: false, Scope: false, To: authority.Grant{Caps: protocol.Capability_None, Scope: authority.Scope{}}}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}, false); err != nil {
+	if _, err := s.Resume(id, "agent-prompt-v2", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Tui, GrantUpdate{Caps: false, Scope: false, To: authority.Grant{Caps: protocol.Capability_None, Scope: authority.Scope{}}}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}, false, RunSpec{}); err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
 
@@ -989,7 +989,7 @@ func TestCreateRecordsCreatorTaskID(t *testing.T) {
 	}
 	s.Assign(id, testRunnerID("runner1"), "/wt", false)
 	s.Finish(id, 0, nil)
-	if _, err := s.Resume(id, "p2", nil, protocol.RunnerSelector{}, "runner1", protocol.ClientKind_Agent, GrantUpdate{Caps: false, Scope: false, To: authority.Grant{Caps: protocol.Capability_None, Scope: authority.Scope{}}}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}, false); err != nil {
+	if _, err := s.Resume(id, "p2", nil, protocol.RunnerSelector{}, "runner1", protocol.ClientKind_Agent, GrantUpdate{Caps: false, Scope: false, To: authority.Grant{Caps: protocol.Capability_None, Scope: authority.Scope{}}}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}, false, RunSpec{}); err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
 	got3, _ := s.Get(id)
@@ -1069,7 +1069,7 @@ func TestTaskCapsChangedReplayEvents(t *testing.T) {
 
 	// Resume with caps override to FileRead (override-to-None is also tested below).
 	newCaps := protocol.Capability_FileRead
-	if _, err := s.Resume(id, "p2", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli, GrantUpdate{Caps: true, Scope: false, To: authority.Grant{Caps: newCaps, Scope: authority.Scope{}}}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}, false); err != nil {
+	if _, err := s.Resume(id, "p2", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli, GrantUpdate{Caps: true, Scope: false, To: authority.Grant{Caps: newCaps, Scope: authority.Scope{}}}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}, false, RunSpec{}); err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
 
@@ -1148,7 +1148,7 @@ func TestResumeSwitchesKindAndReplays(t *testing.T) {
 	s.Assign(id, testRunnerID("runner-x"), "/wt/x", false)
 	s.Finish(id, 0, nil)
 
-	if _, err := s.Resume(id, "prompt", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli, GrantUpdate{Caps: false, Scope: false, To: authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}}}, protocol.TaskKind_Oneshot, "codex", protocol.TaskID{}, false); err != nil {
+	if _, err := s.Resume(id, "prompt", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli, GrantUpdate{Caps: false, Scope: false, To: authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}}}, protocol.TaskKind_Oneshot, "codex", protocol.TaskID{}, false, RunSpec{}); err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
 

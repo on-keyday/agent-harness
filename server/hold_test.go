@@ -135,7 +135,7 @@ func TestCancelAfterHoldWinsOnReplay(t *testing.T) {
 	if err := s.MarkHold(id, rid.Hex(), "cafe", time.Now().Add(time.Minute).UnixNano()); err != nil {
 		t.Fatalf("MarkHold: %v", err)
 	}
-	s.Cancel(id)
+	s.Cancel(id, protocol.EndReason_Cancelled, protocol.TaskID{})
 
 	fresh := replayInto(t, path)
 	got, _ := fresh.Get(id)

@@ -468,10 +468,13 @@ func New(cfg Config) *Server {
 		var progressAt int64
 		var lifecycle protocol.LifecycleState
 		var lifecycleAt int64
+		var runMode protocol.RunMode
+		var endReason protocol.EndReason
 		if t, ok := s.tasks.Get(taskID); ok {
 			taskKind = t.Kind
 			progress, progressAt = t.Progress, t.ProgressAt
 			lifecycle, lifecycleAt = t.Lifecycle, t.LifecycleAt
+			runMode, endReason = t.RunMode, t.EndReason
 		}
 		ev := protocol.TaskStatusEvent{
 			Kind:       kind,
@@ -479,6 +482,8 @@ func New(cfg Config) *Server {
 			TaskStatus: status,
 			TaskKind:   taskKind,
 			ExitCode:   exitCode,
+			RunMode:    runMode,
+			EndReason:  endReason,
 		}
 		// Stored, so stamped on every event like the kind: any event refreshes
 		// a subscriber's progress column without waiting for a List.
@@ -893,7 +898,7 @@ func (s *Server) serve(ctx context.Context, ep objproto.Endpoint, mux *http.Serv
 		// Per spec §9, mark them Cancelled.
 		for _, t := range s.tasks.List(0) {
 			if t.Status == protocol.TaskStatus_Detached {
-				s.tasks.Cancel(t.ID)
+				s.tasks.Cancel(t.ID, protocol.EndReason_Failed, protocol.TaskID{})
 			}
 		}
 		wal, err := OpenWAL(walPath)

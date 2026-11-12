@@ -135,6 +135,26 @@ type WALEvent struct {
 	AuthoritySource uint8  `json:"authority_source,omitempty"`
 	AuthorityActor  string `json:"authority_actor,omitempty"`
 	AuthorityAt     int64  `json:"authority_at,omitempty"`
+	// Pillar A run mode (docs/superpowers/specs/2026-11-13-pillar-a-run-modes-design.md).
+	// task_created / task_resumed: RunMode, the conditions (TurnEnd, *Ms,
+	// Rows, Cols) and QueueDeadlineNs. task_assigned: DeadlineNs.
+	// task_mode_changed: RunMode, the conditions, DeadlineNs, SwitchedAtNs.
+	// task_cancelled / task_finished / task_failed: EndReason, and
+	// task_cancelled CancelledBy (hex task id; empty = operator). Every zero
+	// value is a foreground task with no end reason, as before the fields.
+	RunMode         uint8  `json:"run_mode,omitempty"`
+	TurnEnd         uint8  `json:"turn_end,omitempty"`
+	DeadlineMs      int64  `json:"deadline_ms,omitempty"`
+	QuietMs         int64  `json:"quiet_ms,omitempty"`
+	BlockedMs       int64  `json:"blocked_ms,omitempty"`
+	QueueTimeoutMs  int64  `json:"queue_timeout_ms,omitempty"`
+	Rows            uint16 `json:"rows,omitempty"`
+	Cols            uint16 `json:"cols,omitempty"`
+	QueueDeadlineNs int64  `json:"queue_deadline_ns,omitempty"`
+	DeadlineNs      int64  `json:"deadline_ns,omitempty"`
+	SwitchedAtNs    int64  `json:"switched_at_ns,omitempty"`
+	EndReason       uint8  `json:"end_reason,omitempty"`
+	CancelledBy     string `json:"cancelled_by,omitempty"`
 	Ts              int64  `json:"ts"` // unix nano
 
 	// Selector is the runner-selection constraint. It is not stored directly as
@@ -200,6 +220,19 @@ type walEventJSON struct {
 	AuthoritySource             uint8              `json:"authority_source,omitempty"`
 	AuthorityActor              string             `json:"authority_actor,omitempty"`
 	AuthorityAt                 int64              `json:"authority_at,omitempty"`
+	RunMode                     uint8              `json:"run_mode,omitempty"`
+	TurnEnd                     uint8              `json:"turn_end,omitempty"`
+	DeadlineMs                  int64              `json:"deadline_ms,omitempty"`
+	QuietMs                     int64              `json:"quiet_ms,omitempty"`
+	BlockedMs                   int64              `json:"blocked_ms,omitempty"`
+	QueueTimeoutMs              int64              `json:"queue_timeout_ms,omitempty"`
+	Rows                        uint16             `json:"rows,omitempty"`
+	Cols                        uint16             `json:"cols,omitempty"`
+	QueueDeadlineNs             int64              `json:"queue_deadline_ns,omitempty"`
+	DeadlineNs                  int64              `json:"deadline_ns,omitempty"`
+	SwitchedAtNs                int64              `json:"switched_at_ns,omitempty"`
+	EndReason                   uint8              `json:"end_reason,omitempty"`
+	CancelledBy                 string             `json:"cancelled_by,omitempty"`
 	Ts                          int64              `json:"ts"`
 	// SelectorB64 holds the base64-encoded wire bytes of the RunnerSelector.
 	// Empty / absent means Kind == RunnerSelectorKind_Any (zero value).
@@ -254,6 +287,19 @@ func (e WALEvent) MarshalJSON() ([]byte, error) {
 		AuthoritySource:             e.AuthoritySource,
 		AuthorityActor:              e.AuthorityActor,
 		AuthorityAt:                 e.AuthorityAt,
+		RunMode:                     e.RunMode,
+		TurnEnd:                     e.TurnEnd,
+		DeadlineMs:                  e.DeadlineMs,
+		QuietMs:                     e.QuietMs,
+		BlockedMs:                   e.BlockedMs,
+		QueueTimeoutMs:              e.QueueTimeoutMs,
+		Rows:                        e.Rows,
+		Cols:                        e.Cols,
+		QueueDeadlineNs:             e.QueueDeadlineNs,
+		DeadlineNs:                  e.DeadlineNs,
+		SwitchedAtNs:                e.SwitchedAtNs,
+		EndReason:                   e.EndReason,
+		CancelledBy:                 e.CancelledBy,
 		Ts:                          e.Ts,
 	}
 	// Only encode the selector if it carries a non-Any kind (i.e. it has payload).
@@ -313,6 +359,19 @@ func (e *WALEvent) UnmarshalJSON(b []byte) error {
 	e.AuthoritySource = j.AuthoritySource
 	e.AuthorityActor = j.AuthorityActor
 	e.AuthorityAt = j.AuthorityAt
+	e.RunMode = j.RunMode
+	e.TurnEnd = j.TurnEnd
+	e.DeadlineMs = j.DeadlineMs
+	e.QuietMs = j.QuietMs
+	e.BlockedMs = j.BlockedMs
+	e.QueueTimeoutMs = j.QueueTimeoutMs
+	e.Rows = j.Rows
+	e.Cols = j.Cols
+	e.QueueDeadlineNs = j.QueueDeadlineNs
+	e.DeadlineNs = j.DeadlineNs
+	e.SwitchedAtNs = j.SwitchedAtNs
+	e.EndReason = j.EndReason
+	e.CancelledBy = j.CancelledBy
 	e.Ts = j.Ts
 
 	if j.SelectorB64 != "" {

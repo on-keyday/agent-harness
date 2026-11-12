@@ -22,7 +22,7 @@ func limitedChild(s *TaskStore, creator string, depth, max protocol.SpawnLimit) 
 		c = taskIDFromHex(creator)
 	}
 	return s.CreateWithinLimits("/r", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli, c, "",
-		protocol.RunnerSelector{}, nil, authority.Grant{SpawnDepth: depth, MaxDescendants: max}, "")
+		protocol.RunnerSelector{}, nil, authority.Grant{SpawnDepth: depth, MaxDescendants: max}, "", RunSpec{})
 }
 
 func mustChild(t *testing.T, s *TaskStore, creator string, depth, max protocol.SpawnLimit) string {
@@ -175,7 +175,7 @@ func TestLimitsSurviveReplay(t *testing.T) {
 
 	b := mustChild(t, s, "", authority.LimitOf(3), authority.Unbounded())
 	s.Finish(b, 0, nil)
-	if _, err := s.Resume(b, "p2", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli, GrantUpdate{SpawnDepth: true, MaxDescendants: true, To: authority.Grant{SpawnDepth: authority.LimitOf(1), MaxDescendants: authority.LimitOf(9)}}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}, false); err != nil {
+	if _, err := s.Resume(b, "p2", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli, GrantUpdate{SpawnDepth: true, MaxDescendants: true, To: authority.Grant{SpawnDepth: authority.LimitOf(1), MaxDescendants: authority.LimitOf(9)}}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}, false, RunSpec{}); err != nil {
 		t.Fatalf("resume: %v", err)
 	}
 

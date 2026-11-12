@@ -325,7 +325,7 @@ func TestVisiblePortForwards_ReapsDeadTaskAndListsRest(t *testing.T) {
 	deadID := h.pforwards().add(dead)
 
 	// The dead task leaves Running only AFTER both forwards were registered.
-	h.Tasks.Cancel(deadHex)
+	h.Tasks.Cancel(deadHex, protocol.EndReason_Cancelled, protocol.TaskID{})
 
 	got := h.visiblePortForwards("", protocol.TaskID{})
 	if len(got) != 1 || got[0].ForwardId != liveID {

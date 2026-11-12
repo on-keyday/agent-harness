@@ -83,7 +83,7 @@ func TestOnCancelRevokesTicketBeforeAnyTaskFinished(t *testing.T) {
 	if _, ok := boardTaskTicket(f.board, f.identity, taskIDFromHex(f.taskID)); !ok {
 		t.Fatal("fixture: ticket not registered")
 	}
-	f.tasks.Cancel(f.taskID)
+	f.tasks.Cancel(f.taskID, protocol.EndReason_Cancelled, protocol.TaskID{})
 	if _, ok := boardTaskTicket(f.board, f.identity, taskIDFromHex(f.taskID)); ok {
 		t.Fatal("ticket still valid after cancel, with no TaskFinished received")
 	}
@@ -96,7 +96,7 @@ func TestCancelResentUntilTaskFinished(t *testing.T) {
 		5 * time.Millisecond, 5 * time.Millisecond, 5 * time.Millisecond,
 		200 * time.Millisecond, 200 * time.Millisecond,
 	})
-	f.tasks.Cancel(f.taskID)
+	f.tasks.Cancel(f.taskID, protocol.EndReason_Cancelled, protocol.TaskID{})
 	f.waitCancels(t, 3) // the first send plus two resends
 
 	f.tasks.Finish(f.taskID, 0, nil)
@@ -111,7 +111,7 @@ func TestCancelResentUntilTaskFinished(t *testing.T) {
 // The schedule is finite: an unanswered cancel stops after the last delay.
 func TestCancelResendGivesUp(t *testing.T) {
 	f := newCancelFixture(t, []time.Duration{time.Millisecond, time.Millisecond})
-	f.tasks.Cancel(f.taskID)
+	f.tasks.Cancel(f.taskID, protocol.EndReason_Cancelled, protocol.TaskID{})
 	f.waitCancels(t, 3)
 	time.Sleep(50 * time.Millisecond)
 	if got := f.cancelsSent(t); got != 3 {
@@ -127,8 +127,8 @@ func TestRepeatedCancelResends(t *testing.T) {
 	onCancel := f.tasks.OnCancel
 	f.tasks.OnCancel = func(id string) { published++; onCancel(id) }
 
-	f.tasks.Cancel(f.taskID)
-	f.tasks.Cancel(f.taskID)
+	f.tasks.Cancel(f.taskID, protocol.EndReason_Cancelled, protocol.TaskID{})
+	f.tasks.Cancel(f.taskID, protocol.EndReason_Cancelled, protocol.TaskID{})
 	f.waitCancels(t, 2)
 	if published != 1 {
 		t.Fatalf("OnCancel fired %d times; the transition must happen once", published)
@@ -143,7 +143,7 @@ func TestCancelOfQueuedTaskSendsNothing(t *testing.T) {
 	f := newCancelFixture(t, []time.Duration{})
 	queued := f.tasks.Create("/repo", "work", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, f.fc.id.String(), protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}}, "")
 	before := f.cancelsSent(t)
-	f.tasks.Cancel(queued)
+	f.tasks.Cancel(queued, protocol.EndReason_Cancelled, protocol.TaskID{})
 	if got := f.cancelsSent(t); got != before {
 		t.Fatalf("cancelling a Queued task sent %d CancelTask", got-before)
 	}
