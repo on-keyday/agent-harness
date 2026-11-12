@@ -378,6 +378,9 @@ func New(cfg Config) *Server {
 		ResolveVia:            s.registry.GetLiveByIdentity,
 		ViaSendEstablishRelay: s.sendEstablishRelayRequest,
 	}
+	// Tick starts queued background sessions through the same session start
+	// an interactive open uses (A-D12).
+	s.scheduler.SetSessionStart(s.taskHandler.StartQueuedSession)
 	// Wire the conn-drop hook so a set_caps narrowing reaches in-flight work.
 	s.taskHandler.DropConnsForPrincipal = s.dropConnsForPrincipal
 	s.taskHandler.RevokeDataPlaneForTask = s.revokeDataPlaneForTask

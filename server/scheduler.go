@@ -32,7 +32,15 @@ type Scheduler struct {
 	reg    *Registry
 	store  *TaskStore
 	assign AssignFunc
+	// start starts a queued background session task already Assigned and
+	// bound to the runner (TaskHandler.StartQueuedSession). Nil = background
+	// tasks are not placed (they stay Queued).
+	start AssignFunc
 }
+
+// SetSessionStart wires the start of queued background session tasks
+// (pillar A spec, A-D12). Set once, before the first Tick.
+func (s *Scheduler) SetSessionStart(start AssignFunc) { s.start = start }
 
 // NewScheduler constructs a Scheduler that uses reg and store for state and
 // assign for dispatching work to runners.
@@ -77,6 +85,17 @@ func (s *Scheduler) Tick() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, task := range s.store.QueuedTasks() {
+		// Only queued work Tick can start: a oneshot, or a background session
+		// (A-D12). A foreground session is briefly Queued between its own
+		// create and Assign in handleOpenInteractive and must never be handed
+		// to the oneshot path (F3).
+		background := task.RunMode == protocol.RunMode_Background
+		if task.Kind != protocol.TaskKind_Oneshot && !background {
+			continue
+		}
+		if background && s.start == nil {
+			continue
+		}
 		for _, c := range s.reg.Candidates(task.RepoPath, task.Selector) {
 			if c.Status() != protocol.RunnerStatus_Idle || s.reg.displaced(c.ID) {
 				continue
@@ -95,6 +114,16 @@ func (s *Scheduler) Tick() {
 			// Cancelled back into Running, with no CancelTask ever sent.
 			if cur, ok := s.store.Get(task.ID); !ok || cur.Status != protocol.TaskStatus_Queued {
 				s.reg.UnbindTask(c.ID, task.ID)
+				break
+			}
+			if background {
+				// Assign first, as handleOpenInteractive does: the session
+				// starts on a Running task. A failed start has already failed
+				// the task (finishWithError told the runner and the board).
+				s.store.Assign(task.ID, c.Identity, "", c.SkillsInjected)
+				if err := s.start(c.ID, task.ID); err != nil {
+					slog.Error("background start failed", "runner", c.ID, "task", task.ID, "error", err)
+				}
 				break
 			}
 			if err := s.assign(c.ID, task.ID); err != nil {

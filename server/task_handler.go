@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/hex"
 	"io"
 	"log/slog"
@@ -1954,147 +1953,24 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 	h.Tasks.Assign(taskIDHex, runner.Identity, "", runner.SkillsInjected)
 	h.Registry.BindTask(runner.ID, taskIDHex)
 
-	finishWithError := func(reason string) {
-		slog.Error("handleOpenInteractive: "+reason, "task", taskIDHex, "runner", runner.Hostname)
-		h.Tasks.Finish(taskIDHex, -1, []byte("server: "+reason))
-		h.Registry.UnbindTask(runner.ID, taskIDHex)
-		boardRevokeTask(h.Board, runner.Identity, taskIDHex)
-	}
-
-	// Generate a fresh ticket for the agent Hello handshake.
-	var ticket [16]byte
-	if _, err := rand.Read(ticket[:]); err != nil {
-		slog.Error("handleOpenInteractive: ticket generation failed", "task", taskIDHex, "err", err)
-		finishWithError("ticket gen failed: " + err.Error())
-		return errResp(protocol.OpenInteractiveStatus_InternalError)
-	}
-	boardRegisterTask(h.Board, runner.Identity, taskIDHex, ticket, resolved, conversationOf(req.ResumeConversation()))
-
-	// A detached open creates no client stream: nobody takes the seat.
-	var tuiStream trsf.BidirectionalStream
-	closeTui := func() {
-		if tuiStream != nil {
-			_ = tuiStream.CloseBoth()
-		}
-	}
-	if !req.Detached() {
-		tuiStream = tuiConn.CreateBidirectionalStream()
-		if tuiStream == nil {
-			finishWithError("create client-side stream failed")
-			return errResp(protocol.OpenInteractiveStatus_InternalError)
-		}
-	}
-	runnerConn := runner.Conn
-	if runnerConn == nil {
-		closeTui()
-		finishWithError("runner conn nil")
-		return errResp(protocol.OpenInteractiveStatus_InternalError)
-	}
-	runnerStream := runnerConn.CreateBidirectionalStream()
-	if runnerStream == nil {
-		closeTui()
-		finishWithError("create runner-side stream failed")
-		return errResp(protocol.OpenInteractiveStatus_InternalError)
-	}
-
-	// Tell the runner to wire its stream end to claude.
-	rreq := protocol.RunnerRequest{Kind: protocol.RunnerRequestType_OpenExec}
-	oer := protocol.OpenExecRunnerRequest{
-		TaskId:     tid,
-		StreamId:   uint64(runnerStream.ID()),
-		AuthTicket: ticket,
-		// The args the task runs with: the request's, or the record's on an
-		// exact resume. Tasks.Resume stored the same slice.
-		ExtraArgs: protocol.AgentArgsFromStrings(args),
-	}
-	oer.SetResumeConversation(req.ResumeConversation())
-	// Relay the kind. The runner refuses it when the resolved profile has no
-	// stream adapter, so the check lives where the profiles are rather than
-	// being duplicated here from a stale copy of them.
-	oer.SetEventStream(req.EventStream())
-	oer.SetRepoPath([]byte(repo))
-	oer.SetAgentProfile([]byte(resolved)) // server-resolved profile the runner execs with (empty → runner default)
-	if req.X11Enabled() && req.EventStream() {
-		closeTui()
-		_ = runnerStream.CloseBoth()
-		finishWithError("x11 forwarding is a terminal feature and an event-stream task has no terminal")
-		return errResp(protocol.OpenInteractiveStatus_InternalError)
-	}
-	if req.X11Enabled() && req.Detached() {
-		closeTui()
-		_ = runnerStream.CloseBoth()
-		finishWithError("x11 forwarding needs a live client to host the tunnel, and a detached open has none")
-		return errResp(protocol.OpenInteractiveStatus_InternalError)
-	}
+	// From here the session start is shared with Tick's placement of a
+	// queued background task (A-D12): startSession.
+	var x11 *protocol.X11Forward
 	if req.X11Enabled() {
-		oer.SetX11Enabled(true) // discriminator first
-		if f := req.X11(); f != nil {
-			oer.SetX11(*f) // relay the whole X11Forward block verbatim
-		}
+		x11 = req.X11()
 	}
-	rreq.SetOpenExec(oer)
-	if err := sendRunnerRequest(runnerConn, &rreq); err != nil {
-		closeTui()
-		_ = runnerStream.CloseBoth()
-		finishWithError("send open_exec to runner: " + err.Error())
-		return errResp(protocol.OpenInteractiveStatus_InternalError)
+	var rows, cols uint16
+	if r, c := req.InitialRows(), req.InitialCols(); r != nil && c != nil {
+		rows, cols = *r, *c
 	}
-
-	// Spawn a SessionMux that owns the runner stream and supports
-	// attach/detach of successive TUI streams — every interactive session is
-	// detachable. The initial TUI stream (tuiStream) is attached after
-	// registration.
-	//
-	// Sessions must be wired before calling handleOpenInteractive. A nil
-	// Sessions registry is a programming error.
-	if h.Sessions == nil {
-		closeTui()
-		_ = runnerStream.CloseBoth()
-		finishWithError("Sessions registry not wired (programming error)")
-		return errResp(protocol.OpenInteractiveStatus_InternalError)
+	tuiStream, st := h.startSession(sessionStart{
+		TaskIDHex: taskIDHex, Runner: runner, Profile: resolved, Repo: repo, Args: args,
+		ResumeConversation: req.ResumeConversation(), EventStream: req.EventStream(),
+		Detached: req.Detached(), Rows: rows, Cols: cols, X11: x11, TUIConn: tuiConn,
+	})
+	if st != protocol.OpenInteractiveStatus_Ok {
+		return errResp(st)
 	}
-
-	// RingBufferSize defaults to 1 MiB when not configured.
-	ringSize := h.RingBufferSize
-	if ringSize <= 0 {
-		ringSize = 1 << 20 // 1 MiB default
-	}
-
-	hooks := h.sessionHooks()
-
-	parentCtx := h.Ctx
-	if parentCtx == nil {
-		parentCtx = context.Background()
-	}
-
-	mux := NewSessionMux(parentCtx, taskIDHex, interactiveKind(req), runnerStream, NewRingBuffer(ringSize), hooks)
-	h.Sessions.Add(taskIDHex, mux)
-
-	if req.Detached() {
-		// Nobody attaches, so the OnDetach hook that moves an attached open to
-		// Detached when its client leaves never fires; set it here.
-		_ = h.Tasks.SetDetached(taskIDHex)
-		// The size a client would have sent on its stream, applied as that
-		// stream's first frame would have been.
-		if r, c := req.InitialRows(), req.InitialCols(); r != nil && c != nil && *r != 0 && *c != 0 {
-			if err := mux.applyWinSizeFrame(winSizeFrame(*r, *c)); err != nil {
-				slog.Warn("handleOpenInteractive: initial size", "task", taskIDHex, "err", err)
-			}
-		}
-	} else if err := mux.Attach(parentCtx, tuiStream); err != nil {
-		mux.Stop()
-		h.Sessions.Remove(taskIDHex)
-		finishWithError("initial attach failed: " + err.Error())
-		return errResp(protocol.OpenInteractiveStatus_InternalError)
-	}
-
-	// The SessionMux's onStop hook (above) handles Sessions.Remove. When the
-	// mux stops (runner EOF or Stop()), also clean up task state and the
-	// registry binding — see afterMuxStopped for the exact rules.
-	go func() {
-		<-mux.Wait()
-		h.afterMuxStopped(taskIDHex, runner.ID)
-	}()
 
 	resp := protocol.OpenInteractiveResponse{Status: protocol.OpenInteractiveStatus_Ok, TaskId: tid}
 	if tuiStream != nil {

@@ -614,3 +614,103 @@ func TestSchedulerSkipsTaskCancelledMidWalk(t *testing.T) {
 		t.Fatalf("runner holds %d reservations, want 1 (b's must be released)", len(e.ActiveTasks))
 	}
 }
+
+// createBGAt queues a background interactive task on repo /x.
+func createBGAt(t *testing.T, store *TaskStore) string {
+	t.Helper()
+	id, err := store.CreateWithinLimits("/x", "triage", protocol.TaskKind_Interactive, protocol.ClientKind_Cli,
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{}, "",
+		RunSpec{Mode: protocol.RunMode_Background, Cond: RunConditions{Deadline: time.Hour}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+// F3: an interactive open is Queued for a moment before its own Assign; Tick
+// must never hand it to the oneshot path, or start it a second time.
+func TestTickSkipsForegroundSessions(t *testing.T) {
+	reg := NewRegistry()
+	reg.Add(idleRunner("r1", "h1", nil))
+	store := NewTaskStore()
+	store.Create("/x", "", protocol.TaskKind_Interactive, protocol.ClientKind_Cli, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{}, "")
+	store.Create("/x", "", protocol.TaskKind_Stream, protocol.ClientKind_Cli, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{}, "")
+	calls := 0
+	s := NewScheduler(reg, store, func(objproto.ConnectionID, string) error { calls++; return nil })
+	s.SetSessionStart(func(objproto.ConnectionID, string) error { calls++; return nil })
+	s.Tick()
+	if calls != 0 {
+		t.Fatalf("Tick placed a foreground session (%d calls)", calls)
+	}
+}
+
+func TestTickStartsBackgroundSessionWithStart(t *testing.T) {
+	reg := NewRegistry()
+	reg.Add(idleRunner("r1", "h1", nil))
+	store := NewTaskStore()
+	id := createBGAt(t, store)
+	assigned, started := 0, []string{}
+	s := NewScheduler(reg, store, func(objproto.ConnectionID, string) error { assigned++; return nil })
+	s.SetSessionStart(func(_ objproto.ConnectionID, tID string) error {
+		// Assign comes first, so the session starts on a Running task.
+		if e, _ := store.Get(tID); e.Status != protocol.TaskStatus_Running {
+			t.Errorf("start saw status %v, want Running", e.Status)
+		}
+		started = append(started, tID)
+		return nil
+	})
+	s.Tick()
+	if assigned != 0 || len(started) != 1 || started[0] != id {
+		t.Fatalf("assign %d, started %v", assigned, started)
+	}
+	if e, _ := store.Get(id); e.Status != protocol.TaskStatus_Running || e.DeadlineAt == 0 {
+		t.Fatalf("status %v deadline %d", e.Status, e.DeadlineAt)
+	}
+}
+
+// Review Focus 4.
+func TestTickWaitsSecondBackgroundOnOneSlot(t *testing.T) {
+	reg := NewRegistry()
+	r := idleRunner("r1", "h1", nil)
+	r.MaxTasks = 1
+	reg.Add(r)
+	store := NewTaskStore()
+	first := createBGAt(t, store)
+	second := createBGAt(t, store)
+	var started []string
+	s := NewScheduler(reg, store, nil)
+	s.SetSessionStart(func(_ objproto.ConnectionID, tID string) error { started = append(started, tID); return nil })
+	s.Tick()
+	if len(started) != 1 || started[0] != first {
+		t.Fatalf("first tick started %v", started)
+	}
+	if e, _ := store.Get(second); e.Status != protocol.TaskStatus_Queued {
+		t.Fatalf("second is %v, want Queued", e.Status)
+	}
+	store.Finish(first, 0, nil)
+	reg.UnbindTask(tcid("r1"), first)
+	s.Tick()
+	if len(started) != 2 || started[1] != second {
+		t.Fatalf("after the slot freed, started %v", started)
+	}
+}
+
+// Review Focus 3.
+func TestTickNeverPlacesCancelledQueuedBackground(t *testing.T) {
+	reg := NewRegistry()
+	reg.Add(idleRunner("r1", "h1", nil))
+	store := NewTaskStore()
+	id := createBGAt(t, store)
+	by := protocol.TaskID{Id: [16]byte{5}}
+	store.Cancel(id, protocol.EndReason_Cancelled, by)
+	calls := 0
+	s := NewScheduler(reg, store, nil)
+	s.SetSessionStart(func(objproto.ConnectionID, string) error { calls++; return nil })
+	s.Tick()
+	if calls != 0 {
+		t.Fatal("a cancelled background task was started")
+	}
+	if e, _ := store.Get(id); e.EndReason != protocol.EndReason_Cancelled || e.CancelledBy != by {
+		t.Fatalf("end %v by %v", e.EndReason, e.CancelledBy)
+	}
+}
