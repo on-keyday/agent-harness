@@ -321,6 +321,66 @@ format X11Forward:
     cookie_len :u16
     cookie :[cookie_len]u8
 
+# Run mode of a session task (pillar A, docs/superpowers/specs/2026-11-13-pillar-a-run-modes-design.md
+# A-D1). foreground is the zero value, so every task and record that predates
+# it is foreground.
+enum RunMode:
+    :u8
+    foreground = 0
+    background = 1
+
+# Which signal ends a background run's turn (A-D7). unset = the server's
+# default (any; for the stream kind, lifecycle).
+enum TurnEndSignal:
+    :u8
+    unset = 0
+    off = 1
+    quiet = 2
+    lifecycle = 3
+    program = 4
+    any = 5
+
+# Why a task's latest run ended (A-D8, A-D11). none = not ended, or ended
+# before the field existed.
+enum EndReason:
+    :u8
+    none = 0
+    process_exit = 1
+    cancelled = 2
+    failed = 3
+    deadline = 4
+    turn_done_lifecycle = 5
+    turn_done_program = 6
+    turn_done_quiet = 7
+    agent_error = 8
+    blocked_timeout = 9
+    queue_timeout = 10
+
+# Why a queued background task waits (A-D14), computed when a listing is built.
+enum WaitReason:
+    :u8
+    none = 0
+    no_candidate = 1  # no connected runner has the repo as a root and matches
+    all_busy = 2      # candidates exist and none has a free slot
+
+# The conditions of a background run (A-D7). In every *_ms field 0 means the
+# server's default; for deadline_ms 0 means absent, which a background open
+# refuses (deadline_required).
+format BackgroundConditions:
+    deadline_ms :u64
+    turn_end :TurnEndSignal
+    quiet_ms :u64
+    blocked_ms :u64
+    queue_timeout_ms :u64
+
+# The whole content of a prompt stream, on the client->server leg
+# (OpenInteractiveRequest.prompt_stream_id) and the server->runner leg
+# (OpenExecRunnerRequest.prompt_stream_id). Streamed because a prompt has no
+# bound that fits one UDP datagram (A-D17); capped at protocol.PromptMax.
+format PromptBody:
+    prompt_len :u32
+    prompt :[prompt_len]u8
+
 format OpenExecRunnerRequest:
     task_id :TaskID
     auth_ticket :[16]u8
@@ -337,13 +397,18 @@ format OpenExecRunnerRequest:
     # stream adapter rather than the agent under a PTY. Mutually exclusive with
     # x11_enabled, which is a terminal concept.
     event_stream :u1
-    reserved :u5
+    # 1 = the server wrote a PromptBody on the send stream prompt_stream_id
+    # before this request; the runner reads it before starting the agent.
+    prompt_present :u1
+    reserved :u4
     # agent_profile: relayed from OpenInteractiveRequest.agent_profile /
     # AssignTaskBody.agent_profile.
     agent_profile_len :u8
     agent_profile :[agent_profile_len]u8
     if x11_enabled == 1:
         x11 :X11Forward  # relayed verbatim from OpenInteractiveRequest.x11
+    if prompt_present == 1:
+        prompt_stream_id :u64
 
 format TaskWakeRequest:
     task_id :TaskID
@@ -682,6 +747,9 @@ enum TaskControlKind:
                             # live connection stays
     runner_kick             # appended: make one runner leave (it exits).
                             # Gated on runner_enroll: registry hygiene
+    session_mode            # appended: switch a running session task between
+                            # foreground and background (A-D19). Gated on
+                            # cancel: either direction changes how the run ends
 
 # ClientKind tags the kind of caller that opened a TaskControl session.
 # `agent` is an in-task harness-cli that proves its identity via agent_info;
@@ -1149,6 +1217,18 @@ format TaskInfo:
     spawn_depth     :SpawnLimit
     max_descendants :SpawnLimit
     descendants     :u32
+    # Run mode and how the latest run ended (A-D11, A-D14). cancelled_by is
+    # who cancelled when end_reason == cancelled (zero = the operator).
+    # deadline_ns / queue_deadline_ns are absolute unix nanos, 0 = none.
+    # wait_reason is computed when the listing is built, for a queued
+    # background task. conditions are the current run's.
+    run_mode :RunMode
+    end_reason :EndReason
+    cancelled_by :TaskID
+    deadline_ns :u64
+    queue_deadline_ns :u64
+    wait_reason :WaitReason
+    conditions :BackgroundConditions
 
 format ListResult:
     # Server-initiated send-stream id; client reads ListResultBody bytes
@@ -1310,6 +1390,9 @@ enum SubmitStatus:
     # A spawn limit refused the creation: the creator's spawn_depth is 0, or
     # an ancestor's max_descendants is reached. error_msg names which.
     spawn_limit         = "spawn_limit"
+    # resume_task_id names a background task: a submit resume would turn it
+    # into a oneshot with no session to watch (A-D1).
+    mode_mismatch       = "mode_mismatch"
 
 # SubmitResponse replaces the old bare task_id with a status + optional error.
 format SubmitResponse:
@@ -2377,7 +2460,15 @@ format OpenInteractiveRequest:
     # resume only: same semantics as SubmitRequest's.
     spawn_depth_present     :u1
     max_descendants_present :u1
-    reserved2 :u5
+    # 1 = background names the run mode; 0 = a create opens foreground and a
+    # resume keeps the task's current run mode (A-D1).
+    run_mode_set :u1
+    background :u1          # meaningful only with run_mode_set == 1
+    conditions_present :u1  # the conditions block below is on the wire
+    # 1 = the client writes a PromptBody on the send stream prompt_stream_id
+    # after this request (A-D17).
+    prompt_present :u1
+    reserved2 :u1
     # X11 block is on the wire ONLY when x11_enabled == 1 (no invisible bytes
     # when disabled).
     if x11_enabled == 1:
@@ -2388,6 +2479,10 @@ format OpenInteractiveRequest:
     if detached == 1:
         initial_rows :u16
         initial_cols :u16
+    if conditions_present == 1:
+        conditions :BackgroundConditions
+    if prompt_present == 1:
+        prompt_stream_id :u64
 
 enum OpenInteractiveStatus:
     :u8
@@ -2403,18 +2498,28 @@ enum OpenInteractiveStatus:
     # See SubmitStatus — same resume semantics for the interactive path.
     resume_not_found    = "resume_not_found"
     resume_not_terminal = "resume_not_terminal"
-    # See SubmitStatus.scope_not_permitted. This response carries no error_msg
-    # field, so the status is the whole answer and the client supplies the
-    # offending ids from the scope it sent.
+    # See SubmitStatus.scope_not_permitted; error_msg names the refused id and
+    # which bound refused it.
     scope_not_permitted = "scope_not_permitted"
-    # See SubmitStatus.resume_exact_mismatch. No error_msg on this response;
-    # the client names the conflict from the flags it sent.
+    # See SubmitStatus.resume_exact_mismatch.
     resume_exact_mismatch = "resume_exact_mismatch"
     # The caller may open this task but may not hold its control seat: the
     # target is outside its exec_control scope. Open with detached = 1.
     detach_required       = "detach_required"
     # See SubmitStatus.spawn_limit; error_msg names which limit.
     spawn_limit           = "spawn_limit"
+    # A background open is missing what it cannot run without (A-D5, A-D6,
+    # A-D7): a deadline, an agent profile on a create, a prompt.
+    deadline_required     = "deadline_required"
+    profile_required      = "profile_required"
+    prompt_required       = "prompt_required"
+    # The stream kind has no program state and quiet cannot tell a long tool
+    # call from a finished turn there (F19): turn_end quiet/program refused.
+    turn_end_unsupported  = "turn_end_unsupported"
+    # The prompt stream carried more than protocol.PromptMax bytes, or could
+    # not be read or decoded.
+    prompt_too_large      = "prompt_too_large"
+    bad_prompt            = "bad_prompt"
 
 # One RUNNER offered when a spawn is ambiguous: more than one (runner, agent
 # profile) choice matched. profiles lists the agents the caller may pick on
@@ -2450,7 +2555,10 @@ format OpenInteractiveResponse:
     # stream_id: the server's trsf issues bidirectional ids from 0, so the
     # first stream it opens toward a client IS stream 0.
     attached :u1
-    reserved :u7
+    # 1 = a background open: the task is Queued and will be placed when a
+    # runner can take it (A-D4).
+    queued :u1
+    reserved :u6
     if attached == 1:
         stream_id :u64 # Bidirectional stream the server opens toward the
                        # client; client looks it up via
@@ -2753,6 +2861,32 @@ format LifecycleSetResponse:
     status :LifecycleSetStatus
     lifecycle_at :u64          # SERVER-clock stamp written; 0 unless ok
 
+# session_mode: switch a running session task (interactive or stream) between
+# foreground and background (A-D19). To background needs the conditions block
+# with a deadline; to foreground ignores it. A queued task is refused.
+format SessionModeRequest:
+    task_id :TaskID
+    background :u1
+    conditions_present :u1
+    reserved :u6
+    if conditions_present == 1:
+        conditions :BackgroundConditions
+
+enum SessionModeStatus:
+    :u8
+    ok = 0
+    not_found = 1             # no such task, or outside the caller's cancel scope
+    not_session = 2           # a oneshot task, or one that is not running
+    queued = 3                # Queued: cancel it and resume in the other mode
+    deadline_required = 4
+    turn_end_unsupported = 5
+    internal_error = 6
+
+format SessionModeResponse:
+    status :SessionModeStatus
+    error_msg_len :u16
+    error_msg :[error_msg_len]u8
+
 # OSC 7501 (Program Status Protocol) root-record state and blocked kind, as the
 # server's screen model last parsed them (spec D17). none = never reported.
 enum ProgramState:
@@ -2883,6 +3017,7 @@ format TaskControlRequest:
         TaskControlKind.runner_dial_list         => runner_dial_list         :RunnerDialListRequest
         TaskControlKind.runner_dial_remove       => runner_dial_remove       :RunnerDialRemoveRequest
         TaskControlKind.runner_kick              => runner_kick              :RunnerKickRequest
+        TaskControlKind.session_mode             => session_mode             :SessionModeRequest
         .. => error("Unexpected task")
 
 # CancelResult replaces a bare u8 that every reply wrote as 0. ok stays 0, so
@@ -2980,6 +3115,7 @@ format TaskControlResponse:
         TaskControlKind.runner_dial_list         => runner_dial_list         :RunnerDialListResponse
         TaskControlKind.runner_dial_remove       => runner_dial_remove       :RunnerDialRemoveResponse
         TaskControlKind.runner_kick              => runner_kick              :RunnerKickResponse
+        TaskControlKind.session_mode             => session_mode             :SessionModeResponse
 
 # --- runner enrollment (2026-10-27-runner-enrollment-design.md) --------------
 # The server lets a runner register under AuthRole.runner only when it signs
@@ -3452,6 +3588,8 @@ format TaskStatusEvent:
     program_kind :ProgramKind
     program_msg_len :u16
     program_msg :[program_msg_len]u8
+    run_mode :RunMode       # appended (A-D14)
+    end_reason :EndReason   # appended; none until the run ends (A-D11)
 
 format RunnerStatusEvent:
     kind :StatusEventKind

@@ -1173,6 +1173,13 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		if r := req.RunnerDialRemove(); r != nil {
 			h.handleRunnerDialRemove(conn, req.Header.RequestId, r)
 		}
+	case protocol.TaskControlKind_SessionMode:
+		// Pillar A2 Task 1 stub; Task 7 replaces it within the same landing.
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_SessionMode, RequestId: req.Header.RequestId}
+		sm := protocol.SessionModeResponse{Status: protocol.SessionModeStatus_InternalError}
+		sm.SetErrorMsg([]byte("session_mode: not built"))
+		resp.SetSessionMode(sm)
+		conn.SendMessage(resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})) //nolint:errcheck
 
 	case protocol.TaskControlKind_DialRunner:
 		dr := req.DialRunner()

@@ -41,9 +41,10 @@ import (
 // polling for the same fact. Its one side effect, sink=notify, is gated on
 // `notify` inside the handler.
 var requiredCap = map[protocol.TaskControlKind]protocol.Capability{
-	protocol.TaskControlKind_Cancel:     protocol.Capability_Cancel,
-	protocol.TaskControlKind_PruneTasks: protocol.Capability_Prune,
-	protocol.TaskControlKind_Notify:     protocol.Capability_Notify,
+	protocol.TaskControlKind_Cancel:      protocol.Capability_Cancel,
+	protocol.TaskControlKind_SessionMode: protocol.Capability_Cancel,
+	protocol.TaskControlKind_PruneTasks:  protocol.Capability_Prune,
+	protocol.TaskControlKind_Notify:      protocol.Capability_Notify,
 	// Emptying another task's progress line: whoever may end the task may
 	// empty its status line, which is the weaker act. Target-gated on
 	// cancel's scope in handleProgressClear.
