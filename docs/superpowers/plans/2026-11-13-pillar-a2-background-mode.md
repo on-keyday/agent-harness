@@ -373,10 +373,28 @@ and switched while it runs.
 
 **Files:**
 - Create: `server/run_end.go`, `server/run_watch.go`, `server/deadline_watch.go`
-- Modify: `server/server.go` (start the deadline watcher next to `watchHeldDeadlines`, `:984-988`; wire `TaskHandler.wakeDeadlines`), `server/session_start.go` (`armRunWatcher`)
-- Test: `server/run_end_test.go`, `server/run_watch_test.go`, `server/deadline_watch_test.go`
+- Modify: `server/idle_signal.go:58-68` (`legSatisfied` calls the shared helper), `server/server.go` (start the deadline watcher next to `watchHeldDeadlines`, `:984-988`; wire `TaskHandler.wakeDeadlines`), `server/session_start.go` (`armRunWatcher`)
+- Test: `server/idle_signal_test.go` (new `TestReportCounts`; `TestLegSatisfied` unmodified), `server/run_end_test.go`, `server/run_watch_test.go`, `server/deadline_watch_test.go`
 
 **Interfaces:**
+- **One rule, shared with await-idle**, in `server/idle_signal.go`. Both
+  evaluators decide "does this non-working report end the turn" with it.
+  What stays in each evaluator is which states count and what a fire
+  returns.
+  ```go
+  // reportCounts reports whether a non-working state reported at stateAt
+  // counts: it was reported after floor; when there was input after base, a
+  // `working` at workingAt followed that input; and, with requireWork, a
+  // `working` since base preceded the report.
+  func reportCounts(stateAt, workingAt, floor, base, lastInput int64, requireWork bool) bool
+  ```
+  - `legSatisfied` becomes
+    `reportCounts(stateAt, workingAt, max(s.LastInput, s.MuxStart), s.MuxStart, s.LastInput, false) || <its quiet fallback, unchanged>`.
+    This keeps await-idle's D6/D18 exactly. `TestLegSatisfied` and the other
+    await-idle tests pass without edits, and that is the check.
+  - `evaluateRun` calls it with
+    `floor = max(RunStart, SwitchedAt, LastInput)`, `base = RunStart`,
+    `requireWork = true` (G16).
 - Produces, in `server/run_end.go` (pure, table-tested):
   ```go
   type runInputs struct {
@@ -391,13 +409,11 @@ and switched while it runs.
   func evaluateRun(in runInputs) (protocol.EndReason, bool)
   ```
   - **Order:** `agent_error`, then `blocked_timeout`, then the turn-end leg(s) chosen by `Cond.TurnEnd`, in program → lifecycle → quiet order. `off` disables turn end only.
-  - **Floor:** `floor := max(RunStart, SwitchedAt, LastInput)`.
-  - **Lifecycle turn end:** fires when all of these hold:
-    - `Life.State == Idle`;
-    - `Life.At > floor`;
-    - `Life.WorkingAt >= RunStart && Life.WorkingAt < Life.At`;
-    - when `LastInput > RunStart`, also `Life.WorkingAt > LastInput`.
-  - **Program turn end:** the same rule over `Prog ∈ {idle, done}`, `ProgAt` and `ProgWorkingAt`.
+  - **Lifecycle turn end:** `Life.State == Idle` and
+    `reportCounts(Life.At, Life.WorkingAt, max(RunStart, SwitchedAt, LastInput), RunStart, LastInput, true)`.
+    With `requireWork`, this means
+    `Life.WorkingAt >= RunStart && Life.WorkingAt < Life.At`.
+  - **Program turn end:** the same call over `Prog ∈ {idle, done}`, `ProgAt` and `ProgWorkingAt`.
   - **Quiet:** fires when `SawOutputThisRun` and `Now - max(LastOutput, LastInput, SwitchedAt, MuxStart) >= Cond.Quiet`. It is not used for the stream kind.
   - **Blocked:** the current state is lifecycle `Waiting` or program `Blocked`, and `Now - max(stateAt, SwitchedAt) >= Cond.Blocked`.
   - **Error:** lifecycle `Error` or program `Error`, with `stateAt > max(RunStart, SwitchedAt)`.
@@ -414,6 +430,13 @@ and switched while it runs.
   - `TaskHandler.wakeDeadlines func()` is called after any write that sets a deadline (create/resume with a queue timeout, Assign, SwitchRunMode). Use a buffered (1) channel and a non-blocking send.
 
 - [ ] **Step 1: Write the failing tests.**
+  - `TestReportCounts`, a table in `idle_signal_test.go`:
+    - a report at or before `floor` does not count;
+    - after input, it needs `workingAt > lastInput`;
+    - with `requireWork`, `workingAt < base` or `workingAt >= stateAt`
+      does not count;
+    - without `requireWork` and with no input, any report after `floor`
+      counts (await-idle's case).
   - `TestEvaluateRun`, a table in `run_end_test.go`. One row per rule:
     - `waiting`/`blocked` never end a turn but start the clock;
     - a turn end before any `working` since `RunStart` does not fire;
@@ -428,11 +451,15 @@ and switched while it runs.
   - `TestDeadlineWatcherStartupPassEndsExpiredHeld`.
   - `TestDeadlineWatcherIgnoresTerminal`.
 - [ ] **Step 2: Run them.**
-  Run: `go test ./server -run 'EvaluateRun|RunWatcher|DeadlineWatcher'`.
+  Run: `go test ./server -run 'ReportCounts|EvaluateRun|RunWatcher|DeadlineWatcher'`.
   Expected: FAIL.
-- [ ] **Step 3: Implement.**
+- [ ] **Step 3: Implement.** Write `reportCounts` first and move
+  `legSatisfied` onto it. Run
+  `go test ./server -run 'LegSatisfied|AwaitIdle|IdleWatcher|EvaluateIdle'`.
+  Expected: PASS, with no test file edited. Then write `evaluateRun` and the
+  watchers.
 - [ ] **Step 4: Verify.**
-  Run: `go test -count=3 ./server -run 'EvaluateRun|RunWatcher|DeadlineWatcher'`, then `go test ./server`.
+  Run: `go test -count=3 ./server -run 'ReportCounts|EvaluateRun|RunWatcher|DeadlineWatcher'`, then `go test ./server`.
   Expected: PASS. The `-count=3` run is there because these tests are timing-based. Memory: a server flake family exists; isolation is not evidence.
 - [ ] **Step 5: Commit** `server: background runs end on deadline, turn end, error, blocked, queue timeout`.
 
