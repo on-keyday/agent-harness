@@ -339,6 +339,11 @@ and switched while it runs.
   6. Answer `ok` with `queued=1`, then call `h.OnChange()`.
 - **Foreground branch:** unchanged, plus `Prompt: prompt` into `startSession`, and `RunSpec{Mode: foreground}` on create/resume.
 - `handleSubmitResume`: if the target's `RunMode == background`, answer `SubmitStatus_ModeMismatch`.
+- **Wait reason (A-D14), computed rather than stored:** `handleList` fills
+  `TaskInfo.WaitReason` for a Queued background task from
+  `h.Registry.Candidates(t.RepoPath, t.Selector)` filtered by `HasProfile`.
+  - The list is empty → `no_candidate`.
+  - No entry is Idle and non-displaced → `all_busy`.
 
 - [ ] **Step 1: Write the failing tests** in `background_open_test.go`.
   - `TestBackgroundOpenWithNoRunnerIsQueued`. No runner registered → ok, `queued`, task Queued, `RunMode` background.
