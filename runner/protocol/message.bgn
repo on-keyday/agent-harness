@@ -2530,6 +2530,10 @@ enum OpenInteractiveStatus:
     # not be read or decoded.
     prompt_too_large      = "prompt_too_large"
     bad_prompt            = "bad_prompt"
+    # The open resolved to foreground but carried background conditions (or
+    # the background bit without run_mode_set): refused rather than starting
+    # an unattended session with no deadline.
+    conditions_without_background = "conditions_without_background"
 
 # One RUNNER offered when a spawn is ambiguous: more than one (runner, agent
 # profile) choice matched. profiles lists the agents the caller may pick on
@@ -2891,6 +2895,9 @@ enum SessionModeStatus:
     deadline_required = 4
     turn_end_unsupported = 5
     internal_error = 6
+    # The caller is the target task asking to become foreground: that would
+    # remove its own deadline (spec A-D19). Another principal may.
+    self_foreground_refused = 7
 
 format SessionModeResponse:
     status :SessionModeStatus
