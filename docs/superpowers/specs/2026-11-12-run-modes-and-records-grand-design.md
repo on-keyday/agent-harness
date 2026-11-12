@@ -208,9 +208,12 @@ What the pillar spec must settle, and the facts it builds on:
   (G28); a firing with no runner available is queued, not refused (G26).
 - Open for the pillar spec: whether firings missed while the server was down
   run once on start or are skipped (O3). An agent holding the schedule bit may
-  create one (G37), bounded by its own authority (G36); whether spawn limits
-  (`2026-11-09-spawn-limits-design.md`) also count schedules or their firings
-  is the pillar spec's.
+  create one (G37), bounded by its own authority (G36).
+- Spawn limits (`2026-11-09-spawn-limits-design.md`) follow parent links
+  (`creator_task_id`): `spawn_depth` is decremented per generation, and
+  `max_descendants` counts the records in a subtree — every task in the store,
+  ended ones included, until pruned (its D2). What a firing's parent link names
+  is O9.
 
 ## Pillar B — transcripts
 
@@ -283,6 +286,7 @@ Settled in the pillar specs; listed here so none is decided by default.
 | O6 | Default of the runner's log-file and transcript flags, and who holds the new log-read capability by default | B, C |
 | O7 | Size limit and retention of PTY records (G11): per-run cap, total cap, how long a finished run's record is kept | A |
 | O8 | The server-wide default for PTY recording (G11): on or off, and whether it differs between foreground and background | A |
+| O9 | The parent link of a schedule's firings. If it names the schedule's creator task, spawn limits apply, but every firing adds a record to that subtree, so a recurring schedule fills `max_descendants` unless its ended firings are pruned; and once the creator task is pruned there is no ancestor left to check (spawn-limits D10). If it names no task, firings sit at the root like an operator's, and a schedule lets an agent create tasks outside its own limits | S |
 
 ## Left to the pillar spec authors
 
