@@ -530,11 +530,12 @@ func (s *Session) getWorktreeManager(repoPath string) *WorktreeManager {
 	return wm
 }
 
-// repoAllowed reports whether repoPath is under at least one of AllowedRoots.
-// Uses protocol.IsUnderRoot for consistent semantics with the server side.
+// repoAllowed reports whether repoPath equals one of AllowedRoots. Uses
+// protocol.RootMatches, the predicate the server's Registry.Candidates uses,
+// so a repo below a root is refused here as it is there (G9).
 func (s *Session) repoAllowed(repoPath string) bool {
 	for _, root := range s.AllowedRoots {
-		if protocol.IsUnderRoot(root, repoPath) {
+		if protocol.RootMatches(root, repoPath) {
 			return true
 		}
 	}

@@ -23,6 +23,31 @@ func isDriveLetter(c byte) bool {
 	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
 }
 
+// RootMatches reports whether repo IS root: both absolute, and equal after
+// path.Clean. A repo below a root does not match (G9 of
+// docs/superpowers/specs/2026-11-12-run-modes-and-records-grand-design.md):
+// containment let a broad runner take a task silently while the repo's own
+// runner was reconnecting, and roots exist to keep paths out of remote reach,
+// which an explicit list serves better than a subtree.
+//
+// Wire-format contract: harness paths on the wire are slash-separated. They
+// may be POSIX-absolute ("/home/foo") or Windows drive-letter absolute
+// ("C:/Users/foo") — Windows runners convert via filepath.ToSlash before
+// transmission. POSIX path.Clean is used either way; it treats "C:" as a
+// regular path element and leaves it unchanged. That matters because the
+// server and the runner can be on different OSes — OS-native filepath here
+// would convert separators inconsistently. The drive letter is not
+// case-normalized (see isAbsCrossOS).
+//
+// This is the single roots predicate, shared by the server
+// (Registry.Candidates) and the runner (Session.repoAllowed).
+func RootMatches(root, repo string) bool {
+	if !isAbsCrossOS(root) || !isAbsCrossOS(repo) {
+		return false
+	}
+	return path.Clean(root) == path.Clean(repo)
+}
+
 // IsUnderRoot reports whether repo is the same path as root or is contained
 // within it, treating directory boundaries correctly.
 //

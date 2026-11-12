@@ -285,7 +285,8 @@ func TestSessionGetWorktreeManagerCachesPerRepo(t *testing.T) {
 }
 
 // TestSessionRepoAllowedDelegatesToProtocol verifies that repoAllowed uses
-// protocol.IsUnderRoot semantics — same rules as the server side.
+// protocol.RootMatches — the same exact rule as the server side (G9): a repo
+// below a root is refused.
 func TestSessionRepoAllowedDelegatesToProtocol(t *testing.T) {
 	s := &Session{AllowedRoots: []string{"/home/user/repos"}}
 
@@ -294,8 +295,8 @@ func TestSessionRepoAllowedDelegatesToProtocol(t *testing.T) {
 		allowed bool
 	}{
 		{"/home/user/repos", true},
-		{"/home/user/repos/project", true},
-		{"/home/user/repos/a/b/c", true},
+		{"/home/user/repos/", true},
+		{"/home/user/repos/project", false},
 		{"/home/user/other", false},
 		{"/home/user", false},
 		{"relative/path", false},
