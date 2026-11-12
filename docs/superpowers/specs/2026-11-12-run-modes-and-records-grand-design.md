@@ -108,7 +108,8 @@ the author chose it while writing; those rows are the ones to check.
 | G32 | **Transcripts (pillar B) cover every agent the fleet runs that keeps a transcript** — today's presets are claude, codex, agy, opencode and pi, and their sandboxed variants — not claude first with the rest later. A program with no conversation (bash, cmd) has the PTY record (G11) only. Pillar B does not land claude-only | operator |
 | G33 | **Which signal ends a turn is chosen per task: `off`, `quiet`, `lifecycle`, `program` or `any`; the default is `any`.** The vocabulary is `session await-idle --signal`'s (`2026-11-08-await-idle-signal-design.md` D3), plus `off`. `any` is the default because quiet needs nothing from the agent, so some leg always fires whatever the agent is — reading turn end from lifecycle and program only (G4 as first written) left agents without hooks with no turn end. `off` is for work that spans turns, e.g. a task that ends its turn to wait for another agent's reply. Quiet's threshold is set per task and is minutes, not await-idle's 2500 ms default, or quiet would beat the hooks on agents that have them; its default is pillar A's. A schedule carries the choice and copies it into each task it fires (as G29). The end reason (G5) names the leg that fired (await-idle D8). G16 applies to every leg | operator |
 | G34 | **Capability bits.** Three new bits: reading host logs (G12, G19), creating and editing schedules (pillar S; a schedule keeps creating tasks after its creator is gone, which `spawn` does not cover), and deleting records (G20; reusing `prune` would make granting record deletion also grant forgetting tasks, and would let any agent holding `prune` for its probe tasks erase its own PTY records, which are the evidence of what it did). Reading a PTY record or a transcript reuses `exec_view`: both show what that bit already shows, a session's content, under the task's scope. Bit scarcity is not a reason to merge gates: `Capability` is `u32` with 26 bits used (`runner/protocol/message.bgn:4305`), and widening it to `u64` is cheap — its fields are only in client↔server formats (no runner-decoded format), the WAL stores caps as JSON numbers, and the WebUI's `row.caps & c.bit` (`webui/static/main.js:4106`) breaks only from bit 31. The widening is deferred until few bits remain | operator (record deletion its own bit; widen later), this spec (the other two bits, `exec_view` reuse) |
-| G35 | **A background task's authority is computed as a spawn's.** Caps are `caps_creator ∩ delegate_caps_creator ∩ requested_caps`, and scope and the delegation bound are attenuated the same way (`SubmitRequest.requested_caps`, `runner/protocol/message.bgn:1214-1220`); the mode adds no default of its own (settles O1). For a human's or an agent's background open the creator is the opener. For a schedule's firings the creator is the schedule, whose authority is O4 | operator |
+| G35 | **A background task's authority is computed as a spawn's.** Caps are `caps_creator ∩ delegate_caps_creator ∩ requested_caps`, and scope and the delegation bound are attenuated the same way (`SubmitRequest.requested_caps`, `runner/protocol/message.bgn:1214-1220`); the mode adds no default of its own (settles O1). For a human's or an agent's background open the creator is the opener. For a schedule's firings the creator is the schedule (G36) | operator |
+| G36 | **A schedule carries its own authority, declared when it is created**: caps, scope and delegation bound, computed by G35 with the schedule's creator as creator, so it never exceeds what that principal held then. Each firing's task gets exactly that authority. It is shown with the schedule on every surface, and an edit (G30) re-computes it with the editor as creator. Consequence, accepted: narrowing the creator's own authority later does not reach the schedule; editing or deleting the schedule does | operator (the schedule holds its authority), this spec (bounded at create and edit; no propagation) |
 
 ## Anti-goals
 
@@ -205,10 +206,9 @@ What the pillar spec must settle, and the facts it builds on:
 - A firing while the previous run is still queued or running is skipped
   (G28); a firing with no runner available is queued, not refused (G26).
 - Open for the pillar spec: whether firings missed while the server was down
-  run once on start or are skipped (O3); whether agents may create schedules, and under
-  whose authority the tasks run — an agent-created schedule would at least be
-  bounded by its creator's capabilities and spawn limits
-  (`2026-11-09-spawn-limits-design.md`) (O4).
+  run once on start or are skipped (O3); whether agents may create schedules
+  (O4) — an agent-created schedule would at least be bounded by its creator's
+  authority (G36) and spawn limits (`2026-11-09-spawn-limits-design.md`).
 
 ## Pillar B — transcripts
 
@@ -277,7 +277,7 @@ Settled in the pillar specs; listed here so none is decided by default.
 | # | Question | Pillar |
 | --- | --- | --- |
 | O3 | Firings missed while the server was down: run once, or skip | S |
-| O4 | May agents create schedules, and with whose authority do those tasks run. A firing applies G35 with the schedule as creator, so this decides what the schedule holds: the creator's authority captured at creation (and re-bounded by whoever edits it, G30), or the creator's current authority looked up at each firing (which needs an answer for a creator task that has since been pruned) | S |
+| O4 | May agents create schedules (gated by the schedule bit, G34). What their tasks run with is settled by G36 | S |
 | O5 | Cache fetched transcripts on the server, trading server storage for availability while a runner is down | B |
 | O6 | Default of the runner's log-file and transcript flags, and who holds the new log-read capability by default | B, C |
 | O7 | Size limit and retention of PTY records (G11): per-run cap, total cap, how long a finished run's record is kept | A |
