@@ -18,7 +18,7 @@ import (
 // Callers should ensure AssignFunc does not block indefinitely.
 type AssignFunc func(runnerID objproto.ConnectionID, taskID string) error
 
-// Scheduler matches Queued tasks to available runners sharing a compatible repo root.
+// Scheduler places Queued tasks on runners that can take them.
 // It is the orchestration glue between Registry and TaskStore.
 //
 // Concurrency: Tick takes an internal mutex so concurrent callers (OnChange
@@ -44,88 +44,62 @@ func NewScheduler(reg *Registry, store *TaskStore, assign AssignFunc) *Scheduler
 	}
 }
 
-// Tick performs one pass over all runners in the Registry. For each runner with
-// available capacity it tries to find a Queued task on a compatible repo and
-// dispatch it.
+// Tick places Queued tasks, oldest first. For each one it asks
+// Registry.Candidates — the same answer submit and an interactive open use
+// (G17 of docs/superpowers/specs/2026-11-12-run-modes-and-records-grand-design.md)
+// — and gives the task to the first candidate that:
+//  1. is Idle (connected, below capacity),
+//  2. advertises the task's agent profile, if it names one,
+//  3. takes the reservation: reg.BindTask, which re-checks capacity, so a
+//     runner filled earlier in this pass is refused even though its
+//     Candidates snapshot still read Idle.
 //
-// Order of operations per available runner:
-//  1. Skip runners that are offline (Conn == nil) or at capacity.
-//  2. Find the next Queued task for any of the runner's AllowedRoots via store.NextQueuedForRoot.
-//  3. If none, skip this runner.
-//  4. reg.BindTask(runner.ID, task.ID), then s.assign(runner.ID, task.ID).
-//  5. On error: reg.UnbindTask, log via slog.Error and continue; no state change.
-//  6. On success: store.Assign(task.ID, runner.Identity, "", runner.SkillsInjected).
+// It then sends AssignTask (s.assign). On a send error the reservation is
+// released, the error logged and the next candidate tried. On success
+// store.Assign records the runner. A task no candidate takes stays Queued, and
+// the walk goes on to the next task rather than stopping: stopping would let
+// one task pinned to an offline runner stall every later task.
+//
+// Candidates applies the task's Selector, which is the operator's actual
+// intent and survives reconnects (ByHostname especially). BoundRunnerID is
+// deliberately NOT enforced here. It is a snapshot of the candidate chosen at
+// submit time, and a runner that reconnects comes back under a new
+// ConnectionID — enforcing it would strand queued tasks across a runner
+// restart.
 //
 // Tick serializes itself via s.mu so concurrent callers run one at a time.
-// No goroutines are spawned. The call returns as soon as all runners have
-// been processed.
+// No goroutines are spawned.
 func (s *Scheduler) Tick() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	runners := s.reg.List()
-	for _, runner := range runners {
-		// Skip runners that are offline or at capacity.
-		if runner.Status() != protocol.RunnerStatus_Idle {
-			continue
-		}
-
-		// Find a queued task for any root this runner serves AND that this
-		// runner is actually allowed to run. Root match alone is not the
-		// eligibility test: a task carries the runner Selector it was
-		// submitted with and the agent profile it asked for, and handleSubmit
-		// only VALIDATES those (PinnedNotFound / AmbiguousRunner /
-		// ProfileUnavailable) — it does not assign. Without the check here,
-		// `submit --host h2` was handed to whichever idle runner served a
-		// matching root, and a task naming a profile could land on a runner
-		// that does not advertise it (surfacing as the runner's own
-		// `agent_profile: unknown agent profile ...`, which reads as a profile
-		// bug rather than a routing one).
-		//
-		// BoundRunnerID is deliberately NOT enforced here. It is a snapshot of
-		// the candidate chosen at submit time, and a runner that reconnects
-		// comes back under a new ConnectionID — enforcing it would strand
-		// queued tasks across a runner restart. The Selector is the operator's
-		// actual intent and survives reconnects (ByHostname especially), so it
-		// is the pin that binds.
-		runnerEntry := runner
-		eligible := func(t TaskEntry) bool {
-			if !s.reg.Selects(t.Selector, &runnerEntry) {
-				return false
+	for _, task := range s.store.QueuedTasks() {
+		for _, c := range s.reg.Candidates(task.RepoPath, task.Selector) {
+			if c.Status() != protocol.RunnerStatus_Idle {
+				continue
 			}
-			return t.AgentProfile == "" || runnerEntry.HasProfile(t.AgentProfile)
-		}
-		var task *TaskEntry
-		var foundRepo string
-		for _, root := range runner.AllowedRoots {
-			if t, ok := s.store.NextQueuedForRepoFunc(root, eligible); ok {
-				task = &t
-				foundRepo = root
-				break
+			if task.AgentProfile != "" && !c.HasProfile(task.AgentProfile) {
+				continue
 			}
+			// Reserve BEFORE sending: the runner may answer the moment
+			// AssignTask leaves, and its TaskAccepted and its log JOIN are both
+			// authorized by ownsTask.
+			if !s.reg.BindTask(c.ID, task.ID) {
+				continue
+			}
+			if err := s.assign(c.ID, task.ID); err != nil {
+				s.reg.UnbindTask(c.ID, task.ID)
+				slog.Error("assign failed",
+					"runner", c.ID,
+					"task", task.ID,
+					"repo", task.RepoPath,
+					"error", err,
+				)
+				continue
+			}
+			// WorktreeDir is left empty here; it will be filled in by
+			// TaskStarted when the runner reports back that it has started.
+			s.store.Assign(task.ID, c.Identity, "", c.SkillsInjected)
+			break
 		}
-		if task == nil {
-			continue
-		}
-
-		// Reserve BEFORE sending, as TryDispatch does: the runner may answer the
-		// moment AssignTask leaves, and its TaskAccepted and its log JOIN are
-		// both authorized by ownsTask.
-		if !s.reg.BindTask(runner.ID, task.ID) {
-			continue
-		}
-		if err := s.assign(runner.ID, task.ID); err != nil {
-			s.reg.UnbindTask(runner.ID, task.ID)
-			slog.Error("assign failed",
-				"runner", runner.ID,
-				"task", task.ID,
-				"repo", foundRepo,
-				"error", err,
-			)
-			continue
-		}
-
-		// WorktreeDir is left empty here; it will be filled in by TaskStarted
-		// when the runner reports back that it has started the task.
-		s.store.Assign(task.ID, runner.Identity, "", runner.SkillsInjected)
 	}
 }

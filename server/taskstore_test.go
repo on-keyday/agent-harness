@@ -267,33 +267,23 @@ func TestTaskStoreTerminalClearsIsAttached(t *testing.T) {
 	}
 }
 
-func TestTaskStoreNextQueuedForRepo(t *testing.T) {
+// QueuedTasks is what Scheduler.Tick walks: every Queued task, whatever its
+// repo, in creation order.
+func TestTaskStoreQueuedTasksInCreationOrder(t *testing.T) {
 	s := NewTaskStore()
-	a := s.Create("/x", "a", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()}, "")
-	b := s.Create("/x", "b", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()}, "")
-	_ = s.Create("/y", "c", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()}, "")
+	g := authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()}
+	a := s.Create("/x", "a", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, g, "")
+	b := s.Create("/y", "b", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, g, "")
+	c := s.Create("/x", "c", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, g, "")
+	s.Assign(b, testRunnerID("r"), "/wt", false)
 
-	got, ok := s.NextQueuedForRepo("/x")
-	if !ok {
-		t.Fatal("expected ok=true for /x, got false")
-	}
-	if got.ID != a {
-		t.Fatalf("expected earliest id %q, got %q", a, got.ID)
-	}
-
-	s.Assign(a, testRunnerID("r"), "/wt", false)
-
-	got, ok = s.NextQueuedForRepo("/x")
-	if !ok {
-		t.Fatal("expected ok=true for /x after assigning a, got false")
-	}
-	if got.ID != b {
-		t.Fatalf("expected id %q after a assigned, got %q", b, got.ID)
-	}
-
-	_, ok = s.NextQueuedForRepo("/z")
-	if ok {
-		t.Fatal("expected ok=false for /z, got true")
+	got := s.QueuedTasks()
+	if len(got) != 2 || got[0].ID != a || got[1].ID != c {
+		ids := make([]string, len(got))
+		for i, e := range got {
+			ids[i] = e.ID
+		}
+		t.Fatalf("QueuedTasks = %v, want [%s %s]", ids, a, c)
 	}
 }
 

@@ -216,8 +216,7 @@ func TestSchedulerAssignErrorLeavesQueued(t *testing.T) {
 
 // The runner may answer the moment AssignTask leaves — TaskAccepted, and the
 // JOIN its first log line makes — and both are authorized by ownsTask. So the
-// reservation has to exist before the send, as ownsTask's comment says and
-// TryDispatch already does.
+// reservation has to exist before the send, as ownsTask's comment says.
 func TestSchedulerBindsBeforeSending(t *testing.T) {
 	reg := NewRegistry()
 	r := idleRunner("r1", "h1", nil)
@@ -503,5 +502,51 @@ func TestSchedulerPinnedTaskDoesNotBlockQueue(t *testing.T) {
 	}
 	if got, _ := store.Get(blocked); got.Status != protocol.TaskStatus_Queued {
 		t.Fatalf("pinned task should stay Queued, got %v", got.Status)
+	}
+}
+
+// G9's silent fallback, at the queue: the repo's own runner is gone and only a
+// runner rooted at a parent directory is connected. The task must stay Queued
+// rather than be taken by the broad runner.
+func TestSchedulerParentRootDoesNotTakeTask(t *testing.T) {
+	reg := NewRegistry()
+	broad := idleRunner("broad", "h", nil)
+	broad.AllowedRoots = []string{"/a"}
+	reg.Add(broad)
+	store := NewTaskStore()
+	id := store.Create("/a/b", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}}, "")
+
+	sent := 0
+	NewScheduler(reg, store, func(objproto.ConnectionID, string) error { sent++; return nil }).Tick()
+
+	if sent != 0 {
+		t.Fatalf("assign called %d times; a parent-rooted runner must not take /a/b", sent)
+	}
+	if task, _ := store.Get(id); task.Status != protocol.TaskStatus_Queued {
+		t.Fatalf("status=%v want Queued", task.Status)
+	}
+}
+
+// A runner with free slots takes queued tasks in creation order, as many as it
+// has room for, in one pass.
+func TestSchedulerFillsFreeSlotsInOrder(t *testing.T) {
+	reg := NewRegistry()
+	r := idleRunner("r1", "h", nil)
+	r.MaxTasks = 2
+	reg.Add(r)
+	store := NewTaskStore()
+	g := authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}}
+	a := store.Create("/x", "a", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, g, "")
+	b := store.Create("/x", "b", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, g, "")
+	c := store.Create("/x", "c", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, g, "")
+
+	var order []string
+	NewScheduler(reg, store, func(_ objproto.ConnectionID, id string) error { order = append(order, id); return nil }).Tick()
+
+	if len(order) != 2 || order[0] != a || order[1] != b {
+		t.Fatalf("assigned %v, want [%s %s]", order, a, b)
+	}
+	if task, _ := store.Get(c); task.Status != protocol.TaskStatus_Queued {
+		t.Fatalf("third task status=%v want Queued (runner full)", task.Status)
 	}
 }

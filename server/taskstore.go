@@ -156,7 +156,7 @@ type TaskEntry struct {
 
 // TaskStore is the in-memory authority for task lifecycle.
 //
-// Read methods (Get, NextQueuedForRepo, List) return value snapshots; callers
+// Read methods (Get, QueuedTasks, List) return value snapshots; callers
 // may freely read the returned values. All mutations go through Assign, Finish,
 // Cancel, SetWorktreeDir, or Create.
 //
@@ -164,7 +164,7 @@ type TaskEntry struct {
 type TaskStore struct {
 	mu    sync.RWMutex
 	tasks map[string]*TaskEntry
-	order []string // insertion order; used by List and NextQueuedForRepo
+	order []string // insertion order; used by List and QueuedTasks
 	wal   *WAL
 
 	OnCreate func(id string)                                         // optional; called after each Create. Server uses this to register pubsub taps.
@@ -1246,39 +1246,6 @@ func (s *TaskStore) SetRingBufferBytes(id string, n uint64) bool {
 	return true
 }
 
-// NextQueuedForRepo returns a value snapshot of the earliest-created Queued
-// task whose RepoPath equals repo. Returns (zero, false) if no such task exists.
-func (s *TaskStore) NextQueuedForRepo(repo string) (TaskEntry, bool) {
-	return s.NextQueuedForRepoFunc(repo, nil)
-}
-
-// NextQueuedForRepoFunc is NextQueuedForRepo narrowed by an eligibility
-// predicate: it returns the earliest-created Queued task on repo for which
-// eligible reports true. A nil predicate accepts every task.
-//
-// The predicate exists because "earliest queued task on this root" is NOT the
-// same question as "earliest queued task this runner may run": a task carries a
-// runner Selector and an AgentProfile, and handing it to a runner that fails
-// either is how `submit --host h2` ended up running on h1. Skipping (rather
-// than stopping at) an ineligible task is deliberate — stopping would let one
-// task pinned to an offline runner stall every later task on that root.
-func (s *TaskStore) NextQueuedForRepoFunc(repo string, eligible func(TaskEntry) bool) (TaskEntry, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	// order slice preserves insertion (creation) order; iterate to find first match.
-	for _, id := range s.order {
-		e := s.tasks[id]
-		if e.RepoPath != repo || e.Status != protocol.TaskStatus_Queued {
-			continue
-		}
-		if eligible != nil && !eligible(*e) {
-			continue
-		}
-		return *e, true
-	}
-	return TaskEntry{}, false
-}
-
 // ReplayEvents reconstructs in-memory state from a WAL. Must be called BEFORE the TaskStore is used.
 // Tasks left in Running state after replay are forced to Failed (the runner is presumed lost across restart).
 func (s *TaskStore) ReplayEvents(events []WALEvent) {
@@ -1619,6 +1586,20 @@ func (s *TaskStore) PruneTerminal(allowed map[string]bool, cutoff time.Time, log
 		}
 	}
 	return len(pruned)
+}
+
+// QueuedTasks returns value snapshots of every Queued task, whatever its repo,
+// in creation order — the order Scheduler.Tick places them in.
+func (s *TaskStore) QueuedTasks() []TaskEntry {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []TaskEntry
+	for _, id := range s.order {
+		if e := s.tasks[id]; e.Status == protocol.TaskStatus_Queued {
+			out = append(out, *e)
+		}
+	}
+	return out
 }
 
 // List returns value snapshots of the N most-recent entries in insertion order.

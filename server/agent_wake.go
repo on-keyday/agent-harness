@@ -9,7 +9,7 @@ import (
 
 // runnerForTask returns the ConnHandle for the runner currently executing tid,
 // or nil if no live runner is associated with the task. The lookup uses
-// TaskStore.AssignedTo (set by Assign on successful TryDispatch) and
+// TaskStore.AssignedTo (set by Assign once the scheduler's sendAssign succeeds) and
 // Registry.Get to resolve the connection handle.
 //
 // The second return names WHICH lookup came up empty, for the caller to log.

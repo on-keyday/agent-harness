@@ -1,7 +1,6 @@
 package server
 
 import (
-	"crypto/rand"
 	"encoding/hex"
 	"fmt"
 	"log/slog"
@@ -71,7 +70,7 @@ type Dispatcher struct {
 	// behaviour, still correct for tests that do not wire this field).
 	RecordClientIdentity func(cid string, conn ConnHandle, hello *protocol.ClientHello) protocol.ClientHelloStatus
 
-	// Registry and Tasks are used by TryDispatch and OnCancel.
+	// Registry and Tasks are used by OnCancel.
 	Registry *Registry
 	Tasks    *TaskStore
 
@@ -177,93 +176,6 @@ func taskIDFromHex(taskIDHex string) protocol.TaskID {
 	raw, _ := hex.DecodeString(taskIDHex)
 	copy(tid.Id[:], raw)
 	return tid
-}
-
-// TryDispatch attempts to find an available runner for the given queued task,
-// bind it, and send an AssignTask message. Returns true on success (the task
-// is transitioned to Running). Returns false if no suitable runner has
-// capacity or if every send attempt fails.
-//
-// On send failure the reservation is rolled back via Registry.UnbindTask so the
-// slot is immediately available for the next Tick. The task remains Queued.
-func (d *Dispatcher) TryDispatch(task TaskEntry) bool {
-	if d.Registry == nil || d.Tasks == nil {
-		return false
-	}
-
-	candidates := d.Registry.Candidates(task.RepoPath, task.Selector)
-	for _, runner := range candidates {
-		// Skip runners that have no remaining capacity.
-		if len(runner.ActiveTasks) >= runner.MaxTasks {
-			continue
-		}
-		// Skip runners without an active connection.
-		if runner.Conn == nil {
-			continue
-		}
-
-		if !d.Registry.BindTask(runner.ID, task.ID) {
-			// Race: another goroutine filled the slot between Candidates and BindTask.
-			continue
-		}
-
-		// Generate a fresh ticket for the agent Hello handshake.
-		var ticket [16]byte
-		if _, err := rand.Read(ticket[:]); err != nil {
-			slog.Error("dispatcher: ticket generation failed", "task", task.ID, "err", err)
-			d.Registry.UnbindTask(runner.ID, task.ID)
-			continue
-		}
-		boardRegisterTask(d.Board, runner.Identity, task.ID, ticket, task.AgentProfile, conversationOf(task.ResumeConversation))
-
-		// Allocate the body stream up-front so the AssignTask envelope
-		// can carry its id. On stream-creation failure (e.g. test stub),
-		// rollback and try the next candidate.
-		stream := runner.Conn.CreateSendStream()
-		if stream == nil {
-			slog.Error("dispatcher: CreateSendStream returned nil", "runner", runner.ID, "task", task.ID)
-			boardRevokeTask(d.Board, runner.Identity, task.ID)
-			d.Registry.UnbindTask(runner.ID, task.ID)
-			continue
-		}
-
-		envelope, body, err := buildAssignMsg(task, ticket, uint64(stream.ID()))
-		if err != nil {
-			slog.Error("dispatcher: buildAssignMsg failed", "task", task.ID, "err", err)
-			boardRevokeTask(d.Board, runner.Identity, task.ID)
-			d.Registry.UnbindTask(runner.ID, task.ID)
-			continue
-		}
-
-		// Write body + EOF to the stream FIRST so it is available the
-		// moment the runner receives the envelope and looks up the
-		// receive stream. Both legs are synchronous; total payload is
-		// already in memory.
-		if werr := stream.AppendData(false, body); werr != nil {
-			slog.Error("dispatcher: stream body write failed", "runner", runner.ID, "task", task.ID, "err", werr)
-			boardRevokeTask(d.Board, runner.Identity, task.ID)
-			d.Registry.UnbindTask(runner.ID, task.ID)
-			continue
-		}
-		if werr := stream.AppendData(true); werr != nil {
-			slog.Error("dispatcher: stream EOF failed", "runner", runner.ID, "task", task.ID, "err", werr)
-			boardRevokeTask(d.Board, runner.Identity, task.ID)
-			d.Registry.UnbindTask(runner.ID, task.ID)
-			continue
-		}
-
-		if err := sendRunnerRequest(runner.Conn, envelope); err != nil {
-			slog.Error("dispatcher: SendMessage failed, rolling back", "runner", runner.ID, "task", task.ID, "err", err)
-			boardRevokeTask(d.Board, runner.Identity, task.ID)
-			d.Registry.UnbindTask(runner.ID, task.ID)
-			continue
-		}
-
-		// Send succeeded: transition task to Running.
-		d.Tasks.Assign(task.ID, runner.Identity, "", runner.SkillsInjected)
-		return true
-	}
-	return false
 }
 
 // defaultCancelResendDelays is how long OnCancel waits before each resend of a

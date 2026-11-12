@@ -94,7 +94,7 @@ func (b *Board) Close() {
 	close(b.stopCh)
 }
 
-// Registry returns the ticket registry for server lifecycle code (TryDispatch / TaskFinished).
+// Registry returns the ticket registry for server lifecycle code (sendAssign / TaskFinished).
 func (b *Board) Registry() *registry { return b.reg }
 
 // RegisterTask stores the task's auth ticket and seeds its id-directed inbound

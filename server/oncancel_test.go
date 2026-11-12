@@ -56,10 +56,10 @@ func TestDispatcherOnCancel_ForwardsToRunner(t *testing.T) {
 		Conn:             fc,
 	})
 
-	// Create a task and manually assign it (simulating TryDispatch success).
+	// Create a task and manually assign it (simulating a scheduler dispatch).
 	taskID := tasks.Create("/repo", "work", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}}, "")
 	tasks.Assign(taskID, testRunnerID(runnerID.String()), "", false)
-	// Also bind it in the registry (as TryDispatch would have done).
+	// Also bind it in the registry (as Scheduler.Tick would have done).
 	reg.BindTask(runnerID, taskID)
 
 	// Call OnCancel.
