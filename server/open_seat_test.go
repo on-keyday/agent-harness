@@ -129,7 +129,7 @@ func TestAttachedOpenFirstStreamIdZero(t *testing.T) {
 	tui := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9132-1"), nextBidi: newFakeStream(t)} // id 0
 	oi := &protocol.OpenInteractiveRequest{}
 	oi.SetRepoPath([]byte("/r"))
-	resp, _ := h.handleOpenInteractive("", tui, oi, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All)
+	resp, _ := h.handleOpenInteractive("", tui, oi, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All, "")
 	if id := resp.StreamId(); resp.Status != protocol.OpenInteractiveStatus_Ok || !resp.Attached() || id == nil || *id != 0 {
 		t.Fatalf("status %v attached %v stream %v, want ok, attached, stream 0", resp.Status, resp.Attached(), id)
 	}
@@ -148,7 +148,7 @@ func TestDetachedOpenNoClientStream(t *testing.T) {
 	h := newTestHandler(t)
 	runner := openRunner(t, h)
 	tui := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9133-1"), nextStreamID: 7}
-	resp, _ := h.handleOpenInteractive("", tui, detachedOpen(0, 0), protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All)
+	resp, _ := h.handleOpenInteractive("", tui, detachedOpen(0, 0), protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All, "")
 	if resp.Status != protocol.OpenInteractiveStatus_Ok || resp.Attached() || resp.StreamId() != nil {
 		t.Fatalf("status %v attached %v stream %v, want ok with no stream", resp.Status, resp.Attached(), resp.StreamId())
 	}
@@ -167,7 +167,7 @@ func TestDetachedOpenNoClientStream(t *testing.T) {
 func TestDetachedOpenAppliesInitialSize(t *testing.T) {
 	h := newTestHandler(t)
 	runner := openRunner(t, h)
-	resp, _ := h.handleOpenInteractive("", nil, detachedOpen(40, 150), protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All)
+	resp, _ := h.handleOpenInteractive("", nil, detachedOpen(40, 150), protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All, "")
 	if resp.Status != protocol.OpenInteractiveStatus_Ok {
 		t.Fatalf("status %v", resp.Status)
 	}
@@ -179,7 +179,7 @@ func TestDetachedOpenAppliesInitialSize(t *testing.T) {
 	// Review Focus 3: one zero value means no size, as applyInitialWindowSize.
 	h2 := newTestHandler(t)
 	runner2 := openRunner(t, h2)
-	if resp, _ := h2.handleOpenInteractive("", nil, detachedOpen(40, 0), protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All); resp.Status != protocol.OpenInteractiveStatus_Ok {
+	if resp, _ := h2.handleOpenInteractive("", nil, detachedOpen(40, 0), protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All, ""); resp.Status != protocol.OpenInteractiveStatus_Ok {
 		t.Fatalf("status %v", resp.Status)
 	}
 	time.Sleep(50 * time.Millisecond)
@@ -194,7 +194,7 @@ func TestDetachedX11Refused(t *testing.T) {
 	oi := detachedOpen(0, 0)
 	oi.SetX11Enabled(true)
 	oi.SetX11(protocol.X11Forward{Display: 10})
-	resp, _ := h.handleOpenInteractive("", nil, oi, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All)
+	resp, _ := h.handleOpenInteractive("", nil, oi, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All, "")
 	if resp.Status != protocol.OpenInteractiveStatus_InternalError {
 		t.Fatalf("status %v, want internal_error", resp.Status)
 	}

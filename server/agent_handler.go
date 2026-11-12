@@ -283,6 +283,12 @@ func payloadStreamOf(req *protocol.TaskControlRequest) uint64 {
 		if r := req.AgentSend(); r != nil {
 			return r.PayloadStreamId
 		}
+	case protocol.TaskControlKind_OpenInteractive:
+		if r := req.OpenInteractive(); r != nil && r.PromptPresent() {
+			if id := r.PromptStreamId(); id != nil {
+				return *id
+			}
+		}
 	}
 	return 0
 }

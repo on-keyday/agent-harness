@@ -99,7 +99,7 @@ var spawnSites = []spawnSite{
 		return entryOf(t, h, resp.TaskId), "", true
 	}},
 	{"open", func(t *testing.T, h *TaskHandler, cid, _ string, cc protocol.Capability, a delegReq) (TaskEntry, string, bool) {
-		resp, _ := h.handleOpenInteractive(cid, nil, openReq(a), protocol.ClientKind_Agent, h.lookupPrincipal(cid), cc)
+		resp, _ := h.handleOpenInteractive(cid, nil, openReq(a), protocol.ClientKind_Agent, h.lookupPrincipal(cid), cc, "")
 		if resp.Status != protocol.OpenInteractiveStatus_Ok {
 			return TaskEntry{}, string(resp.ErrorMsg), false
 		}
@@ -108,7 +108,7 @@ var spawnSites = []spawnSite{
 	{"open resume", func(t *testing.T, h *TaskHandler, cid, r string, cc protocol.Capability, a delegReq) (TaskEntry, string, bool) {
 		req := openReq(a)
 		req.ResumeTaskId = hexToTaskID(t, r)
-		resp, _ := h.handleOpenInteractive(cid, nil, req, protocol.ClientKind_Agent, h.lookupPrincipal(cid), cc)
+		resp, _ := h.handleOpenInteractive(cid, nil, req, protocol.ClientKind_Agent, h.lookupPrincipal(cid), cc, "")
 		if resp.Status != protocol.OpenInteractiveStatus_Ok {
 			return TaskEntry{}, string(resp.ErrorMsg), false
 		}
@@ -267,7 +267,7 @@ func TestExactResumeRefusesBoundHalves(t *testing.T) {
 		oreq := openReq(delegReq{dcapsPresent: tc.dcaps, dscopePresent: tc.dscop})
 		oreq.ResumeTaskId = hexToTaskID(t, ri)
 		oreq.SetResumeExact(true)
-		oresp, _ := h.handleOpenInteractive(cid, nil, oreq, protocol.ClientKind_Agent, h.lookupPrincipal(cid), delegHeld)
+		oresp, _ := h.handleOpenInteractive(cid, nil, oreq, protocol.ClientKind_Agent, h.lookupPrincipal(cid), delegHeld, "")
 		if oresp.Status != protocol.OpenInteractiveStatus_ResumeExactMismatch || !strings.Contains(string(oresp.ErrorMsg), tc.flag) {
 			t.Errorf("open %s: %v %q, want resume_exact_mismatch naming %s", tc.flag, oresp.Status, oresp.ErrorMsg, tc.flag)
 		}

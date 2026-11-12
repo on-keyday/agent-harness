@@ -84,7 +84,7 @@ func TestExactKindMismatch(t *testing.T) {
 	stream := recordedTask(t, h, protocol.TaskKind_Stream, "", nil, "bash", "A")
 	oi := &protocol.OpenInteractiveRequest{ResumeTaskId: hexToTaskID(t, stream)}
 	oi.SetResumeExact(true) // event_stream = 0, recorded Stream
-	oresp, _ := h.handleOpenInteractive("", nil, oi, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All)
+	oresp, _ := h.handleOpenInteractive("", nil, oi, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All, "")
 	if oresp.Status != protocol.OpenInteractiveStatus_ResumeExactMismatch {
 		t.Fatalf("open of a stream task without event_stream: status %v, want resume_exact_mismatch", oresp.Status)
 	}
@@ -102,7 +102,7 @@ func TestExactWithoutResumeID(t *testing.T) {
 	oi := &protocol.OpenInteractiveRequest{}
 	oi.SetRepoPath([]byte("/shared/repo"))
 	oi.SetResumeExact(true)
-	if resp, _ := h.handleOpenInteractive("", nil, oi, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All); resp.Status != protocol.OpenInteractiveStatus_ResumeExactMismatch {
+	if resp, _ := h.handleOpenInteractive("", nil, oi, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All, ""); resp.Status != protocol.OpenInteractiveStatus_ResumeExactMismatch {
 		t.Fatalf("open: status %v, want resume_exact_mismatch", resp.Status)
 	}
 }
@@ -146,7 +146,7 @@ func TestExactOpenSendsRecordedArgsToRunner(t *testing.T) {
 
 	oi := &protocol.OpenInteractiveRequest{ResumeTaskId: hexToTaskID(t, id)}
 	oi.SetResumeExact(true)
-	resp, _ := h.handleOpenInteractive("", tuiConn, oi, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All)
+	resp, _ := h.handleOpenInteractive("", tuiConn, oi, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All, "")
 	if resp.Status != protocol.OpenInteractiveStatus_Ok {
 		t.Fatalf("status %v", resp.Status)
 	}
@@ -229,7 +229,7 @@ func TestExactPrefersProfileOverLastRunner(t *testing.T) {
 	oi.SetDetached(true)
 	oi.SetInitialRows(0)
 	oi.SetInitialCols(0)
-	resp, _ := h.handleOpenInteractive("", nil, oi, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All)
+	resp, _ := h.handleOpenInteractive("", nil, oi, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All, "")
 	if resp.Status != protocol.OpenInteractiveStatus_Ok {
 		t.Fatalf("open: status %v, want ok on B", resp.Status)
 	}

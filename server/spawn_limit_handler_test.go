@@ -49,7 +49,7 @@ func TestSubmitRefusedBySpawnLimit(t *testing.T) {
 func TestOpenInteractiveRefusedLeavesNoTask(t *testing.T) {
 	h, _, cid, runner, _ := limitFixture(t, authority.Unbounded(), authority.LimitOf(1), 1)
 	before := len(h.Tasks.List(0))
-	resp, _ := h.handleOpenInteractive(cid, nil, detachedOpen(0, 0), protocol.ClientKind_Agent, h.lookupPrincipal(cid), delegHeld)
+	resp, _ := h.handleOpenInteractive(cid, nil, detachedOpen(0, 0), protocol.ClientKind_Agent, h.lookupPrincipal(cid), delegHeld, "")
 	if resp.Status != protocol.OpenInteractiveStatus_SpawnLimit || string(resp.ErrorMsg) != ownFullText {
 		t.Fatalf("status %v msg %q, want spawn_limit %q", resp.Status, resp.ErrorMsg, ownFullText)
 	}
@@ -77,7 +77,7 @@ func TestSpawnWritesChildLimits(t *testing.T) {
 		t.Errorf("requested 5/4 under depth 3: got %s/%s, want 2/4",
 			authority.LimitLabel(e.SpawnDepth), authority.LimitLabel(e.MaxDescendants))
 	}
-	oresp, _ := h.handleOpenInteractive(cid, nil, detachedOpen(0, 0), protocol.ClientKind_Agent, h.lookupPrincipal(cid), delegHeld)
+	oresp, _ := h.handleOpenInteractive(cid, nil, detachedOpen(0, 0), protocol.ClientKind_Agent, h.lookupPrincipal(cid), delegHeld, "")
 	if oresp.Status != protocol.OpenInteractiveStatus_Ok {
 		t.Fatalf("open: %v %s", oresp.Status, oresp.ErrorMsg)
 	}
@@ -191,7 +191,7 @@ func TestSpawnLimitBeforeRunnerResolution(t *testing.T) {
 	if resp, _ := h.handleSubmit(cid, submitReq(delegReq{}), protocol.ClientKind_Agent, h.lookupPrincipal(cid), delegHeld); resp.Status != protocol.SubmitStatus_SpawnLimit {
 		t.Errorf("submit: %v, want spawn_limit", resp.Status)
 	}
-	if resp, _ := h.handleOpenInteractive(cid, nil, detachedOpen(0, 0), protocol.ClientKind_Agent, h.lookupPrincipal(cid), delegHeld); resp.Status != protocol.OpenInteractiveStatus_SpawnLimit {
+	if resp, _ := h.handleOpenInteractive(cid, nil, detachedOpen(0, 0), protocol.ClientKind_Agent, h.lookupPrincipal(cid), delegHeld, ""); resp.Status != protocol.OpenInteractiveStatus_SpawnLimit {
 		t.Errorf("open: %v, want spawn_limit", resp.Status)
 	}
 }

@@ -58,6 +58,10 @@ type TaskHandler struct {
 	// before the response is sent.
 	OnTaskLifecycle func(taskHex string)
 
+	// wakeDeadlines wakes the background deadline watcher after a write that
+	// sets a deadline (pillar A, A-D13). Nil-safe.
+	wakeDeadlines func()
+
 	// OnSessionObservers fires when a session's observer set changes (a viewer
 	// or cowriter attached or left). Those attaches move no task status by
 	// design, so this is the only signal an event-driven client gets that the
@@ -498,34 +502,79 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("TaskHandler: OpenInteractive variant is nil")
 			return
 		}
+		// A refused open's prompt body is cancelled, not left buffered until
+		// the connection ends (the central gate does the same, payloadStreamOf).
+		deny := func(want protocol.Capability) {
+			if id := payloadStreamOf(&req); id != 0 {
+				discardPayloadStream(conn, id)
+			}
+			h.denyTaskControl(conn, req.Header.Kind, req.Header.RequestId, want)
+		}
 		// Same request-dependent gate as Submit.
 		if want := resumeRequestCap(oi.ResumeTaskId, oi.ResumeExact()); !hasAnyCap(h.callerCaps(cid), want) {
-			h.denyTaskControl(conn, req.Header.Kind, req.Header.RequestId, want)
+			deny(want)
 			return
 		}
 		// An attached open hands the opener the control seat, so it needs what
 		// an attach --control needs. Detached opens attach nobody.
 		if want := authority.AttachModeCap(protocol.AttachMode_Control); !oi.Detached() && !hasAnyCap(h.callerCaps(cid), want) {
-			h.denyTaskControl(conn, req.Header.Kind, req.Header.RequestId, want)
+			deny(want)
 			return
 		}
 		origin := h.lookupClientKind(cid)
 		creator := h.lookupPrincipal(cid)
 		oiCreatorCaps := h.callerCaps(cid)
-		oresp, body := h.handleOpenInteractive(cid, conn, oi, origin, creator, oiCreatorCaps)
+		requestID := req.Header.RequestId
 		send := func(r protocol.OpenInteractiveResponse) {
-			resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_OpenInteractive, RequestId: req.Header.RequestId}
+			resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_OpenInteractive, RequestId: requestID}
 			resp.SetOpenInteractive(r)
 			conn.SendMessage(resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})) //nolint:errcheck
 		}
-		if body != nil {
-			respondWithBody(conn, "open candidates", body, func(streamID uint64) {
-				oresp.SetCandidatesStreamId(streamID)
+		open := func(oi *protocol.OpenInteractiveRequest, prompt string) {
+			oresp, body := h.handleOpenInteractive(cid, conn, oi, origin, creator, oiCreatorCaps, prompt)
+			if body != nil {
+				respondWithBody(conn, "open candidates", body, func(streamID uint64) {
+					oresp.SetCandidatesStreamId(streamID)
+					send(oresp)
+				})
+			} else {
 				send(oresp)
-			})
-		} else {
-			send(oresp)
+			}
 		}
+		if !oi.PromptPresent() {
+			open(oi, "")
+			break
+		}
+		// Off the receive loop: the prompt arrives on a stream the client
+		// writes AFTER this request (A-D17), and that stream's frames are
+		// delivered by the very loop this handler runs on — exec_run's shape.
+		// The request is the decoded frame; a re-decoded copy owns its bytes.
+		var oiCopy protocol.OpenInteractiveRequest
+		if err := oiCopy.DecodeExact(oi.MustAppend(nil)); err != nil {
+			discardPayloadStream(conn, func() uint64 {
+				id := oi.PromptStreamId()
+				if id == nil {
+					return 0
+				}
+				return *id
+			}())
+			send(protocol.OpenInteractiveResponse{Status: protocol.OpenInteractiveStatus_InternalError})
+			break
+		}
+		go func() {
+			var streamID uint64
+			if id := oiCopy.PromptStreamId(); id != nil {
+				streamID = *id
+			}
+			prompt, st, msg := readOpenPrompt(conn, streamID)
+			if st != protocol.OpenInteractiveStatus_Ok {
+				r := protocol.OpenInteractiveResponse{Status: st}
+				r.SetErrorMsg([]byte(msg))
+				send(r)
+				return
+			}
+			open(&oiCopy, prompt)
+		}()
 
 	case protocol.TaskControlKind_OpenFileTransfer:
 		oft := req.OpenFileTransfer()
@@ -1436,6 +1485,13 @@ func (h *TaskHandler) handleSubmitResume(cid string, req *protocol.SubmitRequest
 	if !ok {
 		return protocol.SubmitResponse{Status: protocol.SubmitStatus_ResumeNotFound}, nil
 	}
+	// A background task resumed through submit would become a oneshot with no
+	// session to watch (A-D1).
+	if t, ok := h.Tasks.Get(idHex); ok && t.RunMode == protocol.RunMode_Background {
+		resp := protocol.SubmitResponse{Status: protocol.SubmitStatus_ModeMismatch}
+		resp.SetErrorMsg([]byte("task " + idHex[:8] + " is a background task; resume it with session new --resume"))
+		return resp, nil
+	}
 	prompt, args := string(req.Prompt), req.ExtraArgs.AsStrings()
 	var exactRec *TaskEntry
 	if req.ResumeExact() {
@@ -1726,7 +1782,7 @@ func isZeroTaskID(t protocol.TaskID) bool {
 // does not pick it up for a parallel AssignTask. The runner finalizes the task
 // lifecycle by sending TaskStarted (worktree dir filled in) and TaskFinished
 // (exit code from claude) over the regular RunnerControl path.
-func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req *protocol.OpenInteractiveRequest, origin protocol.ClientKind, creator protocol.TaskID, creatorCaps protocol.Capability) (protocol.OpenInteractiveResponse, *protocol.RunnerCandidatesBody) {
+func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req *protocol.OpenInteractiveRequest, origin protocol.ClientKind, creator protocol.TaskID, creatorCaps protocol.Capability, prompt string) (protocol.OpenInteractiveResponse, *protocol.RunnerCandidatesBody) {
 	// repo is the one the runner search uses: req.RepoPath on a fresh open,
 	// the task's recorded repo on a resume (whose request carries none). The
 	// log names it once it is known, so a resume refusal does not read repo="".
@@ -1810,6 +1866,14 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 		}
 	} else {
 		repo = path.Clean(string(req.RepoPath))
+	}
+
+	// A background open is queued, never placed here (A-D4); Tick places it.
+	if h.resolveRunMode(req, existingTaskIDHex) == protocol.RunMode_Background {
+		return h.openBackground(backgroundOpen{
+			cid: cid, req: req, origin: origin, creator: creator, grant: grant,
+			resumeHex: existingTaskIDHex, exactRec: exactRec, repo: repo, args: args, prompt: prompt,
+		}), nil
 	}
 
 	// The scope half of the seat (the bit half is in the dispatch case): the
@@ -1917,7 +1981,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 		// persisting it here closes the Task 6 gap where handleOpenInteractive
 		// threaded `resolved` to OpenExec but never wrote it back through
 		// Tasks.Resume.
-		if _, err := h.Tasks.Resume(existingTaskIDHex, "", args, req.Selector, runner.ID.String(), origin, grant, interactiveKind(req), resolved, h.lookupPrincipal(cid), req.ResumeConversation(), RunSpec{}); err != nil {
+		if _, err := h.Tasks.Resume(existingTaskIDHex, prompt, args, req.Selector, runner.ID.String(), origin, grant, interactiveKind(req), resolved, h.lookupPrincipal(cid), req.ResumeConversation(), RunSpec{Mode: protocol.RunMode_Foreground}); err != nil {
 			switch err {
 			case ResumeErrNotFound:
 				return errResp(protocol.OpenInteractiveStatus_ResumeNotFound)
@@ -1934,7 +1998,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 		// resolved is the (runner,profile) combo's profile — the server-chosen
 		// profile the runner must exec with (empty only when the sole candidate
 		// advertises no profile, i.e. a legacy runner → its AgentBin default).
-		created, err := h.Tasks.CreateWithinLimits(repo, "", interactiveKind(req), origin, creator, runner.ID.String(), req.Selector, req.ExtraArgs.AsStrings(), grant.To, resolved, RunSpec{})
+		created, err := h.Tasks.CreateWithinLimits(repo, prompt, interactiveKind(req), origin, creator, runner.ID.String(), req.Selector, req.ExtraArgs.AsStrings(), grant.To, resolved, RunSpec{Mode: protocol.RunMode_Foreground})
 		if err != nil {
 			resp, body := errResp(protocol.OpenInteractiveStatus_SpawnLimit)
 			resp.SetErrorMsg([]byte(err.Error()))
@@ -1966,7 +2030,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 	tuiStream, st := h.startSession(sessionStart{
 		TaskIDHex: taskIDHex, Runner: runner, Profile: resolved, Repo: repo, Args: args,
 		ResumeConversation: req.ResumeConversation(), EventStream: req.EventStream(),
-		Detached: req.Detached(), Rows: rows, Cols: cols, X11: x11, TUIConn: tuiConn,
+		Detached: req.Detached(), Rows: rows, Cols: cols, X11: x11, TUIConn: tuiConn, Prompt: prompt,
 	})
 	if st != protocol.OpenInteractiveStatus_Ok {
 		return errResp(st)
@@ -2267,6 +2331,7 @@ func (h *TaskHandler) handleList(conn ConnHandle, requestID uint32, connID strin
 				taskInfos[i].SetAuthorityActorHidden(true)
 			}
 		}
+		taskInfos[i].WaitReason = h.waitReasonFor(t)
 		// Who cancelled a run, by the same rule.
 		if c := t.CancelledBy; !all && c.Id != ([16]byte{}) {
 			if cHex := hex.EncodeToString(c.Id[:]); !allowed[cHex] && cHex != parentHex {
