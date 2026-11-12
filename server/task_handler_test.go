@@ -65,7 +65,7 @@ func TestSubmitCreatesTaskAndReplies(t *testing.T) {
 	reg.Add(&RunnerEntry{
 		ID:               tcid("r-test-1"),
 		Hostname:         "testhost",
-		AllowedRoots:     []string{"/"},
+		AllowedRoots:     []string{"/repo"},
 		MaxTasks:         1,
 		ActiveTasks:      map[string]struct{}{},
 		ConnectedAt:      time.Now(),
@@ -347,11 +347,44 @@ func TestHandleSubmitNoRunnerForRepo(t *testing.T) {
 	}
 }
 
+// P3 of the run-modes grand design: a submit to a directory BELOW a runner's
+// root used to be answered ok and then sit Queued forever, because Tick only
+// assigned exact roots. With exact matching everywhere it is refused at once.
+func TestHandleSubmitSubdirOfRootIsNoRunner(t *testing.T) {
+	h := newTestHandler(t)
+	now := time.Now()
+	h.Registry.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h", AllowedRoots: []string{"/x"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
+
+	req := &protocol.SubmitRequest{}
+	req.SetRepoPath([]byte("/x/repo"))
+	req.SetPrompt([]byte("p"))
+	resp, _ := h.handleSubmit("", req, protocol.ClientKind_Unspecified, protocol.TaskID{}, protocol.Capability_All)
+	if resp.Status != protocol.SubmitStatus_NoRunner {
+		t.Fatalf("status=%v want NoRunner", resp.Status)
+	}
+	if n := len(h.Tasks.List(100)); n != 0 {
+		t.Fatalf("a refused submit must create no task, store holds %d", n)
+	}
+}
+
+func TestHandleOpenInteractiveSubdirOfRootIsNoRunner(t *testing.T) {
+	h := newTestHandler(t)
+	now := time.Now()
+	h.Registry.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h", AllowedRoots: []string{"/x"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
+
+	req := &protocol.OpenInteractiveRequest{}
+	req.SetRepoPath([]byte("/x/repo"))
+	resp, _ := h.handleOpenInteractive("", nil, req, protocol.ClientKind_Unspecified, protocol.TaskID{}, protocol.Capability_All)
+	if resp.Status != protocol.OpenInteractiveStatus_NoRunnerForRepo {
+		t.Fatalf("status=%v want NoRunnerForRepo", resp.Status)
+	}
+}
+
 func TestHandleSubmitAmbiguousRunner(t *testing.T) {
 	h := newTestHandler(t)
 	now := time.Now()
-	h.Registry.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/shared"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
-	h.Registry.Add(&RunnerEntry{ID: tcid("B"), Identity: testRunnerID("B"), Hostname: "h2", AllowedRoots: []string{"/shared"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
+	h.Registry.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/shared/repo"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
+	h.Registry.Add(&RunnerEntry{ID: tcid("B"), Identity: testRunnerID("B"), Hostname: "h2", AllowedRoots: []string{"/shared/repo"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
 
 	req := &protocol.SubmitRequest{}
 	req.SetRepoPath([]byte("/shared/repo"))
@@ -386,7 +419,7 @@ func TestHandleSubmitPinnedNotFound(t *testing.T) {
 func TestHandleSubmitOK(t *testing.T) {
 	h := newTestHandler(t)
 	now := time.Now()
-	h.Registry.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "runner-a", AllowedRoots: []string{"/x"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
+	h.Registry.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "runner-a", AllowedRoots: []string{"/x/repo"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
 
 	req := &protocol.SubmitRequest{}
 	req.SetRepoPath([]byte("/x/repo"))
@@ -420,7 +453,7 @@ func TestHandleSubmitOK(t *testing.T) {
 func TestSubmitProfileUnavailable(t *testing.T) {
 	h := newTestHandler(t) // one runner advertising ["claude"]
 	now := time.Now()
-	h.Registry.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/"}, MaxTasks: 1, AgentProfiles: []string{"claude"}, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
+	h.Registry.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/repo"}, MaxTasks: 1, AgentProfiles: []string{"claude"}, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
 
 	req := &protocol.SubmitRequest{}
 	req.SetRepoPath([]byte("/repo"))
@@ -440,7 +473,7 @@ func TestSubmitProfileUnavailable(t *testing.T) {
 func TestSubmitNoAgentOnMultiProfileRunnerIsAmbiguous(t *testing.T) {
 	h := newTestHandler(t)
 	now := time.Now()
-	h.Registry.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/"}, MaxTasks: 1, AgentProfiles: []string{"claude", "codex"}, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
+	h.Registry.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/repo"}, MaxTasks: 1, AgentProfiles: []string{"claude", "codex"}, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
 	req := &protocol.SubmitRequest{}
 	req.SetRepoPath([]byte("/repo"))
 	req.SetPrompt([]byte("x"))
@@ -454,7 +487,7 @@ func TestSubmitNoAgentOnMultiProfileRunnerIsAmbiguous(t *testing.T) {
 func TestSubmitNoAgentOnSingleProfileRunnerRuns(t *testing.T) {
 	h := newTestHandler(t)
 	now := time.Now()
-	h.Registry.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/"}, MaxTasks: 1, AgentProfiles: []string{"claude"}, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
+	h.Registry.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/repo"}, MaxTasks: 1, AgentProfiles: []string{"claude"}, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
 	req := &protocol.SubmitRequest{}
 	req.SetRepoPath([]byte("/repo"))
 	req.SetPrompt([]byte("x"))
@@ -473,7 +506,7 @@ func TestSubmitNoAgentOnSingleProfileRunnerRuns(t *testing.T) {
 func TestSubmitPinnedNoAgentUsesDefault(t *testing.T) {
 	h := newTestHandler(t)
 	now := time.Now()
-	h.Registry.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/"}, MaxTasks: 1, AgentProfiles: []string{"claude", "codex"}, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
+	h.Registry.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/repo"}, MaxTasks: 1, AgentProfiles: []string{"claude", "codex"}, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
 	sel := protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_ByRunnerId}
 	sel.SetRunnerId(testRunnerID("A"))
 	req := &protocol.SubmitRequest{Selector: sel}
@@ -494,8 +527,8 @@ func TestSubmitProfileFilterNarrowsAmbiguity(t *testing.T) {
 	now := time.Now()
 	// Two runners serve the same repo; only B advertises "codex". Without the
 	// profile filter this would be AmbiguousRunner.
-	h.Registry.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/shared"}, MaxTasks: 1, AgentProfiles: []string{"claude"}, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
-	h.Registry.Add(&RunnerEntry{ID: tcid("B"), Identity: testRunnerID("B"), Hostname: "h2", AllowedRoots: []string{"/shared"}, MaxTasks: 1, AgentProfiles: []string{"codex"}, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
+	h.Registry.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/shared/repo"}, MaxTasks: 1, AgentProfiles: []string{"claude"}, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
+	h.Registry.Add(&RunnerEntry{ID: tcid("B"), Identity: testRunnerID("B"), Hostname: "h2", AllowedRoots: []string{"/shared/repo"}, MaxTasks: 1, AgentProfiles: []string{"codex"}, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
 
 	req := &protocol.SubmitRequest{}
 	req.SetRepoPath([]byte("/shared/repo"))
@@ -522,7 +555,7 @@ func TestSubmitLegacyRunnerNoProfilesFallsBackToAgentBin(t *testing.T) {
 	h := newTestHandler(t)
 	now := time.Now()
 	// Legacy runner: no AgentProfiles advertised at all, only AgentBin.
-	h.Registry.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/"}, MaxTasks: 1, AgentBin: "claude", ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
+	h.Registry.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/repo"}, MaxTasks: 1, AgentBin: "claude", ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
 
 	req := &protocol.SubmitRequest{}
 	req.SetRepoPath([]byte("/repo"))
@@ -553,7 +586,7 @@ func TestSubmitResumeProfileUnavailableWhenRunnerLostProfile(t *testing.T) {
 
 	// Runner "A" is (re)registered but now only advertises "claude" — the
 	// profile the task needs is no longer available on it.
-	h.Registry.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/"}, MaxTasks: 1, AgentProfiles: []string{"claude"}, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
+	h.Registry.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/repo"}, MaxTasks: 1, AgentProfiles: []string{"claude"}, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
 
 	var tid protocol.TaskID
 	raw, _ := hex.DecodeString(taskIDHex)
@@ -578,7 +611,7 @@ func TestSubmitResumeEmptyProfileReusesOriginal(t *testing.T) {
 
 	// Runner still advertises "codex" — resume should succeed and stay bound
 	// to the original profile without the caller repeating it.
-	h.Registry.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/"}, MaxTasks: 1, AgentProfiles: []string{"claude", "codex"}, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
+	h.Registry.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/repo"}, MaxTasks: 1, AgentProfiles: []string{"claude", "codex"}, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
 
 	var tid protocol.TaskID
 	raw, _ := hex.DecodeString(taskIDHex)
@@ -617,8 +650,8 @@ func TestSubmitResumeProfileFilterNarrowsAmbiguity(t *testing.T) {
 	h.Tasks.Finish(taskIDHex, 0, nil)
 
 	// Two runners now serve the same root; only B advertises "codex".
-	h.Registry.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/shared"}, MaxTasks: 1, AgentProfiles: []string{"claude"}, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
-	h.Registry.Add(&RunnerEntry{ID: tcid("B"), Identity: testRunnerID("B"), Hostname: "h2", AllowedRoots: []string{"/shared"}, MaxTasks: 1, AgentProfiles: []string{"codex"}, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
+	h.Registry.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/shared/repo"}, MaxTasks: 1, AgentProfiles: []string{"claude"}, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
+	h.Registry.Add(&RunnerEntry{ID: tcid("B"), Identity: testRunnerID("B"), Hostname: "h2", AllowedRoots: []string{"/shared/repo"}, MaxTasks: 1, AgentProfiles: []string{"codex"}, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
 
 	var tid protocol.TaskID
 	raw, _ := hex.DecodeString(taskIDHex)
@@ -694,7 +727,7 @@ func TestHandleOpenInteractiveBusy(t *testing.T) {
 	h := newTestHandler(t)
 	now := time.Now()
 	// Runner is at capacity (MaxTasks=1, 1 active task).
-	h.Registry.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h", AllowedRoots: []string{"/x"}, MaxTasks: 1,
+	h.Registry.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h", AllowedRoots: []string{"/x/repo"}, MaxTasks: 1,
 		ActiveTasks: map[string]struct{}{"existing": {}}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
 
 	req := &protocol.OpenInteractiveRequest{}
@@ -709,8 +742,8 @@ func TestHandleOpenInteractiveBusy(t *testing.T) {
 func TestHandleOpenInteractiveAmbiguous(t *testing.T) {
 	h := newTestHandler(t)
 	now := time.Now()
-	h.Registry.Add(&RunnerEntry{ID: tcid("ws:10.0.0.1:1-1"), Identity: testRunnerID("ws:10.0.0.1:1-1"), Hostname: "h1", AllowedRoots: []string{"/shared"}, MaxTasks: 8, ActiveTasks: map[string]struct{}{"t": {}}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
-	h.Registry.Add(&RunnerEntry{ID: tcid("ws:10.0.0.2:1-1"), Identity: testRunnerID("ws:10.0.0.2:1-1"), Hostname: "h2", AllowedRoots: []string{"/shared"}, MaxTasks: 8, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
+	h.Registry.Add(&RunnerEntry{ID: tcid("ws:10.0.0.1:1-1"), Identity: testRunnerID("ws:10.0.0.1:1-1"), Hostname: "h1", AllowedRoots: []string{"/shared/repo"}, MaxTasks: 8, ActiveTasks: map[string]struct{}{"t": {}}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
+	h.Registry.Add(&RunnerEntry{ID: tcid("ws:10.0.0.2:1-1"), Identity: testRunnerID("ws:10.0.0.2:1-1"), Hostname: "h2", AllowedRoots: []string{"/shared/repo"}, MaxTasks: 8, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
 
 	req := &protocol.OpenInteractiveRequest{}
 	req.SetRepoPath([]byte("/shared/repo"))
@@ -730,7 +763,7 @@ func TestHandleOpenInteractiveAmbiguous(t *testing.T) {
 	if !ok {
 		t.Fatalf("missing candidate h1; got %v", byCid)
 	}
-	if string(a.Hostname) != "h1" || string(a.MatchedRoot) != "/shared" || a.ActiveTasks != 1 || a.MaxTasks != 8 ||
+	if string(a.Hostname) != "h1" || string(a.MatchedRoot) != "/shared/repo" || a.ActiveTasks != 1 || a.MaxTasks != 8 ||
 		a.RunnerId != testRunnerID("ws:10.0.0.1:1-1") {
 		t.Fatalf("h1 candidate mismatch: %+v", a)
 	}
@@ -764,7 +797,7 @@ func TestHandleOpenInteractiveOkSetsRepoPathOnOpenExec(t *testing.T) {
 
 	runnerConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9100-1"), nextStreamID: 42}
 	h.Registry.Add(&RunnerEntry{
-		ID: tcid("A"), Hostname: "h", AllowedRoots: []string{"/shared"}, MaxTasks: 1,
+		ID: tcid("A"), Hostname: "h", AllowedRoots: []string{"/shared/repo"}, MaxTasks: 1,
 		ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now,
 		Conn: runnerConn,
 	})
@@ -816,7 +849,7 @@ func TestHandleOpenInteractiveOkSetsRepoPathOnOpenExec(t *testing.T) {
 func TestOpenInteractiveMultiProfileIsOneRowWithBoth(t *testing.T) {
 	h := newTestHandler(t)
 	now := time.Now()
-	h.Registry.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/"}, MaxTasks: 1, AgentProfiles: []string{"claude", "codex"}, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
+	h.Registry.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/repo"}, MaxTasks: 1, AgentProfiles: []string{"claude", "codex"}, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
 
 	req := &protocol.OpenInteractiveRequest{}
 	req.SetRepoPath([]byte("/repo"))
@@ -858,7 +891,7 @@ func TestCandidatesBodyLegacyAndSharedIdentity(t *testing.T) {
 func TestHandleSendsCandidatesOnAStream(t *testing.T) {
 	h := newTestHandler(t)
 	now := time.Now()
-	h.Registry.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/"}, MaxTasks: 1, AgentProfiles: []string{"claude", "codex"}, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
+	h.Registry.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/repo"}, MaxTasks: 1, AgentProfiles: []string{"claude", "codex"}, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
 	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9200-1"), autoSendStreams: true}
 
 	oi := protocol.OpenInteractiveRequest{}
@@ -905,7 +938,7 @@ func TestOpenInteractiveAgentFilterPicksProfile(t *testing.T) {
 func TestOpenInteractiveAgentUnavailable(t *testing.T) {
 	h := newTestHandler(t)
 	now := time.Now()
-	h.Registry.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/"}, MaxTasks: 1, AgentProfiles: []string{"claude"}, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
+	h.Registry.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/repo"}, MaxTasks: 1, AgentProfiles: []string{"claude"}, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
 
 	req := &protocol.OpenInteractiveRequest{}
 	req.SetRepoPath([]byte("/repo"))
@@ -973,7 +1006,7 @@ func TestOpenInteractiveUnpinnedResumeExpandsToPicker(t *testing.T) {
 	h.Tasks.Finish(taskIDHex, 0, nil)
 
 	// The runner advertises both profiles the task could resume under.
-	h.Registry.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/shared"}, MaxTasks: 1, AgentProfiles: []string{"claude", "codex"}, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
+	h.Registry.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/shared/repo"}, MaxTasks: 1, AgentProfiles: []string{"claude", "codex"}, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
 
 	var tid protocol.TaskID
 	raw, _ := hex.DecodeString(taskIDHex)
@@ -1142,7 +1175,7 @@ func TestOpenInteractiveResumeCrossModeNotRejected(t *testing.T) {
 	// is the shape of that race rather than of anything this test describes.
 	runnerConn.nextBidi = newFakeStream(t)
 	h.Registry.Add(&RunnerEntry{
-		ID: tcid("A"), Hostname: "h", AllowedRoots: []string{"/shared"}, MaxTasks: 1,
+		ID: tcid("A"), Hostname: "h", AllowedRoots: []string{"/shared/repo"}, MaxTasks: 1,
 		ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now,
 		Conn: runnerConn,
 	})
@@ -1446,7 +1479,7 @@ func TestSubmitResumeProfileMatchesAcrossExeSuffix(t *testing.T) {
 	h.Tasks.Assign(taskIDHex, testRunnerID("A"), "/wt", false)
 	h.Tasks.Finish(taskIDHex, 0, nil)
 
-	h.Registry.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/"}, MaxTasks: 1, AgentProfiles: []string{"claude"}, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
+	h.Registry.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/repo"}, MaxTasks: 1, AgentProfiles: []string{"claude"}, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
 
 	var tid protocol.TaskID
 	raw, _ := hex.DecodeString(taskIDHex)

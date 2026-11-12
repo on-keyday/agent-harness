@@ -187,23 +187,34 @@ func TestRegistryStatusMethod(t *testing.T) {
 	}
 }
 
-func TestRegistryCandidatesPrefixMatch(t *testing.T) {
+// Roots match exactly (G9): a runner serves a repo only when one of its roots
+// IS that repo. A root that merely contains the repo does not.
+func TestRegistryCandidatesExactMatch(t *testing.T) {
 	r := NewRegistry()
 	now := time.Now()
-	r.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "gmkhost", AllowedRoots: []string{"/home/kforfk/workspace"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now})
-	r.Add(&RunnerEntry{ID: tcid("B"), Identity: testRunnerID("B"), Hostname: "raspi", AllowedRoots: []string{"/home/pi/workspace"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now})
+	r.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/home/u/ws", "/home/u/ws/repo1"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now})
+	r.Add(&RunnerEntry{ID: tcid("B"), Identity: testRunnerID("B"), Hostname: "h2", AllowedRoots: []string{"/srv/ws"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now})
 
-	cs := r.Candidates("/home/kforfk/workspace/repo1", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any})
-	if len(cs) != 1 || cs[0].ID != tcid("A") {
+	any := protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}
+	if cs := r.Candidates("/home/u/ws/repo1", any); len(cs) != 1 || cs[0].ID != tcid("A") {
 		t.Fatalf("expected only A, got %v", cs)
 	}
-	cs = r.Candidates("/home/pi/workspace/foo", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any})
-	if len(cs) != 1 || cs[0].ID != tcid("B") {
-		t.Fatalf("expected only B, got %v", cs)
+	if cs := r.Candidates("/home/u/ws/other", any); len(cs) != 0 {
+		t.Fatalf("a repo below a root must have no candidate, got %v", cs)
 	}
-	cs = r.Candidates("/etc/passwd", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any})
-	if len(cs) != 0 {
-		t.Fatalf("expected no candidates, got %v", cs)
+	if cs := r.Candidates("/srv/ws/foo", any); len(cs) != 0 {
+		t.Fatalf("a repo below a root must have no candidate, got %v", cs)
+	}
+}
+
+// The silent fallback G9 removes: with the repo's own runner absent, a runner
+// rooted at a parent directory must not become its candidate.
+func TestRegistryCandidatesParentRootDoesNotServe(t *testing.T) {
+	r := NewRegistry()
+	now := time.Now()
+	r.Add(&RunnerEntry{ID: tcid("broad"), Identity: testRunnerID("broad"), Hostname: "h", AllowedRoots: []string{"/a"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
+	if cs := r.Candidates("/a/b", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}); len(cs) != 0 {
+		t.Fatalf("parent-rooted runner must not serve /a/b, got %v", cs)
 	}
 }
 
@@ -212,7 +223,7 @@ func TestRegistryCandidatesAmbiguous(t *testing.T) {
 	now := time.Now()
 	r.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/shared"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now})
 	r.Add(&RunnerEntry{ID: tcid("B"), Identity: testRunnerID("B"), Hostname: "h2", AllowedRoots: []string{"/shared"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now})
-	cs := r.Candidates("/shared/foo", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any})
+	cs := r.Candidates("/shared", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any})
 	if len(cs) != 2 {
 		t.Fatalf("expected 2 candidates (ambiguous), got %d", len(cs))
 	}
@@ -221,7 +232,7 @@ func TestRegistryCandidatesAmbiguous(t *testing.T) {
 func TestRegistryCandidatesCapacityAgnostic(t *testing.T) {
 	r := NewRegistry()
 	now := time.Now()
-	r.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/x"}, MaxTasks: 1,
+	r.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/x/repo"}, MaxTasks: 1,
 		ActiveTasks: map[string]struct{}{"existing": {}}, ConnectedAt: now, LastTaskActivity: now})
 	cs := r.Candidates("/x/repo", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any})
 	if len(cs) != 1 {
@@ -249,8 +260,8 @@ func TestRegistryOnRemovePassesSnapshot(t *testing.T) {
 func TestRegistryCandidatesSelectorByHostname(t *testing.T) {
 	r := NewRegistry()
 	now := time.Now()
-	r.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "gmkhost", AllowedRoots: []string{"/x"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now})
-	r.Add(&RunnerEntry{ID: tcid("B"), Identity: testRunnerID("B"), Hostname: "raspi", AllowedRoots: []string{"/x"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now})
+	r.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "gmkhost", AllowedRoots: []string{"/x/repo"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now})
+	r.Add(&RunnerEntry{ID: tcid("B"), Identity: testRunnerID("B"), Hostname: "raspi", AllowedRoots: []string{"/x/repo"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now})
 
 	sel := protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_ByHostname}
 	h := protocol.Hostname{}
@@ -260,68 +271,6 @@ func TestRegistryCandidatesSelectorByHostname(t *testing.T) {
 	cs := r.Candidates("/x/repo", sel)
 	if len(cs) != 1 || cs[0].ID != tcid("A") {
 		t.Fatalf("expected only A (gmkhost), got %v", cs)
-	}
-}
-
-// Longest-prefix-match: when several runners' roots all contain the repo,
-// only the runner(s) whose matching root is the most specific (longest) are
-// returned. A broad fallback root must not collide with a focused root.
-func TestRegistryCandidatesLongestPrefixMatch(t *testing.T) {
-	r := NewRegistry()
-	now := time.Now()
-	r.Add(&RunnerEntry{ID: tcid("broad"), Identity: testRunnerID("broad"), Hostname: "h", AllowedRoots: []string{"/a"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now})
-	r.Add(&RunnerEntry{ID: tcid("focused"), Identity: testRunnerID("focused"), Hostname: "h", AllowedRoots: []string{"/a/b/c"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now})
-
-	cs := r.Candidates("/a/b/c", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any})
-	if len(cs) != 1 || cs[0].ID != tcid("focused") {
-		t.Fatalf("expected only focused runner via longest-prefix-match, got %v", cs)
-	}
-
-	// A repo that only the broad runner covers still resolves to it.
-	cs = r.Candidates("/a/other", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any})
-	if len(cs) != 1 || cs[0].ID != tcid("broad") {
-		t.Fatalf("expected only broad runner for non-overlapping repo, got %v", cs)
-	}
-}
-
-// Tie at the most-specific level remains ambiguous (caller's job to reject).
-func TestRegistryCandidatesLongestPrefixTieAmbiguous(t *testing.T) {
-	r := NewRegistry()
-	now := time.Now()
-	r.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/a/b"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now})
-	r.Add(&RunnerEntry{ID: tcid("B"), Identity: testRunnerID("B"), Hostname: "h2", AllowedRoots: []string{"/a/b"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now})
-	r.Add(&RunnerEntry{ID: tcid("broad"), Identity: testRunnerID("broad"), Hostname: "h3", AllowedRoots: []string{"/a"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now})
-
-	cs := r.Candidates("/a/b/c", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any})
-	if len(cs) != 2 {
-		t.Fatalf("expected 2 candidates at the most-specific tier (A,B); broad must drop, got %v", cs)
-	}
-	gotIDs := map[objproto.ConnectionID]bool{cs[0].ID: true, cs[1].ID: true}
-	if !gotIDs[tcid("A")] || !gotIDs[tcid("B")] {
-		t.Fatalf("expected A and B at the most-specific tier, got %v", cs)
-	}
-}
-
-// A runner with multiple roots is ranked by its longest matching root, so a
-// runner whose specific root matches beats one that only catches the repo via
-// a generic fallback root.
-func TestRegistryCandidatesLongestPrefixPerRunnerMaxRoot(t *testing.T) {
-	r := NewRegistry()
-	now := time.Now()
-	r.Add(&RunnerEntry{
-		ID: tcid("multi"), Hostname: "h1",
-		AllowedRoots: []string{"/a", "/a/b/c"},
-		MaxTasks:     1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now,
-	})
-	r.Add(&RunnerEntry{
-		ID: tcid("broad"), Hostname: "h2",
-		AllowedRoots: []string{"/a/b"},
-		MaxTasks:     1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now,
-	})
-
-	cs := r.Candidates("/a/b/c/x", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any})
-	if len(cs) != 1 || cs[0].ID != tcid("multi") {
-		t.Fatalf("expected multi (its longest matching root wins over broad), got %v", cs)
 	}
 }
 
@@ -441,26 +390,6 @@ func TestRegistry_ViaWalk_TerminatesAtNil(t *testing.T) {
 		if visited[i] != id {
 			t.Errorf("walk[%d]: got %v, want %v", i, visited[i], id)
 		}
-	}
-}
-
-// Selector pinning is independent of longest-match arithmetic: a pinned
-// runner with a shorter root still wins when other runners are filtered out
-// by the selector.
-func TestRegistryCandidatesLongestPrefixScopedToSelector(t *testing.T) {
-	r := NewRegistry()
-	now := time.Now()
-	r.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "specific-host", AllowedRoots: []string{"/a/b/c"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now})
-	r.Add(&RunnerEntry{ID: tcid("B"), Identity: testRunnerID("B"), Hostname: "broad-host", AllowedRoots: []string{"/a"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now})
-
-	sel := protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_ByHostname}
-	h := protocol.Hostname{}
-	h.SetName([]byte("broad-host"))
-	sel.SetHostname(h)
-
-	cs := r.Candidates("/a/b/c", sel)
-	if len(cs) != 1 || cs[0].ID != tcid("B") {
-		t.Fatalf("selector pin to broad-host must return B even though A has a more specific root, got %v", cs)
 	}
 }
 

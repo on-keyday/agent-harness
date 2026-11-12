@@ -451,11 +451,11 @@ func TestRunnerIDPinMatchesOnlyTheIdentityHolder(t *testing.T) {
 
 	sel := protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_ByRunnerId}
 	sel.SetRunnerId(id)
-	got := reg.Candidates("/x/repo", sel)
+	got := reg.Candidates("/x", sel)
 	if len(got) != 1 || got[0].ID != tcid("A2") {
 		t.Fatalf("candidates=%v want only A2, the identity's holder", got)
 	}
-	if n := len(reg.Candidates("/x/repo", protocol.RunnerSelector{})); n != 2 {
+	if n := len(reg.Candidates("/x", protocol.RunnerSelector{})); n != 2 {
 		t.Fatalf("Any still lists both connections, got %d", n)
 	}
 

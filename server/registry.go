@@ -376,14 +376,14 @@ func (r *Registry) UnbindTask(id objproto.ConnectionID, taskID string) {
 	e.LastTaskActivity = time.Now()
 }
 
-// Candidates returns runner snapshots that can serve repo, restricted to
-// the most specific tier of matching roots (longest-prefix-match) and
-// further filtered by the selector (or any runner if Kind == Any).
+// Candidates returns snapshots of the runners that can serve repo: those the
+// selector picks (any runner if Kind == Any) with a root that IS repo
+// (protocol.RootMatches). A root that only contains repo does not count (G9 of
+// docs/superpowers/specs/2026-11-12-run-modes-and-records-grand-design.md), so
+// there is no tier of more and less specific roots to rank.
 //
-// Specificity per runner is the length of its longest matching root
-// (protocol.MatchLen). Across selector-matched runners, only those whose
-// score equals the global maximum survive — so a focused per-repo runner
-// shadows a broad fallback runner that would otherwise also match.
+// This is the one answer to "who may take this task": submit, interactive
+// open and Scheduler.Tick all ask it (G17).
 //
 // The slice is capacity-agnostic: at-capacity runners are still listed so
 // callers can detect ambiguity even when matching runners are all busy.
@@ -394,30 +394,12 @@ func (r *Registry) Candidates(repo string, sel protocol.RunnerSelector) []Runner
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	type scored struct {
-		entry RunnerEntry
-		score int
-	}
-	var matches []scored
-	maxScore := 0
-	for _, e := range r.runners {
-		if !r.selects(sel, e) {
-			continue
-		}
-		score := bestRootScore(e.AllowedRoots, repo)
-		if score == 0 {
-			continue
-		}
-		if score > maxScore {
-			maxScore = score
-		}
-		matches = append(matches, scored{entry: e.snapshot(), score: score})
-	}
 	var out []RunnerEntry
-	for _, m := range matches {
-		if m.score == maxScore {
-			out = append(out, m.entry)
+	for _, e := range r.runners {
+		if !r.selects(sel, e) || !servesRepo(e.AllowedRoots, repo) {
+			continue
 		}
+		out = append(out, e.snapshot())
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].ConnectedAt.Equal(out[j].ConnectedAt) {
@@ -431,16 +413,21 @@ func (r *Registry) Candidates(repo string, sel protocol.RunnerSelector) []Runner
 	return out
 }
 
-// bestRootScore returns the largest protocol.MatchLen across roots, or 0 if
-// none contain repo.
-func bestRootScore(roots []string, repo string) int {
-	best := 0
+// servesRepo reports whether one of roots is repo (protocol.RootMatches).
+func servesRepo(roots []string, repo string) bool {
+	return matchedRoot(roots, repo) != ""
+}
+
+// matchedRoot returns the first of roots that IS repo (protocol.RootMatches),
+// in the runner's own spelling, or "" if none is. Besides deciding servesRepo,
+// it is what the candidate picker shows as the reason a runner is offered.
+func matchedRoot(roots []string, repo string) string {
 	for _, root := range roots {
-		if s := protocol.MatchLen(root, repo); s > best {
-			best = s
+		if protocol.RootMatches(root, repo) {
+			return root
 		}
 	}
-	return best
+	return ""
 }
 
 // selects is selectorMatches plus the one rule it cannot decide alone: a

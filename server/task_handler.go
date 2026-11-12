@@ -2870,19 +2870,6 @@ func (h *TaskHandler) handleNotify(conn ConnHandle, req *protocol.TaskControlReq
 	conn.SendMessage(out) //nolint:errcheck
 }
 
-// matchedRoot returns the first AllowedRoots entry whose MatchLen(root, repo)
-// equals the runner's best score — the display reason this runner is a
-// candidate. Display metadata only; does not affect selection.
-func matchedRoot(roots []string, repo string) string {
-	best, bestRoot := 0, ""
-	for _, root := range roots {
-		if s := protocol.MatchLen(root, repo); s > best {
-			best, bestRoot = s, root
-		}
-	}
-	return bestRoot
-}
-
 // interactiveKind is the TaskKind an open-interactive request creates. Both
 // kinds come through this one request and the same session machinery; the flag
 // is the only thing that differs, so the kind is derived here rather than

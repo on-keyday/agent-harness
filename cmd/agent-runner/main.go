@@ -111,7 +111,7 @@ func newMainConfig() *mainConfig {
 // bindFlags registers all flags on fs, using cfg's current values as defaults.
 func (c *mainConfig) bindFlags(fs *flag.FlagSet) {
 	fs.StringVar(&c.ServerCID, "server-cid", c.ServerCID, "server ConnectionID (e.g. ws:host:port-id, * for random); mutually exclusive with --listen/--udp-listen. Takes a comma-separated list, tried in order until one answers, and re-tried from the top on every reconnect — for a runner that moves between networks (a LAN address first, a tailnet one after it). harness-cli/TUI/WebUI take a single address: the operator who moved knows which network they are on, and this runner may come back up with nobody present. Agents are unaffected either way; they are handed the ONE address this runner connected on.")
-	fs.StringVar(&c.Roots, "roots", c.Roots, "comma-separated list of absolute repo root paths this runner serves")
+	fs.StringVar(&c.Roots, "roots", c.Roots, "comma-separated list of absolute repo paths this runner serves; a task's repo must equal one of them (no subdirectories)")
 	fs.IntVar(&c.MaxTasks, "max-tasks", c.MaxTasks, "maximum number of concurrent tasks (>= 1)")
 	fs.StringVar(&c.AgentBin, "agent-bin", c.AgentBin, "path to the agent binary")
 	fs.StringVar(&c.AgentArgs, "agent-args", c.AgentArgs, "extra args passed to the agent before the task args (whitespace-separated, e.g. \"--dangerously-skip-permissions\")")

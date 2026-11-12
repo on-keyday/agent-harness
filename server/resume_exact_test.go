@@ -20,7 +20,7 @@ func exactRunner(t *testing.T, h *TaskHandler, name string, conn ConnHandle, pro
 	}
 	h.Registry.Add(&RunnerEntry{
 		ID: tcid(name), Identity: testRunnerID(name), Hostname: "h-" + name,
-		AllowedRoots: []string{"/shared"}, MaxTasks: 4, AgentProfiles: profiles,
+		AllowedRoots: []string{"/shared/repo"}, MaxTasks: 4, AgentProfiles: profiles,
 		ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: conn,
 	})
 }

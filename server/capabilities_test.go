@@ -88,7 +88,7 @@ func TestSpawnAttenuation(t *testing.T) {
 	h.Registry.Add(&RunnerEntry{
 		ID:               tcid("A"),
 		Hostname:         "runner-a",
-		AllowedRoots:     []string{"/x"},
+		AllowedRoots:     []string{"/x/repo"},
 		MaxTasks:         4,
 		ActiveTasks:      map[string]struct{}{},
 		ConnectedAt:      now,
