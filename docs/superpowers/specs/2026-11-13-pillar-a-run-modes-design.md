@@ -119,6 +119,18 @@ Read on `b3959555`; each was traced to the handler, not inferred.
   principal (`task_handler.go:438-446`) and `task_cancelled` carries none
   (`taskstore.go:910`). `TaskEntry.AuthorityActor` is who last wrote the
   task's authority, not who ended it.
+- **F18 — every conversational preset's agent takes an initial prompt on an
+  interactive start; the shells do not.** Read from each binary's `--help`
+  on 2026-11-13: claude 2.1.322 takes a positional (`claude [options]
+  [command] [prompt]`); codex-cli 0.165.0 a positional (`codex [OPTIONS]
+  [PROMPT]`); agy 1.5.3 `--prompt-interactive`/`-i` ("Run an initial prompt
+  interactively and continue the session"); opencode 1.18.18 `--prompt`;
+  pi 1.4.0 a positional after `--` (`pi [options] [--] [@files...]
+  [messages...]`, with an "Interactive mode with initial prompt" example).
+  bash has no form that runs a command and stays interactive (`-c` exits);
+  cmd's `/k` does, unchecked here (no Windows host). Help text only: no
+  agent was started with a prompt, and the resume forms (`--continue`,
+  `resume --last`) were not checked.
 
 ## Decisions taken
 
@@ -129,7 +141,7 @@ the grand design row named; **this spec** = the author's call, to check.
 |---|---|---|
 | A-D1 | **A task carries a run mode, `foreground` or `background`, fixed for its life** (G1, G24; "run mode" because "mode" already names kind, F16). Foreground is the zero value, so every existing task and every WAL record without the field is foreground. **A resume takes the run mode from the task**: a plain resume of a background task (the TUI's resume keys included) is a background resume. A resume that asks for background on a foreground task is refused `mode_mismatch`, and so is `submit --resume` of a background task (a new `SubmitStatus` value): it would turn the task into a oneshot with no session to watch | GD (G24), this spec (zero value, inherit on resume, refusals) |
 | A-D2 | **Background applies to the interactive kind only in A2.** The stream kind could carry it (G1 makes mode independent of data plane), but nothing needs it yet; the open refuses `background` with `event_stream` | this spec (anti-goal: nothing without a consumer) |
-| A-D3 | **Both run modes take an initial prompt (G6).** The open request and `OpenExecRunnerRequest` carry a prompt (on a stream, A-D17). Interactive fresh and resume templates accept `{prompt}`; an empty prompt drops the token entirely rather than passing `""`. A profile whose interactive template has no `{prompt}` cannot take one, and the harness does not type it into the PTY instead, which would race the program's startup. The server cannot see templates (F14), so **the runner refuses** such a start with `TaskFinished(-1, "prompt_unsupported: …")`: the task ends `Failed` with end reason `failed` and that message, in either run mode. Each preset's template is set from that agent's own help output in the plan; an agent that parses a leading `-` in a positional as a flag gets `--` before `{prompt}` | GD (G6), this spec (drop when empty, runner refuses, no typing) |
+| A-D3 | **Both run modes take an initial prompt (G6).** The open request and `OpenExecRunnerRequest` carry a prompt (on a stream, A-D17). Interactive fresh and resume templates accept `{prompt}`; an empty prompt drops the token entirely rather than passing `""`, and a flag-borne form (`-i {prompt}`, `--prompt {prompt}`) drops its flag with it. The five conversational presets get `{prompt}` in F18's form for each agent (pi's after `--`); the plan starts each one with a prompt, fresh and resumed, and confirms the prompt becomes the first turn. A profile whose interactive template has no `{prompt}` — after that, only the shell presets and a hand-written profile — cannot take one, and **the runner refuses** such a start with `TaskFinished(-1, "prompt_unsupported: …")`, the shape it already uses for an unresolvable profile (`runner/session.go:933-938`): the task ends `Failed` with end reason `failed` and that message, in either run mode. A shell command meant to run once belongs to a oneshot. Not chosen: dropping the prompt silently (an unprompted background run idles to a `turn_done_quiet` that reads like a finished turn); typing it into the PTY (needs a readiness signal some agents lack, and multi-line paste and Enter handling differ by agent and version — revisit only if an agent with no argv form appears); advertising prompt support in `RunnerHello` so the server refuses at open (a wire change for a case F18 leaves to misconfiguration; the cost accepted is that a background task with such a profile fails at placement, not at open) | GD (G6), this spec (drop when empty, runner refuses, no typing, no hello advertisement) |
 | A-D4 | **A background open is enqueued, never refused for capacity or for no runner (G26).** It is created Queued and placed by `Tick`. Refusals that remain at open time: grant (`ScopeNotPermitted`), spawn limits, a resume target that is missing or not terminal, `mode_mismatch`, a missing required field (A-D6, A-D7), and — when candidates exist — `ProfileUnavailable`. No runner is chosen at open time, so `AmbiguousRunner` is never answered: when several runners could take the task, `Tick` gives it to the first free one in `Candidates` order (connected earliest, then id), and an opener who cares pins one with the selector (`--runner`/`--host`) | GD (G26), this spec (which refusals stay, first-free placement) |
 | A-D5 | **A background open must name its agent profile.** With no candidate at open time the profile cannot be resolved, and `Tick` would otherwise place an unnamed profile on whichever runner is free. Every fleet runner carries all presets (operator memory: fleet runs `--agents all`), so a bare open is ambiguous there anyway | this spec |
 | A-D6 | **The deadline is required when a background task is created; no server default** (G41). Given as a duration; resolved to an absolute time when each run starts (A-D10) and persisted (G4). A resume reuses the stored duration (A-D7) | GD (G4, G41), this spec (reuse on resume) |
@@ -290,3 +302,6 @@ template in background mode only or in both.
   deadline ends `deadline`; each surface shows mode, end reason and, for a
   queued task on a full runner, the wait reason.
 - The F5 measurement of A-D16.
+- Each conversational preset (F18) opened with a prompt, fresh and resumed,
+  takes it as its first turn; the `bash` preset opened with a prompt ends
+  `Failed` with `prompt_unsupported`.
