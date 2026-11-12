@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -373,6 +375,60 @@ func (s *Server) captureHeldScreen(taskIDHex string) {
 	cols, rows := mux.screenSize()
 	s.cfg.Logger.Info("hold: session captured", "task", taskIDHex,
 		"bytes", len(cap), "cols", cols, "rows", rows)
+	// A background run's "has worked" facts, beside the screen (A-D13).
+	if t, ok := s.tasks.Get(taskIDHex); ok && t.RunMode == protocol.RunMode_Background {
+		var runStart int64
+		if t.StartedAt != nil {
+			runStart = t.StartedAt.UnixNano()
+		}
+		if err := s.writeHeldRunFacts(taskIDHex, mux.runFacts(runStart)); err != nil {
+			s.cfg.Logger.Warn("hold: run facts not written", "task", taskIDHex, "err", err)
+		}
+	}
+}
+
+// heldRunFacts is what a background run carries across a deliberate stop
+// besides its screen (pillar A, A-D13): whether the program had reported
+// working in this run, and whether output had arrived in it. A sidecar JSON,
+// not a frame in the .frames capture: that file is wire frames replayed into
+// the screen, and these are not screen content.
+type heldRunFacts struct {
+	ProgramWorkingAt int64 `json:"program_working_at"`
+	SawOutput        bool  `json:"saw_output"`
+}
+
+const holdRunFactsExt = ".run.json"
+
+func holdRunFactsPath(dataDir, taskIDHex string) string {
+	return filepath.Join(holdScreenDir(dataDir), taskIDHex+holdRunFactsExt)
+}
+
+func (s *Server) writeHeldRunFacts(taskIDHex string, f heldRunFacts) error {
+	b, err := json.Marshal(f)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(holdRunFactsPath(s.cfg.DataDir, taskIDHex), b, 0o644)
+}
+
+// readHeldRunFacts reads and removes the task's run facts; ok is false when
+// there are none or they do not parse — the run then falls back to the
+// per-mux floor and runs on to its deadline.
+func (s *Server) readHeldRunFacts(taskIDHex string) (heldRunFacts, bool) {
+	if s.cfg.DataDir == "" {
+		return heldRunFacts{}, false
+	}
+	path := holdRunFactsPath(s.cfg.DataDir, taskIDHex)
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return heldRunFacts{}, false
+	}
+	_ = os.Remove(path)
+	var f heldRunFacts
+	if err := json.Unmarshal(b, &f); err != nil {
+		return heldRunFacts{}, false
+	}
+	return f, true
 }
 
 // readHeldScreen returns a held task's capture and removes the file. Removing it
@@ -405,10 +461,15 @@ func (s *Server) sweepHeldScreens() {
 	}
 	for _, e := range entries {
 		name := e.Name()
-		if filepath.Ext(name) != holdCaptureExt {
+		var id string
+		switch {
+		case strings.HasSuffix(name, holdRunFactsExt):
+			id = strings.TrimSuffix(name, holdRunFactsExt)
+		case filepath.Ext(name) == holdCaptureExt:
+			id = name[:len(name)-len(holdCaptureExt)]
+		default:
 			continue
 		}
-		id := name[:len(name)-len(holdCaptureExt)]
 		if t, ok := s.tasks.Get(id); ok && t.Status == protocol.TaskStatus_Held {
 			continue
 		}

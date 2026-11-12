@@ -115,7 +115,7 @@ func (h *TaskHandler) runInputsOf(taskID string, mux *SessionMux) (runInputs, bo
 		Life:             LifecycleReading{State: t.Lifecycle, At: t.LifecycleAt, WorkingAt: t.LifecycleWorkingAt},
 		Prog:             pst,
 		ProgAt:           pat,
-		ProgWorkingAt:    pwat,
-		SawOutputThisRun: lo > runStart,
+		ProgWorkingAt:    max(pwat, mux.carriedProgramWorkingAt.Load()),
+		SawOutputThisRun: mux.sawOutputSince(runStart),
 	}, true
 }

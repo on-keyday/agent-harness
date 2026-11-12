@@ -225,6 +225,10 @@ type SessionMux struct {
 	lastInput        atomic.Int64
 	programAt        atomic.Int64
 	programWorkingAt atomic.Int64
+	// carried* are a background run's facts from before a deliberate restart
+	// (carryRunFacts, A-D13); zero on a mux that was not re-adopted.
+	carriedProgramWorkingAt atomic.Int64
+	carriedSawOutput        atomic.Bool
 
 	// mainMark is the ring append-index of the frame at which the session last
 	// returned to the primary screen (a full-screen app's alt-screen exit).
@@ -1361,3 +1365,31 @@ func (m *SessionMux) Stop() {
 
 // Wait returns a channel that is closed when Stop completes.
 func (m *SessionMux) Wait() <-chan struct{} { return m.stopped }
+
+// carryRunFacts applies a re-adopted background run's facts from the previous
+// server (heldRunFacts).
+func (m *SessionMux) carryRunFacts(f heldRunFacts) {
+	m.carriedProgramWorkingAt.Store(f.ProgramWorkingAt)
+	m.carriedSawOutput.Store(f.SawOutput)
+}
+
+// runFacts is what this mux would carry across a deliberate stop for a run
+// that started at runStart.
+func (m *SessionMux) runFacts(runStart int64) heldRunFacts {
+	return heldRunFacts{
+		ProgramWorkingAt: m.runProgramWorkingAt(),
+		SawOutput:        m.sawOutputSince(runStart),
+	}
+}
+
+// runProgramWorkingAt is the last program `working` of the run: on this mux,
+// or carried from before a restart.
+func (m *SessionMux) runProgramWorkingAt() int64 {
+	return max(m.programWorkingAt.Load(), m.carriedProgramWorkingAt.Load())
+}
+
+// sawOutputSince reports output in a run that started at runStart: on this
+// mux, or carried from before a restart.
+func (m *SessionMux) sawOutputSince(runStart int64) bool {
+	return m.carriedSawOutput.Load() || m.lastOutput.Load() > runStart
+}

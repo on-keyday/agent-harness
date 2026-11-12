@@ -237,7 +237,22 @@ func (s *Server) rebindHeldSessions(identity protocol.RunnerID, taskIDs []string
 			log.Warn("rebind: incomplete capture", "task", taskID,
 				"size", gotSize, "screen", gotScreen)
 		}
+		// A background run's "has worked" facts from before the stop, so a
+		// restored idle screen ends a run that had worked and cannot end one
+		// that had not (A-D13). Missing facts leave the per-mux floor.
+		background := false
+		if t, ok := s.tasks.Get(taskID); ok && t.RunMode == protocol.RunMode_Background {
+			background = true
+			if f, ok := s.readHeldRunFacts(taskID); ok {
+				mux.carryRunFacts(f)
+			} else {
+				log.Warn("rebind: no run facts; the run ends at its deadline unless it works again", "task", taskID)
+			}
+		}
 		s.taskHandler.Sessions.Add(taskID, mux)
+		if background {
+			s.taskHandler.armRunWatcher(taskID, mux)
+		}
 
 		var rr protocol.RunnerRequest
 		rr.Kind = protocol.RunnerRequestType_RebindSession

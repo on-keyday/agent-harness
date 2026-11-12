@@ -493,6 +493,9 @@ type progressLine struct {
 	Lifecycle           uint8  `json:"lifecycle"`
 	LifecycleAt         int64  `json:"lifecycle_at"`
 	LifecycleReportedAt int64  `json:"lifecycle_reported_at"`
+	// LifecycleWorkingAt crosses a deliberate stop so a re-adopted background
+	// run knows it had worked (pillar A, A-D13).
+	LifecycleWorkingAt int64 `json:"lifecycle_working_at,omitempty"`
 }
 
 // progressLines returns every task that has ever written a line (cleared ones
@@ -504,7 +507,8 @@ func (s *TaskStore) progressLines() []progressLine {
 	for id, t := range s.tasks {
 		if t.ProgressAt != 0 || t.LifecycleAt != 0 {
 			out = append(out, progressLine{TaskID: id, Progress: t.Progress, ProgressAt: t.ProgressAt,
-				Lifecycle: uint8(t.Lifecycle), LifecycleAt: t.LifecycleAt, LifecycleReportedAt: t.LifecycleReportedAt})
+				Lifecycle: uint8(t.Lifecycle), LifecycleAt: t.LifecycleAt, LifecycleReportedAt: t.LifecycleReportedAt,
+				LifecycleWorkingAt: t.LifecycleWorkingAt})
 		}
 	}
 	return out
@@ -525,6 +529,7 @@ func (s *TaskStore) restoreProgress(l progressLine) bool {
 	t.Lifecycle = protocol.LifecycleState(l.Lifecycle)
 	t.LifecycleAt = l.LifecycleAt
 	t.LifecycleReportedAt = l.LifecycleReportedAt
+	t.LifecycleWorkingAt = l.LifecycleWorkingAt
 	return true
 }
 
