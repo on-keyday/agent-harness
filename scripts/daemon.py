@@ -11,7 +11,7 @@ the matching ``.sh`` thin wrappers):
   - ``verify_owner(pid, bin_name)``        does the running pid still belong
                                            to <bin_name>?
 
-State files live under ``<repo>/bin/.run/<slot>.{pid,log}``. The slot is the
+State files live under ``<repo>/bin/.run/<slot>.{pid,log,argv.json}``. The slot is the
 *instance* identity (single-instance daemons use slot == bin_name; multi-
 instance daemons use a tagged slot like "agent-runner-2"). ``bin/`` is
 gitignored, so pid/log artefacts don't pollute the working tree.
@@ -24,6 +24,7 @@ systemd unit cgroup rather than inheriting the caller's. See
 
 from __future__ import annotations
 
+import json
 import os
 import signal
 import subprocess
@@ -71,6 +72,41 @@ def shutdown_file(slot: str) -> Path:
 
 def restart_log(slot: str) -> Path:
     return RUN_DIR / f"{slot}.restart.log"
+
+
+def argv_file(slot: str) -> Path:
+    """The flags of the slot's last SUCCESSFUL start. restart.py reads the
+    live process when there is one; this is what it reads once the daemon has
+    died, so a crash does not mean digging the flags out of a log."""
+    return RUN_DIR / f"{slot}.argv.json"
+
+
+def record_argv(slot: str, bin_name: str, args: list[str]) -> None:
+    """Write *bin_name*, *args* (without ``--shutdown-file``, which daemon_up
+    injects afresh) and the daemon's cwd to ``argv_file(slot)``.
+
+    The cwd is ``_ROOT`` because that is where ``_spawn_detached`` starts every
+    daemon, whatever the caller's cwd; relative flags (harness-server's default
+    ``--data-dir ./harness-data``) resolve against it. Mode 0600: the args can
+    carry ``--operator-psk VALUE``. Written to a temp file and renamed, so a
+    crash mid-write leaves the previous record intact."""
+    path = argv_file(slot)
+    tmp = path.with_name(path.name + ".tmp")
+    body = json.dumps({"bin": bin_name, "cwd": str(_ROOT), "args": list(args)}, indent=2)
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(body + "\n")
+    os.chmod(tmp, 0o600)  # O_CREAT's mode does not apply to a tmp left from before
+    os.replace(tmp, path)
+
+
+def recorded_argv(slot: str) -> tuple[str, str, list[str]] | None:
+    """``(bin_name, cwd, args)`` from ``argv_file(slot)``, or None if absent."""
+    try:
+        data = json.loads(argv_file(slot).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    return str(data["bin"]), str(data["cwd"]), [str(a) for a in data["args"]]
 
 
 def _proc_basename(p: psutil.Process) -> str:
@@ -284,6 +320,13 @@ def daemon_up(slot: str, bin_name: str, *args: str) -> int:
         except FileNotFoundError:
             pass
         raise RuntimeError(f"{slot} failed to start")
+
+    # Only after the start held: a bad flag must not overwrite the last flag
+    # set that worked.
+    try:
+        record_argv(slot, bin_name, args)
+    except OSError as e:
+        sys.stderr.write(f"[{slot}] could not record argv to {argv_file(slot)}: {e}\n")
 
     print(f"[{slot}] started pid={pid} log={lf}")
     return pid

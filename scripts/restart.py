@@ -15,7 +15,10 @@ Usage::
 primary instances (``agent-runner``, ``harness-server``) or
 ``<binary>-<tag>`` for additional instances. Flags, CWD, and the
 underlying binary are read from the running process so the new instance
-comes up identically.
+comes up identically. When the daemon is no longer running (it crashed),
+they are read from ``bin/.run/<slot>.argv.json`` instead, which
+``daemon.daemon_up`` writes after every successful start — so the same
+command brings a dead daemon back with its last working flags.
 
 Anything after the slot is an *override*: each ``--flag`` named there is
 stripped from the inherited argv and the overrides are appended, so the
@@ -25,6 +28,9 @@ secret rotation without retyping the full flag set::
     python scripts/restart.py harness-server --operator-psk NEWSECRET
     python scripts/restart.py harness-server --operator-psk-file /path/to/new-psk
 
+``--operator-psk`` and ``--operator-psk-file`` are one setting: overriding
+either strips both, so switching from the value form to the file form does
+not leave the old value behind (the server prefers a value over a file).
 (``--operator-psk`` values are redacted in the restart log,
 but the value form is still visible in ``ps`` on the new process — use
 the ``-file`` form when that matters.)
@@ -93,13 +99,24 @@ def _override_names(overrides: list[str]) -> list[str]:
     return names
 
 
+# Flags that set ONE thing two ways. Overriding any member strips every member:
+# harness-server takes --operator-psk over --operator-psk-file, so overriding
+# only the file would leave the inherited value in force (and in ps).
+_FLAG_GROUPS = (frozenset({"operator-psk", "operator-psk-file"}),)
+
+
 def _merge_flags(inherited: list[str], overrides: list[str]) -> list[str]:
-    """Inherited argv with every override-named flag stripped, overrides
-    appended. Appending alone would usually work (Go flag parsing is
-    last-wins), but stripping keeps ``ps`` output honest — no stale
-    ``--operator-psk`` value lingering in front of the new one."""
+    """Inherited argv with every override-named flag (and its group, see
+    ``_FLAG_GROUPS``) stripped, overrides appended. Appending alone would
+    usually work (Go flag parsing is last-wins), but stripping keeps ``ps``
+    output honest — no stale ``--operator-psk`` value lingering in front of
+    the new one."""
+    names = set(_override_names(overrides))
+    for group in _FLAG_GROUPS:
+        if names & group:
+            names |= group
     merged = list(inherited)
-    for name in _override_names(overrides):
+    for name in sorted(names):
         merged = _daemon._strip_flag(merged, name)
     return merged + list(overrides)
 
@@ -223,6 +240,45 @@ def _do_restart(slot: str, bin_name: str, flags: list[str], orig_cwd: str) -> No
         emit(f"[{_ts()}] restart {slot} end")
 
 
+def _live_pid(slot: str, recorded_bin: str | None) -> int | None:
+    """The slot's pid if it is running and (when a record names the binary)
+    still that binary — a pid file left by a crash can point at a reused pid."""
+    try:
+        pid = int(_daemon.pid_file(slot).read_text().strip())
+    except (FileNotFoundError, ValueError):
+        return None
+    if pid <= 0 or not psutil.pid_exists(pid):
+        return None
+    if recorded_bin is not None and not _daemon.verify_owner(pid, recorded_bin):
+        return None
+    return pid
+
+
+def _resolve_state(slot: str) -> tuple[str, list[str], str] | None:
+    """``(bin_name, flags, cwd)`` to restart *slot* with: from the live
+    process when there is one, else from its last recorded start. Reports
+    and returns None when neither exists."""
+    rec = _daemon.recorded_argv(slot)
+    pid = _live_pid(slot, rec[0] if rec else None)
+    if pid is not None:
+        try:
+            return _read_proc_state(pid)
+        except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
+            if rec is None:
+                sys.stderr.write(f"[{slot}] cannot inspect pid={pid}: {e}\n")
+                return None
+    if rec is None:
+        sys.stderr.write(
+            f"[{slot}] not running and no recorded start at {_daemon.argv_file(slot)}; "
+            "start it via the per-daemon helper first\n"
+        )
+        return None
+    bin_name, cwd, flags = rec
+    print(f"[{slot}] not running; restarting with the flags recorded at its last start "
+          f"({_daemon.argv_file(slot)})")
+    return bin_name, flags, cwd
+
+
 def _usage_and_exit() -> None:
     sys.stderr.write(
         "usage: restart.py <slot> [override flags...]   "
@@ -250,30 +306,10 @@ def main(argv: list[str]) -> int:
     if overrides and not overrides[0].startswith("--"):
         _usage_and_exit()  # a second positional is a typo, not an override
 
-    pf = _daemon.pid_file(slot)
-    if not pf.is_file():
-        sys.stderr.write(
-            f"[{slot}] no pid file at {pf} (daemon not currently managed); "
-            "start it via the per-daemon helper first\n"
-        )
+    state = _resolve_state(slot)
+    if state is None:
         return 1
-    try:
-        pid = int(pf.read_text().strip())
-    except ValueError:
-        sys.stderr.write(f"[{slot}] pid file unreadable\n")
-        return 1
-    if not psutil.pid_exists(pid):
-        sys.stderr.write(
-            f"[{slot}] pid file present but pid={pid} not running; "
-            f"clean up {pf} and start fresh\n"
-        )
-        return 1
-
-    try:
-        bin_name, flags, cwd = _read_proc_state(pid)
-    except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
-        sys.stderr.write(f"[{slot}] cannot inspect pid={pid}: {e}\n")
-        return 1
+    bin_name, flags, cwd = state
     if overrides:
         flags = _merge_flags(flags, overrides)
 
