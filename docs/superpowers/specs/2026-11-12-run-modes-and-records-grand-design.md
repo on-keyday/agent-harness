@@ -105,6 +105,7 @@ the author chose it while writing; those rows are the ones to check.
 | G29 | **An optional queueing period.** A background task (or a schedule, for each task it fires) may carry a limit on how long it waits in the queue; past it, the task is cancelled with its own end reason (G5, e.g. `queue_timeout`). The limit is a field of the task and the only one the timeout reads: a human or agent opening in background mode sets it directly, and a schedule copies its value into each task when it fires, so both paths reach one mechanism. Unset by default, which keeps G27's no-expiry rule. Separate from the deadline (G4), which starts only when the run starts. For a schedule it is what lets a stale firing give way: under G28 a queued firing blocks the next ones, and a queueing period shorter than the interval cancels it before the next firing | operator (the option, at both task and schedule level), this spec (unset by default, separate end reason) |
 | G30 | **A schedule can be edited after it is created** — its period and conditions included — so a queueing period (G29) can be set once the usual wait is known: past it, something is probably wrong. An edit applies to firings after it; a task already fired keeps the values it was created with (cancel it to drop it) | operator (editable), this spec (future firings only) |
 | G31 | **The usual wait is observable.** Each run records when it was queued and when it started (today `TaskEntry` has one `CreatedAt`/`StartedAt` per task, `server/taskstore.go`, and a resume re-queues the same task, so these become per run with G21). A schedule lists its recent firings with each one's wait, end reason (G5) and skips (G28). Without this G30's "once the usual wait is known" has nothing to read | this spec (follows from G30) |
+| G32 | **Transcripts (pillar B) cover every agent the fleet runs that keeps a transcript** — today's presets are claude, codex, agy, opencode and pi, and their sandboxed variants — not claude first with the rest later. A program with no conversation (bash, cmd) has the PTY record (G11) only. Pillar B does not land claude-only | operator |
 
 ## Anti-goals
 
@@ -208,8 +209,17 @@ What the pillar spec must settle, and the facts it builds on:
   location (`~/.claude/projects/<encoded-cwd>/`, or under `$CLAUDE_CONFIG_DIR`)
   and is reused; its newest-file rule is not. A sandboxed profile keeps its
   config dir somewhere other than the runner host's `~/.claude`, so the
-  location is resolved in the agent's environment, not the runner's. Other
-  agents' locations are recorded per profile, as `--agent-log-format` is today.
+  location is resolved in the agent's environment, not the runner's.
+- **Every agent that writes a transcript is covered, not claude alone (G32).**
+  The per-agent part is kept to two facts — where the agent stores a session,
+  and how its session id reaches the runner — recorded per profile, as
+  `--agent-log-format` is today. Fetching returns the stored file as it is,
+  so no per-agent parser is needed to fetch; rendering one is per agent and
+  may come later. Today only claude has either fact implemented
+  (`runner/streamagent/claude_transcript.go`). Binding past runs (before G18
+  existed) is also per agent: claude stores per working directory, so a
+  worktree task's directory holds only that task's sessions; another agent
+  may store by date and need a field read instead.
 - Transcripts live outside the runner's roots. Resolving from the task, never
   from a client-supplied path, is what keeps this from being an arbitrary-file
   read.
