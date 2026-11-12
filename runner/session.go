@@ -698,8 +698,8 @@ func (s *Session) handleAssign(ctx context.Context, taskID protocol.TaskID, body
 		s.testHookHandleAssign()
 	}
 
-	// Gate: check repo is under an allowed root (skip check if AllowedRoots is empty
-	// so existing tests that don't set AllowedRoots continue to work).
+	// Gate: check repo is one of the allowed roots (skip check if AllowedRoots is
+	// empty so existing tests that don't set AllowedRoots continue to work).
 	if len(s.AllowedRoots) > 0 && !s.repoAllowed(repoPath) {
 		finishWithError(-1, "repo_not_allowed: "+repoPath)
 		return
@@ -918,7 +918,7 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 		return
 	}
 
-	// Gate: check repo is under an allowed root.
+	// Gate: check repo is one of the allowed roots.
 	if len(s.AllowedRoots) > 0 && !s.repoAllowed(repoPath) {
 		_ = stream.CloseBoth()
 		finishWithError(-1, "repo_not_allowed: "+repoPath)

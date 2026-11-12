@@ -550,3 +550,67 @@ func TestSchedulerFillsFreeSlotsInOrder(t *testing.T) {
 		t.Fatalf("third task status=%v want Queued (runner full)", task.Status)
 	}
 }
+
+// A takeover leaves the displaced connection registered until its teardown
+// arrives (up to the dead-peer GC on UDP), and Candidates lists the older
+// connection first. An unpinned queued task must still go to the connection
+// that holds the identity: the displaced one can no longer report for it
+// (ownsTask), and its runner process is gone.
+func TestSchedulerSkipsDisplacedConnection(t *testing.T) {
+	reg := NewRegistry()
+	id := testRunnerID("A")
+	old := idleRunner("A", "h1", nil)
+	old.Identity = id
+	old.ConnectedAt = time.Unix(1, 0)
+	reg.Add(old)
+	cur := idleRunner("A2", "h1", nil)
+	cur.Identity = id
+	cur.ConnectedAt = time.Unix(2, 0)
+	reg.Add(cur) // takeover; "A" is not torn down yet
+
+	store := NewTaskStore()
+	store.Create("/x", "queued", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}}, "")
+
+	var captured []assignPair
+	NewScheduler(reg, store, func(r objproto.ConnectionID, tID string) error {
+		captured = append(captured, assignPair{r, tID})
+		return nil
+	}).Tick()
+	if len(captured) != 1 || captured[0].runner != tcid("A2") {
+		t.Fatalf("assigned %v, want one assignment to A2 (the identity's holder)", captured)
+	}
+}
+
+// Cancel does not take the scheduler's lock, so a task can be cancelled after
+// Tick's QueuedTasks snapshot and before Tick reaches it. It must not then be
+// sent: TaskStore.Assign would turn Cancelled back into Running, and OnCancel,
+// which saw no runner, sent no CancelTask.
+func TestSchedulerSkipsTaskCancelledMidWalk(t *testing.T) {
+	reg := NewRegistry()
+	r := idleRunner("r1", "h", nil)
+	r.MaxTasks = 2
+	reg.Add(r)
+	store := NewTaskStore()
+	g := authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}}
+	a := store.Create("/x", "a", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, g, "")
+	b := store.Create("/x", "b", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, g, "")
+
+	var sent []string
+	NewScheduler(reg, store, func(_ objproto.ConnectionID, tID string) error {
+		sent = append(sent, tID)
+		if tID == a {
+			store.Cancel(b) // the operator cancels b while Tick is mid-walk
+		}
+		return nil
+	}).Tick()
+
+	if len(sent) != 1 || sent[0] != a {
+		t.Fatalf("sent %v, want only %s", sent, a)
+	}
+	if task, _ := store.Get(b); task.Status != protocol.TaskStatus_Cancelled {
+		t.Fatalf("b status=%v want Cancelled", task.Status)
+	}
+	if e, _ := reg.Get(tcid("r1")); len(e.ActiveTasks) != 1 {
+		t.Fatalf("runner holds %d reservations, want 1 (b's must be released)", len(e.ActiveTasks))
+	}
+}

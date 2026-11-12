@@ -48,13 +48,17 @@ func NewScheduler(reg *Registry, store *TaskStore, assign AssignFunc) *Scheduler
 // Registry.Candidates — the same answer submit and an interactive open use
 // (G17 of docs/superpowers/specs/2026-11-12-run-modes-and-records-grand-design.md)
 // — and gives the task to the first candidate that:
-//  1. is Idle (connected, below capacity),
+//  1. is Idle (connected, below capacity) and not a displaced connection
+//     (Registry.displaced: a takeover's predecessor, which Candidates lists
+//     first because it connected earlier),
 //  2. advertises the task's agent profile, if it names one,
-//  3. takes the reservation: reg.BindTask, which re-checks capacity, so a
-//     runner filled earlier in this pass is refused even though its
-//     Candidates snapshot still read Idle.
+//  3. takes the reservation: reg.BindTask re-checks capacity under the
+//     registry lock, which matters because handleOpenInteractive and readopt
+//     reserve slots without holding s.mu.
 //
-// It then sends AssignTask (s.assign). On a send error the reservation is
+// Having reserved, it re-reads the task: a task cancelled since the
+// QueuedTasks snapshot is released and skipped. It then sends AssignTask
+// (s.assign). On a send error the reservation is
 // released, the error logged and the next candidate tried. On success
 // store.Assign records the runner. A task no candidate takes stays Queued, and
 // the walk goes on to the next task rather than stopping: stopping would let
@@ -74,7 +78,7 @@ func (s *Scheduler) Tick() {
 	defer s.mu.Unlock()
 	for _, task := range s.store.QueuedTasks() {
 		for _, c := range s.reg.Candidates(task.RepoPath, task.Selector) {
-			if c.Status() != protocol.RunnerStatus_Idle {
+			if c.Status() != protocol.RunnerStatus_Idle || s.reg.displaced(c.ID) {
 				continue
 			}
 			if task.AgentProfile != "" && !c.HasProfile(task.AgentProfile) {
@@ -85,6 +89,13 @@ func (s *Scheduler) Tick() {
 			// authorized by ownsTask.
 			if !s.reg.BindTask(c.ID, task.ID) {
 				continue
+			}
+			// Cancel does not take s.mu: the task may have been cancelled since
+			// the QueuedTasks snapshot. Sending it now would let Assign turn
+			// Cancelled back into Running, with no CancelTask ever sent.
+			if cur, ok := s.store.Get(task.ID); !ok || cur.Status != protocol.TaskStatus_Queued {
+				s.reg.UnbindTask(c.ID, task.ID)
+				break
 			}
 			if err := s.assign(c.ID, task.ID); err != nil {
 				s.reg.UnbindTask(c.ID, task.ID)

@@ -567,7 +567,7 @@ func (s *Session) buildGitResult(ctx context.Context, req *protocol.RunnerGitQue
 	// AllowedRoots empty means an unconfigured Session (tests); the assign /
 	// open-exec paths guard the same way.
 	if len(s.AllowedRoots) > 0 && !s.repoAllowed(repoPath) {
-		return fail(protocol.GitRunStatus_RepoNotAllowed, "repo is not under this runner's --roots")
+		return fail(protocol.GitRunStatus_RepoNotAllowed, "repo is not one of this runner's --roots")
 	}
 
 	taskIDHex := hex.EncodeToString(req.TaskId.Id[:])

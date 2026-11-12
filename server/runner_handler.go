@@ -138,8 +138,8 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 		roots := make([]string, len(hello.AllowedRoots))
 		for i, ar := range hello.AllowedRoots {
 			// Wire is POSIX '/'-paths; use path.Clean (not filepath.Clean) so a
-			// Windows-running server doesn't convert '/' to '\' and break the
-			// boundary predicate.
+			// Windows-running server doesn't convert '/' to '\' and break
+			// protocol.RootMatches.
 			roots[i] = path.Clean(string(ar.Path))
 		}
 		profiles := make([]string, len(hello.AgentProfiles))

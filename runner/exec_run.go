@@ -196,7 +196,7 @@ func (s *Session) handleExecRun(ctx context.Context, req *protocol.RunnerExecRun
 	// AllowedRoots empty means an unconfigured Session (tests).
 	if len(s.AllowedRoots) > 0 && !s.repoAllowed(repoPath) {
 		_ = stream.CloseBoth()
-		finish(protocol.ExecEventKind_Failed, -1, "repo is not under this runner's --roots: "+repoPath)
+		finish(protocol.ExecEventKind_Failed, -1, "repo is not one of this runner's --roots: "+repoPath)
 		return
 	}
 	dir, ok := s.execRunDir(repoPath, taskIDHex)

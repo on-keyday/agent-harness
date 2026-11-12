@@ -65,6 +65,11 @@ func TestSendAssignReachesRunner(t *testing.T) {
 	if string(body.Prompt) != "do-the-thing" {
 		t.Fatalf("body.Prompt=%q want do-the-thing", body.Prompt)
 	}
+	// The runner's repo gate reads this; TestTryDispatch_HappyPath asserted it
+	// until TryDispatch was deleted.
+	if string(body.RepoPath) != "/r" {
+		t.Fatalf("body.RepoPath=%q want /r", body.RepoPath)
+	}
 }
 
 func TestSendAssignDisconnected(t *testing.T) {

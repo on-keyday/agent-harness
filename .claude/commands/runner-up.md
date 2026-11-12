@@ -294,7 +294,7 @@ Arguments: $ARGUMENTS
 
    The Windows roots default `C:/workspace` matches the user's observed convention; override with `roots=` if the actual workspace is elsewhere.
 
-4. **Pre-flight: detect dispatch-ambiguity collision**. Before spawning, run `harness-cli ls` and scan the RUNNERS section. The server uses longest-prefix-match across `AllowedRoots` plus selector to pick a runner; when two runners on the *same reported hostname* serve the *same exact roots string*, dispatch (`submit` / `session new` / `interactive`) with the default `Any` selector returns `AmbiguousRunner`, and a `--host <name>` pin cannot disambiguate them either.
+4. **Pre-flight: detect dispatch-ambiguity collision**. Before spawning, run `harness-cli ls` and scan the RUNNERS section. The server picks a runner whose `AllowedRoots` contains an entry equal to the repo, plus the selector; when two runners on the *same reported hostname* serve the *same exact roots string*, dispatch (`submit` / `session new` / `interactive`) with the default `Any` selector returns `AmbiguousRunner`, and a `--host <name>` pin cannot disambiguate them either.
 
    - Compute `intended_roots_csv` (the resolved `--roots` value, or `.` if omitted).
    - Compare against each existing row's `host=<H>` and `roots=<csv>` (exact string match on both).

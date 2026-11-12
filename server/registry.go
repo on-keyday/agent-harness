@@ -316,6 +316,18 @@ func (r *Registry) ownsTask(id objproto.ConnectionID, taskID string) bool {
 	return assigned
 }
 
+// displaced reports whether id is a connection whose identity a newer
+// connection has taken over. Until its teardown arrives (up to the dead-peer GC
+// on UDP) it stays registered, but it can no longer report for a task
+// (ownsTask), so nothing should be assigned to it. An entry with no identity
+// (test wiring only) is never displaced.
+func (r *Registry) displaced(id objproto.ConnectionID) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	e, ok := r.runners[id]
+	return ok && !e.Identity.IsZero() && r.byIdentity[e.Identity] != id
+}
+
 func (r *Registry) isCurrentRunner(id objproto.ConnectionID, identity protocol.RunnerID) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -445,13 +457,6 @@ func (r *Registry) selects(sel protocol.RunnerSelector, e *RunnerEntry) bool {
 		return r.byIdentity[e.Identity] == e.ID
 	}
 	return true
-}
-
-// Selects is selects for a caller holding a snapshot rather than the lock.
-func (r *Registry) Selects(sel protocol.RunnerSelector, e *RunnerEntry) bool {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.selects(sel, e)
 }
 
 func selectorMatches(sel protocol.RunnerSelector, e *RunnerEntry) bool {

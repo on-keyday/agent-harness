@@ -1822,7 +1822,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 		// resume request carries none, and a client that composed the message
 		// from its own argument printed `no idle runner for repo ""`. "Idle"
 		// was wrong too -- Candidates ignores capacity; an empty list means no
-		// connected runner has a root covering the repo.
+		// connected runner has the repo as one of its roots.
 		resp, body := errResp(protocol.OpenInteractiveStatus_NoRunnerForRepo)
 		msg := "no connected runner serves " + repo
 		if resuming {

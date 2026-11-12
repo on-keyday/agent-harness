@@ -59,7 +59,7 @@ type Config struct {
 	// the children this runner had are gone.
 	RunnerID protocol.RunnerID
 
-	AllowedRoots []string // absolute repo paths (or root prefixes) this runner serves
+	AllowedRoots []string // absolute repo paths this runner serves; a task's repo must equal one
 	MaxTasks     int      // maximum concurrent tasks (0 → defaults to 1)
 	Hostname     string   // hostname reported in Hello (empty → no hostname sent)
 

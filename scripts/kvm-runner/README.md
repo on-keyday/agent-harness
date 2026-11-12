@@ -170,12 +170,12 @@ Three things about it are worth knowing:
   backing are both boot-time.
 - **An agent with root in the guest can write whatever you export.** Export one
   repo, not `$HOME` — the same trade the podman kit makes with its bind mounts.
-- **Do not give a guest slot the same exact `--roots` string as a host slot.**
+- **Do not give a guest slot the same `--roots` entry as a host slot.**
   That is the one configuration where the server cannot tell the two runners
-  apart. A share alone does not cause it: root matching keeps only the longest
-  match, so a host slot serving `~/workspace/<repo>` shadows a guest slot
-  serving `~/workspace`, and the guest's no-worktree slot never creates
-  worktrees anyway.
+  apart. A share alone does not cause it: a task's repo must equal one of a
+  runner's roots, so a host slot serving `~/workspace/<repo>` and a guest slot
+  serving `~/workspace` never both match the same repo, and the guest's
+  no-worktree slot never creates worktrees anyway.
 
 Landing to a trunk still works the way it does from any other separate runner
 host: push, then fast-forward the trunk-authoritative checkout.

@@ -780,8 +780,8 @@ func (s *TaskStore) Get(id string) (TaskEntry, bool) {
 // is set to true (a new client has taken the session).
 // skillsInjected is the assigned runner's RunnerEntry.SkillsInjected. It is a
 // parameter rather than a registry lookup inside the store so the compiler
-// names every dispatch site when the value's meaning changes; all three
-// (scheduler, dispatcher, handleOpenInteractive) already hold the RunnerEntry.
+// names every dispatch site when the value's meaning changes; both
+// (scheduler, handleOpenInteractive) already hold the RunnerEntry.
 func (s *TaskStore) Assign(id string, runner protocol.RunnerID, worktreeDir string, skillsInjected bool) {
 	now := time.Now()
 	s.mu.Lock()
