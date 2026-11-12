@@ -41,18 +41,64 @@ func TestOpenInteractiveRequestRunModeRoundTrip(t *testing.T) {
 	}
 }
 
-// A request from a client that predates the run-mode bits sets none of them,
-// and the bits already in that byte keep their positions.
+// The run-mode bits were appended after max_descendants_present; the bits
+// already in that byte must keep their positions, or a peer on the old build
+// misreads them silently. Checked on the raw byte, which a same-build round
+// trip cannot see. The encoder is MSB-first.
 func TestOpenInteractiveRequestOldFlagsKeepTheirBits(t *testing.T) {
-	oi := OpenInteractiveRequest{}
-	oi.SetRepoPath([]byte("/r"))
-	oi.SetMaxDescendantsPresent(true)
-	var got OpenInteractiveRequest
-	if err := got.DecodeExact(oi.MustAppend(nil)); err != nil {
-		t.Fatalf("decode: %v", err)
+	enc := func(set func(*OpenInteractiveRequest)) []byte {
+		oi := OpenInteractiveRequest{}
+		oi.SetRepoPath([]byte("/r"))
+		set(&oi)
+		return oi.MustAppend(nil)
 	}
-	if !got.MaxDescendantsPresent() || got.RunModeSet() || got.Background() || got.ConditionsPresent() || got.PromptPresent() {
-		t.Fatalf("flags drifted: %+v", got)
+	base := enc(func(*OpenInteractiveRequest) {})
+	maxDesc := enc(func(o *OpenInteractiveRequest) { o.SetMaxDescendantsPresent(true) })
+	idx := -1
+	for i := range base {
+		if base[i] != maxDesc[i] {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 || maxDesc[idx] != 0x20 {
+		t.Fatalf("max_descendants_present byte %d = %#x, want 0x20", idx, maxDesc[idx])
+	}
+	for name, c := range map[string]struct {
+		set  func(*OpenInteractiveRequest)
+		want byte
+	}{
+		"run_mode_set":       {func(o *OpenInteractiveRequest) { o.SetRunModeSet(true) }, 0x10},
+		"background":         {func(o *OpenInteractiveRequest) { o.SetBackground(true) }, 0x08},
+		"conditions_present": {func(o *OpenInteractiveRequest) { o.SetConditionsPresent(true); o.SetConditions(BackgroundConditions{}) }, 0x04},
+		"prompt_present":     {func(o *OpenInteractiveRequest) { o.SetPromptPresent(true); o.SetPromptStreamId(1) }, 0x02},
+	} {
+		if got := enc(c.set)[idx]; got != c.want {
+			t.Errorf("%s: flag byte %#x, want %#x", name, got, c.want)
+		}
+	}
+}
+
+func TestOpenExecRunnerRequestOldFlagsKeepTheirBits(t *testing.T) {
+	enc := func(set func(*OpenExecRunnerRequest)) []byte {
+		o := OpenExecRunnerRequest{}
+		set(&o)
+		return o.MustAppend(nil)
+	}
+	base := enc(func(*OpenExecRunnerRequest) {})
+	es := enc(func(o *OpenExecRunnerRequest) { o.SetEventStream(true) })
+	idx := -1
+	for i := range base {
+		if base[i] != es[i] {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 || es[idx] != 0x20 {
+		t.Fatalf("event_stream byte %d = %#x, want 0x20", idx, es[idx])
+	}
+	if got := enc(func(o *OpenExecRunnerRequest) { o.SetPromptPresent(true); o.SetPromptStreamId(1) })[idx]; got != 0x10 {
+		t.Fatalf("prompt_present flag byte %#x, want 0x10", got)
 	}
 }
 
@@ -110,23 +156,26 @@ func TestSessionModeRoundTrip(t *testing.T) {
 func TestTaskInfoRunFieldsRoundTrip(t *testing.T) {
 	info := TaskInfo{
 		RunMode: RunMode_Background, EndReason: EndReason_TurnDoneQuiet,
-		DeadlineNs: 11, QueueDeadlineNs: 12, WaitReason: WaitReason_AllBusy,
+		DeadlineNs: 11, DeadlineRemainingMs: 13, QueueDeadlineNs: 12, WaitReason: WaitReason_AllBusy,
 		Conditions: BackgroundConditions{DeadlineMs: 5},
 	}
 	info.CancelledBy.Id[0] = 0xab
+	info.SetCancelledByHidden(true)
+	info.SetAuthorityActorHidden(true)
 	var got TaskInfo
 	if err := got.DecodeExact(info.MustAppend(nil)); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
 	if got.RunMode != RunMode_Background || got.EndReason != EndReason_TurnDoneQuiet || got.DeadlineNs != 11 ||
 		got.QueueDeadlineNs != 12 || got.WaitReason != WaitReason_AllBusy || got.Conditions.DeadlineMs != 5 ||
-		got.CancelledBy.Id[0] != 0xab {
+		got.CancelledBy.Id[0] != 0xab || got.DeadlineRemainingMs != 13 || !got.CancelledByHidden() || !got.AuthorityActorHidden() {
 		t.Fatalf("got %+v", got)
 	}
 
-	ev := TaskStatusEvent{RunMode: RunMode_Background, EndReason: EndReason_Deadline}
+	ev := TaskStatusEvent{RunMode: RunMode_Background, EndReason: EndReason_Deadline, DeadlineNs: 21, DeadlineRemainingMs: 22}
 	var gotEv TaskStatusEvent
-	if err := gotEv.DecodeExact(ev.MustAppend(nil)); err != nil || gotEv.RunMode != RunMode_Background || gotEv.EndReason != EndReason_Deadline {
+	if err := gotEv.DecodeExact(ev.MustAppend(nil)); err != nil || gotEv.RunMode != RunMode_Background || gotEv.EndReason != EndReason_Deadline ||
+		gotEv.DeadlineNs != 21 || gotEv.DeadlineRemainingMs != 22 {
 		t.Fatalf("event = %+v, %v", gotEv, err)
 	}
 }

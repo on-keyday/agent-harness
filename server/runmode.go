@@ -108,3 +108,15 @@ type DeadlineHit struct {
 	ID     string
 	Reason protocol.EndReason
 }
+
+// remainingMs is the time left to an absolute deadline, on the server clock,
+// for listings and events (0 when there is none or it has passed).
+func remainingMs(at int64) uint64 {
+	if at == 0 {
+		return 0
+	}
+	if d := time.Until(time.Unix(0, at)); d > 0 {
+		return uint64(d / time.Millisecond)
+	}
+	return 0
+}

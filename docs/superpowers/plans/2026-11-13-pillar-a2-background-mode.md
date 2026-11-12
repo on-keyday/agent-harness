@@ -39,7 +39,11 @@ and switched while it runs.
     appended (`message.bgn` B:566-568, B:5245-5251).
   - Regenerate with `make protoregen`.
   - Run `scripts/wire-skew-check.sh` before landing, because the runner
-    decodes `OpenExecRunnerRequest`. Restart order: **server first**.
+    decodes `OpenExecRunnerRequest`. Restart order: **runners first**, then the
+    server. An old runner reads a new server's `prompt_present` as reserved and
+    starts the agent with no prompt, silently; a new runner never sees the bit
+    from an old server. The handshake path is guarded both ways since
+    `9f164ca1`, so runner-first is safe there (Task 1 checkpoint review, I1).
 - **WAL format:** every new WAL field is a JSON key whose zero value means
   today's behaviour.
   - Each one is added to `WALEvent`, `walEventJSON`, `MarshalJSON` and
@@ -114,7 +118,7 @@ and switched while it runs.
 - Produces (bgn → Go):
   - **New enums:**
     - `enum RunMode :u8 { foreground = 0, background = 1 }`
-    - `enum TurnEndSignal :u8 { default = 0, off, quiet, lifecycle, program, any }`
+    - `enum TurnEndSignal :u8 { unset = 0, off, quiet, lifecycle, program, any }`
     - `enum EndReason :u8 { none = 0, process_exit, cancelled, failed, deadline, turn_done_lifecycle, turn_done_program, turn_done_quiet, agent_error, blocked_timeout, queue_timeout }`
     - `enum WaitReason :u8 { none = 0, no_candidate, all_busy }`
   - **New formats:**

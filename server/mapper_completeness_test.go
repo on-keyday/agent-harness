@@ -100,7 +100,7 @@ func TestToTaskInfoMapsEveryField(t *testing.T) {
 		AuthorityAt:     now.Add(-time.Second),
 		RunMode:         protocol.RunMode_Background,
 		Cond:            RunConditions{Deadline: time.Hour, TurnEnd: protocol.TurnEndSignal_Quiet, Quiet: time.Minute, Blocked: time.Minute, QueueTimeout: time.Minute},
-		DeadlineAt:      now.UnixNano(),
+		DeadlineAt:      now.Add(time.Hour).UnixNano(),
 		QueueDeadlineAt: now.UnixNano(),
 		EndReason:       protocol.EndReason_Deadline,
 		CancelledBy:     protocol.TaskID{Id: [16]byte{0x4e}},

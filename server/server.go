@@ -470,11 +470,12 @@ func New(cfg Config) *Server {
 		var lifecycleAt int64
 		var runMode protocol.RunMode
 		var endReason protocol.EndReason
+		var deadlineAt int64
 		if t, ok := s.tasks.Get(taskID); ok {
 			taskKind = t.Kind
 			progress, progressAt = t.Progress, t.ProgressAt
 			lifecycle, lifecycleAt = t.Lifecycle, t.LifecycleAt
-			runMode, endReason = t.RunMode, t.EndReason
+			runMode, endReason, deadlineAt = t.RunMode, t.EndReason, t.DeadlineAt
 		}
 		ev := protocol.TaskStatusEvent{
 			Kind:       kind,
@@ -484,6 +485,9 @@ func New(cfg Config) *Server {
 			ExitCode:   exitCode,
 			RunMode:    runMode,
 			EndReason:  endReason,
+
+			DeadlineNs:          uint64(deadlineAt),
+			DeadlineRemainingMs: remainingMs(deadlineAt),
 		}
 		// Stored, so stamped on every event like the kind: any event refreshes
 		// a subscriber's progress column without waiting for a List.

@@ -361,6 +361,7 @@ enum WaitReason:
     :u8
     none = 0
     no_candidate = 1  # no connected runner has the repo as a root and matches
+                      # the selector and advertises the profile
     all_busy = 2      # candidates exist and none has a free slot
 
 # The conditions of a background run (A-D7). In every *_ms field 0 means the
@@ -957,7 +958,8 @@ enum TaskStatus:
 # TaskKind distinguishes how the task was requested.
 #  - oneshot:     submitted via SubmitRequest, claude runs with -p prompt and exits
 #  - interactive: opened via OpenInteractiveRequest, claude runs under a PTY
-#                 spliced bytewise to the requesting client. Has empty prompt.
+#                 spliced bytewise to the requesting client. Its prompt, if
+#                 any, is the agent's first turn (OpenInteractiveRequest.prompt_present).
 # Without this field the TUI has to infer the kind from len(prompt)==0,
 # which is brittle (a freshly-stubbed TaskInfo from TaskStatusEvent would
 # spuriously look interactive until the next List snapshot fills the prompt).
@@ -1113,7 +1115,11 @@ format TaskInfo:
     # authority_actor_hidden: authority_actor was withheld because the caller
     # cannot see that task. A zero actor alone reads as "the operator".
     authority_actor_hidden :u1
-    reserved :u4
+    # cancelled_by_hidden: cancelled_by was withheld because the caller cannot
+    # see that task, as authority_actor_hidden. A zero cancelled_by alone
+    # reads as "the operator".
+    cancelled_by_hidden :u1
+    reserved :u3
     ring_buffer_bytes :u64    # current bytes buffered (0 for oneshot tasks —
                               # every interactive session has a ring)
     last_output_at :u64   # unix nanos (SERVER clock) of the last Stdout/Stderr
@@ -1226,6 +1232,10 @@ format TaskInfo:
     end_reason :EndReason
     cancelled_by :TaskID
     deadline_ns :u64
+    # Server-computed time left to deadline_ns at the moment the listing was
+    # built (0 when none or past), like the *_age_ms fields, so cross-host
+    # clock skew cannot distort a "remaining" display.
+    deadline_remaining_ms :u64
     queue_deadline_ns :u64
     wait_reason :WaitReason
     conditions :BackgroundConditions
@@ -2409,7 +2419,7 @@ format OpenInteractiveRequest:
     # requested_caps: same semantics as SubmitRequest.requested_caps.
     requested_caps :Capability
     # See SubmitRequest.resume_task_id — same semantics, applied to the
-    # interactive path (PTY claude with empty prompt).
+    # interactive path.
     # Every interactive open is a detachable session (detach on disconnect,
     # reattach from any operator client) — the legacy kill-on-disconnect
     # variant was removed along with its wire bit.
@@ -3590,6 +3600,12 @@ format TaskStatusEvent:
     program_msg :[program_msg_len]u8
     run_mode :RunMode       # appended (A-D14)
     end_reason :EndReason   # appended; none until the run ends (A-D11)
+    # The run deadline and the server-computed time left to it when the event
+    # was built (TaskInfo's fields of the same names): placement and a mode
+    # switch change them, and a subscriber that only patches rows from events
+    # would otherwise show a stale or missing deadline.
+    deadline_ns :u64
+    deadline_remaining_ms :u64
 
 format RunnerStatusEvent:
     kind :StatusEventKind

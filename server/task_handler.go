@@ -2391,6 +2391,13 @@ func (h *TaskHandler) handleList(conn ConnHandle, requestID uint32, connID strin
 				taskInfos[i].SetAuthorityActorHidden(true)
 			}
 		}
+		// Who cancelled a run, by the same rule.
+		if c := t.CancelledBy; !all && c.Id != ([16]byte{}) {
+			if cHex := hex.EncodeToString(c.Id[:]); !allowed[cHex] && cHex != parentHex {
+				taskInfos[i].CancelledBy = protocol.TaskID{}
+				taskInfos[i].SetCancelledByHidden(true)
+			}
+		}
 		// Live-session enrichment: these are point-in-time reads of the
 		// SessionMux, not stored task state (the mux is gone once the session
 		// ends, and idleness of a dead session is meaningless).
@@ -2742,6 +2749,7 @@ func toTaskInfo(t TaskEntry) protocol.TaskInfo {
 	info.EndReason = t.EndReason
 	info.CancelledBy = t.CancelledBy
 	info.DeadlineNs = uint64(t.DeadlineAt)
+	info.DeadlineRemainingMs = remainingMs(t.DeadlineAt)
 	info.QueueDeadlineNs = uint64(t.QueueDeadlineAt)
 	info.Conditions = t.Cond.Wire()
 	info.AuthoritySource = t.AuthoritySource
