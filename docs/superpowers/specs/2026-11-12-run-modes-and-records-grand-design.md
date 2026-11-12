@@ -110,6 +110,7 @@ the author chose it while writing; those rows are the ones to check.
 | G34 | **Capability bits.** Three new bits: reading host logs (G12, G19), creating and editing schedules (pillar S; a schedule keeps creating tasks after its creator is gone, which `spawn` does not cover), and deleting records (G20; reusing `prune` would make granting record deletion also grant forgetting tasks, and would let any agent holding `prune` for its probe tasks erase its own PTY records, which are the evidence of what it did). Reading a PTY record or a transcript reuses `exec_view`: both show what that bit already shows, a session's content, under the task's scope. Bit scarcity is not a reason to merge gates: `Capability` is `u32` with 26 bits used (`runner/protocol/message.bgn:4305`), and widening it to `u64` is cheap — its fields are only in client↔server formats (no runner-decoded format), the WAL stores caps as JSON numbers, and the WebUI's `row.caps & c.bit` (`webui/static/main.js:4106`) breaks only from bit 31. The widening is deferred until few bits remain | operator (record deletion its own bit; widen later), this spec (the other two bits, `exec_view` reuse) |
 | G35 | **A background task's authority is computed as a spawn's.** Caps are `caps_creator ∩ delegate_caps_creator ∩ requested_caps`, and scope and the delegation bound are attenuated the same way (`SubmitRequest.requested_caps`, `runner/protocol/message.bgn:1214-1220`); the mode adds no default of its own (settles O1). For a human's or an agent's background open the creator is the opener. For a schedule's firings the creator is the schedule (G36) | operator |
 | G36 | **A schedule carries its own authority, declared when it is created**: caps, scope and delegation bound, computed by G35 with the schedule's creator as creator, so it never exceeds what that principal held then. Each firing's task gets exactly that authority. It is shown with the schedule on every surface, and an edit (G30) re-computes it with the editor as creator. Consequence, accepted: narrowing the creator's own authority later does not reach the schedule; editing or deleting the schedule does | operator (the schedule holds its authority), this spec (bounded at create and edit; no propagation) |
+| G37 | **Agents may create schedules; the schedule bit (G34) is the only gate** (settles O4). Like every bit it reaches a task by the spawn rule (G35), so it is attenuated down a spawn chain and is held only where it was granted. Keeping an agent from leaving schedules behind is done by not granting the bit, not by an agent-specific rule | operator |
 
 ## Anti-goals
 
@@ -206,9 +207,10 @@ What the pillar spec must settle, and the facts it builds on:
 - A firing while the previous run is still queued or running is skipped
   (G28); a firing with no runner available is queued, not refused (G26).
 - Open for the pillar spec: whether firings missed while the server was down
-  run once on start or are skipped (O3); whether agents may create schedules
-  (O4) — an agent-created schedule would at least be bounded by its creator's
-  authority (G36) and spawn limits (`2026-11-09-spawn-limits-design.md`).
+  run once on start or are skipped (O3). An agent holding the schedule bit may
+  create one (G37), bounded by its own authority (G36); whether spawn limits
+  (`2026-11-09-spawn-limits-design.md`) also count schedules or their firings
+  is the pillar spec's.
 
 ## Pillar B — transcripts
 
@@ -277,7 +279,6 @@ Settled in the pillar specs; listed here so none is decided by default.
 | # | Question | Pillar |
 | --- | --- | --- |
 | O3 | Firings missed while the server was down: run once, or skip | S |
-| O4 | May agents create schedules (gated by the schedule bit, G34). What their tasks run with is settled by G36 | S |
 | O5 | Cache fetched transcripts on the server, trading server storage for availability while a runner is down | B |
 | O6 | Default of the runner's log-file and transcript flags, and who holds the new log-read capability by default | B, C |
 | O7 | Size limit and retention of PTY records (G11): per-run cap, total cap, how long a finished run's record is kept | A |
