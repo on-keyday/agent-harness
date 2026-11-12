@@ -112,6 +112,22 @@ class MergeFlagsTest(unittest.TestCase):
         merged = restart._merge_flags(["--operator-psk", "OLD", "--x"], ["--operator-psk="])
         self.assertEqual(merged, ["--x", "--operator-psk="])
 
+    def test_unset_strips_the_group_and_adds_nothing(self) -> None:
+        overrides, unset = restart._split_unset(["--unset", "operator-psk", "--max-tasks", "4"])
+        self.assertEqual((overrides, unset), (["--max-tasks", "4"], ["operator-psk"]))
+        merged = restart._merge_flags(
+            ["--listen", ":8549", "--operator-psk", "OLD", "--operator-psk-file=/p"], overrides, unset
+        )
+        self.assertEqual(merged, ["--listen", ":8549", "--max-tasks", "4"])
+
+    def test_unset_equals_form(self) -> None:
+        self.assertEqual(restart._split_unset(["--unset=--roots"]), ([], ["roots"]))
+
+    def test_unset_without_a_name_is_refused(self) -> None:
+        for bad in (["--unset"], ["--unset", "--x"], ["--unset="]):
+            with self.assertRaises(ValueError, msg=bad):
+                restart._split_unset(bad)
+
 
 if __name__ == "__main__":
     unittest.main()

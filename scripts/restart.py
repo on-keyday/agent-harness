@@ -31,6 +31,14 @@ secret rotation without retyping the full flag set::
 ``--operator-psk`` and ``--operator-psk-file`` are one setting: overriding
 either strips both, so switching from the value form to the file form does
 not leave the old value behind (the server prefers a value over a file).
+
+``--unset NAME`` (repeatable; restart.py's own, never passed on) strips a
+flag without adding anything back, so the daemon falls back to its default.
+It strips NAME's group too: ``--unset operator-psk`` leaves the server with
+neither form, and it then reads ``<data-dir>/operator-psk`` — write the secret
+there FIRST, or the server generates a new one into it::
+
+    python scripts/restart.py harness-server --unset operator-psk
 (``--operator-psk`` values are redacted in the restart log,
 but the value form is still visible in ``ps`` on the new process — use
 the ``-file`` form when that matters.)
@@ -105,13 +113,42 @@ def _override_names(overrides: list[str]) -> list[str]:
 _FLAG_GROUPS = (frozenset({"operator-psk", "operator-psk-file"}),)
 
 
-def _merge_flags(inherited: list[str], overrides: list[str]) -> list[str]:
-    """Inherited argv with every override-named flag (and its group, see
-    ``_FLAG_GROUPS``) stripped, overrides appended. Appending alone would
-    usually work (Go flag parsing is last-wins), but stripping keeps ``ps``
-    output honest — no stale ``--operator-psk`` value lingering in front of
-    the new one."""
-    names = set(_override_names(overrides))
+_UNSET = "unset"
+
+
+def _split_unset(overrides: list[str]) -> tuple[list[str], list[str]]:
+    """Separate restart.py's own ``--unset NAME`` / ``--unset=NAME`` from the
+    overrides passed on to the daemon. Returns ``(overrides, unset_names)``."""
+    rest: list[str] = []
+    unset: list[str] = []
+    i = 0
+    while i < len(overrides):
+        tok = overrides[i]
+        if tok == f"--{_UNSET}":
+            if i + 1 >= len(overrides) or overrides[i + 1].startswith("--"):
+                raise ValueError("--unset needs a flag name (e.g. --unset operator-psk)")
+            unset.append(overrides[i + 1].lstrip("-"))
+            i += 2
+            continue
+        if tok.startswith(f"--{_UNSET}="):
+            name = tok.split("=", 1)[1].lstrip("-")
+            if not name:
+                raise ValueError("--unset needs a flag name (e.g. --unset=operator-psk)")
+            unset.append(name)
+            i += 1
+            continue
+        rest.append(tok)
+        i += 1
+    return rest, unset
+
+
+def _merge_flags(inherited: list[str], overrides: list[str], unset: list[str] = ()) -> list[str]:
+    """Inherited argv with every override-named and *unset* flag (and its
+    group, see ``_FLAG_GROUPS``) stripped, overrides appended. Appending alone
+    would usually work (Go flag parsing is last-wins), but stripping keeps
+    ``ps`` output honest — no stale ``--operator-psk`` value lingering in
+    front of the new one."""
+    names = set(_override_names(overrides)) | set(unset)
     for group in _FLAG_GROUPS:
         if names & group:
             names |= group
@@ -281,7 +318,7 @@ def _resolve_state(slot: str) -> tuple[str, list[str], str] | None:
 
 def _usage_and_exit() -> None:
     sys.stderr.write(
-        "usage: restart.py <slot> [override flags...]   "
+        "usage: restart.py <slot> [override flags...] [--unset NAME ...]   "
         "(e.g. agent-runner, harness-server --operator-psk NEW)\n"
     )
     sys.exit(2)
@@ -305,13 +342,18 @@ def main(argv: list[str]) -> int:
     overrides = list(argv[1:])
     if overrides and not overrides[0].startswith("--"):
         _usage_and_exit()  # a second positional is a typo, not an override
+    try:
+        overrides, unset = _split_unset(overrides)
+    except ValueError as e:
+        sys.stderr.write(f"[{slot}] {e}\n")
+        return 2
 
     state = _resolve_state(slot)
     if state is None:
         return 1
     bin_name, flags, cwd = state
-    if overrides:
-        flags = _merge_flags(flags, overrides)
+    if overrides or unset:
+        flags = _merge_flags(flags, overrides, unset)
 
     log = _daemon.restart_log(slot)
     log.parent.mkdir(parents=True, exist_ok=True)
