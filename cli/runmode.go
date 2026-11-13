@@ -132,7 +132,8 @@ func (c *Client) SessionMode(ctx context.Context, taskIDHex string, background b
 // RunStr is a task's run-mode facts as one `ls` fragment (A-D14), "" when
 // there is nothing to say: run=bg for a background task; while it is queued,
 // why it waits (placing = a runner can take it and Tick is about to); while it
-// runs, the time left to its deadline (server clock); once ended, why — every
+// runs, the time left to its deadline (server clock) and the deadline itself
+// on the reader's clock (with the date from a day out); once ended, why — every
 // task, both modes — and, for a cancel, who did it. A terminal task from
 // before end reasons existed reads end=unknown. Shared by the CLI and the TUI.
 func RunStr(t *protocol.TaskInfo) string {
@@ -153,7 +154,12 @@ func RunStr(t *protocol.TaskInfo) string {
 		parts = append(parts, "wait="+w)
 	case bg && t.EndedAt == 0 && t.DeadlineNs != 0:
 		left := (time.Duration(t.DeadlineRemainingMs) * time.Millisecond).Round(time.Second)
-		parts = append(parts, "deadline="+left.String())
+		layout := "15:04"
+		if left >= 24*time.Hour {
+			layout = "01-02T15:04"
+		}
+		until := time.Unix(0, int64(t.DeadlineNs)).Local().Format(layout)
+		parts = append(parts, "deadline="+left.String(), "until="+until)
 	}
 	if t.EndedAt != 0 {
 		r := "unknown"
