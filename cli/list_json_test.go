@@ -152,3 +152,28 @@ func TestRenderListJSONEmpty(t *testing.T) {
 		t.Fatalf("empty arrays must be [] not null: %s", buf.String())
 	}
 }
+
+// A background task's conditions ride ls --json, so a front-end can prefill a
+// resume from its last run (A-D7, A-D15); every field present at zero.
+func TestRenderListJSONRunConditions(t *testing.T) {
+	var task protocol.TaskInfo
+	task.Kind = protocol.TaskKind_Interactive
+	task.RunMode = protocol.RunMode_Background
+	task.Conditions = protocol.BackgroundConditions{DeadlineMs: 3600000, TurnEnd: protocol.TurnEndSignal_Quiet, QuietMs: 60000}
+	var buf bytes.Buffer
+	renderListJSON(&protocol.ListResultBody{Tasks: []protocol.TaskInfo{task}}, &buf)
+	var got struct {
+		Tasks []struct {
+			RunMode    string         `json:"run_mode"`
+			Conditions map[string]any `json:"conditions"`
+		} `json:"tasks"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	c := got.Tasks[0].Conditions
+	if got.Tasks[0].RunMode != "background" || c["deadline_ms"] != float64(3600000) || c["turn_end"] != "quiet" ||
+		c["quiet_ms"] != float64(60000) || c["blocked_ms"] != float64(0) || c["queue_timeout_ms"] != float64(0) {
+		t.Fatalf("row %+v", got.Tasks[0])
+	}
+}

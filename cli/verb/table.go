@@ -3059,6 +3059,7 @@ var Verbs = []VerbSpec{
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/actions.go:onRunMode"},
 			{Surface: TUI, At: "tui/bgform.go:BgFormModel"}, // the conditions for going background
+			{Surface: WebUI, At: "webui/static/main.js:buildTaskSheet"},
 		},
 		Notes: []string{
 			"switch a running session between foreground and background; background needs --deadline (the run's deadline counts from the switch)",

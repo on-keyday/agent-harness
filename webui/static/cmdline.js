@@ -642,7 +642,7 @@ async function runVerbCommandDispatch(tokens, ctx) {
         break;
       }
       if (tokens[1] !== "stream") {
-        ctx.echo("session: only the `stream` namespace is available here — new/ls/kill are the buttons above");
+        ctx.echo("session: only the `stream` namespace is available here — new/ls/kill are the buttons above, `mode` is the task sheet's ⇄ button");
         break;
       }
       // Parsed by the shared declaration like every other verb here. It

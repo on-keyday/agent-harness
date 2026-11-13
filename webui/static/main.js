@@ -373,7 +373,10 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
                         eventStream = false, resumeExact = false,
                         caps = null, scope = null, scopeFor = null,
                         delegateCaps = null, delegateScope = null,
-                        spawnDepth = null, maxDescendants = null }) {
+                        spawnDepth = null, maxDescendants = null,
+                        prompt = "", runMode = "", deadlineMs = 0, quietMs = 0,
+                        blockedMs = 0, queueTimeoutMs = 0, turnEnd = "",
+                        rows = 0, cols = 0 }) {
     // An exact resume takes the task's recorded agent, args, caps and scope,
     // and the server refuses a request that carries any of them, so none of
     // the Compose state rides along.
@@ -416,6 +419,10 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       spawnDepthPresent: !!resumeTaskId && !resumeExact && spawnDepth !== null,
       maxDescendantsPresent: !!resumeTaskId && !resumeExact && maxDescendants !== null,
       resumeExact,
+      // Pillar A (A-D15): the prompt (any mode) and, for a background open,
+      // the run mode, the conditions in ms and the PTY size.
+      prompt, runMode, deadlineMs, quietMs, blockedMs, queueTimeoutMs, turnEnd,
+      rows, cols,
     };
     if (runner) req.runner = runner;
     if (ip) req.ip = ip;
@@ -3891,6 +3898,72 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // composeRequest assembles the shared fields from the Compose section.
   const spawnStreamBox = document.getElementById("spawn-stream");
   const resumeConvBox  = document.getElementById("resume-conversation");
+  // Background run (pillar A, A-D15): the prompt and the conditions.
+  const composePrompt = document.getElementById("compose-prompt");
+  const composeBgBox  = document.getElementById("compose-background");
+  const composeBg     = document.getElementById("compose-bg");
+  const bgInput = (id) => document.getElementById(id);
+  if (composeBgBox) composeBgBox.addEventListener("change", () => { composeBg.hidden = !composeBgBox.checked; });
+
+  // parseDurationMs reads Go's duration grammar ("90s", "5m", "1h30m");
+  // blank is 0, which the server reads as "its default" (none for a deadline).
+  const DUR_UNIT_MS = { ms: 1, s: 1000, m: 60000, h: 3600000 };
+  function parseDurationMs(name, v) {
+    v = (v || "").trim();
+    if (v === "") return 0;
+    const re = /(\d+(?:\.\d+)?)(ms|s|m|h)/gy;
+    let total = 0, at = 0, m;
+    while ((m = re.exec(v)) !== null) {
+      total += parseFloat(m[1]) * DUR_UNIT_MS[m[2]];
+      at = re.lastIndex;
+    }
+    if (at !== v.length || at === 0) throw new Error(`${name}: "${v}" is not a duration (e.g. 90s, 5m, 1h)`);
+    return Math.round(total);
+  }
+
+  // composeRunMode is Compose's run-mode half of a session request; throws on
+  // a malformed duration.
+  function composeRunMode() {
+    const r = { prompt: composePrompt ? composePrompt.value : "" };
+    if (!composeBgBox || !composeBgBox.checked) return r;
+    r.runMode = "background";
+    r.deadlineMs = parseDurationMs("deadline", bgInput("bg-deadline").value);
+    r.quietMs = parseDurationMs("quiet", bgInput("bg-quiet").value);
+    r.blockedMs = parseDurationMs("blocked", bgInput("bg-blocked").value);
+    r.queueTimeoutMs = parseDurationMs("queue timeout", bgInput("bg-queue").value);
+    r.turnEnd = bgInput("bg-turn-end").value;
+    // The PTY size (A-D7): the terminal's own, as a foreground open gets it.
+    r.rows = term.rows;
+    r.cols = term.cols;
+    return r;
+  }
+
+  const msDurationStr = (ms) => {
+    if (!ms) return "";
+    const h = Math.floor(ms / 3600000), m = Math.floor(ms % 3600000 / 60000), s = (ms % 60000) / 1000;
+    return `${h ? h + "h" : ""}${m ? m + "m" : ""}${s ? s + "s" : ""}`;
+  };
+
+  // prefillComposeFromTask fills Compose from a background task's last run
+  // (A-D15: the server reuses nothing of it) and scrolls there: the prompt,
+  // the agent, the conditions and the resume id, Background checked.
+  function prefillComposeFromTask(t, resumeConversation) {
+    if (composePrompt) composePrompt.value = t.prompt || "";
+    if (agentSelect) populateAgentSelect(agentSelect, knownAgentProfiles, t.agentProfile || "", t.agentProfile);
+    const c = t.conditions || {};
+    bgInput("bg-deadline").value = msDurationStr(c.deadlineMs) || "1h";
+    bgInput("bg-turn-end").value = c.turnEnd && c.turnEnd !== "unset" ? c.turnEnd : "";
+    bgInput("bg-quiet").value = msDurationStr(c.quietMs);
+    bgInput("bg-blocked").value = msDurationStr(c.blockedMs);
+    bgInput("bg-queue").value = msDurationStr(c.queueTimeoutMs);
+    if (composeBgBox) { composeBgBox.checked = true; composeBg.hidden = false; }
+    if (spawnStreamBox) spawnStreamBox.checked = isStreamKind(t);
+    if (resumeConvBox) resumeConvBox.checked = !!resumeConversation;
+    if (taskIdInput) taskIdInput.value = t.id;
+    setActiveTab("tasks");
+    document.getElementById("compose").scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
   const composeRequest = () => sessionReq({
     repo: runnerSelect.value || "",
     host: hostSelect ? (hostSelect.value || "") : "",
@@ -3905,6 +3978,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     // A checkbox, not a typed flag: this decomposes into a control the form
     // already has a kind for, which is what checklist 34a asks.
     eventStream: !!(spawnStreamBox && spawnStreamBox.checked),
+    ...composeRunMode(),
   });
 
   // --- Cap chips (session-default capability set for new-session spawns) ---
@@ -4873,6 +4947,12 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // session and asks the runner to resume the agent conversation too.
   const resumeTaskById = async (id) => {
     if (!id) return;
+    // A background task resumes in background from Compose, prefilled.
+    const known = lastTasks.find((x) => x.id === id);
+    if (known && known.runMode === "background") {
+      prefillComposeFromTask(known, true);
+      return;
+    }
     const args = currentAgentArgs();
     // agent reuses the Compose dropdown's current selection (this quick-resume
     // path — from the notification feed — only has the task id, not the task's
@@ -5017,9 +5097,30 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // is a detachable, takeover-able session (the one-shot/non-detachable
   // variant was removed; a session you cannot re-enter had no upside).
   const openInteractive = async (label) => {
-    const req = composeRequest();
+    let req;
+    try {
+      req = composeRequest();
+    } catch (e) {
+      alert(e.message);
+      return;
+    }
     if (!req.repo && !req.resumeTaskId) {
       alert("select a repo or fill in Resume task id");
+      return;
+    }
+    if (req.runMode === "background") {
+      // Queued, not attached: nothing mounts, the row shows it wait and run.
+      const reissueBackground = async (retryReq) => {
+        const id = await window.harness.startInteractive(retryReq);
+        appendCmdOutput(`background: ${id} queued`, true);
+        refreshSnapshot();
+      };
+      try {
+        await reissueBackground(req);
+      } catch (e) {
+        if (routeAmbiguous(e, req, reissueBackground)) return;
+        alert(`background: ${e.message}`);
+      }
       return;
     }
     attachEpoch++;            // invalidate any in-flight close handler
@@ -6103,6 +6204,8 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       // at zero for the same reason the pair above is: 0 is a measurement,
       // absence is not.
       metaText += `  execs=${t.execCount || 0}`;
+      // Run mode and how the run ended (A-D11, A-D14), rendered in Go.
+      if (t.runStr) metaText += `  ${t.runStr}`;
       meta.textContent = metaText;
       if (t.errorMsg) {
         const err = document.createElement("span");
@@ -6293,6 +6396,37 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       });
     }
 
+    // Run mode (A-D19): a running session switches between foreground and
+    // background. To background asks for a deadline, prefilled 1h.
+    if ((taskSessionAlive(t) || t.status === "Held") && (isPTYKind(t) || isStreamKind(t))) {
+      if (t.runMode === "background") {
+        addItem("⇄ foreground に切替", "", async () => {
+          try {
+            await window.harness.sessionMode({ taskId: t.id, runMode: "foreground" });
+            appendCmdOutput(`session mode ${t.id.slice(0, 12)}: foreground`, true);
+            refreshSnapshot();
+          } catch (e) {
+            appendCmdOutput(`session mode: ${e.message}`, true);
+          }
+        });
+      } else {
+        // A prompt, as "⌨ コマンド実行" does: the sheet is rebuilt on every
+        // snapshot tick, which wiped an inline field within a second.
+        addItem("⇄ background に切替…", "", async () => {
+          const dl = window.prompt(`${t.id.slice(0, 12)}… を background にする: deadline (90s / 5m / 1h30m)`, "1h");
+          if (dl === null) return;
+          try {
+            const deadlineMs = parseDurationMs("deadline", dl);
+            await window.harness.sessionMode({ taskId: t.id, runMode: "background", deadlineMs });
+            appendCmdOutput(`session mode ${t.id.slice(0, 12)}: background (deadline ${dl})`, true);
+            refreshSnapshot();
+          } catch (err) {
+            appendCmdOutput(`session mode: ${err.message}`, true);
+          }
+        });
+      }
+    }
+
     addItem("▦ この配下をグリッド", "", async () => {
       appendCmdOutput(await openGridSet({ mode: "subtree", anchor: t.id }), true);
     });
@@ -6331,6 +6465,13 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       sheet.appendChild(agentRow);
 
       const doResume = async (agentArgs, note, resumeConversation = false, runner = "") => {
+        // A background task resumes in background, and the server reuses
+        // nothing of its last run (A-D7): fill Compose from it rather than
+        // send an open the server would refuse prompt_required.
+        if (t.runMode === "background") {
+          prefillComposeFromTask(t, resumeConversation);
+          return;
+        }
         const req = sessionReq({ agent: agentSel.value || "", agentArgs, resumeTaskId: t.id, resumeConversation, runner });
         try {
           const id = await window.harness.startInteractive(req);

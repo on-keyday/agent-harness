@@ -117,6 +117,7 @@ func main() {
 		"watch":              js.FuncOf(harnessWatch),
 		"prune":              js.FuncOf(harnessPrune),
 		"startInteractive":   js.FuncOf(harnessStartInteractive),
+		"sessionMode":        js.FuncOf(harnessSessionMode),
 		"sendInteractive":    js.FuncOf(harnessSendInteractive),
 		"resizeInteractive":  js.FuncOf(harnessResizeInteractive),
 		"detachInteractive":  js.FuncOf(harnessDetachInteractive),
@@ -1920,6 +1921,19 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					"programState":   cli.ProgramWord(t.ProgramState),
 					"programKind":    cli.ProgramKindWord(t.ProgramKind),
 					"programMsg":     string(t.ProgramMsg),
+					// Run mode (pillar A): the wire word, the row/sheet label
+					// rendered in Go as the CLI and TUI render it (cli.RunStr),
+					// and the raw conditions a resume prefills Compose from
+					// (A-D15) — durations in ms, turnEnd a wire word.
+					"runMode": cli.EnumWireName(t.RunMode.String()),
+					"runStr":  cli.RunStr(&t),
+					"conditions": map[string]any{
+						"deadlineMs":     float64(t.Conditions.DeadlineMs),
+						"turnEnd":        cli.EnumWireName(t.Conditions.TurnEnd.String()),
+						"quietMs":        float64(t.Conditions.QuietMs),
+						"blockedMs":      float64(t.Conditions.BlockedMs),
+						"queueTimeoutMs": float64(t.Conditions.QueueTimeoutMs),
+					},
 				})
 			}
 			// taskTree is the creator hierarchy WITH its grid positions, both
@@ -3552,6 +3566,11 @@ func harnessStartInteractive(this js.Value, args []js.Value) any {
 				rejectErr(reject, fmt.Errorf("interactive: %w", boundErr))
 				return
 			}
+			runMode, rmErr := runModeFromOpts(opts)
+			if rmErr != nil {
+				rejectErr(reject, fmt.Errorf("interactive: %w", rmErr))
+				return
+			}
 			sopts := cli.SessionOpts{
 				Selector: sel, ExtraArgs: extraArgs, ResumeTaskID: resumeTaskID,
 				Caps: caps, Scope: scope, Overrides: overrides,
@@ -3565,6 +3584,8 @@ func harnessStartInteractive(this js.Value, args []js.Value) any {
 				SpawnDepth: bound.SpawnDepth, MaxDescendants: bound.MaxDescendants,
 				SpawnDepthPresent: bound.SpawnDepthPresent, MaxDescendantsPresent: bound.MaxDescendantsPresent,
 			}
+			// A background open is detached: no xterm, the id comes back.
+			runMode.Apply(&sopts)
 			// c.Interactive itself declines to mount the xterm when
 			// EventStream is set (cli/open_interactive_wasm.go): this kind has
 			// no PTY, and splicing NDJSON into a terminal is what that guard
@@ -3578,6 +3599,78 @@ func harnessStartInteractive(this js.Value, args []js.Value) any {
 				return
 			}
 			resolve.Invoke(js.ValueOf(taskID))
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
+// runModeFromOpts reads the run mode, the prompt and the background
+// conditions (pillar A spec, A-D15): runMode "background" | "foreground" | ""
+// (a resume keeps the task's), durations as milliseconds, turnEnd a wire word.
+func runModeFromOpts(opts js.Value) (cli.RunModeFlags, error) {
+	var f cli.RunModeFlags
+	switch m := optString(opts, "runMode"); m {
+	case "background":
+		f.Background = true
+	case "foreground":
+		f.Foreground = true
+	case "":
+	default:
+		return f, fmt.Errorf("runMode %q: want background or foreground", m)
+	}
+	f.Prompt = optString(opts, "prompt")
+	ms := func(key string) time.Duration {
+		if v := opts.Get(key); v.Type() == js.TypeNumber && v.Int() > 0 {
+			return time.Duration(v.Int()) * time.Millisecond
+		}
+		return 0
+	}
+	f.Deadline, f.Quiet, f.Blocked, f.QueueTimeout = ms("deadlineMs"), ms("quietMs"), ms("blockedMs"), ms("queueTimeoutMs")
+	var err error
+	if f.TurnEnd, err = verb.ParseTurnEnd(optString(opts, "turnEnd")); err != nil {
+		return f, err
+	}
+	return f, nil
+}
+
+// harnessSessionMode switches a running session between foreground and
+// background (A-D19). Background takes the conditions (deadlineMs required).
+//
+//	harness.sessionMode({taskId, runMode: "background", deadlineMs: 3600000, ...}) -> Promise<void>
+func harnessSessionMode(this js.Value, args []js.Value) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		go func() {
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			if len(args) < 1 {
+				rejectErr(reject, errors.New("sessionMode: missing options arg"))
+				return
+			}
+			f, err := runModeFromOpts(args[0])
+			if err != nil {
+				rejectErr(reject, fmt.Errorf("sessionMode: %w", err))
+				return
+			}
+			if !f.Background && !f.Foreground {
+				rejectErr(reject, errors.New("sessionMode: runMode must be background or foreground"))
+				return
+			}
+			var cond *protocol.BackgroundConditions
+			if f.Background {
+				cond = f.Conditions()
+			}
+			if err := c.SessionMode(rootCtx, optString(args[0], "taskId"), f.Background, cond); err != nil {
+				rejectErr(reject, fmt.Errorf("session mode: %w", err))
+				return
+			}
+			resolve.Invoke(js.Undefined())
 		}()
 		return nil
 	})

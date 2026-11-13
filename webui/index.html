@@ -120,6 +120,31 @@
            what "resume" means is worse than an extra click. -->
       <label class="caps-on-resume-toggle" title="Resume task id を指定したときのみ有効。エージェントの会話も引き継ぐ（--resume-conversation 相当）。オフだと worktree とブランチだけ引き継いで会話は捨てる"><input type="checkbox" id="resume-conversation"> resume the agent's conversation too</label>
       <label class="caps-on-resume-toggle" title="PTY ではなく構造化イベントのセッションを開く。承認は端末のキー入力ではなくボタンで答える"><input type="checkbox" id="spawn-stream"> event-stream で開く (チャット)</label>
+      <!-- Pillar A, A-D15: a background run starts from a prompt and ends on its
+           conditions. The prompt is accepted in foreground too. The deadline
+           is prefilled 1h (the server has no default); the other limits take
+           the server's defaults when blank. -->
+      <label for="compose-prompt">Prompt (最大 16384 バイト。background では必須):</label>
+      <textarea id="compose-prompt" rows="3" placeholder="エージェントの最初のターン"></textarea>
+      <label class="caps-on-resume-toggle" title="端末を開かずにキューへ入れ、runner が空いたら起動する。ターン終了・blocked・deadline のいずれかで終わる"><input type="checkbox" id="compose-background"> background で開く</label>
+      <div id="compose-bg" class="bg-block" hidden>
+        <label class="limit-field">deadline <input id="bg-deadline" type="text" size="7" value="1h"></label>
+        <label class="limit-field">turn end
+          <select id="bg-turn-end">
+            <option value="">any (既定)</option>
+            <!-- A stored task carries the resolved value, so a resume prefill
+                 needs "any" as a value of its own. -->
+            <option value="any">any</option>
+            <option value="off">off</option>
+            <option value="quiet">quiet</option>
+            <option value="lifecycle">lifecycle</option>
+            <option value="program">program</option>
+          </select></label>
+        <label class="limit-field">quiet <input id="bg-quiet" type="text" size="6" placeholder="5m"></label>
+        <label class="limit-field">blocked <input id="bg-blocked" type="text" size="6" placeholder="5m"></label>
+        <label class="limit-field">queue timeout <input id="bg-queue" type="text" size="6" placeholder="なし"></label>
+        <p class="hint">時間は 90s / 5m / 1h30m の形式。stream では turn end は off / lifecycle / any のみ。</p>
+      </div>
       <div class="scope-block">
         <label>Scope (which tasks those caps may target):</label>
         <div class="scope-base-row" id="spawn-base-row" aria-label="Scope base">

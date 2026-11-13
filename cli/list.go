@@ -566,6 +566,18 @@ type taskJSON struct {
 	DeadlineRemainingMs uint64 `json:"deadline_remaining_ms"`
 	QueueDeadlineNs     uint64 `json:"queue_deadline_ns"`
 	WaitReason          string `json:"wait_reason"`
+	// The current (or last) run's background conditions, as stored on the
+	// task (A-D7): what a front-end prefills a resume from (A-D15).
+	Conditions conditionsJSON `json:"conditions"`
+}
+
+// conditionsJSON is BackgroundConditions in wire words; all present at zero.
+type conditionsJSON struct {
+	DeadlineMs     uint64 `json:"deadline_ms"`
+	TurnEnd        string `json:"turn_end"`
+	QuietMs        uint64 `json:"quiet_ms"`
+	BlockedMs      uint64 `json:"blocked_ms"`
+	QueueTimeoutMs uint64 `json:"queue_timeout_ms"`
 }
 
 // listJSON is the top-level `ls --json` document.
@@ -698,6 +710,10 @@ func newTaskJSON(t *protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo
 		DeadlineRemainingMs: t.DeadlineRemainingMs,
 		QueueDeadlineNs:     t.QueueDeadlineNs,
 		WaitReason:          EnumWireName(t.WaitReason.String()),
+		Conditions: conditionsJSON{
+			DeadlineMs: t.Conditions.DeadlineMs, TurnEnd: EnumWireName(t.Conditions.TurnEnd.String()),
+			QuietMs: t.Conditions.QuietMs, BlockedMs: t.Conditions.BlockedMs, QueueTimeoutMs: t.Conditions.QueueTimeoutMs,
+		},
 	}
 }
 

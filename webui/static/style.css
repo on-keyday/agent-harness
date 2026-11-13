@@ -2589,3 +2589,36 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
 .tt-whatif-cmd code { overflow-wrap: anywhere; min-width: 0; }
 /* hidden under an author display rule: see the [hidden] note above. */
 .task-tree-reach[hidden], .regrant-flag[hidden], #regrant-mode-row[hidden] { display: none; }
+
+/* Pillar A background run (Compose, A-D15): the prompt and the conditions.
+   The textarea is not covered by the input/select rule above, so it gets the
+   palette here rather than the UA's white. */
+/* Its own line: inline, it trails the checkbox row above it. */
+label[for="compose-prompt"] { display: block; margin-top: 0.4rem; }
+#compose-prompt {
+  display: block;
+  width: 100%;
+  max-width: 48rem;
+  box-sizing: border-box;
+  margin: 0.2rem 0 0.5rem;
+  background: #2a2a2a;
+  color: #d4d4d4;
+  border: 1px solid #555;
+  padding: 0.3rem;
+  font-family: monospace;
+}
+.bg-block {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem 0.8rem;
+  margin: 0 0 0.5rem;
+}
+/* display:flex outranks the UA's [hidden] rule. */
+.bg-block[hidden] { display: none; }
+.bg-block .hint { flex-basis: 100%; margin: 0; }
+@media (max-width: 600px) {
+  #compose-prompt { font-size: 16px; } /* >= 16px: no iOS auto-zoom */
+  .bg-block { display: block; }
+  .bg-block[hidden] { display: none; }
+}
