@@ -73,14 +73,58 @@ func TestRunModeKey(t *testing.T) {
 	}
 }
 
-func TestTaskRowShowsRunFields(t *testing.T) {
-	info := protocol.TaskInfo{Status: protocol.TaskStatus_Queued, RunMode: protocol.RunMode_Background, WaitReason: protocol.WaitReason_AllBusy}
-	if got := aboutCell(info); !strings.Contains(got, "wait=all_busy") {
-		t.Fatalf("about cell %q", got)
+func TestRunCell(t *testing.T) {
+	old := time.Local
+	time.Local = time.UTC
+	defer func() { time.Local = old }()
+	at := uint64(time.Date(2026, 11, 14, 15, 4, 0, 0, time.UTC).UnixNano())
+	bg := func(ti protocol.TaskInfo) protocol.TaskInfo { ti.RunMode = protocol.RunMode_Background; return ti }
+	for _, c := range []struct {
+		name string
+		t    protocol.TaskInfo
+		want string
+	}{
+		{"foreground", protocol.TaskInfo{Status: protocol.TaskStatus_Running, DeadlineNs: at, DeadlineRemainingMs: 60_000}, ""},
+		{"queued busy", bg(protocol.TaskInfo{Status: protocol.TaskStatus_Queued, WaitReason: protocol.WaitReason_AllBusy}), "all_busy"},
+		{"queued none", bg(protocol.TaskInfo{Status: protocol.TaskStatus_Queued, WaitReason: protocol.WaitReason_NoCandidate}), "no_candidate"},
+		{"queued placing", bg(protocol.TaskInfo{Status: protocol.TaskStatus_Queued}), "placing"},
+		{"running", bg(protocol.TaskInfo{Status: protocol.TaskStatus_Running, DeadlineNs: at, DeadlineRemainingMs: 65*60_000 + 30_000}), "1h05m 15:04"},
+		{"under a minute", bg(protocol.TaskInfo{Status: protocol.TaskStatus_Detached, DeadlineNs: at, DeadlineRemainingMs: 20_000}), "0m 15:04"},
+		{"days out", bg(protocol.TaskInfo{Status: protocol.TaskStatus_Running, DeadlineNs: at, DeadlineRemainingMs: (51*60 + 7) * 60_000}), "2d03h 11-14"},
+		{"ended", bg(protocol.TaskInfo{Status: protocol.TaskStatus_Cancelled, EndedAt: 1, EndReason: protocol.EndReason_BlockedTimeout}), "blocked_timeout"},
+		{"ended before end reasons", bg(protocol.TaskInfo{Status: protocol.TaskStatus_Failed, EndedAt: 1}), "unknown"},
+	} {
+		if got := runCell(c.t); got != c.want {
+			t.Errorf("%s: runCell = %q, want %q", c.name, got, c.want)
+		}
 	}
-	ended := protocol.TaskInfo{Status: protocol.TaskStatus_Cancelled, EndedAt: 1, RunMode: protocol.RunMode_Background, EndReason: protocol.EndReason_BlockedTimeout}
-	if got := aboutCell(ended); !strings.Contains(got, "end=blocked_timeout") {
-		t.Fatalf("about cell %q", got)
+}
+
+// A-D14 on the task list itself, at the widths terminals actually have: the
+// run facts used to lead the About column, which is about 0 cells wide below
+// ~240 terminal columns, so they were readable only in the `d` popup.
+func TestTaskListShowsRunFactsAtCommonWidths(t *testing.T) {
+	old := time.Local
+	time.Local = time.UTC
+	defer func() { time.Local = old }()
+	at := uint64(time.Date(2026, 11, 14, 15, 4, 0, 0, time.UTC).UnixNano())
+	running := protocol.TaskInfo{Status: protocol.TaskStatus_Running, RunMode: protocol.RunMode_Background,
+		DeadlineNs: at, DeadlineRemainingMs: 65 * 60_000, Kind: protocol.TaskKind_Interactive}
+	running.Id.Id[0] = 1
+	queued := protocol.TaskInfo{Status: protocol.TaskStatus_Queued, RunMode: protocol.RunMode_Background,
+		WaitReason: protocol.WaitReason_NoCandidate, Kind: protocol.TaskKind_Interactive}
+	queued.Id.Id[0] = 2
+	for _, w := range []int{144, 160, 200} {
+		a := New(Config{Server: "ws://test:8080"})
+		a.width, a.height = w, 40
+		a.layout()
+		a.tasks.SetRows([]protocol.TaskInfo{running, queued}, nil)
+		view := a.tasks.View()
+		for _, want := range []string{"1h05m 15:04", "no_candidate"} {
+			if !strings.Contains(view, want) {
+				t.Errorf("terminal %d: task list does not show %q:\n%s", w, want, view)
+			}
+		}
 	}
 }
 

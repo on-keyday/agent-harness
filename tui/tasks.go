@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
@@ -55,8 +56,25 @@ type TasksModel struct {
 // not a loss of information.
 const obsColumnMinWidth = 60
 
+// runColumnMinWidth is the panel width at which the tasks table also carries
+// the Run column (a background task's run facts, A-D14). The column is kept at
+// its full width (fitTaskColumns), so it costs the rest a fixed 17 cells; 70 is
+// the narrowest panel where the other nine columns still keep their header
+// floors after that (35 cells of floors + 18 of padding + 17), so adding Run
+// never truncates the headers of a panel that had them whole. Below it the run
+// facts are in the `d` popup, as the observer counts are below Obs's threshold.
+// It must stay above obsColumnMinWidth: the row builder assumes Run never
+// appears without Life and Obs.
+const runColumnMinWidth = 70
+
+// runColumnWidth fits every Run cell but the two longest end reasons, which
+// truncate to a still-distinct prefix (turn_done_lif…, turn_done_pro…). Not
+// 12: bubbles spends a truncated cell's last column on "…", so at 12 the
+// three turn_done_* reasons all read "turn_done_…".
+const runColumnWidth = 15
+
 // colsFor is the ONE place the column set is decided, from the two things it
-// depends on: tree mode and whether the panel can afford the Obs column. Both
+// depends on: tree mode and how wide the panel is (Obs, then Run). Both
 // callers (SetTree, SetSize) go through it so they cannot drift on what a given
 // (mode, width) looks like — and so the row builder can ask the same question.
 func colsFor(tree bool, width int) []table.Column {
@@ -67,8 +85,9 @@ func colsFor(tree bool, width int) []table.Column {
 	if width >= obsColumnMinWidth {
 		// Life is inserted before Act and Obs before Repo, so the live-session
 		// columns (Life, Act, Obs) stay adjacent: what the agent's hooks say,
-		// whether its screen is moving, and whether a HUMAN is on it.
-		out := make([]table.Column, 0, len(cols)+2)
+		// whether its screen is moving, and whether a HUMAN is on it. Run
+		// follows them: how long the run has left, or why it waits or ended.
+		out := make([]table.Column, 0, len(cols)+3)
 		for _, c := range cols {
 			if c.Title == "Act" {
 				// 10 fits ready:999m.
@@ -80,6 +99,9 @@ func colsFor(tree bool, width int) []table.Column {
 				// column width — a narrower column would hide the exec count
 				// exactly when there is one to show.
 				out = append(out, table.Column{Title: "Obs", Width: 10})
+				if width >= runColumnMinWidth {
+					out = append(out, table.Column{Title: "Run", Width: runColumnWidth})
+				}
 			}
 			out = append(out, c)
 		}
@@ -88,10 +110,38 @@ func colsFor(tree bool, width int) []table.Column {
 	return cols
 }
 
+// fitTaskColumns is fitColumns with About as the flex column, except that Run
+// keeps its declared width: fitColumns shrinks every column in proportion, and
+// a Run cell cut to 8 cells loses the deadline's clock time (A-D14) — the one
+// thing the column is there to show — while the columns it takes from (Repo,
+// Agent) still read when trimmed.
+func fitTaskColumns(base []table.Column, w int) []table.Column {
+	ri := -1
+	for i, c := range base {
+		if c.Title == "Run" {
+			ri = i
+		}
+	}
+	if ri < 0 {
+		return fitColumns(base, w, flexColumn(base, "About"))
+	}
+	rest := make([]table.Column, 0, len(base)-1)
+	rest = append(rest, base[:ri]...)
+	rest = append(rest, base[ri+1:]...)
+	fitted := fitColumns(rest, w-base[ri].Width-tableCellPadding, flexColumn(rest, "About"))
+	out := make([]table.Column, 0, len(base))
+	out = append(out, fitted[:ri]...)
+	out = append(out, base[ri])
+	return append(out, fitted[ri:]...)
+}
+
 // showsObs reports whether the current column set includes Obs and Life, so
 // SetRows builds exactly as many cells as there are columns. Below the
 // threshold the Act cell carries the lifecycle badge instead (actCell).
 func (m *TasksModel) showsObs() bool { return m.width >= obsColumnMinWidth }
+
+// showsRun is showsObs for the Run column.
+func (m *TasksModel) showsRun() bool { return m.width >= runColumnMinWidth }
 
 // flatCols is the default column set. Kept as a function so NewTasks and
 // SetTree cannot drift apart on what "not tree mode" looks like.
@@ -138,7 +188,7 @@ func (m *TasksModel) SetTree(on bool) bool {
 	// ID cell carries the gutter), and flat and tree happen to have the SAME
 	// column count — so a count-based check would swap the headers and leave
 	// every row showing its flat id.
-	m.swapColumnsAndRebuild(fitColumns(m.baseCols, m.width, flexColumn(m.baseCols, "About")))
+	m.swapColumnsAndRebuild(fitTaskColumns(m.baseCols, m.width))
 	return m.tree
 }
 
@@ -159,7 +209,7 @@ func (m *TasksModel) columns() []table.Column {
 func (m *TasksModel) SetMark(c protocol.Capability) {
 	m.mark = c
 	m.baseCols = m.columns()
-	m.swapColumnsAndRebuild(fitColumns(m.baseCols, m.width, flexColumn(m.baseCols, "About")))
+	m.swapColumnsAndRebuild(fitTaskColumns(m.baseCols, m.width))
 }
 
 // SelectID puts the cursor on the task's row, reporting whether it is listed.
@@ -197,7 +247,7 @@ func (m *TasksModel) SetSize(w, h int) {
 	// Width decides the column SET, not only the widths.
 	m.width = w
 	m.baseCols = m.columns()
-	cols := fitColumns(m.baseCols, w, flexColumn(m.baseCols, "About"))
+	cols := fitTaskColumns(m.baseCols, w)
 	// A width-only change keeps the same column set, and must NOT disturb the
 	// rows: bubbles keeps the scroll position in the unexported
 	// viewport.YOffset, and SetCursor does not restore it (only MoveUp/MoveDown
@@ -318,6 +368,9 @@ func (m *TasksModel) rebuild() {
 		}
 		if m.showsObs() {
 			row = append(row, lifeCell(t), actCell(t, false), observerCell(t))
+			if m.showsRun() {
+				row = append(row, runCell(t))
+			}
 		} else {
 			row = append(row, actCell(t, true))
 		}
@@ -510,18 +563,11 @@ func taskStatusStr(s protocol.TaskStatus) string {
 // Both strings have their control characters stripped HERE: bubbles hands a
 // cell's bytes to the terminal as they are, and a task event can be forged by
 // any subscriber, so the server's own rules are not a substitute.
+//
+// A background task's run facts are the Run column's (runCell), not a prefix
+// here: About is the flex column and is a few cells wide below ~240 terminal
+// columns, so a prefix was readable only on the widest terminals.
 func aboutCell(t protocol.TaskInfo) string {
-	// A background task leads with its run facts (A-D14): why it waits, the
-	// time left, or how it ended.
-	if t.RunMode == protocol.RunMode_Background {
-		if r := cli.RunStr(&t); r != "" {
-			return "[" + r + "] " + aboutCellRest(t)
-		}
-	}
-	return aboutCellRest(t)
-}
-
-func aboutCellRest(t protocol.TaskInfo) string {
 	if t.ProgressAt != 0 && len(t.Progress) > 0 {
 		p := string(t.Progress)
 		return vtgrid.SanitizeTitle(p, len(p)) + " (" + cli.AgeStr(t.ProgressAgeMs) + ")"
@@ -531,6 +577,42 @@ func aboutCellRest(t protocol.TaskInfo) string {
 		return "(title) " + vtgrid.SanitizeTitle(ti, len(ti))
 	}
 	return renderPromptCell(t)
+}
+
+// runCell is the Run column (A-D14), blank for a foreground task: while a
+// background task is queued, why it waits (the wait reason's schema name, or
+// placing); while it runs, the time left and the deadline on the reader's
+// clock (the date instead from a day out); once it has ended, the end reason's
+// schema name. The same facts as cli.RunStr, compacted to fit a cell; who
+// cancelled it is in the `d` popup.
+func runCell(t protocol.TaskInfo) string {
+	if t.RunMode != protocol.RunMode_Background {
+		return ""
+	}
+	switch {
+	case t.Status == protocol.TaskStatus_Queued:
+		switch t.WaitReason {
+		case protocol.WaitReason_NoCandidate, protocol.WaitReason_AllBusy:
+			return cli.EnumWireName(t.WaitReason.String())
+		}
+		return "placing"
+	case t.EndedAt != 0:
+		if t.EndReason == protocol.EndReason_None {
+			return "unknown"
+		}
+		return cli.EnumWireName(t.EndReason.String())
+	case t.DeadlineNs != 0:
+		left := time.Duration(t.DeadlineRemainingMs) * time.Millisecond
+		at := time.Unix(0, int64(t.DeadlineNs)).Local()
+		if left >= 24*time.Hour {
+			return fmt.Sprintf("%dd%02dh %s", int(left/(24*time.Hour)), int(left%(24*time.Hour)/time.Hour), at.Format("01-02"))
+		}
+		if left >= time.Hour {
+			return fmt.Sprintf("%dh%02dm %s", int(left/time.Hour), int(left%time.Hour/time.Minute), at.Format("15:04"))
+		}
+		return fmt.Sprintf("%dm %s", int(left/time.Minute), at.Format("15:04"))
+	}
+	return ""
 }
 
 // lifeCell is the Life column: the lifecycle badge (cli.LifecycleBadge), blank
