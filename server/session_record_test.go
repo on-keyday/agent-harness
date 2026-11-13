@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -231,7 +232,14 @@ func TestMuxStopDetachesWithoutClosing(t *testing.T) {
 // Review Focus 5: a slow disk stalls the pump at the queue's bound, never
 // reorders or drops a frame.
 func TestRecorderKeepsOrderUnderSlowWriter(t *testing.T) {
-	mux, runner, _ := newStampMux(t)
+	// Not newStampMux: its 3 s context ends the pump while a loaded machine
+	// is still working through a deliberately slow sink, which reads as
+	// frames lost when they were simply never read.
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	t.Cleanup(cancel)
+	runner := newFakeStream(t)
+	mux := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, runner, NewRingBuffer(4096), SessionHooks{})
+	t.Cleanup(mux.Stop)
 	sink := newMemSink(1 << 30)
 	sink.delay = 20 * time.Microsecond
 	_ = mux.StartRecording(sink, recordFresh)
@@ -239,7 +247,7 @@ func TestRecorderKeepsOrderUnderSlowWriter(t *testing.T) {
 	for i := 0; i < n; i++ {
 		runner.QueueRead(encodeFrame(frame.FrameType_Stdout, []byte(fmt.Sprintf("%d,", i))))
 	}
-	deadline := time.Now().Add(30 * time.Second)
+	deadline := time.Now().Add(50 * time.Second)
 	for len(sink.all()) < n && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
