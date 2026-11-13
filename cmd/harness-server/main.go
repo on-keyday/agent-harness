@@ -49,6 +49,10 @@ var (
 	serverKeyFile        = flag.String("server-key-file", "", "path to the server's Ed25519 signing key (hex seed); auto-generated if absent. Default <data-dir>/server-key. Its public half is written to <data-dir>/server-key.pub and logged at startup: configure it on clients as HARNESS_SERVER_PUBKEY (runners: --server-pubkey) so they refuse an impostor server.")
 	permitNoOperatorPSK  = flag.Bool("dangerously-permit-no-operator-psk", false, "run WITHOUT an operator secret. Operator surfaces then prove nothing, so an in-task agent can drop its ticket, reconnect as an operator kind and hold Capability_All. Off by default: an operator secret is required, generated under --data-dir when none is supplied.")
 	ringSize             = flag.Int64("detach-ring-buffer-size", 1<<20, "byte size of per-detached-session scrollback ring buffer (default 1 MiB)")
+	recordDefault        = flag.Bool("record", false, "record the PTY output of every interactive session whose open says nothing either way (--record / --no-record on the open). Off by default. Records live under <data-dir>/records; input is never recorded")
+	recordRunMax         = flag.Int64("record-run-max", 64<<20, "bytes of PTY output kept per run's record (default 64 MiB); past it the oldest eighth is dropped, so the record keeps the most recent part")
+	recordTotalMax       = flag.Int64("record-total-max", 1<<30, "bytes on disk for all PTY records together (default 1 GiB); past it the oldest segment on the server is dropped, whichever task's it is, even from a record kept forever")
+	recordRetention      = flag.Duration("record-retention", 0, "how long a new PTY record is kept after its run ends; 0 = forever (the default). Changeable per record with `record keep`")
 	notifyHook           = flag.String("notify-hook", "", "external command line invoked on each notify request (stdin: JSON; env: HARNESS_NOTIFY_*); whitespace-split into executable + args (no quoting). Fallbacks: env HARNESS_NOTIFY_HOOK, then first non-# line of <data-dir>/notify-hook — write the command there once and it survives restarts. Empty everywhere disables egress.")
 
 	shutdownFile = flag.String("shutdown-file", "", "path to a sentinel file the server polls every 250ms; when it appears the server triggers a graceful shutdown. daemon.py injects this automatically when the server is spawned via scripts/server.py up, so Windows downs (where SIGTERM can't reach a DETACHED_PROCESS child) can still close WS connections cleanly instead of being TerminateProcess'd cold.")
@@ -354,7 +358,11 @@ func main() {
 		WebUIFS:              webUIFS,
 		WebUINoCache:         webUINoCache,
 		DetachRingBufferSize: *ringSize,
-		NotifyHook:           nh,
+		Record: server.RecordSettings{
+			Default: *recordDefault, RunMax: *recordRunMax,
+			TotalMax: *recordTotalMax, Retention: *recordRetention,
+		},
+		NotifyHook: nh,
 	})
 	board := agentboard.New(agentboard.Config{
 		RingN:      *agentboardRing,

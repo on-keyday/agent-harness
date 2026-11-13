@@ -38,6 +38,7 @@ type backgroundOpen struct {
 	repo      string
 	args      []string
 	prompt    string
+	record    bool // the open's resolved record switch (A-D22)
 }
 
 // openBackground queues a background session task (A-D4): it never chooses a
@@ -117,7 +118,7 @@ func (h *TaskHandler) openBackground(b backgroundOpen) protocol.OpenInteractiveR
 	if r, c := req.InitialRows(), req.InitialCols(); r != nil && c != nil {
 		cond.Rows, cond.Cols = *r, *c
 	}
-	run := RunSpec{Mode: protocol.RunMode_Background, Cond: cond}
+	run := RunSpec{Mode: protocol.RunMode_Background, Cond: cond, Record: b.record}
 
 	var taskIDHex string
 	if b.resumeHex != "" {

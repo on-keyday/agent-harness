@@ -171,6 +171,9 @@ func (h *TaskHandler) startSession(ss sessionStart) (trsf.BidirectionalStream, p
 		kind = protocol.TaskKind_Stream
 	}
 	mux := NewSessionMux(parentCtx, taskIDHex, kind, runnerStream, NewRingBuffer(ringSize), h.sessionHooks())
+	// From the ring, which holds just what arrived since the mux was built,
+	// so a recorded run's record starts at the PTY's first byte (A-D22).
+	h.startRecording(taskIDHex, mux, recordFromRing)
 	h.Sessions.Add(taskIDHex, mux)
 
 	if ss.Detached {

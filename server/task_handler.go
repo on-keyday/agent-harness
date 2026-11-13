@@ -190,6 +190,11 @@ type TaskHandler struct {
 	// detachable session. When zero, defaults to 1 MiB (1 << 20 bytes).
 	RingBufferSize int
 
+	// Records keeps PTY records; nil = none (no data dir). RecordDefault is
+	// whether an open that says nothing is recorded (--record, A-D22).
+	Records       *RecordStore
+	RecordDefault bool
+
 	// ServerRevision / ServerDirty are this server binary's build, answered to
 	// whoami. Fields rather than a buildinfo.Read() inside the handler: the
 	// value cannot change while the process lives, so reading it per request
@@ -1896,11 +1901,24 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 		repo = path.Clean(string(req.RepoPath))
 	}
 
+	// The record switch (A-D22): saying on needs record_persist, within the
+	// bit's scope when the open resumes a task.
+	record, recordOK := h.recordForOpen(req, creatorCaps)
+	if recordOK && record && existingTaskIDHex != "" && !h.inScope(cid, protocol.Capability_RecordPersist, existingTaskIDHex) {
+		recordOK = false
+	}
+	if !recordOK {
+		resp, body := errResp(protocol.OpenInteractiveStatus_RecordNotPermitted)
+		resp.SetErrorMsg([]byte("recording a session needs record_persist"))
+		return resp, body
+	}
+
 	// A background open is queued, never placed here (A-D4); Tick places it.
 	if h.resolveRunMode(req, existingTaskIDHex) == protocol.RunMode_Background {
 		return h.openBackground(backgroundOpen{
 			cid: cid, req: req, origin: origin, creator: creator, grant: grant,
 			resumeHex: existingTaskIDHex, exactRec: exactRec, repo: repo, args: args, prompt: prompt,
+			record: record,
 		}), nil
 	}
 	// Background conditions on an open that resolved to foreground would
@@ -2016,7 +2034,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 		// persisting it here closes the Task 6 gap where handleOpenInteractive
 		// threaded `resolved` to OpenExec but never wrote it back through
 		// Tasks.Resume.
-		if _, err := h.Tasks.Resume(existingTaskIDHex, prompt, args, req.Selector, runner.ID.String(), origin, grant, interactiveKind(req), resolved, h.lookupPrincipal(cid), req.ResumeConversation(), RunSpec{Mode: protocol.RunMode_Foreground}); err != nil {
+		if _, err := h.Tasks.Resume(existingTaskIDHex, prompt, args, req.Selector, runner.ID.String(), origin, grant, interactiveKind(req), resolved, h.lookupPrincipal(cid), req.ResumeConversation(), RunSpec{Mode: protocol.RunMode_Foreground, Record: record}); err != nil {
 			switch err {
 			case ResumeErrNotFound:
 				return errResp(protocol.OpenInteractiveStatus_ResumeNotFound)
@@ -2033,7 +2051,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 		// resolved is the (runner,profile) combo's profile — the server-chosen
 		// profile the runner must exec with (empty only when the sole candidate
 		// advertises no profile, i.e. a legacy runner → its AgentBin default).
-		created, err := h.Tasks.CreateWithinLimits(repo, prompt, interactiveKind(req), origin, creator, runner.ID.String(), req.Selector, req.ExtraArgs.AsStrings(), grant.To, resolved, RunSpec{Mode: protocol.RunMode_Foreground})
+		created, err := h.Tasks.CreateWithinLimits(repo, prompt, interactiveKind(req), origin, creator, runner.ID.String(), req.Selector, req.ExtraArgs.AsStrings(), grant.To, resolved, RunSpec{Mode: protocol.RunMode_Foreground, Record: record})
 		if err != nil {
 			resp, body := errResp(protocol.OpenInteractiveStatus_SpawnLimit)
 			resp.SetErrorMsg([]byte(err.Error()))
@@ -2141,6 +2159,9 @@ func (h *TaskHandler) afterMuxStopped(taskIDHex string, runnerID objproto.Connec
 	}
 	if terminal {
 		h.Registry.UnbindTask(runnerID, taskIDHex)
+		// The session is over: close its record (FinishRun is idempotent, and
+		// the task's own end may already have done it).
+		h.finishRecording(taskIDHex)
 	}
 	if h.OnChange != nil {
 		h.OnChange()
@@ -2396,6 +2417,7 @@ func (h *TaskHandler) handleList(conn ConnHandle, requestID uint32, connID strin
 			// this enrichment runs AFTER redactParentTaskInfo, so the parent
 			// row must be skipped here or the redaction would be undone.
 			taskInfos[i].SetLiveTerminal(mux.HasTerminal())
+			taskInfos[i].SetRecording(mux.Recording())
 			if t.ID != redactedHex {
 				taskInfos[i].SetTitle([]byte(mux.Title()))
 			}

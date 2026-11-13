@@ -22,6 +22,9 @@ type RunConditions struct {
 type RunSpec struct {
 	Mode protocol.RunMode
 	Cond RunConditions
+	// Record: this run's PTY output is recorded (pillar A spec, A-D22), as
+	// the open resolved it: its own on/off, else the server default.
+	Record bool
 }
 
 const (

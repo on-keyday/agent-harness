@@ -106,6 +106,10 @@ type Config struct {
 	// (1 MiB).
 	DetachRingBufferSize int64
 
+	// Record configures PTY records (pillar A spec, A1). Records live under
+	// <DataDir>/records; with no DataDir there are none.
+	Record RecordSettings
+
 	// NotifyHook, when non-empty, is an executable invoked once per notify
 	// request: stdin receives a JSON payload, env carries HARNESS_NOTIFY_*.
 	// Empty disables the egress leg (notify still records to the ring + topic).
@@ -271,7 +275,17 @@ func New(cfg Config) *Server {
 	s.chainedRelay = NewChainedRelayHandler(cfg.Logger, s.registry, s.sendEstablishRelayRequest)
 	s.runnerHandler.ChainedRelay = s.chainedRelay
 	logsDir, restoreWALPath := "", ""
+	var records *RecordStore
 	if s.cfg.DataDir != "" {
+		var err error
+		records, err = NewRecordStore(RecordConfig{
+			Dir: filepath.Join(s.cfg.DataDir, "records"), RunMax: cfg.Record.RunMax,
+			TotalMax: cfg.Record.TotalMax, Retention: cfg.Record.Retention,
+		})
+		if err != nil {
+			slog.Error("record store unavailable; sessions will not be recorded", "err", err)
+			records = nil
+		}
 		logsDir = filepath.Join(s.cfg.DataDir, "logs")
 		// Same file serve() replays from at startup. Named here because
 		// RestoreFn re-reads it per call, and both must be the one WAL.
@@ -303,6 +317,8 @@ func New(cfg Config) *Server {
 		OnChange:       s.scheduler.Tick,
 		LogsDir:        logsDir,
 		RingBufferSize: int(cfg.DetachRingBufferSize),
+		Records:        records,
+		RecordDefault:  cfg.Record.Default,
 		// Read once here rather than per whoami: it cannot change while this
 		// process lives, and "which commit is the server running" is the check
 		// the fleet's server-first deploy rule needs to be answerable at all.
@@ -518,6 +534,7 @@ func New(cfg Config) *Server {
 			// itself (Claude Code rewrites it on every spinner tick). The
 			// parent-hop copy below drops it.
 			ev.SetLiveTerminal(mux.HasTerminal())
+			ev.SetRecording(mux.Recording())
 			ev.SetTitle([]byte(mux.Title()))
 			// The program's OSC 7501 report rides every event like the
 			// title; the parent-hop copy drops its msg.
@@ -706,6 +723,7 @@ func New(cfg Config) *Server {
 	}
 	s.tasks.OnFinish = func(id string, exit int32, status protocol.TaskStatus) {
 		publishTaskEvent(id, protocol.StatusEventKind_TaskEnded, status, exit)
+		s.taskHandler.finishRecording(id)
 	}
 	s.tasks.OnCancel = func(id string) {
 		publishTaskEvent(id, protocol.StatusEventKind_TaskEnded, protocol.TaskStatus_Cancelled, 0)
@@ -717,6 +735,12 @@ func New(cfg Config) *Server {
 		s.dispatcher.OnCancel(id)
 	}
 	s.tasks.OnPrune = func(id string) {
+		// A prune deletes the task's records with it (GD G20, A-D26).
+		if s.taskHandler.Records != nil {
+			if _, err := s.taskHandler.Records.Delete(id, 0); err != nil {
+				slog.Warn("record: delete on prune failed", "task", id, "err", err)
+			}
+		}
 		// The task is already removed, so publishTaskEvent's TaskKind lookup
 		// comes back zero — fine, clients key on the TaskPruned kind and drop
 		// the row. task_status is left unset for the same reason.
@@ -1000,6 +1024,18 @@ func (s *Server) serve(ctx context.Context, ep objproto.Endpoint, mux *http.Serv
 	if s.cfg.DataDir != "" {
 		s.sweepHeldScreens()
 		go s.watchHeldDeadlines(ctx)
+	}
+
+	// PTY records (pillar A, A1): close the open segment of every run a
+	// crash or a non-held stop left open, then expire records by retention.
+	if rs := s.taskHandler.Records; rs != nil {
+		if err := rs.CompressLeftovers(func(task string) bool {
+			t, ok := s.tasks.Get(task)
+			return ok && t.Status == protocol.TaskStatus_Held
+		}); err != nil {
+			slog.Warn("record: startup pass", "err", err)
+		}
+		go rs.RunRetention(ctx)
 	}
 
 	// Background deadlines and queueing periods (pillar A, A-D13): one

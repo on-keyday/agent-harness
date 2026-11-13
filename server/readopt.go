@@ -252,6 +252,15 @@ func (s *Server) rebindHeldSessions(identity protocol.RunnerID, taskIDs []string
 		} else if haveFacts {
 			mux.carryRunFacts(facts) // harmless for foreground; ready if switched back
 		}
+		// A recorded run continues its record where the previous server
+		// left it (A-D23), before the runner is told to resume so the gap's
+		// output lands in it. A re-adopted mux has no afterMuxStopped, so its
+		// end closes the record here.
+		s.taskHandler.startRecording(taskID, mux, recordContinue)
+		go func(id string, m *SessionMux) {
+			<-m.Wait()
+			s.taskHandler.finishRecording(id)
+		}(taskID, mux)
 		s.taskHandler.Sessions.Add(taskID, mux)
 
 		var rr protocol.RunnerRequest

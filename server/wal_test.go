@@ -209,6 +209,7 @@ func TestWALEventJSONRoundTripCopiesEveryField(t *testing.T) {
 		EndReason:                   uint8(protocol.EndReason_Deadline),
 		CancelledBy:                 "ffeeddccbbaa99887766554433221100",
 		Run:                         5,
+		Record:                      true,
 		Ts:                          1234567890,
 		Selector:                    sel,
 	}

@@ -173,6 +173,9 @@ type TaskEntry struct {
 	// resume; a hold and its re-adoption continue the run. A run's PTY record
 	// is named by (ID, Run).
 	Run uint32
+	// Record: the current run's session is to be recorded (A-D22), set by its
+	// open and by a switch while it runs.
+	Record bool
 }
 
 // TaskStore is the in-memory authority for task lifecycle.
@@ -1478,6 +1481,10 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 				t.EndReason = protocol.EndReason(ev.EndReason)
 				t.DeadlineAt, t.QueueDeadlineAt = 0, 0
 			}
+		case "task_record_changed":
+			if t, ok := s.tasks[ev.TaskID]; ok {
+				t.Record = ev.Record
+			}
 		case "task_mode_changed":
 			if t, ok := s.tasks[ev.TaskID]; ok {
 				t.RunMode = protocol.RunMode(ev.RunMode)
@@ -1769,6 +1776,7 @@ func (s *TaskStore) List(limit int) []TaskEntry {
 func (e *TaskEntry) applyRunSpec(run RunSpec, now int64) {
 	e.RunMode = run.Mode
 	e.Cond = run.Cond
+	e.Record = run.Record
 	e.DeadlineAt, e.QueueDeadlineAt, e.ModeSwitchedAt = 0, 0, 0
 	e.EndReason, e.CancelledBy = protocol.EndReason_None, protocol.TaskID{}
 	if run.Mode == protocol.RunMode_Background && run.Cond.QueueTimeout > 0 {
@@ -1778,6 +1786,7 @@ func (e *TaskEntry) applyRunSpec(run RunSpec, now int64) {
 
 func (e *TaskEntry) runSpecToWAL(ev *WALEvent) {
 	ev.RunMode = uint8(e.RunMode)
+	ev.Record = e.Record
 	e.Cond.toWAL(ev)
 	ev.QueueDeadlineNs = e.QueueDeadlineAt
 }
@@ -1786,6 +1795,7 @@ func (e *TaskEntry) runSpecToWAL(ev *WALEvent) {
 // queue deadline rather than recomputing it from the replay clock.
 func (e *TaskEntry) runSpecFromWAL(ev WALEvent) {
 	e.RunMode = protocol.RunMode(ev.RunMode)
+	e.Record = ev.Record
 	e.Cond = conditionsFromWAL(ev)
 	e.QueueDeadlineAt = ev.QueueDeadlineNs
 	e.DeadlineAt, e.ModeSwitchedAt = 0, 0
@@ -1796,6 +1806,26 @@ func (e *TaskEntry) runSpecFromWAL(ev WALEvent) {
 // background (A-D19). A switch to background resolves the deadline from now;
 // to foreground clears it. Refused for a Queued task (Tick never places a
 // foreground one, so it would never start), a terminal one, and a oneshot.
+// SetRecord switches whether the task's current run is recorded (A-D22),
+// persisted as task_record_changed so a re-adoption after a deliberate
+// restart keeps recording.
+func (s *TaskStore) SetRecord(id string, on bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.tasks[id]
+	if !ok {
+		return ErrSwitchNotFound
+	}
+	e.Record = on
+	if s.wal != nil {
+		ev := WALEvent{Type: "task_record_changed", TaskID: id, Record: on, Ts: time.Now().UnixNano()}
+		if err := s.wal.Write(ev); err != nil {
+			slog.Error("WAL write failed", "op", "task_record_changed", "task_id", id, "err", err)
+		}
+	}
+	return nil
+}
+
 func (s *TaskStore) SwitchRunMode(id string, mode protocol.RunMode, cond RunConditions, now int64) (TaskEntry, error) {
 	e, err := s.switchRunModeLocked(id, mode, cond, now)
 	if err == nil {
