@@ -119,6 +119,7 @@ func RunClaude(ctx context.Context, o ClaudeOpts) error {
 	// no console for anyone to look at -- but Windows allocates one anyway, and
 	// it appears on the desktop.
 	cmd := hostcmd.CommandContext(ctx, argv[0], argv[1:]...)
+	stopGracefully(cmd)
 	cmd.Dir = o.Dir
 	cmd.Env = os.Environ()
 	stdin, err := cmd.StdinPipe()

@@ -49,6 +49,9 @@ type sessionRelay struct {
 	// nowhere else.
 	pending []byte
 	closed  bool
+	// inputEnded is set by endInput: Read reports EOF from then on while Write
+	// keeps draining. See endInput.
+	inputEnded bool
 
 	// held reports whether a hold is armed. It is what separates a GAP from an
 	// END, and without it the relay cannot tell them apart: an error from the
@@ -115,6 +118,12 @@ func (r *sessionRelay) current() (trsf.BidirectionalStream, chan struct{}, bool)
 	return r.far, r.wake, r.closed
 }
 
+func (r *sessionRelay) inputDone() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.closed || r.inputEnded
+}
+
 // Read carries the server's bytes toward the child. With no far stream it
 // PARKS rather than returning EOF: an EOF here is what agentexec's reaper
 // ladder watches for, and the child must not be reaped because a server went
@@ -122,7 +131,7 @@ func (r *sessionRelay) current() (trsf.BidirectionalStream, chan struct{}, bool)
 func (r *sessionRelay) Read(p []byte) (int, error) {
 	for {
 		far, wake, closed := r.current()
-		if closed {
+		if closed || r.inputDone() {
 			return 0, io.EOF
 		}
 		if far == nil {
@@ -140,6 +149,9 @@ func (r *sessionRelay) Read(p []byte) (int, error) {
 		n, err := far.Read(p)
 		if err == nil {
 			return n, err
+		}
+		if r.inputDone() {
+			return n, io.EOF // endInput cancelled the far stream to wake this read
 		}
 		if !r.isHeld() {
 			r.logf("read: ENDING the session (far error, no hold)", "err", err, "n", n)
@@ -186,6 +198,10 @@ func (r *sessionRelay) Write(p []byte) (int, error) {
 		r.mu.Unlock()
 		return 0, io.ErrClosedPipe
 	}
+	if r.inputEnded && far == nil {
+		r.mu.Unlock()
+		return len(p), nil // draining a cancelled session: nobody to send it to
+	}
 	if far == nil {
 		if !r.isHeld() {
 			r.mu.Unlock()
@@ -205,13 +221,18 @@ func (r *sessionRelay) Write(p []byte) (int, error) {
 	}
 	pending := r.pending
 	r.pending = nil
+	draining := r.inputEnded
 	r.mu.Unlock()
 	if len(pending) > 0 {
-		if _, err := far.Write(pending); err != nil {
+		if _, err := far.Write(pending); err != nil && !draining {
 			return 0, err
 		}
 	}
-	return far.Write(p)
+	n, err := far.Write(p)
+	if err != nil && draining {
+		return len(p), nil
+	}
+	return n, err
 }
 
 // CloseBoth is NOT forwarded: agentexec defers it, and forwarding it would
@@ -338,6 +359,35 @@ func (r *sessionRelay) EOF() bool {
 
 func (r *sessionRelay) Cancel() {
 	if far, _, _ := r.current(); far != nil {
+		far.Cancel()
+	}
+}
+
+// endInput is how a cancel reaches the child (pillar A spec, A-D16): Read
+// reports EOF from now on, which ends agentexec's input copy and so runs its
+// SIGHUP → SIGTERM → SIGKILL ladder — the path every other end of a session
+// takes — instead of the bare SIGKILL a context cancel gives a PTY child. An
+// agent that is hung up can end the tool processes it started in sessions of
+// their own; one that is SIGKILLed cannot (F5).
+//
+// Write keeps succeeding, discarding what it can no longer forward: a child on
+// its way out still writes, and a PTY nobody drains would block it there until
+// the ladder's SIGKILL. The far stream is cancelled so a Read parked in it
+// returns. Unlike close, this works while a hold is armed: a cancel is an end,
+// not a gap.
+func (r *sessionRelay) endInput() {
+	r.mu.Lock()
+	if r.inputEnded || r.closed {
+		r.mu.Unlock()
+		return
+	}
+	r.inputEnded = true
+	close(r.wake)
+	r.wake = make(chan struct{})
+	far := r.far
+	r.mu.Unlock()
+	r.logf("input ended: the child is being hung up")
+	if far != nil {
 		far.Cancel()
 	}
 }

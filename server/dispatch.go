@@ -180,10 +180,12 @@ func taskIDFromHex(taskIDHex string) protocol.TaskID {
 
 // defaultCancelResendDelays is how long OnCancel waits before each resend of a
 // CancelTask that has not been answered by a TaskFinished: about 2.5 minutes in
-// all. On the PTY path a cancel is an immediate SIGKILL of the child (go-pty's
-// default Cancel; pillar A spec, F5), so it is answered well inside the first
-// gap. A oneshot's SIGTERM has 5s of grace (runner/process.go), so its first
-// resend can precede the answer; a resent CancelTask is harmless.
+// all. On the PTY path a cancel hangs the child up (SIGHUP, then SIGTERM and
+// SIGKILL within 2s; a context cancel backstops it at 5s), and a stream
+// session's process group gets SIGTERM and SIGKILL after 2s (pillar A spec,
+// A-D16); a oneshot's SIGTERM has 5s of grace (runner/process.go). So the first
+// resend can precede the answer; a resent CancelTask is harmless (the runner's
+// second cancel of a session is a no-op).
 var defaultCancelResendDelays = []time.Duration{
 	3 * time.Second, 6 * time.Second, 12 * time.Second, 24 * time.Second,
 	30 * time.Second, 30 * time.Second, 30 * time.Second, 30 * time.Second,

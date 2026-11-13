@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os/exec"
+	"runtime"
 	"sync"
 
 	"github.com/on-keyday/agent-harness/runner/streamagent"
@@ -140,7 +141,18 @@ func (t *StreamTask) Run(ctx context.Context, stream trsf.BidirectionalStream) e
 		argv[0], argv[1:], t.Dir,
 		false, // no PTY: this kind is events, not a terminal
 		t.Env,
-		agentexec.ExecuteOption{Audit: &streamTap{task: t}, OnStdinWriter: t.OnStdinWriter})
+		agentexec.ExecuteOption{
+			Audit: &streamTap{task: t}, OnStdinWriter: t.OnStdinWriter,
+			// A cancel TERMs the adapter's process group, the agent in it, and
+			// KILLs it after a grace, rather than SIGKILLing the adapter alone
+			// and orphaning the agent (pillar A spec, F5). Not on Windows:
+			// there the group is a job object that kills everything the agent
+			// started when the session ends, even on a clean finish, and
+			// nothing can opt out of it — what an agent deliberately left
+			// running would die with every session (ssh-gateway spec, "A
+			// second flag was added here and removed again").
+			KillProcessTree: runtime.GOOS != "windows",
+		})
 }
 
 func (t *StreamTask) notifyPending(n int) {

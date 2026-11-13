@@ -295,6 +295,11 @@ func (r *TaskRegistry) putUnlessCancelled(taskIDHex string, e *taskEntry) bool {
 	return true
 }
 
+// ptyCancelGrace is how long a cancelled PTY session gets to end through its
+// hangup ladder (objtrsf: SIGHUP, SIGTERM after 1 s, SIGKILL after 2 s) before
+// its context is cancelled as a backstop. A var so a test can shorten it.
+var ptyCancelGrace = 5 * time.Second
+
 // cancelTask cancels a registered task and reports true. Otherwise it reports
 // false, and if the task is pending it marks it so putUnlessCancelled refuses
 // it. One critical section, so a registration cannot land between the lookup
@@ -307,6 +312,14 @@ func (r *TaskRegistry) cancelTask(taskIDHex string) bool {
 	r.mu.Lock()
 	if e, ok := r.tasks[taskIDHex]; ok && e != nil {
 		r.mu.Unlock()
+		// An interactive session is ended through its input, so the child is
+		// hung up rather than SIGKILLed (relay.endInput); the context cancel
+		// follows as a backstop. Everything else is cancelled at once.
+		if rl := e.relay; rl != nil {
+			rl.endInput()
+			time.AfterFunc(ptyCancelGrace, e.cancel)
+			return true
+		}
 		e.cancel()
 		return true
 	}

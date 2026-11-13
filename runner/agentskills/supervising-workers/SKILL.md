@@ -695,7 +695,9 @@ your sessions" above; `logs` / `watch` don't apply to interactive tasks.)
 
 `cancel <id>` and `session kill <id>` (its alias), by contrast, **do** work on
 interactive sessions: they route a `CancelTask` to the assigned runner, which
-cancels the session's per-task context and kills the agent process. Cancel is
+hangs up the agent (SIGHUP, then SIGTERM, then SIGKILL within about 2 s) so it
+can stop the tool processes it started; what an agent deliberately detached into
+a session of its own (`setsid`) is left running. Cancel is
 idempotent and skips already-terminal tasks. (`prune` / `prune-local` are
 post-hoc cleanup of terminal tasks — server-side forget and local worktree
 removal respectively — and are kind-agnostic.)

@@ -59,9 +59,10 @@ func main() {
 		os.Exit(2)
 	}
 
-	// SIGINT/SIGTERM cancel the context, which kills the agent process group
-	// through CommandContext. The runner already owns process lifetime; this
-	// only makes a hand-run adapter behave.
+	// SIGINT/SIGTERM cancel the context, which passes SIGTERM on to the agent
+	// and SIGKILLs it after a grace (streamagent.stopGracefully). The runner
+	// signals this process's whole group on a cancel, so the agent usually has
+	// its own SIGTERM already; this also makes a hand-run adapter behave.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 

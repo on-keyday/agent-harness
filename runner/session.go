@@ -1219,11 +1219,13 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 			// How the child ended, always: for a held task this is the only
 			// place the answer exists, and "it died during the hold" is
 			// otherwise indistinguishable from "the relay ended the session".
-			// taskCtx.Err() separates the two endings: non-nil means OUR
-			// cancel ran — on a PTY child that is go-pty's default Cancel, an
-			// immediate SIGKILL of the child pid alone (pillar A spec, F5);
-			// nil means agentexec's own stdin-EOF ladder (SIGHUP → SIGTERM →
-			// SIGKILL, ~2s) or the child's own exit did it.
+			// taskCtx.Err() separates the endings: non-nil means the context
+			// cancel ran — a cancel's backstop after ptyCancelGrace, or a hold
+			// path — and on a PTY child that is go-pty's default Cancel, a
+			// SIGKILL of the child pid alone (pillar A spec, F5); nil means
+			// agentexec's stdin-EOF ladder (SIGHUP → SIGTERM → SIGKILL, ~2s),
+			// which a cancel now starts through relay.endInput, or the
+			// child's own exit did it.
 			log.Info("agent child exited", "task_id", taskIDHex,
 				"state", fmt.Sprint(st), "wait_err", werr,
 				"held", s.reg.holdArmed(), "task_ctx_err", taskCtx.Err())
