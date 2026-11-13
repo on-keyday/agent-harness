@@ -388,7 +388,7 @@ func runSessionNewWith(cid objproto.ConnectionID, a verb.SpawnAction) error {
 	cli.RunModeFlags{
 		Background: a.Background, Foreground: a.Foreground, Prompt: a.Prompt,
 		Deadline: a.Deadline, Quiet: a.QuietFor, Blocked: a.BlockedFor, QueueTimeout: a.QueueTimeout,
-		TurnEnd: turnEnd,
+		TurnEnd: turnEnd, RecordSet: a.Record || a.NoRecord, Record: a.Record,
 	}.Apply(&sopts)
 	// --background implies --detach (and so does a resume carrying conditions).
 	detach, x11, x11Display := a.Detach || sopts.Detached, a.X11, int(a.X11Display)

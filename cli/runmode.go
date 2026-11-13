@@ -204,6 +204,11 @@ type RunModeFlags struct {
 	Prompt                                 string
 	Deadline, Quiet, Blocked, QueueTimeout time.Duration
 	TurnEnd                                protocol.TurnEndSignal
+	// RecordSet: the open says whether its run is recorded (Record), rather
+	// than leaving it to the server default (pillar A spec, A-D22). Not a run
+	// mode, but carried here because this is the one struct every surface's
+	// open goes through, so no surface can drop it.
+	RecordSet, Record bool
 }
 
 // Conditions is the background conditions block the flags describe, nil when
@@ -235,4 +240,5 @@ func (f RunModeFlags) Apply(o *SessionOpts) {
 	if f.Background || o.Conditions != nil {
 		o.Detached = true
 	}
+	o.RecordSet, o.Record = f.RecordSet, f.RecordSet && f.Record
 }

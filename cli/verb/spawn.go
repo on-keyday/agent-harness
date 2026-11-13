@@ -131,6 +131,12 @@ func spawnFlags(k spawnKind) []Flag {
 			Help: "background: how long the agent may wait on a human before the run ends (default 5m)"},
 		Flag{Name: "queue-timeout", Type: FlagDuration, Default: time.Duration(0), Field: "QueueTimeout",
 			Help: "background: cancel the task if it is still queued this long after it was queued (default none)"},
+		// The PTY record (pillar A spec, A-D22): neither = the server's
+		// --record default; a resume does not reuse the previous run's.
+		Flag{Name: "record", Type: FlagBool, Default: false, Field: "Record",
+			Help: "record this run's PTY output on the server (`record get` reads it back; needs record_persist)"},
+		Flag{Name: "no-record", Type: FlagBool, Default: false, Field: "NoRecord",
+			Help: "do not record this run's PTY output, whatever the server's default"},
 	)
 }
 
@@ -166,6 +172,8 @@ func spawnRules(k spawnKind) ([]Rule, []Requirement) {
 			Reason: "they name the two run modes"},
 		Rule{Flags: []string{"background", "x11"},
 			Reason: "a background session has no client to host the X tunnel"},
+		Rule{Flags: []string{"record", "no-record"},
+			Reason: "they are the two answers to one question"},
 	)
 	// A stream session needs --detach or --background (which implies it):
 	// checked in spawnValidate, since a Requirement names one flag.

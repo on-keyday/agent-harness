@@ -106,6 +106,12 @@ type SessionOpts struct {
 	Background bool
 	Conditions *protocol.BackgroundConditions
 	Prompt     string
+
+	// RecordSet: this open says whether its run is recorded (Record), rather
+	// than leaving it to the server's --record default (A-D22). Saying on
+	// needs record_persist.
+	RecordSet bool
+	Record    bool
 }
 
 // buildOpenInteractiveRequest constructs the wire OpenInteractiveRequest from
@@ -144,6 +150,13 @@ func buildOpenInteractiveRequest(repoPath string, opts SessionOpts) protocol.Ope
 	if opts.Conditions != nil {
 		oi.SetConditionsPresent(true) // the discriminator before its block
 		oi.SetConditions(*opts.Conditions)
+	}
+	if opts.RecordSet {
+		var ext protocol.OpenInteractiveExt
+		ext.SetRecordSet(true)
+		ext.SetRecord(opts.Record)
+		oi.SetExtPresent(true) // the discriminator before its byte
+		oi.SetExt(ext)
 	}
 	return oi
 }

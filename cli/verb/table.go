@@ -3096,6 +3096,99 @@ var Verbs = []VerbSpec{
 			"session mode aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa foreground",
 		},
 	},
+	// PTY records (pillar A spec, A1, A-D28). CLI and the TUI command line;
+	// the TUI's d popup lists them and the WebUI task sheet lists, downloads,
+	// deletes and switches them.
+	{
+		Path: []string{"record", "ls"}, CmdlineSurfaces: CLI | TUI,
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/detail.go:formatTaskDetail"},
+			{Surface: WebUI, At: "webui/static/main.js:buildTaskSheet"},
+		},
+		Notes:  []string{"list PTY records: each run's start, end, end reason, size on disk, expiry, truncation; with no task, every record you may view"},
+		Action: "RecordLsAction",
+		Args:   []Arg{{Name: "task-id", Type: ArgTaskID, Variadic: true, MaxCount: 1, Field: "TaskID"}},
+		Examples: []string{
+			"record ls",
+			"record ls aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		},
+	},
+	{
+		Path: []string{"record", "get"}, CmdlineSurfaces: CLI | TUI,
+		ModalSurfaces: []ModalSurface{{Surface: WebUI, At: "webui/static/main.js:buildTaskSheet"}},
+		Notes: []string{
+			"write one run's PTY record: the raw output, as session snapshot --raw prints it, or asciicast v2 (asciinema play)",
+			"<task-id> is the latest run; <task-id>#<n> names a run",
+		},
+		Action: "RecordGetAction",
+		Args:   []Arg{{Name: "record", Type: ArgString, Field: "Ref"}},
+		Flags: []Flag{
+			{Name: "format", Type: FlagString, Default: "raw", Field: "Format", Help: "raw (the output bytes) or asciicast (asciicast v2, for asciinema play)"},
+			{Name: "without-synth", Type: FlagBool, Default: false, Field: "WithoutSynth", Help: "drop the bytes the server made (segment heads, a seed's modes), as on session snapshot --raw"},
+			{Name: "o", Type: FlagString, Default: "", Field: "Output", Help: "write to this file instead of stdout (required on the TUI command line)"},
+		},
+		Validate: func(b Bound) error {
+			switch f := b.Str("format"); f {
+			case "raw", "asciicast":
+				return nil
+			default:
+				return fmt.Errorf("--format %q: want raw or asciicast", f)
+			}
+		},
+		Examples: []string{
+			"record get aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"record get --format asciicast -o run2.cast aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa#2",
+		},
+	},
+	{
+		Path: []string{"record", "rm"}, CmdlineSurfaces: CLI | TUI,
+		ModalSurfaces: []ModalSurface{{Surface: WebUI, At: "webui/static/main.js:buildTaskSheet"}},
+		Notes:         []string{"delete a PTY record (record_delete); <task-id>#<n> for one run, or <task-id> --all-runs for every run"},
+		Action:        "RecordRmAction",
+		Args:          []Arg{{Name: "record", Type: ArgString, Field: "Ref"}},
+		Flags: []Flag{
+			{Name: "all-runs", Type: FlagBool, Default: false, Field: "AllRuns", Help: "delete every run's record of the task"},
+		},
+		Examples: []string{
+			"record rm aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa#2",
+			"record rm --all-runs aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		},
+	},
+	{
+		Path: []string{"record", "keep"}, CmdlineSurfaces: CLI | TUI,
+		ModalSurfaces: []ModalSurface{{Surface: WebUI, At: "webui/static/main.js:buildTaskSheet"}},
+		Notes:         []string{"change how long a record is kept after its run ends: longer needs record_persist, shorter record_delete"},
+		Action:        "RecordKeepAction",
+		Args:          []Arg{{Name: "record", Type: ArgString, Field: "Ref"}},
+		Flags: []Flag{
+			{Name: "forever", Type: FlagBool, Default: false, Field: "Forever", Help: "keep it until deleted (or pushed out by --record-total-max)"},
+			{Name: "for", Type: FlagDuration, Default: time.Duration(0), Field: "For", Help: "keep it this long after its run ends"},
+		},
+		Exclusive:  []Rule{{Flags: []string{"forever", "for"}, Reason: "they are two retentions"}},
+		AtLeastOne: []Rule{{Flags: []string{"forever", "for"}, Reason: "a keep with no retention changes nothing"}},
+		Examples: []string{
+			"record keep --forever aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa#2",
+			"record keep --for 168h aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		},
+	},
+	{
+		Path: []string{"record", "on"}, CmdlineSurfaces: CLI | TUI,
+		ModalSurfaces: []ModalSurface{{Surface: WebUI, At: "webui/static/main.js:buildTaskSheet"}},
+		Notes:         []string{"start recording a live interactive session (record_persist); with no record yet the record starts from the session's replay buffer"},
+		Action:        "RecordSwitchAction",
+		Const:         map[string]string{"Sub": "on"},
+		Args:          []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
+		Examples:      []string{"record on aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+	},
+	{
+		Path: []string{"record", "off"}, CmdlineSurfaces: CLI | TUI,
+		ModalSurfaces: []ModalSurface{{Surface: WebUI, At: "webui/static/main.js:buildTaskSheet"}},
+		Notes:         []string{"stop recording a session (record_delete); the record stays"},
+		Action:        "RecordSwitchAction",
+		Const:         map[string]string{"Sub": "off"},
+		Args:          []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
+		Examples:      []string{"record off aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+	},
 	{
 		// CLI only. It renders a session's screen to STDOUT for something that
 		// reads text -- an agent driving a loop, a script. The TUI has its own

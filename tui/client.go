@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -630,4 +631,22 @@ func DoSessionList(c *cli.Client) tea.Cmd {
 		}
 		return SessionListMsg{Tasks: sessions}
 	}
+}
+
+// DoRecord runs one record verb and carries its text to the results pane.
+func DoRecord(c *cli.Client, verbName string, fn func(ctx context.Context, c *cli.Client, out io.Writer) error) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		var buf strings.Builder
+		err := fn(ctx, c, &buf)
+		return RecordResultMsg{Verb: verbName, Text: strings.TrimSpace(buf.String()), Err: err}
+	}
+}
+
+// RecordResultMsg carries a record verb's outcome to the results pane.
+type RecordResultMsg struct {
+	Verb string
+	Text string
+	Err  error
 }

@@ -282,6 +282,15 @@ func taskLine(t protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo) st
 	obs := ""
 	if t.Status == protocol.TaskStatus_Running || t.Status == protocol.TaskStatus_Detached {
 		obs = fmt.Sprintf("  cowrite=%d viewer=%d", t.Cowriters, t.Viewers)
+		// Whether the live terminal is being recorded (pillar A, A-D22),
+		// both answers printed, as the pair above.
+		if t.LiveTerminal() {
+			rec := "off"
+			if t.Recording() {
+				rec = "on"
+			}
+			obs += "  rec=" + rec
+		}
 	}
 	// Commands running in the task's WORKTREE, which is a different subject
 	// from the session above: a task that ended with uncommitted work keeps its
@@ -566,6 +575,10 @@ type taskJSON struct {
 	DeadlineRemainingMs uint64 `json:"deadline_remaining_ms"`
 	QueueDeadlineNs     uint64 `json:"queue_deadline_ns"`
 	WaitReason          string `json:"wait_reason"`
+	// The current run's number (A-D20) and whether its session is being
+	// recorded now (A-D22).
+	Run       uint32 `json:"run"`
+	Recording bool   `json:"recording"`
 	// The current (or last) run's background conditions, as stored on the
 	// task (A-D7): what a front-end prefills a resume from (A-D15).
 	Conditions conditionsJSON `json:"conditions"`
@@ -710,6 +723,8 @@ func newTaskJSON(t *protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo
 		DeadlineRemainingMs: t.DeadlineRemainingMs,
 		QueueDeadlineNs:     t.QueueDeadlineNs,
 		WaitReason:          EnumWireName(t.WaitReason.String()),
+		Run:                 t.Run,
+		Recording:           t.Recording(),
 		Conditions: conditionsJSON{
 			DeadlineMs: t.Conditions.DeadlineMs, TurnEnd: EnumWireName(t.Conditions.TurnEnd.String()),
 			QuietMs: t.Conditions.QuietMs, BlockedMs: t.Conditions.BlockedMs, QueueTimeoutMs: t.Conditions.QueueTimeoutMs,

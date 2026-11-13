@@ -1,7 +1,10 @@
 package tui
 
 import (
+	"context"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -1073,6 +1076,113 @@ func spawnRunMode(v verb.SpawnAction) cli.RunModeFlags {
 	return cli.RunModeFlags{
 		Background: v.Background, Foreground: v.Foreground, Prompt: v.Prompt,
 		Deadline: v.Deadline, Quiet: v.QuietFor, Blocked: v.BlockedFor, QueueTimeout: v.QueueTimeout,
-		TurnEnd: turnEnd,
+		TurnEnd: turnEnd, RecordSet: v.Record || v.NoRecord, Record: v.Record,
 	}
+}
+
+// --- PTY records (pillar A spec, A1) -----------------------------------------
+
+// recordCmd resolves a typed task-id prefix in a record ref, then runs fn.
+func (h tuiVerbs) recordCmd(verbName string, fn func(ctx context.Context, c *cli.Client, out io.Writer) error) tea.Cmd {
+	a := h.a
+	if a.client == nil {
+		a.cmdresult.Append(ErrorStyle.Render(verbName + ": not connected to server"))
+		return nil
+	}
+	return DoRecord(a.client, verbName, fn)
+}
+
+// resolveRecordRef turns `<prefix>[#n]` into `<full-id>[#n]`.
+func (h tuiVerbs) resolveRecordRef(ref string) (string, bool) {
+	id, run, hasRun := strings.Cut(ref, "#")
+	full, errStr := h.a.resolveTaskIDPrefix(id)
+	if errStr != "" {
+		h.a.cmdresult.Append(ErrorStyle.Render(errStr))
+		return "", false
+	}
+	if hasRun {
+		return full + "#" + run, true
+	}
+	return full, true
+}
+
+func (h tuiVerbs) RecordLs(v verb.RecordLsAction) tea.Cmd {
+	task := ""
+	if v.TaskID != "" {
+		full, ok := h.resolveRecordRef(v.TaskID)
+		if !ok {
+			return nil
+		}
+		task = full
+	}
+	return h.recordCmd("record ls", func(ctx context.Context, c *cli.Client, out io.Writer) error {
+		return cli.RecordLsWith(ctx, c, task, out)
+	})
+}
+
+// RecordGet needs -o here: raw terminal bytes written into the results pane
+// would draw into the TUI itself.
+func (h tuiVerbs) RecordGet(v verb.RecordGetAction) tea.Cmd {
+	if v.Output == "" {
+		h.a.cmdresult.Append(ErrorStyle.Render("record get: give -o <file> — a record's raw bytes would draw over the TUI"))
+		return nil
+	}
+	ref, ok := h.resolveRecordRef(v.Ref)
+	if !ok {
+		return nil
+	}
+	return h.recordCmd("record get", func(ctx context.Context, c *cli.Client, out io.Writer) error {
+		f, err := os.Create(v.Output)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		if err := cli.RecordGetWith(ctx, c, ref, v.Format, !v.WithoutSynth, f); err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "record get: %s written to %s", ref, v.Output)
+		return nil
+	})
+}
+
+func (h tuiVerbs) RecordRm(v verb.RecordRmAction) tea.Cmd {
+	ref, ok := h.resolveRecordRef(v.Ref)
+	if !ok {
+		return nil
+	}
+	if err := cli.CheckRecordRm(ref, v.AllRuns); err != nil {
+		h.a.cmdresult.Append(ErrorStyle.Render(err.Error()))
+		return nil
+	}
+	return h.recordCmd("record rm", func(ctx context.Context, c *cli.Client, out io.Writer) error {
+		return cli.RecordRmWith(ctx, c, ref, v.AllRuns, out)
+	})
+}
+
+func (h tuiVerbs) RecordKeep(v verb.RecordKeepAction) tea.Cmd {
+	ref, ok := h.resolveRecordRef(v.Ref)
+	if !ok {
+		return nil
+	}
+	return h.recordCmd("record keep", func(ctx context.Context, c *cli.Client, out io.Writer) error {
+		return cli.RecordKeepWith(ctx, c, ref, v.Forever, v.For, out)
+	})
+}
+
+func (h tuiVerbs) RecordOn(v verb.RecordSwitchAction) tea.Cmd  { return h.recordSwitch(v, true) }
+func (h tuiVerbs) RecordOff(v verb.RecordSwitchAction) tea.Cmd { return h.recordSwitch(v, false) }
+
+func (h tuiVerbs) recordSwitch(v verb.RecordSwitchAction, on bool) tea.Cmd {
+	full, errStr := h.a.resolveTaskIDPrefix(v.TaskID)
+	if errStr != "" {
+		h.a.cmdresult.Append(ErrorStyle.Render(errStr))
+		return nil
+	}
+	word := "off"
+	if on {
+		word = "on"
+	}
+	return h.recordCmd("record "+word, func(ctx context.Context, c *cli.Client, out io.Writer) error {
+		return cli.RecordSwitchWith(ctx, c, full, on, out)
+	})
 }

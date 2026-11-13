@@ -1185,6 +1185,15 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// leaving the user looking at a stub that arrived via TaskEventMsg.
 		return a, RefreshSnapshot(a.client)
 
+	case RecordResultMsg:
+		if msg.Err != nil {
+			a.cmdresult.Append(ErrorStyle.Render(msg.Verb + " failed: " + msg.Err.Error()))
+			return a, nil
+		}
+		for _, line := range strings.Split(msg.Text, "\n") {
+			a.cmdresult.Append(line)
+		}
+		return a, nil
 	case RestoreResultMsg:
 		if msg.Err != nil {
 			a.cmdresult.Append(ErrorStyle.Render("restore failed: " + msg.Err.Error()))

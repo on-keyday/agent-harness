@@ -527,6 +527,49 @@ type PruneLocalAction struct {
 	TaskIDs []string
 }
 
+// RecordGetAction is built by: record get.
+type RecordGetAction struct {
+	ActionMarker
+	// raw (the output bytes) or asciicast (asciicast v2, for asciinema play)
+	Format string
+	// drop the bytes the server made (segment heads, a seed's modes), as on session snapshot --raw
+	WithoutSynth bool
+	// write to this file instead of stdout (required on the TUI command line)
+	Output string
+	Ref    string
+}
+
+// RecordKeepAction is built by: record keep.
+type RecordKeepAction struct {
+	ActionMarker
+	// keep it until deleted (or pushed out by --record-total-max)
+	Forever bool
+	// keep it this long after its run ends
+	For time.Duration
+	Ref string
+}
+
+// RecordLsAction is built by: record ls.
+type RecordLsAction struct {
+	ActionMarker
+	TaskID string
+}
+
+// RecordRmAction is built by: record rm.
+type RecordRmAction struct {
+	ActionMarker
+	// delete every run's record of the task
+	AllRuns bool
+	Ref     string
+}
+
+// RecordSwitchAction is built by: record off, record on.
+type RecordSwitchAction struct {
+	ActionMarker
+	TaskID string
+	Sub    string
+}
+
 // RestoreAction is built by: restore.
 type RestoreAction struct {
 	ActionMarker
@@ -881,6 +924,10 @@ type SpawnAction struct {
 	BlockedFor time.Duration
 	// background: cancel the task if it is still queued this long after it was queued (default none)
 	QueueTimeout time.Duration
+	// record this run's PTY output on the server (`record get` reads it back; needs record_persist)
+	Record bool
+	// do not record this run's PTY output, whatever the server's default
+	NoRecord bool
 }
 
 // WorkspaceAction is built by: workspace apply, workspace detach, workspace forward add, workspace forward rm, workspace ls, workspace rm, workspace save, workspace show.
@@ -2615,6 +2662,8 @@ func init() {
 			a.QuietFor = durationOf(b.Flags["quiet"])
 			a.BlockedFor = durationOf(b.Flags["blocked"])
 			a.QueueTimeout = durationOf(b.Flags["queue-timeout"])
+			a.Record = b.Bool("record")
+			a.NoRecord = b.Bool("no-record")
 			return a, nil
 		},
 		"session new\x00tui": func(b Bound) (Action, error) {
@@ -2698,6 +2747,8 @@ func init() {
 			a.QuietFor = durationOf(b.Flags["quiet"])
 			a.BlockedFor = durationOf(b.Flags["blocked"])
 			a.QueueTimeout = durationOf(b.Flags["queue-timeout"])
+			a.Record = b.Bool("record")
+			a.NoRecord = b.Bool("no-record")
 			return a, nil
 		},
 		"session send\x00cli": func(b Bound) (Action, error) {
@@ -3945,6 +3996,106 @@ func init() {
 			}
 			return a, nil
 		},
+		"record ls\x00cli": func(b Bound) (Action, error) {
+			a := RecordLsAction{}
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			return a, nil
+		},
+		"record ls\x00tui": func(b Bound) (Action, error) {
+			a := RecordLsAction{}
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			return a, nil
+		},
+		"record get\x00cli": func(b Bound) (Action, error) {
+			a := RecordGetAction{}
+			a.Format = b.Str("format")
+			a.WithoutSynth = b.Bool("without-synth")
+			a.Output = b.Str("o")
+			if len(b.Args) > 0 {
+				a.Ref = b.Args[0]
+			}
+			return a, nil
+		},
+		"record get\x00tui": func(b Bound) (Action, error) {
+			a := RecordGetAction{}
+			a.Format = b.Str("format")
+			a.WithoutSynth = b.Bool("without-synth")
+			a.Output = b.Str("o")
+			if len(b.Args) > 0 {
+				a.Ref = b.Args[0]
+			}
+			return a, nil
+		},
+		"record rm\x00cli": func(b Bound) (Action, error) {
+			a := RecordRmAction{}
+			a.AllRuns = b.Bool("all-runs")
+			if len(b.Args) > 0 {
+				a.Ref = b.Args[0]
+			}
+			return a, nil
+		},
+		"record rm\x00tui": func(b Bound) (Action, error) {
+			a := RecordRmAction{}
+			a.AllRuns = b.Bool("all-runs")
+			if len(b.Args) > 0 {
+				a.Ref = b.Args[0]
+			}
+			return a, nil
+		},
+		"record keep\x00cli": func(b Bound) (Action, error) {
+			a := RecordKeepAction{}
+			a.Forever = b.Bool("forever")
+			a.For = durationOf(b.Flags["for"])
+			if len(b.Args) > 0 {
+				a.Ref = b.Args[0]
+			}
+			return a, nil
+		},
+		"record keep\x00tui": func(b Bound) (Action, error) {
+			a := RecordKeepAction{}
+			a.Forever = b.Bool("forever")
+			a.For = durationOf(b.Flags["for"])
+			if len(b.Args) > 0 {
+				a.Ref = b.Args[0]
+			}
+			return a, nil
+		},
+		"record on\x00cli": func(b Bound) (Action, error) {
+			a := RecordSwitchAction{}
+			a.Sub = "on"
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			return a, nil
+		},
+		"record on\x00tui": func(b Bound) (Action, error) {
+			a := RecordSwitchAction{}
+			a.Sub = "on"
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			return a, nil
+		},
+		"record off\x00cli": func(b Bound) (Action, error) {
+			a := RecordSwitchAction{}
+			a.Sub = "off"
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			return a, nil
+		},
+		"record off\x00tui": func(b Bound) (Action, error) {
+			a := RecordSwitchAction{}
+			a.Sub = "off"
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			return a, nil
+		},
 		"session snapshot\x00cli": func(b Bound) (Action, error) {
 			a := SessionAction{}
 			a.Sub = "snapshot"
@@ -4384,6 +4535,12 @@ const (
 	CmdAwaitProgressKill      = "await-progress kill"
 	CmdSessionResize          = "session resize"
 	CmdSessionMode            = "session mode"
+	CmdRecordLs               = "record ls"
+	CmdRecordGet              = "record get"
+	CmdRecordRm               = "record rm"
+	CmdRecordKeep             = "record keep"
+	CmdRecordOn               = "record on"
+	CmdRecordOff              = "record off"
 	CmdSessionSnapshot        = "session snapshot"
 	CmdSessionStreamAttach    = "session stream attach"
 	CmdSessionStreamInterrupt = "session stream interrupt"
@@ -4441,6 +4598,8 @@ const (
 	SubLs              = "ls"
 	SubMode            = "mode"
 	SubNotifyWatch     = "notify-watch"
+	SubOff             = "off"
+	SubOn              = "on"
 	SubPurge           = "purge"
 	SubPurgeThread     = "purge-thread"
 	SubQuit            = "quit"
@@ -6895,6 +7054,132 @@ func ParseCmdSessionMode(sf Surface, args []string, ctx map[string]string) (Sess
 	return a, nil
 }
 
+func ParseCmdRecordLs(sf Surface, args []string, ctx map[string]string) (RecordLsAction, error) {
+	var zero RecordLsAction
+	sp, ok := Lookup("record", "ls")
+	if !ok {
+		return zero, fmt.Errorf("record ls: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(RecordLsAction)
+	return a, nil
+}
+
+func ParseCmdRecordGet(sf Surface, args []string, ctx map[string]string) (RecordGetAction, error) {
+	var zero RecordGetAction
+	sp, ok := Lookup("record", "get")
+	if !ok {
+		return zero, fmt.Errorf("record get: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(RecordGetAction)
+	return a, nil
+}
+
+func ParseCmdRecordRm(sf Surface, args []string, ctx map[string]string) (RecordRmAction, error) {
+	var zero RecordRmAction
+	sp, ok := Lookup("record", "rm")
+	if !ok {
+		return zero, fmt.Errorf("record rm: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(RecordRmAction)
+	return a, nil
+}
+
+func ParseCmdRecordKeep(sf Surface, args []string, ctx map[string]string) (RecordKeepAction, error) {
+	var zero RecordKeepAction
+	sp, ok := Lookup("record", "keep")
+	if !ok {
+		return zero, fmt.Errorf("record keep: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(RecordKeepAction)
+	return a, nil
+}
+
+func ParseCmdRecordOn(sf Surface, args []string, ctx map[string]string) (RecordSwitchAction, error) {
+	var zero RecordSwitchAction
+	sp, ok := Lookup("record", "on")
+	if !ok {
+		return zero, fmt.Errorf("record on: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(RecordSwitchAction)
+	return a, nil
+}
+
+func ParseCmdRecordOff(sf Surface, args []string, ctx map[string]string) (RecordSwitchAction, error) {
+	var zero RecordSwitchAction
+	sp, ok := Lookup("record", "off")
+	if !ok {
+		return zero, fmt.Errorf("record off: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(RecordSwitchAction)
+	return a, nil
+}
+
 func ParseCmdSessionSnapshot(sf Surface, args []string, ctx map[string]string) (SessionAction, error) {
 	var zero SessionAction
 	sp, ok := Lookup("session", "snapshot")
@@ -7532,6 +7817,18 @@ type CLIDispatch[R any] interface {
 	SessionResize(SessionAction) R
 	// session mode
 	SessionMode(SessionAction) R
+	// record ls
+	RecordLs(RecordLsAction) R
+	// record get
+	RecordGet(RecordGetAction) R
+	// record rm
+	RecordRm(RecordRmAction) R
+	// record keep
+	RecordKeep(RecordKeepAction) R
+	// record on
+	RecordOn(RecordSwitchAction) R
+	// record off
+	RecordOff(RecordSwitchAction) R
 	// session snapshot
 	SessionSnapshot(SessionAction) R
 	// session stream attach
@@ -8151,6 +8448,42 @@ func DispatchCLI[R any](h CLIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.SessionMode(a), true, nil
+	case CmdRecordLs:
+		a, perr := ParseCmdRecordLs(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.RecordLs(a), true, nil
+	case CmdRecordGet:
+		a, perr := ParseCmdRecordGet(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.RecordGet(a), true, nil
+	case CmdRecordRm:
+		a, perr := ParseCmdRecordRm(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.RecordRm(a), true, nil
+	case CmdRecordKeep:
+		a, perr := ParseCmdRecordKeep(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.RecordKeep(a), true, nil
+	case CmdRecordOn:
+		a, perr := ParseCmdRecordOn(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.RecordOn(a), true, nil
+	case CmdRecordOff:
+		a, perr := ParseCmdRecordOff(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.RecordOff(a), true, nil
 	case CmdSessionSnapshot:
 		a, perr := ParseCmdSessionSnapshot(CLI, args, ctx)
 		if perr != nil {
@@ -8521,6 +8854,21 @@ func DispatchCLIAction[R any](h CLIDispatch[R], act Action) (r R, handled bool) 
 			return h.AwaitProgressLs(a), true
 		case "kill":
 			return h.AwaitProgressKill(a), true
+		}
+	case RecordLsAction:
+		return h.RecordLs(a), true
+	case RecordGetAction:
+		return h.RecordGet(a), true
+	case RecordRmAction:
+		return h.RecordRm(a), true
+	case RecordKeepAction:
+		return h.RecordKeep(a), true
+	case RecordSwitchAction:
+		switch a.Sub {
+		case "on":
+			return h.RecordOn(a), true
+		case "off":
+			return h.RecordOff(a), true
 		}
 	case AgentAction:
 		switch a.Sub {
@@ -9143,6 +9491,42 @@ func ParseCLICommand(tokens []string, ctx map[string]string) (act Action, handle
 				return nil, true, perr
 			}
 			return a, true, nil
+		case CmdRecordLs:
+			a, perr := ParseCmdRecordLs(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdRecordGet:
+			a, perr := ParseCmdRecordGet(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdRecordRm:
+			a, perr := ParseCmdRecordRm(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdRecordKeep:
+			a, perr := ParseCmdRecordKeep(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdRecordOn:
+			a, perr := ParseCmdRecordOn(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdRecordOff:
+			a, perr := ParseCmdRecordOff(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
 		case CmdSessionSnapshot:
 			a, perr := ParseCmdSessionSnapshot(CLI, tokens[n:], ctx)
 			if perr != nil {
@@ -9417,6 +9801,18 @@ type TUIDispatch[R any] interface {
 	AwaitProgressKill(AwaitProgressAction) R
 	// session mode
 	SessionMode(SessionAction) R
+	// record ls
+	RecordLs(RecordLsAction) R
+	// record get
+	RecordGet(RecordGetAction) R
+	// record rm
+	RecordRm(RecordRmAction) R
+	// record keep
+	RecordKeep(RecordKeepAction) R
+	// record on
+	RecordOn(RecordSwitchAction) R
+	// record off
+	RecordOff(RecordSwitchAction) R
 	// session stream attach
 	SessionStreamAttach(SessionAction) R
 	// session stream interrupt
@@ -9894,6 +10290,42 @@ func DispatchTUI[R any](h TUIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.SessionMode(a), true, nil
+	case CmdRecordLs:
+		a, perr := ParseCmdRecordLs(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.RecordLs(a), true, nil
+	case CmdRecordGet:
+		a, perr := ParseCmdRecordGet(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.RecordGet(a), true, nil
+	case CmdRecordRm:
+		a, perr := ParseCmdRecordRm(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.RecordRm(a), true, nil
+	case CmdRecordKeep:
+		a, perr := ParseCmdRecordKeep(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.RecordKeep(a), true, nil
+	case CmdRecordOn:
+		a, perr := ParseCmdRecordOn(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.RecordOn(a), true, nil
+	case CmdRecordOff:
+		a, perr := ParseCmdRecordOff(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.RecordOff(a), true, nil
 	case CmdSessionStreamAttach:
 		a, perr := ParseCmdSessionStreamAttach(TUI, args, ctx)
 		if perr != nil {
@@ -10134,6 +10566,21 @@ func DispatchTUIAction[R any](h TUIDispatch[R], act Action) (r R, handled bool) 
 			return h.AwaitProgressLs(a), true
 		case "kill":
 			return h.AwaitProgressKill(a), true
+		}
+	case RecordLsAction:
+		return h.RecordLs(a), true
+	case RecordGetAction:
+		return h.RecordGet(a), true
+	case RecordRmAction:
+		return h.RecordRm(a), true
+	case RecordKeepAction:
+		return h.RecordKeep(a), true
+	case RecordSwitchAction:
+		switch a.Sub {
+		case "on":
+			return h.RecordOn(a), true
+		case "off":
+			return h.RecordOff(a), true
 		}
 	}
 	// A surface-local action (the TUI's clear / quit / grid), which the
@@ -10609,6 +11056,42 @@ func ParseTUICommand(tokens []string, ctx map[string]string) (act Action, handle
 			return a, true, nil
 		case CmdSessionMode:
 			a, perr := ParseCmdSessionMode(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdRecordLs:
+			a, perr := ParseCmdRecordLs(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdRecordGet:
+			a, perr := ParseCmdRecordGet(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdRecordRm:
+			a, perr := ParseCmdRecordRm(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdRecordKeep:
+			a, perr := ParseCmdRecordKeep(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdRecordOn:
+			a, perr := ParseCmdRecordOn(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdRecordOff:
+			a, perr := ParseCmdRecordOff(TUI, tokens[n:], ctx)
 			if perr != nil {
 				return nil, true, perr
 			}

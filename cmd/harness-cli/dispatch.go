@@ -1249,3 +1249,41 @@ func (h cliVerbs) PruneLocal(a verb.PruneLocalAction) error {
 func (h cliVerbs) unimplemented(name string) error {
 	return fmt.Errorf("%s: declared for the CLI and not wired here yet", name)
 }
+
+// --- PTY records (pillar A spec, A1) -----------------------------------------
+
+func (h cliVerbs) RecordLs(a verb.RecordLsAction) error {
+	return cli.RecordLs(h.ctx, h.cid(), a.TaskID, os.Stdout)
+}
+
+func (h cliVerbs) RecordGet(a verb.RecordGetAction) error {
+	out := io.Writer(os.Stdout)
+	if a.Output != "" {
+		f, err := os.Create(a.Output)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		out = f
+	}
+	return cli.RecordGetOut(h.ctx, h.cid(), a.Ref, a.Format, !a.WithoutSynth, out)
+}
+
+func (h cliVerbs) RecordRm(a verb.RecordRmAction) error {
+	if err := cli.CheckRecordRm(a.Ref, a.AllRuns); err != nil {
+		return err
+	}
+	return cli.RecordRm(h.ctx, h.cid(), a.Ref, a.AllRuns, os.Stdout)
+}
+
+func (h cliVerbs) RecordKeep(a verb.RecordKeepAction) error {
+	return cli.RecordKeepOut(h.ctx, h.cid(), a.Ref, a.Forever, a.For, os.Stdout)
+}
+
+func (h cliVerbs) RecordOn(a verb.RecordSwitchAction) error {
+	return cli.RecordSwitchOut(h.ctx, h.cid(), a.TaskID, true, os.Stdout)
+}
+
+func (h cliVerbs) RecordOff(a verb.RecordSwitchAction) error {
+	return cli.RecordSwitchOut(h.ctx, h.cid(), a.TaskID, false, os.Stdout)
+}
