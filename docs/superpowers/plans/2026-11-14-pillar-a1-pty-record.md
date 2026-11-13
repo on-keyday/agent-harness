@@ -37,6 +37,12 @@ for a whole run — `session snapshot --raw` kept on disk — and listed, read
   - Regenerate with `make protoregen`.
   - The runner decodes none of the new formats. Still run
     `scripts/wire-skew-check.sh` before landing. Restart order: server only.
+  - **Clients and server move together.** `TaskInfo` and `TaskStatusEvent`
+    grow, so a CLI/TUI built by the post-landing `make build` cannot list
+    tasks against a server still on the old build. Measured after A2: `ls`
+    failed with `decode ListResultBody … not enough data to read for field
+    "TaskInfo::ProgramMsg"`. The landing report says so and asks the operator
+    for the server restart in the same message.
 - **Datagram size:** every new request and response is fixed-size. Anything
   of variable length (a record list, a record's entries) goes on a stream
   (memory: one control message is one datagram, ~1170 B over UDP).
