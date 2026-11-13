@@ -650,3 +650,20 @@ type RecordResultMsg struct {
 	Text string
 	Err  error
 }
+
+// DoRecordList fetches a task's PTY records for the detail popup.
+func DoRecordList(c *cli.Client, taskID string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		rs, err := c.RecordList(ctx, taskID)
+		return RecordListMsg{TaskID: taskID, Records: rs, Err: err}
+	}
+}
+
+// RecordListMsg carries a task's records to the detail popup.
+type RecordListMsg struct {
+	TaskID  string
+	Records []protocol.RecordInfo
+	Err     error
+}

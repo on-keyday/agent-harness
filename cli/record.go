@@ -230,7 +230,12 @@ func recordTime(ns uint64) string {
 
 // RecordRow is one record as `record ls` prints it.
 func RecordRow(r protocol.RecordInfo) string {
-	id := hex.EncodeToString(r.TaskId.Id[:])
+	return hex.EncodeToString(r.TaskId.Id[:]) + RecordRunRow(r)
+}
+
+// RecordRunRow is RecordRow without the task id: `#<run>  started=…`, for a
+// surface that already names the task.
+func RecordRunRow(r protocol.RecordInfo) string {
 	ended := recordTime(r.EndedNs)
 	if r.Recording() {
 		ended = "recording"
@@ -246,8 +251,8 @@ func RecordRow(r protocol.RecordInfo) string {
 	if r.EndReason != protocol.EndReason_None {
 		end = EnumWireName(r.EndReason.String())
 	}
-	row := fmt.Sprintf("%s#%d  started=%s  ended=%s  end=%s  size=%s (raw %s)  expires=%s",
-		id, r.Run, recordTime(r.StartedNs), ended, end, humanBytes(r.DiskBytes), humanBytes(r.EntryBytes), expires)
+	row := fmt.Sprintf("#%d  started=%s  ended=%s  end=%s  size=%s (raw %s)  expires=%s",
+		r.Run, recordTime(r.StartedNs), ended, end, humanBytes(r.DiskBytes), humanBytes(r.EntryBytes), expires)
 	if r.TruncatedFromNs != 0 {
 		row += "  truncated-from=" + recordTime(r.TruncatedFromNs)
 	}

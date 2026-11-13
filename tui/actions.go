@@ -398,9 +398,16 @@ func (a *App) onDetail(msg tea.KeyMsg) (tea.Cmd, bool) {
 	case focusTasks:
 		if t := a.tasks.SelectedTask(); t != nil {
 			a.detail.Open("Task detail", formatTaskDetail(*t, runnerIndex(a.runnersSnapshot)))
-		} else {
-			a.cmdresult.Append(WarnStyle.Render("no task selected"))
+			// The task's PTY records arrive after the popup opens (A-D28).
+			id := a.tasks.SelectedID()
+			if a.client == nil {
+				a.detail.WatchRecords(id, "records:       (not connected)")
+				return nil, true
+			}
+			a.detail.WatchRecords(id, "records:       loading…")
+			return DoRecordList(a.client, id), true
 		}
+		a.cmdresult.Append(WarnStyle.Render("no task selected"))
 		return nil, true
 	}
 	return nil, false

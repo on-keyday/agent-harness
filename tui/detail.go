@@ -43,6 +43,11 @@ type DetailPopup struct {
 	// overflow records whether the body did not fit, so the footer only offers
 	// scrolling when there is something to scroll to.
 	overflow bool
+	// recordsFor is the task whose PTY records the popup is waiting for (or
+	// showing); base is the body without them. The list arrives after the
+	// popup opens (A-D28), so it is appended when it does.
+	recordsFor string
+	base       string
 }
 
 func NewDetailPopup() DetailPopup {
@@ -55,8 +60,50 @@ func (d *DetailPopup) Open(title, body string) {
 	d.open = true
 	d.title = title
 	d.body = body
+	d.base, d.recordsFor = body, ""
 	d.vp.SetContent(body)
 	d.vp.GotoTop()
+}
+
+// WatchRecords marks the open popup as the task's, and shows block (the
+// records, or that they are on their way) under its body.
+func (d *DetailPopup) WatchRecords(taskID, block string) {
+	d.recordsFor = taskID
+	d.setRecords(block)
+}
+
+// SetRecords replaces the records block when the popup still shows taskID.
+func (d *DetailPopup) SetRecords(taskID, block string) {
+	if !d.open || d.recordsFor != taskID {
+		return
+	}
+	d.setRecords(block)
+}
+
+func (d *DetailPopup) setRecords(block string) {
+	d.body = strings.TrimRight(d.base, "\n") + "\n" + block
+	d.vp.SetContent(d.body)
+}
+
+// formatRecordsBlock is the popup's records section: one line per run's
+// record with its size and expiry (G43: every surface lists both).
+func formatRecordsBlock(rs []protocol.RecordInfo, err error) string {
+	switch {
+	case err != nil:
+		return "records:       (" + err.Error() + ")"
+	case len(rs) == 0:
+		return "records:       none"
+	}
+	var sb strings.Builder
+	sb.WriteString("records:\n")
+	for _, r := range rs {
+		sb.WriteString("  " + cli.RecordRunRow(r))
+		if r.Recording() {
+			sb.WriteString("  recording")
+		}
+		sb.WriteString("\n")
+	}
+	return strings.TrimRight(sb.String(), "\n")
 }
 
 func (d *DetailPopup) Close() {

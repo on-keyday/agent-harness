@@ -31,10 +31,11 @@ const (
 	bgFieldQuiet
 	bgFieldBlocked
 	bgFieldQueue
+	bgFieldRecord
 	bgFieldCount
 )
 
-var bgFieldLabels = [bgFieldCount]string{"agent", "deadline", "turn end", "quiet", "blocked", "queue timeout"}
+var bgFieldLabels = [bgFieldCount]string{"agent", "deadline", "turn end", "quiet", "blocked", "queue timeout", "record"}
 
 // defaultBgDeadline is the deadline the form starts with: the front-end
 // prefill G41 allows (the server has no default).
@@ -85,6 +86,10 @@ func NewBgForm() BgFormModel {
 	m.fields[bgFieldQuiet].Placeholder = "5m"
 	m.fields[bgFieldBlocked].Placeholder = "5m"
 	m.fields[bgFieldQueue].Placeholder = "none"
+	// The PTY record (A-D22): left as default the open says nothing and the
+	// server's --record decides; a resume is not prefilled from the last run,
+	// which the server would not reuse either.
+	m.fields[bgFieldRecord].Placeholder = "default (default|on|off)"
 	return m
 }
 
@@ -174,7 +179,7 @@ func (m *BgFormModel) order() []int {
 	if m.purpose == bgSwitch {
 		return []int{bgFieldDeadline, bgFieldTurnEnd, bgFieldQuiet, bgFieldBlocked}
 	}
-	return []int{-1, bgFieldAgent, bgFieldDeadline, bgFieldTurnEnd, bgFieldQuiet, bgFieldBlocked, bgFieldQueue}
+	return []int{-1, bgFieldAgent, bgFieldDeadline, bgFieldTurnEnd, bgFieldQuiet, bgFieldBlocked, bgFieldQueue, bgFieldRecord}
 }
 
 func (m *BgFormModel) setFocus(f int) {
@@ -247,6 +252,13 @@ func (m *BgFormModel) Values() (cli.RunModeFlags, string, error) {
 	}
 	if f.TurnEnd, err = verb.ParseTurnEnd(strings.TrimSpace(m.fields[bgFieldTurnEnd].Value())); err != nil {
 		return f, "", err
+	}
+	switch v := strings.TrimSpace(m.fields[bgFieldRecord].Value()); v {
+	case "", "default":
+	case "on", "off":
+		f.RecordSet, f.Record = true, v == "on"
+	default:
+		return f, "", fmt.Errorf("record: %q: want default, on or off", v)
 	}
 	agent := strings.TrimSpace(m.fields[bgFieldAgent].Value())
 	if m.purpose != bgSwitch {
