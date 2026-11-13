@@ -197,6 +197,9 @@ type SessionMux struct {
 	screenMu sync.Mutex
 	screen   *vtgrid.Terminal
 
+	// recState is the session's PTY record (pillar A, A1; session_record.go).
+	recState
+
 	// runnerWriteMu serializes writes to the runner stream and keeps them
 	// frame-atomic. With multi-writer (one control tui + N cowriters all
 	// forwarding input), an unsynchronised write could interleave a cowriter
@@ -373,6 +376,11 @@ func (m *SessionMux) activityWatcher(fn func(taskID string, busy bool, lastOutpu
 // feed-modes-and-write-screen block, so code that copied the visible part
 // would silently keep a stale replay start point.
 func (m *SessionMux) recordFrame(frameBytes []byte) {
+	// Held for the whole frame so a record started now neither repeats nor
+	// misses it (StartRecording seeds from the ring under the same lock).
+	m.recMu.Lock()
+	defer m.recMu.Unlock()
+	output := false
 	// Track DEC private-mode state from display output so a reattach can
 	// re-establish modes (e.g. a hidden cursor) whose controlling sequence
 	// has since been evicted from the ring. Only Stdout/Stderr carry it.
@@ -380,6 +388,7 @@ func (m *SessionMux) recordFrame(frameBytes []byte) {
 	if len(frameBytes) >= frame.FrameHeaderSize {
 		switch frame.FrameType(frameBytes[0]) {
 		case frame.FrameType_Stdout, frame.FrameType_Stderr:
+			output = m.terminal
 			if m.terminal {
 				m.modes.Feed(frameBytes[frame.FrameHeaderSize:])
 				m.screenMu.Lock()
@@ -407,6 +416,10 @@ func (m *SessionMux) recordFrame(frameBytes []byte) {
 		m.altMu.Lock()
 		m.altTransitions = append(m.altTransitions, altTransition{index: idx, entered: nowAlt})
 		m.altMu.Unlock()
+	}
+	// After the screen took the frame, so a rotation's head shows it.
+	if output {
+		m.recordOutputLocked(frameBytes)
 	}
 }
 
@@ -979,6 +992,9 @@ func (m *SessionMux) applyWinSizeFrame(fb []byte) error {
 		m.screen.Resize(cols, rows)
 		m.screenMu.Unlock()
 	}
+	m.recMu.Lock()
+	m.recordOutputLocked(cp)
+	m.recMu.Unlock()
 	return m.writeFrameToRunner(fb)
 }
 
@@ -1363,6 +1379,9 @@ func (m *SessionMux) Stop() {
 			_ = v.stream.CloseBoth()
 		}
 		_ = m.runner.CloseBoth()
+		// The record stays open for a server that re-adopts the run; the run's
+		// end closes it (RecordStore.FinishRun).
+		m.detachRecording()
 		if m.onStop != nil {
 			m.onStop(m.taskID)
 		}
