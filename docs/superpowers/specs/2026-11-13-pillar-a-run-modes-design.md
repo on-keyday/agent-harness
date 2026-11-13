@@ -7,9 +7,9 @@ Implements pillar A of
 its rows as G1…G46). This spec stays inside GD's decisions; where it settles
 something GD left to it, the row says so. It lands in three stages (G44):
 **A2 background mode** first, then **A1 PTY record**, then **A3 retiring
-oneshot**. A2 is specified in full here. A1 and A3 are specified to the
-depth their order requires: each gets its decisions settled before its plan
-is written, and the questions still open for them are listed in §A1 and §A3.
+oneshot**. A2 (landed) and A1 are specified in full here. A3 is specified to
+the depth its order requires: its decisions are settled before its plan is
+written, and the questions still open for it are listed in §A3.
 
 ## Why
 
@@ -344,27 +344,107 @@ The per-run record and run identity (A1); retiring oneshot, `submit`, the
 
 ## A1 — PTY record
 
-Settled (GD G11, G20, G21, G42, G43):
+Line references in this section are to `main` at `89531bfc`.
 
-- Every session's PTY output can be recorded server-side, per run; **off by
-  default**, a server flag sets the default, a session opened with
-  recording on is recorded (G42).
-- Retention follows agentboard's topic retention: forever or a period from
-  the run's end, changeable; expiry deletes the record only; prune deletes it
-  with the task; a new capability bit deletes records alone (G20, G34, G43);
-  every surface lists size and expiry.
-- Records travel on streams (G13); reading needs `exec_view` under the
-  task's scope (G34).
-- Raw bytes with timestamps are kept; replay and text rendering are both
-  derived from them (operator, 2026-11-13, on G43's measurement).
-- Turning recording on for a live session starts the record from the
-  detach ring's contents, as `agentboard.Board.Retain` writes what a topic
-  already holds (this spec).
+### Why (A1)
 
-Open, to settle before A1's plan: run identity (G21 leaves it to this spec —
-a per-task run number assigned at create and each resume is the candidate);
-the size cap (O7); compression on disk; how a record is viewed on each
-surface.
+The use the operator has for a record is a shell's: keeping what a shell
+session showed, as `script(1)` or asciinema do (operator, 2026-11-14). Agent
+sessions are recorded by the same mechanism, because nothing in it depends on
+what runs in the PTY; no use for an agent's record is fixed (G42). A record
+is therefore defined as **`session snapshot --raw` kept on disk for a whole
+run** (operator, 2026-11-14): the bytes the PTY produced and when each
+arrived. What is read out of them is the reader's choice.
+
+Settled before this section (GD G11, G20, G21, G42, G43): recording is per
+run and **off by default**, a server flag sets the default, a session opened
+with recording on is recorded (G42); retention follows agentboard's topic
+retention — forever or a period from the run's end, changeable, expiry
+deletes the record only, prune deletes it with the task, a new capability
+bit deletes records alone, every surface lists size and expiry (G20, G34,
+G43); records travel on streams (G13) and reading one needs `exec_view`
+under the task's scope (G34); raw bytes with timestamps are kept and every
+other form is derived from them (operator, 2026-11-13); turning recording on
+for a live session starts the record from the detach ring's contents, as
+`agentboard.Board.Retain` writes what a topic already holds.
+
+### Facts (A1)
+
+- **F22 — every PTY byte the server sees is a frame, and passes one
+  function.** The runner stream is read one exec/frame frame at a time — a
+  1-byte type and a 4-byte length ahead of the payload (`readOneFrame`,
+  `server/session_mux.go`) — and `recordFrame` (`:375`) is the single place
+  each inbound frame reaches the screen model and the ring. Types: Stdout 1,
+  Stderr 2, Control 3, Synth 4. Synth marks bytes the server invented
+  (`encodeSynthFrame`, `:139`), which `snapshot --raw --without-synth`
+  drops. The session's size is held as a frame too (`lastWinSizeBytes`,
+  `:1278`), applied by `applyWinSizeFrame` (`:967`).
+- **F23 — the server can rebuild the current screen at any moment.**
+  `screenRepaint` (`:990`) builds it from the screen model, and every attach
+  ends its replay with the mode preamble and that repaint (`attachObserver`,
+  `:684`). It is nil for a session without a terminal (the stream kind).
+- **F24 — the detach ring is 1 MiB of whole frames** (`ringSize`,
+  `server/session_start.go:163`, `server/readopt.go:189`); `replayRing`
+  (`:1114`) picks where a replay starts so it does not begin inside a
+  finished full-screen episode.
+- **F25 — fetching bytes already has a shape.** `GetTaskLog` answers with a
+  stream id and the server then writes the log into that stream
+  (`handleGetTaskLog`, `server/task_handler.go:2527-2530`).
+- **F26 — wire room.** After A2 the open request has one spare bit
+  (`reserved2 :u1`, `runner/protocol/message.bgn:2481`). `Capability` is a
+  `u32` with 26 bits in use (`message.bgn:4467` onward).
+- **F27 — prune and restore.** Prune removes the task and
+  `<logDir>/<id>.log` (`TaskStore.PruneByIDs`, `server/taskstore.go:1590`);
+  `RestoreFromWAL` (`server/restore.go:130`) brings the task back but not
+  its log. A resume is a `task_resumed` WAL record (`taskstore.go:737`);
+  nothing numbers resumes.
+- **F28 — agentboard retention** is `Retention{TTL, Forever, SetBy, SetAt}`
+  (`agentboard/store.go:13-18`), its expiry counted from the later of the
+  last publish and the time it was set (`Retention.ExpiresAt`,
+  `agentboard/retention.go:31`).
+- Volume: F12 / G43 — claude streaming about 3.3 KB/s (12 MB an hour); a
+  1 MiB ring compressed 13× with `gzip -9`, 18× with `zstd -19`.
+
+### Decisions (A1)
+
+| # | Decision | Decided by |
+|---|---|---|
+| A-D20 | **Run identity is a per-task run number**: 1 at create, one more at each resume, written as `run` on `task_created` and `task_resumed`. A WAL from before A1 is numbered at replay by counting (created = 1, each resume + 1). `TaskInfo` carries the current number. The CLI names a run `<task-id>#<n>`; a bare id means the latest. A run keeps its number across a hold and re-adoption. What a run's record needs to say about the run (start, end, end reason) is kept with the record (A-D24), not added to `TaskEntry`; the task keeps its latest run's end reason as A-D11 says | this spec (G21 left it here) |
+| A-D21 | **What is recorded: the output of interactive sessions, never input, never the stream kind.** Every Stdout and Stderr frame `recordFrame` sees (F22), each size the session takes, and the Synth frames of A-D23. Input is not recorded: a shell echoes what is typed, and what it does not echo — a password at a prompt — is what must not be kept. The stream kind carries NDJSON, not a PTY (G11 is about PTY output), and the agent's own transcript is that kind's record. Nothing distinguishes a shell from an agent | operator (shell use, no distinction), this spec (no input, no stream kind) |
+| A-D22 | **The switch.** Off by default; `--record` on the server sets the default (G42). An open — create or resume — may say on or off; one that says neither takes the server default, not the previous run's setting (A-D7's rule: nothing is reused on a resume). A live session can be switched on and off. **On** starts a new segment (A-D23); if the run has no record yet, the record begins with the frames `replayRing` would replay to an attach, stamped with the switch time, so it reaches back as far as the ring does (F24). **Off** closes the current segment; the record stays. Gate: switching on needs `exec_view` on the task (it keeps only what that caller could read anyway); switching off needs `record_delete` (A-D26), since withholding a record is a lesser form of deleting it. Whether a task may do that to its **own** record is decided where every such question already is, in the grant: `record_delete` given with a scope override whose `exclude_self` is set (`ScopeOverride`, `message.bgn:4739-4745`) cannot reach the holder's own task, and A1 adds no self-refusal of its own (operator, 2026-11-14). An open that says off is not gated: off is the default, and what it withholds is the new task's record, not the opener's. Persisted as `record` on `task_created`/`task_resumed` and a new `task_record_changed`, so a deliberate restart's re-adoption keeps recording | GD (G42), operator (self-protection through the scope, no self-refusal), this spec (gates, ungated open, resume rule, persistence) |
+| A-D23 | **Storage: segments, each playable on its own.** A run's record is a directory, `<data-dir>/records/<task-id>/<run>/`, of numbered segments. A segment is a sequence of entries — the arrival time on the server clock (Unix nanoseconds) and one frame as F22 describes it — declared as a `.bgn` format, since it is persisted bytes. A segment closes when its entries reach one eighth of the per-run cap (A-D25; 8 MiB by default), at switch-off, and at the run's end, and is **gzip-compressed when it closes** (`compress/gzip`, already used by the server; zstd's 18× over gzip's 13× is not worth a new dependency). The open segment stays uncompressed so it can be appended and read while live. **Every segment after a record's first begins with Synth frames: the mode preamble and repaint an attach ends with (F23)**, so a segment whose predecessors were dropped (A-D25) still plays from a correct screen; `--without-synth` drops them, as on `snapshot --raw`. A startup pass compresses every uncompressed segment whose run is not Held | operator (rotation), this spec (layout, gzip, the segment head) |
+| A-D24 | **Each run's record has a metadata file** beside its segments (JSON): run number; when recording started and ended; the run's end reason; the time of the oldest kept entry when a segment was dropped (`truncated`); the entry and on-disk byte totals; the retention (A-D26) | this spec |
+| A-D25 | **Size caps (settles O7): the most recent part is kept.** Per run, 64 MiB of entries by default (`--record-run-max`): past it the oldest segment is deleted, so at most eight segments of the run remain. Server-wide, 1 GiB on disk by default (`--record-total-max`): past it the oldest segment on the server is deleted, whichever task it belongs to — the same rule; the alternative, refusing new records, keeps old ones over new. A record that lost a segment is marked `truncated` with the time it now starts from. The total cap outranks retention: a record kept forever can still be cut by it, and the listing says so. For scale: an agent streaming for an hour writes about 12 MB of entries, so the per-run cap is for a burst — a shell printing a large file | operator (keep the most recent, rotate), this spec (values, server-wide eviction) |
+| A-D26 | **Retention and deletion as G43 settles them.** The default is `--record-retention` (default forever); `record keep` changes a run's record; the period counts from the run's end (F28's shape, with the run's end in place of the last publish); expiry deletes the record, never the task. Prune deletes `records/<task-id>/`, and a restore does not bring it back (F27). A new capability bit, **`record_delete`**, deletes records alone, bounded by the task's scope (including `exclude_self`, A-D22); reading needs `exec_view` (G34). **`record keep` is gated by direction:** an expiry earlier than the current one is a delayed delete and needs `record_delete`; a later one or forever needs `exec_view`. No keep bit like agentboard's `board_persist`: that bit exists because a retained topic takes disk nothing else bounds, and records are bounded by the server-wide cap (A-D25), so a longer retention can only push older records out sooner. After `record_delete`, 27 of the 32 capability bits are in use | GD (G20, G34, G43), operator (self-protection through the scope), this spec (bit name, default retention, keep by direction) |
+| A-D27 | **Reading: the server sends entries, the client renders.** A read is answered with a stream id the server writes the run's entries into, decompressed, oldest first (F25's shape); a run still being recorded is read up to the moment of the request. The client renders either the payloads concatenated — what `snapshot --raw` prints, the default, `--without-synth` dropping Synth frames — or **asciicast v2** (`--format asciicast`): a header with the first size and the start time, an `"o"` event per output frame and an `"r"` event per size change, invalid UTF-8 replaced with U+FFFD as asciinema does, so `asciinema play` and its web player replay it at its own pace. No text rendering, player or follow mode in A1: each derives from the entries and can be added later, and following a live session is what attach does | operator (raw as `snapshot --raw`; asciicast if cheap), this spec (decompress on the server, no follow) |
+| A-D28 | **Surfaces.** CLI: `--record`/`--no-record` on `session new` and its resume; `record ls [<task>]` lists each run's record — run, start, end, end reason, size on disk, expiry, truncated, recording now; `record get <task>[#n] [--format raw\|asciicast] [--without-synth] [-o FILE]`; `record rm <task>#<n>` or `--all-runs`; `record keep <task>[#n] --forever\|--for D`; `record on\|off <task>`. TUI and WebUI open forms choose among **server default, on and off**, starting at server default, which sends neither: a two-state control would send off on every open whose box was left clear and override a server run with `--record`, and the clients are never told the server's default. TUI: `d` lists the task's records with size and expiry, and the rest goes through the command line, which takes the CLI verbs. WebUI: the task sheet lists records with download (raw and asciicast), delete, and on/off for a live session. The wasm client shares the CLI's renderers. The plan walks `surface-parity-checklist` | this spec (G43: every surface lists size and expiry) |
+
+### Wire (A1)
+
+- `OpenInteractiveRequest`: the last spare bit (F26) becomes `ext_present`,
+  which puts a flags byte on the wire: `record_set :u1`, `record :u1` and six
+  reserved bits, so the next open option does not have to find room again.
+- New task-control requests: record list, record get (answered with a
+  stream id), record delete, record keep, record switch.
+- `TaskInfo` and `TaskStatusEvent`: the run number and whether the session
+  is being recorded now.
+- Capability `record_delete`.
+- The runner decodes none of it: no runner restart, no skew window. The plan
+  still runs `scripts/wire-skew-check.sh`.
+
+### Persistence (A1, disk axis)
+
+- WAL: `run` and `record` on `task_created`/`task_resumed`; new
+  `task_record_changed` (on or off, and when). Zero values are today's
+  behaviour: not recorded, and the run counted at replay (A-D20).
+- `records/`: new files a server from before A1 does not read. A downgrade
+  leaves them on disk untouched.
+
+### Not in A1
+
+Text rendering, a player and a follow mode (A-D27); recording the stream
+kind or input (A-D21); splitting the oneshot task log per run (A3 removes
+it); a schedule writing its record setting on each firing (pillar S, G42).
 
 ## A3 — retiring oneshot
 
@@ -425,3 +505,39 @@ template in background mode only or in both.
   measurement); a background stream open with a short prompt ends
   `turn_done_lifecycle`; `--turn-end quiet` on a stream open is refused
   `turn_end_unsupported`.
+
+## Testing (A1)
+
+- Unit, run numbers: create is 1 and each resume adds one; a WAL from before
+  A1 replays to the same numbers; a hold and re-adoption keep the number.
+- Unit, storage: entries round-trip through a segment; a segment closes at
+  one eighth of the run cap and is gzip-compressed then; every segment after
+  the first starts with Synth frames that, fed to a fresh screen model alone,
+  give the screen the live model had at that point; the startup pass
+  compresses an uncompressed segment of a run that is not Held.
+- Unit, caps: past the run cap the oldest segment goes and the metadata says
+  `truncated` from the right time; past the server-wide cap the oldest
+  segment on the server goes, across tasks.
+- Unit, switch: on for a live run with no record starts with `replayRing`'s
+  frames; off then on gives a new segment; a resume that says nothing takes
+  the server default, not the previous run's setting; switching off needs
+  `record_delete`; input frames never reach a segment; a stream-kind session
+  is never recorded.
+- Unit, retention and deletion: expiry deletes the record and keeps the
+  task; prune deletes the records and a restore does not bring them back;
+  reading needs `exec_view`, deleting needs `record_delete`, both within the
+  task's scope; a task holding `record_delete` under an override with
+  `exclude_self` cannot switch off, delete or shorten its own record and can
+  do all three to a task in that scope; extending a retention needs only
+  `exec_view`.
+- Unit, client rendering: raw output is the payloads concatenated;
+  `--without-synth` drops Synth frames; asciicast v2 has the header, an
+  `"o"` per output frame, an `"r"` per size change, and U+FFFD for invalid
+  UTF-8.
+- Dummy harness: a `bash` session opened with `--record`, a few commands
+  typed; `record get --without-synth` contains what
+  `session snapshot --raw --without-synth` returns for the same session; the
+  asciicast output is checked line by line as JSON (asciinema itself is not
+  installed for the test); a deliberate restart in the middle leaves one
+  record for the run; `record ls`, the TUI `d` popup and the WebUI task sheet
+  show size and expiry.
