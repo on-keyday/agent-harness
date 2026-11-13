@@ -1760,6 +1760,8 @@ var Verbs = []VerbSpec{
 		SurfaceNotes: map[Surface][]string{TUI: {"open/resume detachable interactive; --detach backgrounds it and prints the id"}},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/actions.go:onSession"},
+			// N, and a resume key on a background task (A-D15).
+			{Surface: TUI, At: "tui/bgform.go:BgFormModel"},
 			{Surface: WebUI, At: "webui/index.html#open-detachable"},
 		},
 		Notes: []string{
@@ -3054,7 +3056,10 @@ var Verbs = []VerbSpec{
 		// run modes. Gated on cancel over the task: either direction changes
 		// how the run ends.
 		Path: []string{"session", "mode"}, CmdlineSurfaces: CLI | TUI,
-		NoModalSurface: "A2 Task 9: the TUI key and WebUI button arrive in Tasks 10-11, which replace this line with ModalSurfaces",
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/actions.go:onRunMode"},
+			{Surface: TUI, At: "tui/bgform.go:BgFormModel"}, // the conditions for going background
+		},
 		Notes: []string{
 			"switch a running session between foreground and background; background needs --deadline (the run's deadline counts from the switch)",
 			"a turn that ended before the switch does not end the run; a task may not switch itself",

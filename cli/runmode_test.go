@@ -2,8 +2,8 @@ package cli
 
 import (
 	"strings"
-	"time"
 	"testing"
+	"time"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )

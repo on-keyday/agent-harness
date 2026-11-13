@@ -227,6 +227,10 @@ func formatTaskDetail(t protocol.TaskInfo, runnerByID map[string]protocol.Runner
 	if t.ProgressAt != 0 {
 		fmt.Fprintf(&sb, "progress:      %q (%s)\n", string(t.Progress), cli.AgeStr(t.ProgressAgeMs))
 	}
+	// Run mode and how the run ended (A-D11, A-D14), every task.
+	if r := cli.RunStr(&t); r != "" {
+		fmt.Fprintf(&sb, "run:           %s\n", r)
+	}
 	// What the task's hooks last reported, beside its own line and the
 	// output age, so the three can be read against each other.
 	// Gated like the badge: not for a finished task, which must not read

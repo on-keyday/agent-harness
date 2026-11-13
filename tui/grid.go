@@ -340,6 +340,13 @@ func (m GridModel) Update(msg tea.Msg) (GridModel, tea.Cmd) {
 		case "x":
 			m.dismissFocused()
 			return m, nil
+		case "E":
+			// Switch the focused session's run mode (A-D19); the App decides
+			// which way and draws the form over the grid.
+			if id := m.FocusedTaskID(); id != "" {
+				return m, func() tea.Msg { return GridRunModeMsg{TaskID: id} }
+			}
+			return m, nil
 		case "[":
 			m.setPage(m.page - 1)
 			return m, nil
@@ -498,7 +505,7 @@ func (m GridModel) scopeLabel() string {
 // go to the pane, not the grid.
 func (m GridModel) statusLine() string {
 	bg, fg := lipgloss.Color("236"), lipgloss.Color("252")
-	txt := fmt.Sprintf(" grid  scope:%s · page %d/%d · %d sessions   [ ]:page  ⇧HJKL:move  hjkl:focus  ⇧↑↓←→:scroll  0:reset  i:input  ⏎:attach  v:view  x:close  q:quit ",
+	txt := fmt.Sprintf(" grid  scope:%s · page %d/%d · %d sessions   [ ]:page  ⇧HJKL:move  hjkl:focus  ⇧↑↓←→:scroll  0:reset  i:input  ⏎:attach  v:view  E:run mode  x:close  q:quit ",
 		m.scopeLabel(), m.page+1, m.pageCount(), len(m.panes))
 	if m.input {
 		bg, fg = lipgloss.Color("22"), lipgloss.Color("231") // green bar
@@ -619,3 +626,6 @@ func (m GridModel) renderPane(idx, w, h int) string {
 	// terminal and lipgloss.Place cannot clip the header row.
 	return style.Width(w).Height(h + 1).MaxWidth(w + 2).MaxHeight(h + 3).Render(head + "\n" + body)
 }
+
+// GridRunModeMsg asks the App to switch a grid pane's run mode.
+type GridRunModeMsg struct{ TaskID string }

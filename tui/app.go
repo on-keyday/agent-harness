@@ -55,6 +55,7 @@ type App struct {
 	cmdHistoryIndex int
 	cmdHistoryDraft string
 	popup           PopupModel
+	bgform          BgFormModel
 	detail          DetailPopup
 	filepicker      FilePickerModel
 	fileEditor      FileEditModel
@@ -397,6 +398,7 @@ func New(cfg Config) *App {
 		cmdline:           cmd,
 		cmdHistoryIndex:   -1,
 		popup:             NewPopup(cfg.DefaultRepo),
+		bgform:            NewBgForm(),
 		filepicker:        NewFilePicker(),
 		fileEditor:        NewFileEdit(),
 		connsModal:        NewConnsModal(),
@@ -1511,6 +1513,12 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case GridOpenChatMsg:
 		return a, a.openChat(msg.TaskID)
 
+	case GridRunModeMsg:
+		if t, ok := a.tasksByID[msg.TaskID]; ok {
+			return a, a.switchRunMode(&t, msg.TaskID)
+		}
+		return a, nil
+
 	case InteractiveReadyMsg:
 		// Only the opens that offer a picker (`S` and the r/R/u/U resumes)
 		// stamp a Retry on their result; every other path keeps an ambiguous
@@ -2043,6 +2051,9 @@ func (a *App) View() string {
 	}
 	if a.filepicker.IsOpen() {
 		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.filepicker.View())
+	}
+	if a.bgform.IsOpen() {
+		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.bgform.View())
 	}
 	if a.popup.IsOpen() {
 		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.popup.View())

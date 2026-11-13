@@ -511,6 +511,17 @@ func taskStatusStr(s protocol.TaskStatus) string {
 // cell's bytes to the terminal as they are, and a task event can be forged by
 // any subscriber, so the server's own rules are not a substitute.
 func aboutCell(t protocol.TaskInfo) string {
+	// A background task leads with its run facts (A-D14): why it waits, the
+	// time left, or how it ended.
+	if t.RunMode == protocol.RunMode_Background {
+		if r := cli.RunStr(&t); r != "" {
+			return "[" + r + "] " + aboutCellRest(t)
+		}
+	}
+	return aboutCellRest(t)
+}
+
+func aboutCellRest(t protocol.TaskInfo) string {
 	if t.ProgressAt != 0 && len(t.Progress) > 0 {
 		p := string(t.Progress)
 		return vtgrid.SanitizeTitle(p, len(p)) + " (" + cli.AgeStr(t.ProgressAgeMs) + ")"

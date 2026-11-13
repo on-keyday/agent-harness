@@ -485,6 +485,13 @@ func (a *App) onResume(msg tea.KeyMsg) (tea.Cmd, bool) {
 		}
 		return a.openChat(a.tasks.SelectedID()), true
 	case actionResume:
+		// A background task resumes in background, and the server reuses
+		// nothing of its last run (A-D7): open the form prefilled from it
+		// rather than send a request that would be refused prompt_required.
+		if t != nil && t.RunMode == protocol.RunMode_Background {
+			a.bgform.OpenResume(*t, a.tasks.SelectedID(), act.ResumeConversation)
+			return nil, true
+		}
 		// repo is irrelevant on resume — the server reuses the task's
 		// RepoPath and worktree branch. Prefer the runner the task last
 		// ran on (t.AssignedTo) so resume stays one keypress even when
@@ -602,4 +609,39 @@ func (a *App) onRawConnect(msg tea.KeyMsg) (tea.Cmd, bool) {
 	a.rawModal.Show(taskID)
 	a.rawModal.SetSize(a.width, a.height)
 	return nil, true
+}
+
+// `N` opens the background form for a new session on the default repo.
+func (a *App) onBackgroundOpen(msg tea.KeyMsg) (tea.Cmd, bool) {
+	repo := a.defaultRepo
+	if repo == "" {
+		if rs := uniqueRepoPaths(a.runnersSnapshot); len(rs) > 0 {
+			repo = rs[0]
+		}
+	}
+	if repo == "" {
+		a.cmdresult.Append(WarnStyle.Render("background: no repo — wait for a runner to register, or use `session new --background --repo ...`"))
+		return nil, true
+	}
+	a.bgform.OpenNew(repo, "")
+	return nil, true
+}
+
+// `E` switches the selected running session's run mode (A-D19): to
+// foreground at once, to background through the form (it needs a deadline).
+func (a *App) onRunMode(msg tea.KeyMsg) (tea.Cmd, bool) {
+	return a.switchRunMode(a.tasks.SelectedTask(), a.tasks.SelectedID()), true
+}
+
+// switchRunMode is E on the task row and in the grid.
+func (a *App) switchRunMode(t *protocol.TaskInfo, id string) tea.Cmd {
+	if t == nil || !taskSessionAlive(t.Status) || t.Kind == protocol.TaskKind_Oneshot {
+		a.cmdresult.Append(WarnStyle.Render("E: pick a running session"))
+		return nil
+	}
+	if t.RunMode == protocol.RunMode_Background {
+		return DoSessionMode(a.client, id, false, nil)
+	}
+	a.bgform.OpenSwitch(id)
+	return nil
 }

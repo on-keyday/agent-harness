@@ -49,6 +49,8 @@ type mainKeyMap struct {
 	ResumeAssignedFresh    string
 	ResumeAnyContinue      string
 	ResumeAnyFresh         string
+	BackgroundOpen         string
+	RunMode                string
 	ViewOnly               string
 	AwaitIdle              string
 	AwaitIdleNotify        string
@@ -88,6 +90,8 @@ var mainKeys = mainKeyMap{
 	ResumeAssignedFresh:    "R",
 	ResumeAnyContinue:      "u",
 	ResumeAnyFresh:         "U",
+	BackgroundOpen:         "N",
+	RunMode:                "E",
 	ViewOnly:               "v",
 	AwaitIdle:              "w",
 	AwaitIdleNotify:        "W",
@@ -327,6 +331,8 @@ var mainKeyBindings = []keyBinding{
 	{Keys: []string{mainKeys.RawConnect}, Scope: scopeTasks, Do: (*App).onRawConnect, Short: "t raw connect", Long: "raw-connect to a forwarded port"},
 	{Keys: []string{mainKeys.GridSubtree, mainKeys.GridDescendants}, Scope: scopeTasks, Do: (*App).onGridSubtree, Short: "z/Z subtree grid",
 		Long: "grid of the selected task's subtree — z includes the task itself, Z is its descendants only (for when you are watching that one elsewhere); g is the whole fleet"},
+	{Keys: []string{mainKeys.BackgroundOpen}, Scope: scopeTasks, Do: (*App).onBackgroundOpen, Short: "N background", Long: "open a background session: a prompt and a deadline, queued until a runner is free, ended by its conditions"},
+	{Keys: []string{mainKeys.RunMode}, Scope: scopeTasks, Do: (*App).onRunMode, Short: "E run mode", Long: "switch the selected running session between foreground and background (background asks for a deadline)"},
 
 	// --- logs pane ---
 	{Keys: []string{"left", "right"}, Scope: scopeLogs, Short: "←/→ scroll", Long: "scroll the log horizontally"},

@@ -29,6 +29,8 @@ var appOverlays = []overlay{
 	{func(a *App) bool { return a.idleWatchersModal.IsOpen() }, (*App).inIdleWatchersModal},
 	{func(a *App) bool { return a.capsAuditModal.IsOpen() }, (*App).inCapsAuditModal},
 	{func(a *App) bool { return a.forwardsModal.IsOpen() }, (*App).inForwardsModal},
+	// Opened from the grid (E) and drawn over it, so it comes first.
+	{func(a *App) bool { return a.bgform.IsOpen() }, (*App).inBgForm},
 	{func(a *App) bool { return a.grid.IsOpen() }, (*App).inGrid},
 	{func(a *App) bool { return a.chat.IsOpen() }, (*App).inChat},
 	{func(a *App) bool { return a.boardModal.IsOpen() }, (*App).inBoardModal},
@@ -1127,4 +1129,34 @@ func (a *App) inCapsAuditModal(msg tea.KeyMsg) tea.Cmd {
 		}
 	}
 	return nil
+}
+
+// Background form intercepts ALL keys when open (pillar A spec, A-D15).
+func (a *App) inBgForm(msg tea.KeyMsg) tea.Cmd {
+	switch msg.Type {
+	case tea.KeyEsc:
+		a.bgform.Close()
+		return nil
+	case tea.KeyTab:
+		a.bgform.Cycle(+1)
+		return nil
+	case tea.KeyShiftTab:
+		a.bgform.Cycle(-1)
+		return nil
+	case tea.KeyCtrlJ:
+		flags, agent, err := a.bgform.Values()
+		if err != nil {
+			a.cmdresult.Append(ErrorStyle.Render(err.Error()))
+			return nil
+		}
+		f := a.bgform
+		a.bgform.Close()
+		if f.IsSwitch() {
+			return DoSessionMode(a.client, f.SwitchID(), true, flags.Conditions())
+		}
+		size := TermSize{Rows: uint16(a.height), Cols: uint16(a.width)}
+		return DoStartDetachedSession(a.client, f.Repo(), cli.SelectorOpts{}, nil, f.ResumeID(), a.authority(),
+			false, f.ResumeConversation(), false, agent, size, f.Stream(), flags)
+	}
+	return a.bgform.Update(msg)
 }
