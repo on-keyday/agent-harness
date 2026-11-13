@@ -136,6 +136,17 @@ func (h *TaskHandler) handleRecord(cid string, conn ConnHandle, req *protocol.Ta
 				return
 			}
 		}
+		// Deleting the run being recorded stops recording it (and clears the
+		// task's switch, so a re-adoption does not start again): the record
+		// is gone, and a writer left on it would be inert but still pinned.
+		if t, have := h.Tasks.Get(task); have && (run == 0 || run == t.Run) {
+			if mux := h.sessionMux(task); mux != nil && mux.Recording() {
+				mux.StopRecording()
+			}
+			if t.Record {
+				_ = h.Tasks.SetRecord(task, false)
+			}
+		}
 		ok, err := h.Records.Delete(task, run)
 		switch {
 		case err != nil:
@@ -155,8 +166,23 @@ func (h *TaskHandler) handleRecord(cid string, conn ConnHandle, req *protocol.Ta
 			return
 		}
 		task := hex.EncodeToString(r.Ref.TaskId.Id[:])
-		if !hasAnyCap(h.callerCaps(cid), protocol.Capability_RecordPersist|protocol.Capability_RecordDelete) {
+		caps := h.callerCaps(cid)
+		if !hasAnyCap(caps, protocol.Capability_RecordPersist|protocol.Capability_RecordDelete) {
 			h.denyTaskControl(conn, req.Header.Kind, req.Header.RequestId, protocol.Capability_RecordPersist)
+			return
+		}
+		// The direction needs the record's current retention, so the caller
+		// must be able to act on the task with a bit it holds before the
+		// record is looked at — otherwise which denial comes back tells an
+		// out-of-scope caller whether a record exists and how long it is kept.
+		reach := false
+		for _, b := range []protocol.Capability{protocol.Capability_RecordPersist, protocol.Capability_RecordDelete} {
+			if hasCap(caps, b) && h.inScope(cid, b, task) {
+				reach = true
+			}
+		}
+		if !reach {
+			status(protocol.RecordStatus_NotFound)
 			return
 		}
 		curForever, curTTL, ok := h.Records.Retention(task, r.Ref.Run)

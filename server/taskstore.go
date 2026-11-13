@@ -1802,10 +1802,6 @@ func (e *TaskEntry) runSpecFromWAL(ev WALEvent) {
 	e.EndReason, e.CancelledBy = protocol.EndReason_None, protocol.TaskID{}
 }
 
-// SwitchRunMode switches a running session task between foreground and
-// background (A-D19). A switch to background resolves the deadline from now;
-// to foreground clears it. Refused for a Queued task (Tick never places a
-// foreground one, so it would never start), a terminal one, and a oneshot.
 // SetRecord switches whether the task's current run is recorded (A-D22),
 // persisted as task_record_changed so a re-adoption after a deliberate
 // restart keeps recording.
@@ -1826,6 +1822,10 @@ func (s *TaskStore) SetRecord(id string, on bool) error {
 	return nil
 }
 
+// SwitchRunMode switches a running session task between foreground and
+// background (A-D19). A switch to background resolves the deadline from now;
+// to foreground clears it. Refused for a Queued task (Tick never places a
+// foreground one, so it would never start), a terminal one, and a oneshot.
 func (s *TaskStore) SwitchRunMode(id string, mode protocol.RunMode, cond RunConditions, now int64) (TaskEntry, error) {
 	e, err := s.switchRunModeLocked(id, mode, cond, now)
 	if err == nil {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -268,5 +269,61 @@ func TestExcludeSelfProtectsOwnRecord(t *testing.T) {
 	}
 	if len(f.h.Records.List(f.caller)) != 1 {
 		t.Fatal("the caller's own record is gone")
+	}
+}
+
+// Review (Tasks 5-6) I1: keep must not tell an out-of-scope caller whether a
+// record exists or how long it is kept — the direction it would need is
+// computed only for a target the caller may act on.
+func TestRecordKeepIsNoOracleOutOfScope(t *testing.T) {
+	f := newRecFixture(t)
+	f.grant(t, protocol.Capability_RecordPersist, authority.Scope{Base: protocol.ScopeBase_None})
+	if r := f.keep(t, f.target, false, time.Second).RecordKeep(); r == nil || r.Status != protocol.RecordStatus_NotFound {
+		t.Fatalf("shorten an out-of-scope record: %+v, want not_found (not a denial that reveals its retention)", r)
+	}
+	ghost := strings.Repeat("ab", 16)
+	if r := f.keep(t, ghost, false, time.Second).RecordKeep(); r == nil || r.Status != protocol.RecordStatus_NotFound {
+		t.Fatalf("a task with no record: %+v, want the same not_found", r)
+	}
+}
+
+// Review I2: deleting the run being recorded stops recording, and switching
+// on again records into a fresh record.
+func TestDeleteLiveRecordThenSwitchOnRecordsAgain(t *testing.T) {
+	f := newRecFixture(t)
+	global := authority.Scope{Base: protocol.ScopeBase_Global}
+	f.grant(t, protocol.Capability_RecordPersist|protocol.Capability_RecordDelete|protocol.Capability_ExecView, global)
+	m := f.liveMux(t)
+	_ = f.h.Records.FinishRun(f.target, 1, time.Now(), protocol.EndReason_None) // the fixture's leftover
+	_, _ = f.h.Records.Delete(f.target, 0)
+	if r := f.sw(t, f.target, true).RecordSwitch(); r == nil || r.Status != protocol.RecordStatus_Ok {
+		t.Fatalf("on: %+v", r)
+	}
+	if r := f.del(t, f.target).RecordDelete(); r == nil || r.Status != protocol.RecordStatus_Ok {
+		t.Fatalf("delete the live run: %+v", r)
+	}
+	if e, _ := f.h.Tasks.Get(f.target); m.Recording() || e.Record {
+		t.Fatalf("after deleting the live record: recording %v, task record %v — want both off", m.Recording(), e.Record)
+	}
+	if r := f.sw(t, f.target, true).RecordSwitch(); r == nil || r.Status != protocol.RecordStatus_Ok {
+		t.Fatalf("on again: %+v", r)
+	}
+	if !m.Recording() {
+		t.Fatal("switched on again but not recording")
+	}
+	if infos := f.h.Records.List(f.target); len(infos) != 1 || !infos[0].Recording() {
+		t.Fatalf("records %+v, want one being written", infos)
+	}
+}
+
+// Review I3: a list naming no task still needs exec_view.
+func TestRecordListWithNoTaskNeedsExecView(t *testing.T) {
+	f := newRecFixture(t)
+	f.grant(t, protocol.Capability_Notify, authority.Scope{Base: protocol.ScopeBase_Global})
+	r := f.call(t, protocol.TaskControlKind_RecordList, func(r *protocol.TaskControlRequest) {
+		r.SetRecordList(protocol.RecordListRequest{})
+	})
+	if !denied(r) {
+		t.Fatalf("list without exec_view: %+v, want a denial", r)
 	}
 }
