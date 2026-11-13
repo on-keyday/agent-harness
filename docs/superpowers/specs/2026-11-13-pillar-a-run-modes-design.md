@@ -81,8 +81,11 @@ Read on `b3959555`; each was traced to the handler, not inferred.
     only that command.'` showed the killed call as `Interrupted` and
     answered `python3 -c 'import time; time.sleep(300)'`.
   - So A-D16's condition holds on its second half: a graceful stop for
-    automatic cancels is part of A2. Whether claude, stopped gracefully
-    (Esc, SIGHUP or SIGTERM), ends its own tool sessions was not measured.
+    automatic cancels is part of A2.
+  - **A signal claude can handle does end its tool sessions.** Same setup,
+    `kill -TERM <claude pid>` (and, separately, `kill -HUP`) during the
+    tool call: 6 s later claude had exited and the tool process was gone,
+    for both signals. Only claude was measured; Esc was not.
 - **F6 — the idle evaluator.** `evaluateIdle` (`server/idle_signal.go:100-121`)
   checks program → lifecycle → quiet; `legSatisfied` (`:58-68`) implements
   await-idle D6/D18 with `muxStart` as the floor. It treats lifecycle
