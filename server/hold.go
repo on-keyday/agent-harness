@@ -388,12 +388,17 @@ func (s *Server) captureHeldScreen(taskIDHex string) {
 }
 
 // heldRunFacts is what a background run carries across a deliberate stop
-// besides its screen (pillar A, A-D13): whether the program had reported
-// working in this run, and whether output had arrived in it. A sidecar JSON,
-// not a frame in the .frames capture: that file is wire frames replayed into
-// the screen, and these are not screen content.
+// besides its screen (pillar A, A-D13): the facts its turn-end rule compares
+// — when the program last reported working, and when its current state was
+// really reported (the capture's reload re-stamps it); the last client input
+// (the floor a turn end must follow a working past); and whether output had
+// arrived in the run. A sidecar JSON, not a frame in the .frames capture:
+// that file is wire frames replayed into the screen, and these are not screen
+// content.
 type heldRunFacts struct {
 	ProgramWorkingAt int64 `json:"program_working_at"`
+	ProgramAt        int64 `json:"program_at"`
+	LastInput        int64 `json:"last_input"`
 	SawOutput        bool  `json:"saw_output"`
 }
 

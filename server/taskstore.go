@@ -149,8 +149,9 @@ type TaskEntry struct {
 	// LifecycleWorkingAt is the server stamp of the last accepted `working`
 	// report. await-idle counts a non-working state after an input only if a
 	// `working` followed that input, which shuts out the previous turn's late
-	// async Stop hook (await-idle signal spec D6). Memory only and NOT in the
-	// progress snapshot: a restart makes a new mux, whose start floors it.
+	// async Stop hook (await-idle signal spec D6). Carried across a deliberate
+	// stop by the progress snapshot, so a re-adopted background run knows it
+	// had worked (pillar A, A-D13); a crash loses it, with the task.
 	LifecycleWorkingAt int64
 
 	// Run mode (pillar A, docs/superpowers/specs/2026-11-13-pillar-a-run-modes-design.md).
@@ -213,7 +214,8 @@ type TaskStore struct {
 	// OnDeadlineSet fires, outside the lock, after a write that sets a
 	// background deadline: a queue deadline at create or resume, a run
 	// deadline at Assign or at a switch to background. The deadline watcher
-	// sleeps until the earliest one it knows, so a new one must wake it.
+	// sleeps until the earliest one it knows, so a new one must wake it. Set
+	// once in Server.Run before serving, like the hooks above.
 	OnDeadlineSet func()
 }
 
@@ -945,12 +947,28 @@ func (s *TaskStore) Finish(id string, exit int32, errorMsg []byte) {
 // Cancelled, only OnCancelRepeated fires.
 // Allowed source states: Queued, Running, and Detached (non-terminal states).
 func (s *TaskStore) Cancel(id string, reason protocol.EndReason, by protocol.TaskID) {
+	s.cancel(id, reason, by, nil)
+}
+
+// CancelBackgroundRun is the automatic end of a background run (pillar A,
+// A-D8): it cancels only if the task is still the same background run the
+// decision was made about — background, and not switched since switchedAt —
+// checked under the same lock as the cancel, so a deadline or turn-end fire
+// that loses a race with a switch to foreground (or a resume) cancels
+// nothing. Reports whether it cancelled.
+func (s *TaskStore) CancelBackgroundRun(id string, reason protocol.EndReason, switchedAt int64) bool {
+	return s.cancel(id, reason, protocol.TaskID{}, func(e *TaskEntry) bool {
+		return e.RunMode == protocol.RunMode_Background && e.ModeSwitchedAt == switchedAt
+	})
+}
+
+func (s *TaskStore) cancel(id string, reason protocol.EndReason, by protocol.TaskID, still func(*TaskEntry) bool) bool {
 	now := time.Now()
 	s.mu.Lock()
 	e, ok := s.tasks[id]
-	if !ok {
+	if !ok || (still != nil && !still(e)) {
 		s.mu.Unlock()
-		return
+		return false
 	}
 	// Idempotent: skip if already terminal. Held is deliberately NOT here:
 	// cancelling a held task is an operator action the hold design requires,
@@ -960,14 +978,14 @@ func (s *TaskStore) Cancel(id string, reason protocol.EndReason, by protocol.Tas
 	switch e.Status {
 	case protocol.TaskStatus_Succeeded, protocol.TaskStatus_Failed:
 		s.mu.Unlock()
-		return
+		return false
 	case protocol.TaskStatus_Cancelled:
 		onRepeat := s.OnCancelRepeated
 		s.mu.Unlock()
 		if onRepeat != nil {
 			onRepeat(id)
 		}
-		return
+		return false
 	}
 	e.Status = protocol.TaskStatus_Cancelled
 	e.IsAttached = false
@@ -989,6 +1007,7 @@ func (s *TaskStore) Cancel(id string, reason protocol.EndReason, by protocol.Tas
 	if onCancel != nil {
 		onCancel(id)
 	}
+	return true
 }
 
 // MarkFailed transitions a non-terminal task to Failed, recording reason in DiffInfo.
@@ -1814,12 +1833,12 @@ func (s *TaskStore) switchRunModeLocked(id string, mode protocol.RunMode, cond R
 func (s *TaskStore) BackgroundDeadlines(now int64) (due []DeadlineHit, next int64) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	consider := func(id string, at int64, reason protocol.EndReason) {
+	consider := func(id string, at int64, reason protocol.EndReason, switchedAt int64) {
 		if at == 0 {
 			return
 		}
 		if at <= now {
-			due = append(due, DeadlineHit{ID: id, Reason: reason})
+			due = append(due, DeadlineHit{ID: id, Reason: reason, SwitchedAt: switchedAt})
 			return
 		}
 		if next == 0 || at < next {
@@ -1833,9 +1852,9 @@ func (s *TaskStore) BackgroundDeadlines(now int64) (due []DeadlineHit, next int6
 		}
 		switch e.Status {
 		case protocol.TaskStatus_Queued:
-			consider(id, e.QueueDeadlineAt, protocol.EndReason_QueueTimeout)
+			consider(id, e.QueueDeadlineAt, protocol.EndReason_QueueTimeout, e.ModeSwitchedAt)
 		case protocol.TaskStatus_Running, protocol.TaskStatus_Detached, protocol.TaskStatus_Held:
-			consider(id, e.DeadlineAt, protocol.EndReason_Deadline)
+			consider(id, e.DeadlineAt, protocol.EndReason_Deadline, e.ModeSwitchedAt)
 		}
 	}
 	return due, next

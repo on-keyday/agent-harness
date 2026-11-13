@@ -126,7 +126,7 @@ func TestSwitchSelfToForegroundRefused(t *testing.T) {
 	if _, err := h.Tasks.SwitchRunMode(self, protocol.RunMode_Background, RunConditions{Deadline: time.Hour}, time.Now().UnixNano()); err != nil {
 		t.Fatal(err)
 	}
-	if r := sessionMode(t, h, conn, self, false, nil); r.Status != protocol.SessionModeStatus_SelfForegroundRefused {
+	if r := sessionMode(t, h, conn, self, false, nil); r.Status != protocol.SessionModeStatus_SelfSwitchRefused {
 		t.Fatalf("status %v", r.Status)
 	}
 	if e, _ := h.Tasks.Get(self); e.RunMode != protocol.RunMode_Background || e.DeadlineAt == 0 {

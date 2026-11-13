@@ -105,8 +105,9 @@ var (
 
 // DeadlineHit is one background deadline that has passed (A-D13).
 type DeadlineHit struct {
-	ID     string
-	Reason protocol.EndReason
+	ID         string
+	Reason     protocol.EndReason
+	SwitchedAt int64 // the run's ModeSwitchedAt when the deadline was read
 }
 
 // remainingMs is the time left to an absolute deadline, on the server clock,

@@ -94,8 +94,8 @@ func sessionModeStatusError(status protocol.SessionModeStatus, serverMsg []byte)
 		return fmt.Errorf("session mode deadline_required: a switch to background must state its deadline (--deadline)")
 	case protocol.SessionModeStatus_TurnEndUnsupported:
 		return fmt.Errorf("session mode turn_end_unsupported: a stream session reports lifecycle only")
-	case protocol.SessionModeStatus_SelfForegroundRefused:
-		return fmt.Errorf("session mode self_foreground_refused: a task may not switch itself to foreground")
+	case protocol.SessionModeStatus_SelfSwitchRefused:
+		return fmt.Errorf("session mode self_switch_refused: a task may not switch its own run mode")
 	case protocol.SessionModeStatus_InternalError:
 		return fmt.Errorf("session mode internal_error")
 	}

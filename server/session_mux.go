@@ -229,6 +229,13 @@ type SessionMux struct {
 	// (carryRunFacts, A-D13); zero on a mux that was not re-adopted.
 	carriedProgramWorkingAt atomic.Int64
 	carriedSawOutput        atomic.Bool
+	carriedLastInput        atomic.Int64
+	// carriedProgramAt is when the restored program state was really
+	// reported; loadedProgramAt is the stamp loadScreen gave it. While the
+	// mux's programAt still equals loadedProgramAt, the state is the restored
+	// one and carriedProgramAt is its time.
+	carriedProgramAt atomic.Int64
+	loadedProgramAt  atomic.Int64
 
 	// mainMark is the ring append-index of the frame at which the session last
 	// returned to the primary screen (a full-screen app's alt-screen exit).
@@ -1371,6 +1378,9 @@ func (m *SessionMux) Wait() <-chan struct{} { return m.stopped }
 func (m *SessionMux) carryRunFacts(f heldRunFacts) {
 	m.carriedProgramWorkingAt.Store(f.ProgramWorkingAt)
 	m.carriedSawOutput.Store(f.SawOutput)
+	m.carriedLastInput.Store(f.LastInput)
+	m.carriedProgramAt.Store(f.ProgramAt)
+	m.loadedProgramAt.Store(m.programAt.Load())
 }
 
 // runFacts is what this mux would carry across a deliberate stop for a run
@@ -1378,8 +1388,25 @@ func (m *SessionMux) carryRunFacts(f heldRunFacts) {
 func (m *SessionMux) runFacts(runStart int64) heldRunFacts {
 	return heldRunFacts{
 		ProgramWorkingAt: m.runProgramWorkingAt(),
+		ProgramAt:        m.runProgramAt(m.programAt.Load()),
+		LastInput:        m.runLastInput(),
 		SawOutput:        m.sawOutputSince(runStart),
 	}
+}
+
+// runProgramAt is when the current program state was reported: the carried
+// time while the state is still the one restored from a capture (whose load
+// re-stamped programAt), else at.
+func (m *SessionMux) runProgramAt(at int64) int64 {
+	if c := m.carriedProgramAt.Load(); c != 0 && at == m.loadedProgramAt.Load() {
+		return c
+	}
+	return at
+}
+
+// runLastInput is the last client input of the run: on this mux, or carried.
+func (m *SessionMux) runLastInput() int64 {
+	return max(m.lastInput.Load(), m.carriedLastInput.Load())
 }
 
 // runProgramWorkingAt is the last program `working` of the run: on this mux,

@@ -71,8 +71,13 @@ func evaluateRun(in runInputs) (protocol.EndReason, bool) {
 // endBackgroundRun ends a background run for an automatic reason (A-D8): a
 // cancel recording why, through the same path a human's cancel takes. The
 // cancel also wakes Tick, since the run's slot frees when the runner answers.
-func (h *TaskHandler) endBackgroundRun(taskID string, reason protocol.EndReason) {
-	h.Tasks.Cancel(taskID, reason, protocol.TaskID{})
+//
+// The cancel is conditional (TaskStore.CancelBackgroundRun): a fire computed
+// before a switch to foreground, or for a run since replaced, cancels nothing.
+func (h *TaskHandler) endBackgroundRun(hit DeadlineHit) {
+	if !h.Tasks.CancelBackgroundRun(hit.ID, hit.Reason, hit.SwitchedAt) {
+		return
+	}
 	if h.OnChange != nil {
 		h.OnChange()
 	}

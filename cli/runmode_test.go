@@ -57,7 +57,7 @@ func TestSessionModeStatusTexts(t *testing.T) {
 	for _, st := range []protocol.SessionModeStatus{
 		protocol.SessionModeStatus_NotFound, protocol.SessionModeStatus_NotSession, protocol.SessionModeStatus_Queued,
 		protocol.SessionModeStatus_DeadlineRequired, protocol.SessionModeStatus_TurnEndUnsupported,
-		protocol.SessionModeStatus_InternalError, protocol.SessionModeStatus_SelfForegroundRefused,
+		protocol.SessionModeStatus_InternalError, protocol.SessionModeStatus_SelfSwitchRefused,
 	} {
 		if err := sessionModeStatusError(st, nil); err == nil || strings.Contains(err.Error(), "status=") {
 			t.Errorf("%v: %v", st, err)

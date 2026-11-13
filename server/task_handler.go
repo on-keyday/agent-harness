@@ -61,6 +61,9 @@ type TaskHandler struct {
 	// runWatchSet holds the background run watchers (run_watch.go).
 	runWatchOnce sync.Once
 	runWatchSet  *runWatchers
+	// runModeMu serializes a run-mode switch's store write with its watcher
+	// arm/disarm, and re-adoption's arm with any switch (session_mode.go).
+	runModeMu sync.Mutex
 
 	// OnSessionObservers fires when a session's observer set changes (a viewer
 	// or cowriter attached or left). Those attaches move no task status by

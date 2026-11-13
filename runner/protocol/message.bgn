@@ -2895,9 +2895,10 @@ enum SessionModeStatus:
     deadline_required = 4
     turn_end_unsupported = 5
     internal_error = 6
-    # The caller is the target task asking to become foreground: that would
-    # remove its own deadline (spec A-D19). Another principal may.
-    self_foreground_refused = 7
+    # The caller is the target task: a task may not switch its own run mode,
+    # in either direction — it could drop or replace its own deadline (spec
+    # A-D19). Another principal may.
+    self_switch_refused = 7
 
 format SessionModeResponse:
     status :SessionModeStatus

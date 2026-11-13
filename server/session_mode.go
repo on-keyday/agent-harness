@@ -40,6 +40,13 @@ func (h *TaskHandler) handleSessionMode(cid string, conn ConnHandle, req *protoc
 		return
 	}
 
+	// A task may not switch itself, in either direction: to foreground it
+	// would drop its own deadline, to background it could replace it.
+	if self := h.lookupPrincipal(cid); self == sm.TaskId && self.Id != ([16]byte{}) {
+		respond(protocol.SessionModeStatus_SelfSwitchRefused, "a task may not switch its own run mode")
+		return
+	}
+
 	mode := protocol.RunMode_Foreground
 	var cond RunConditions
 	if sm.Background() {
@@ -59,11 +66,13 @@ func (h *TaskHandler) handleSessionMode(cid string, conn ConnHandle, req *protoc
 		}
 		cond = ConditionsFromWire(wc).WithDefaults(t.Kind)
 		cond.Rows, cond.Cols = t.Cond.Rows, t.Cond.Cols
-	} else if self := h.lookupPrincipal(cid); self == sm.TaskId && self.Id != ([16]byte{}) {
-		respond(protocol.SessionModeStatus_SelfForegroundRefused, "a task may not switch itself to foreground")
-		return
 	}
 
+	// The store write and the watcher arm/disarm happen together, so two
+	// concurrent switches cannot leave a background run unwatched (or a
+	// foreground one watched).
+	h.runModeMu.Lock()
+	defer h.runModeMu.Unlock()
 	if _, err := h.Tasks.SwitchRunMode(taskID, mode, cond, time.Now().UnixNano()); err != nil {
 		switch {
 		case errors.Is(err, ErrSwitchQueued):

@@ -3,8 +3,6 @@ package server
 import (
 	"context"
 	"time"
-
-	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 // runDeadlineWatcher ends background runs whose deadline has passed and queued
@@ -14,11 +12,11 @@ import (
 // by TaskStore.OnDeadlineSet) tells it a new, possibly earlier, deadline
 // exists. Deadlines are absolute times in the WAL, so the startup pass after
 // replay ends whatever passed while the server was down, a Held task included.
-func runDeadlineWatcher(ctx context.Context, store *TaskStore, wake <-chan struct{}, end func(id string, reason protocol.EndReason)) {
+func runDeadlineWatcher(ctx context.Context, store *TaskStore, wake <-chan struct{}, end func(DeadlineHit)) {
 	for {
 		due, next := store.BackgroundDeadlines(time.Now().UnixNano())
 		for _, d := range due {
-			end(d.ID, d.Reason)
+			end(d)
 		}
 		var timer *time.Timer
 		var fire <-chan time.Time

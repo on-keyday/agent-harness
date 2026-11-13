@@ -240,19 +240,19 @@ func (s *Server) rebindHeldSessions(identity protocol.RunnerID, taskIDs []string
 		// A background run's "has worked" facts from before the stop, so a
 		// restored idle screen ends a run that had worked and cannot end one
 		// that had not (A-D13). Missing facts leave the per-mux floor.
-		background := false
+		// Read (and so remove) the facts whatever the mode: a task switched to
+		// foreground during the hold must not leave them for a later hold.
+		facts, haveFacts := s.readHeldRunFacts(taskID)
 		if t, ok := s.tasks.Get(taskID); ok && t.RunMode == protocol.RunMode_Background {
-			background = true
-			if f, ok := s.readHeldRunFacts(taskID); ok {
-				mux.carryRunFacts(f)
+			if haveFacts {
+				mux.carryRunFacts(facts)
 			} else {
 				log.Warn("rebind: no run facts; the run ends at its deadline unless it works again", "task", taskID)
 			}
+		} else if haveFacts {
+			mux.carryRunFacts(facts) // harmless for foreground; ready if switched back
 		}
 		s.taskHandler.Sessions.Add(taskID, mux)
-		if background {
-			s.taskHandler.armRunWatcher(taskID, mux)
-		}
 
 		var rr protocol.RunnerRequest
 		rr.Kind = protocol.RunnerRequestType_RebindSession
@@ -269,5 +269,14 @@ func (s *Server) rebindHeldSessions(identity protocol.RunnerID, taskIDs []string
 			continue
 		}
 		log.Info("rebind: sent", "task", taskID, "stream", runnerStream.ID())
+		// Armed only once the runner has been told to rebind: the first
+		// evaluation can end the run at once, and its CancelTask must not
+		// reach the runner before the rebind does. Under runModeMu, and with
+		// the mode re-read, so a switch landing meanwhile is not missed.
+		s.taskHandler.runModeMu.Lock()
+		if t, ok := s.tasks.Get(taskID); ok && t.RunMode == protocol.RunMode_Background {
+			s.taskHandler.armRunWatcher(taskID, mux)
+		}
+		s.taskHandler.runModeMu.Unlock()
 	}
 }

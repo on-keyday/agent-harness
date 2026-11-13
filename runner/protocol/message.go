@@ -47176,14 +47176,14 @@ func (s *SessionModeRequest) DecodeExact(buf []byte) error {
 type SessionModeStatus uint8
 
 const (
-	SessionModeStatus_Ok                    SessionModeStatus = 0
-	SessionModeStatus_NotFound              SessionModeStatus = 1
-	SessionModeStatus_NotSession            SessionModeStatus = 2
-	SessionModeStatus_Queued                SessionModeStatus = 3
-	SessionModeStatus_DeadlineRequired      SessionModeStatus = 4
-	SessionModeStatus_TurnEndUnsupported    SessionModeStatus = 5
-	SessionModeStatus_InternalError         SessionModeStatus = 6
-	SessionModeStatus_SelfForegroundRefused SessionModeStatus = 7
+	SessionModeStatus_Ok                 SessionModeStatus = 0
+	SessionModeStatus_NotFound           SessionModeStatus = 1
+	SessionModeStatus_NotSession         SessionModeStatus = 2
+	SessionModeStatus_Queued             SessionModeStatus = 3
+	SessionModeStatus_DeadlineRequired   SessionModeStatus = 4
+	SessionModeStatus_TurnEndUnsupported SessionModeStatus = 5
+	SessionModeStatus_InternalError      SessionModeStatus = 6
+	SessionModeStatus_SelfSwitchRefused  SessionModeStatus = 7
 )
 
 func (e SessionModeStatus) String() string {
@@ -47202,8 +47202,8 @@ func (e SessionModeStatus) String() string {
 		return "TurnEndUnsupported"
 	case SessionModeStatus_InternalError:
 		return "InternalError"
-	case SessionModeStatus_SelfForegroundRefused:
-		return "SelfForegroundRefused"
+	case SessionModeStatus_SelfSwitchRefused:
+		return "SelfSwitchRefused"
 	default:
 		return fmt.Sprintf("SessionModeStatus(%d)", e)
 	}

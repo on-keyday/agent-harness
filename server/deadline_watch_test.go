@@ -14,15 +14,15 @@ type endLog struct {
 	got map[string]protocol.EndReason
 }
 
-func (l *endLog) end(store *TaskStore) func(string, protocol.EndReason) {
-	return func(id string, r protocol.EndReason) {
+func (l *endLog) end(store *TaskStore) func(DeadlineHit) {
+	return func(d DeadlineHit) {
 		l.mu.Lock()
 		if l.got == nil {
 			l.got = map[string]protocol.EndReason{}
 		}
-		l.got[id] = r
+		l.got[d.ID] = d.Reason
 		l.mu.Unlock()
-		store.Cancel(id, r, protocol.TaskID{})
+		store.CancelBackgroundRun(d.ID, d.Reason, d.SwitchedAt)
 	}
 }
 

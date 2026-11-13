@@ -59,7 +59,7 @@ func (h *TaskHandler) armRunWatcher(taskID string, mux *SessionMux) {
 					return
 				default:
 				}
-				h.endBackgroundRun(taskID, reason)
+				h.endBackgroundRun(DeadlineHit{ID: taskID, Reason: reason, SwitchedAt: in.SwitchedAt})
 				return
 			}
 			select {
@@ -108,13 +108,13 @@ func (h *TaskHandler) runInputsOf(taskID string, mux *SessionMux) (runInputs, bo
 		RunStart:         runStart,
 		SwitchedAt:       t.ModeSwitchedAt,
 		MuxStart:         mux.MuxStartUnixNano(),
-		LastInput:        mux.LastInputUnixNano(),
+		LastInput:        mux.runLastInput(),
 		LastOutput:       lo,
 		Kind:             t.Kind,
 		Cond:             t.Cond,
 		Life:             LifecycleReading{State: t.Lifecycle, At: t.LifecycleAt, WorkingAt: t.LifecycleWorkingAt},
 		Prog:             pst,
-		ProgAt:           pat,
+		ProgAt:           mux.runProgramAt(pat),
 		ProgWorkingAt:    max(pwat, mux.carriedProgramWorkingAt.Load()),
 		SawOutputThisRun: mux.sawOutputSince(runStart),
 	}, true
