@@ -1024,6 +1024,9 @@ func (h cliVerbs) AwaitProgressKill(a verb.AwaitProgressAction) error {
 func (h cliVerbs) SessionResize(a verb.SessionAction) error {
 	return runSessionResizeWith(h.cid(), a)
 }
+func (h cliVerbs) SessionMode(a verb.SessionAction) error {
+	return runSessionModeWith(h.cid(), a)
+}
 func (h cliVerbs) SessionStreamAttach(a verb.SessionAction) error {
 	return runSessionStreamAttachWith(h.cid(), a)
 }

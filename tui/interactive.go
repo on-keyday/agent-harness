@@ -276,7 +276,7 @@ type TermSize struct{ Rows, Cols uint16 }
 // into its log, so the TUI follows it through the logs pane rather than a
 // terminal splice. The initial size is still sent — the runner ignores it for
 // this kind (no PTY exists to size).
-func DoStartDetachedSession(c *cli.Client, repo string, selOpts cli.SelectorOpts, extraArgs []string, resumeTaskID string, auth Authority, resumeCapsOverride bool, resumeConversation bool, exact bool, agentProfile string, size TermSize, eventStream bool) tea.Cmd {
+func DoStartDetachedSession(c *cli.Client, repo string, selOpts cli.SelectorOpts, extraArgs []string, resumeTaskID string, auth Authority, resumeCapsOverride bool, resumeConversation bool, exact bool, agentProfile string, size TermSize, eventStream bool, runMode cli.RunModeFlags) tea.Cmd {
 	return func() tea.Msg {
 		sel, err := cli.BuildSelector(selOpts)
 		if err != nil {
@@ -293,6 +293,7 @@ func DoStartDetachedSession(c *cli.Client, repo string, selOpts cli.SelectorOpts
 			// TUI inside it paints nothing.
 			InitialRows: size.Rows, InitialCols: size.Cols,
 			EventStream: eventStream,
+			RunMode:     runMode,
 		}))
 		if err != nil {
 			return SessionStartedMsg{Err: err}

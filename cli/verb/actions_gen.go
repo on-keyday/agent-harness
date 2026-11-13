@@ -656,7 +656,7 @@ type ServerDialRunnerAction struct {
 	RunnerCID string
 }
 
-// SessionAction is built by: session attach, session await-idle, session await-idle kill, session await-idle ls, session kill, session ls, session resize, session snapshot, session stream answer, session stream approve, session stream attach, session stream finish, session stream interrupt, session stream turn.
+// SessionAction is built by: session attach, session await-idle, session await-idle kill, session await-idle ls, session kill, session ls, session mode, session resize, session snapshot, session stream answer, session stream approve, session stream attach, session stream finish, session stream interrupt, session stream turn.
 type SessionAction struct {
 	ActionMarker
 	// ms to let the line drain to the runner before detaching
@@ -686,6 +686,15 @@ type SessionAction struct {
 	WaitMs uint
 	// suppress the one-line result on stderr
 	Quiet bool
+	// to background: the run is cancelled this long after the switch (required)
+	Deadline time.Duration
+	// to background: off|quiet|lifecycle|program|any (default any; a stream session: lifecycle)
+	TurnEnd string
+	// to background: output silence that counts as a finished turn (default 5m)
+	QuietFor time.Duration
+	// to background: how long the agent may wait on a human before the run ends (default 5m)
+	BlockedFor time.Duration
+	Mode       string
 	// fallback rows when the session reports no size
 	Rows uint
 	// fallback cols when the session reports no size
@@ -852,10 +861,26 @@ type SpawnAction struct {
 	Detach bool
 	// open an event-stream session (structured events, no PTY)
 	Stream bool
-	// initial PTY rows (0 = unset; needs --cols too)
+	// initial PTY rows of a detached/background open; --rows 0 --cols 0 sends no size (PTY 0x0)
 	Rows uint
-	// initial PTY columns (0 = unset; needs --rows too)
+	// initial PTY columns of a detached/background open; --rows 0 --cols 0 sends no size (PTY 0x0)
 	Cols uint
+	// run unattended: queued until a runner is free, ended by its conditions (implies --detach; needs --pr…
+	Background bool
+	// with --resume: resume a background task in foreground (without either, a resume keeps the task's run…
+	Foreground bool
+	// the agent's first turn, in either run mode (at most 16384 bytes)
+	Prompt string
+	// background: the run is cancelled this long after it starts (required; no default)
+	Deadline time.Duration
+	// background: which signal ends the run at a turn's end: off|quiet|lifecycle|program|any (default any;…
+	TurnEnd string
+	// background: output silence that counts as a finished turn (default 5m)
+	QuietFor time.Duration
+	// background: how long the agent may wait on a human before the run ends (default 5m)
+	BlockedFor time.Duration
+	// background: cancel the task if it is still queued this long after it was queued (default none)
+	QueueTimeout time.Duration
 }
 
 // WorkspaceAction is built by: workspace apply, workspace detach, workspace forward add, workspace forward rm, workspace ls, workspace rm, workspace save, workspace show.
@@ -2582,6 +2607,14 @@ func init() {
 			a.Stream = b.Bool("stream")
 			a.Rows = uintOf(b.Flags["rows"])
 			a.Cols = uintOf(b.Flags["cols"])
+			a.Background = b.Bool("background")
+			a.Foreground = b.Bool("foreground")
+			a.Prompt = b.Str("prompt")
+			a.Deadline = durationOf(b.Flags["deadline"])
+			a.TurnEnd = b.Str("turn-end")
+			a.QuietFor = durationOf(b.Flags["quiet"])
+			a.BlockedFor = durationOf(b.Flags["blocked"])
+			a.QueueTimeout = durationOf(b.Flags["queue-timeout"])
 			return a, nil
 		},
 		"session new\x00tui": func(b Bound) (Action, error) {
@@ -2657,6 +2690,14 @@ func init() {
 			a.Stream = b.Bool("stream")
 			a.Rows = uintOf(b.Flags["rows"])
 			a.Cols = uintOf(b.Flags["cols"])
+			a.Background = b.Bool("background")
+			a.Foreground = b.Bool("foreground")
+			a.Prompt = b.Str("prompt")
+			a.Deadline = durationOf(b.Flags["deadline"])
+			a.TurnEnd = b.Str("turn-end")
+			a.QuietFor = durationOf(b.Flags["quiet"])
+			a.BlockedFor = durationOf(b.Flags["blocked"])
+			a.QueueTimeout = durationOf(b.Flags["queue-timeout"])
 			return a, nil
 		},
 		"session send\x00cli": func(b Bound) (Action, error) {
@@ -3874,6 +3915,36 @@ func init() {
 			}
 			return a, nil
 		},
+		"session mode\x00cli": func(b Bound) (Action, error) {
+			a := SessionAction{}
+			a.Sub = "mode"
+			a.Deadline = durationOf(b.Flags["deadline"])
+			a.TurnEnd = b.Str("turn-end")
+			a.QuietFor = durationOf(b.Flags["quiet"])
+			a.BlockedFor = durationOf(b.Flags["blocked"])
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.Mode = b.Args[1]
+			}
+			return a, nil
+		},
+		"session mode\x00tui": func(b Bound) (Action, error) {
+			a := SessionAction{}
+			a.Sub = "mode"
+			a.Deadline = durationOf(b.Flags["deadline"])
+			a.TurnEnd = b.Str("turn-end")
+			a.QuietFor = durationOf(b.Flags["quiet"])
+			a.BlockedFor = durationOf(b.Flags["blocked"])
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.Mode = b.Args[1]
+			}
+			return a, nil
+		},
 		"session snapshot\x00cli": func(b Bound) (Action, error) {
 			a := SessionAction{}
 			a.Sub = "snapshot"
@@ -4312,6 +4383,7 @@ const (
 	CmdAwaitProgressLs        = "await-progress ls"
 	CmdAwaitProgressKill      = "await-progress kill"
 	CmdSessionResize          = "session resize"
+	CmdSessionMode            = "session mode"
 	CmdSessionSnapshot        = "session snapshot"
 	CmdSessionStreamAttach    = "session stream attach"
 	CmdSessionStreamInterrupt = "session stream interrupt"
@@ -4367,6 +4439,7 @@ const (
 	SubLeave           = "leave"
 	SubLog             = "log"
 	SubLs              = "ls"
+	SubMode            = "mode"
 	SubNotifyWatch     = "notify-watch"
 	SubPurge           = "purge"
 	SubPurgeThread     = "purge-thread"
@@ -6801,6 +6874,27 @@ func ParseCmdSessionResize(sf Surface, args []string, ctx map[string]string) (Se
 	return a, nil
 }
 
+func ParseCmdSessionMode(sf Surface, args []string, ctx map[string]string) (SessionAction, error) {
+	var zero SessionAction
+	sp, ok := Lookup("session", "mode")
+	if !ok {
+		return zero, fmt.Errorf("session mode: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(SessionAction)
+	return a, nil
+}
+
 func ParseCmdSessionSnapshot(sf Surface, args []string, ctx map[string]string) (SessionAction, error) {
 	var zero SessionAction
 	sp, ok := Lookup("session", "snapshot")
@@ -7436,6 +7530,8 @@ type CLIDispatch[R any] interface {
 	AwaitProgressKill(AwaitProgressAction) R
 	// session resize
 	SessionResize(SessionAction) R
+	// session mode
+	SessionMode(SessionAction) R
 	// session snapshot
 	SessionSnapshot(SessionAction) R
 	// session stream attach
@@ -8049,6 +8145,12 @@ func DispatchCLI[R any](h CLIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.SessionResize(a), true, nil
+	case CmdSessionMode:
+		a, perr := ParseCmdSessionMode(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.SessionMode(a), true, nil
 	case CmdSessionSnapshot:
 		a, perr := ParseCmdSessionSnapshot(CLI, args, ctx)
 		if perr != nil {
@@ -8344,6 +8446,8 @@ func DispatchCLIAction[R any](h CLIDispatch[R], act Action) (r R, handled bool) 
 			return h.SessionAwaitIdleKill(a), true
 		case "resize":
 			return h.SessionResize(a), true
+		case "mode":
+			return h.SessionMode(a), true
 		case "snapshot":
 			return h.SessionSnapshot(a), true
 		case "stream-attach":
@@ -9033,6 +9137,12 @@ func ParseCLICommand(tokens []string, ctx map[string]string) (act Action, handle
 				return nil, true, perr
 			}
 			return a, true, nil
+		case CmdSessionMode:
+			a, perr := ParseCmdSessionMode(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
 		case CmdSessionSnapshot:
 			a, perr := ParseCmdSessionSnapshot(CLI, tokens[n:], ctx)
 			if perr != nil {
@@ -9305,6 +9415,8 @@ type TUIDispatch[R any] interface {
 	AwaitProgressLs(AwaitProgressAction) R
 	// await-progress kill
 	AwaitProgressKill(AwaitProgressAction) R
+	// session mode
+	SessionMode(SessionAction) R
 	// session stream attach
 	SessionStreamAttach(SessionAction) R
 	// session stream interrupt
@@ -9776,6 +9888,12 @@ func DispatchTUI[R any](h TUIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.AwaitProgressKill(a), true, nil
+	case CmdSessionMode:
+		a, perr := ParseCmdSessionMode(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.SessionMode(a), true, nil
 	case CmdSessionStreamAttach:
 		a, perr := ParseCmdSessionStreamAttach(TUI, args, ctx)
 		if perr != nil {
@@ -9949,6 +10067,8 @@ func DispatchTUIAction[R any](h TUIDispatch[R], act Action) (r R, handled bool) 
 			return h.SessionAwaitIdleLs(a), true
 		case "await-idle-kill":
 			return h.SessionAwaitIdleKill(a), true
+		case "mode":
+			return h.SessionMode(a), true
 		case "stream-attach":
 			return h.SessionStreamAttach(a), true
 		case "stream-interrupt":
@@ -10483,6 +10603,12 @@ func ParseTUICommand(tokens []string, ctx map[string]string) (act Action, handle
 			return a, true, nil
 		case CmdAwaitProgressKill:
 			a, perr := ParseCmdAwaitProgressKill(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdSessionMode:
+			a, perr := ParseCmdSessionMode(TUI, tokens[n:], ctx)
 			if perr != nil {
 				return nil, true, perr
 			}

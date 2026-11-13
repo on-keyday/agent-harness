@@ -533,8 +533,8 @@ func (h tuiVerbs) SessionNew(v verb.SpawnAction) tea.Cmd {
 	if v.X11 {
 		return DoOpenX11Session(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, int(v.X11Display), a.program, auth, capsOverride, v.ResumeConversation, v.Exact, v.Agent)
 	}
-	if v.Detach {
-		return DoStartDetachedSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Exact, v.Agent, TermSize{Rows: uint16(a.height), Cols: uint16(a.width)}, v.Stream)
+	if v.Detach || v.Background {
+		return DoStartDetachedSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Exact, v.Agent, TermSize{Rows: uint16(a.height), Cols: uint16(a.width)}, v.Stream, spawnRunMode(v))
 	}
 	// Stream without Detach cannot reach here: the declaration refuses it.
 	return DoOpenDetachableSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Exact, v.Agent)
@@ -569,6 +569,28 @@ func (h tuiVerbs) SessionAttach(v verb.SessionAction) tea.Cmd {
 		mode = protocol.AttachMode_View
 	}
 	return DoAttachSession(h.a.client, full, mode)
+}
+
+func (h tuiVerbs) SessionMode(v verb.SessionAction) tea.Cmd {
+	full, ok := h.sessionTask(v)
+	if !ok {
+		return nil
+	}
+	background, err := verb.ParseRunModeWord(v.Mode)
+	if err != nil {
+		h.a.cmdresult.Append(ErrorStyle.Render(err.Error()))
+		return nil
+	}
+	var cond *protocol.BackgroundConditions
+	if background {
+		turnEnd, err := verb.ParseTurnEnd(v.TurnEnd)
+		if err != nil {
+			h.a.cmdresult.Append(ErrorStyle.Render(err.Error()))
+			return nil
+		}
+		cond = cli.RunModeFlags{Deadline: v.Deadline, Quiet: v.QuietFor, Blocked: v.BlockedFor, TurnEnd: turnEnd}.Conditions()
+	}
+	return DoSessionMode(h.a.client, full, background, cond)
 }
 
 func (h tuiVerbs) SessionKill(v verb.SessionAction) tea.Cmd {
@@ -1042,4 +1064,15 @@ func mustRoute(s string) protocol.DataPlaneRoute {
 		return protocol.DataPlaneRoute_Splice
 	}
 	return r
+}
+
+// spawnRunMode is a `session new` line's run-mode flags (pillar A spec,
+// A-D15); an unparsable --turn-end was already refused by the declaration.
+func spawnRunMode(v verb.SpawnAction) cli.RunModeFlags {
+	turnEnd, _ := verb.ParseTurnEnd(v.TurnEnd)
+	return cli.RunModeFlags{
+		Background: v.Background, Foreground: v.Foreground, Prompt: v.Prompt,
+		Deadline: v.Deadline, Quiet: v.QuietFor, Blocked: v.BlockedFor, QueueTimeout: v.QueueTimeout,
+		TurnEnd: turnEnd,
+	}
 }

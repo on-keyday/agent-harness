@@ -36,6 +36,24 @@ type CancelResultMsg struct {
 	Err      error
 }
 
+// SessionModeResultMsg answers a run-mode switch (pillar A spec, A-D19).
+type SessionModeResultMsg struct {
+	TaskID     string
+	Background bool
+	Err        error
+}
+
+// DoSessionMode switches a running session between foreground and background
+// through the long-lived client.
+func DoSessionMode(c *cli.Client, taskID string, background bool, cond *protocol.BackgroundConditions) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		err := c.SessionMode(ctx, taskID, background, cond)
+		return SessionModeResultMsg{TaskID: taskID, Background: background, Err: err}
+	}
+}
+
 type PruneResultMsg struct {
 	Removed uint32
 	// IDMode is true when the prune targeted explicit task ids; only then are
@@ -127,6 +145,9 @@ type sessionRequest struct {
 	// Detached opens without attaching: no stream comes back, and the initial
 	// size rides in the request (cli.SessionOpts.Detached).
 	Detached bool
+	// RunMode is the run mode, background conditions and initial prompt
+	// (pillar A spec, A-D15); its Apply sets them on the opts.
+	RunMode cli.RunModeFlags
 }
 
 // opts folds an Authority and a sessionRequest into the cli.SessionOpts the
@@ -142,7 +163,7 @@ type sessionRequest struct {
 // reported the flag as supported while `session new` granted the bare scope.
 // A warning comment is not a mechanism.
 func (a Authority) opts(r sessionRequest) cli.SessionOpts {
-	return cli.SessionOpts{
+	o := cli.SessionOpts{
 		Selector:           r.Selector,
 		ExtraArgs:          r.ExtraArgs,
 		ResumeTaskID:       r.ResumeTaskID,
@@ -169,6 +190,8 @@ func (a Authority) opts(r sessionRequest) cli.SessionOpts {
 		SpawnDepthPresent:     a.SpawnDepthPresent,
 		MaxDescendantsPresent: a.MaxDescendantsPresent,
 	}
+	r.RunMode.Apply(&o)
+	return o
 }
 
 func DoSubmit(c *cli.Client, repo, prompt string, auth Authority) tea.Cmd {

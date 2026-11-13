@@ -95,6 +95,17 @@ type SessionOpts struct {
 	// (which needs exec_control). The initial size then travels in the request,
 	// because there is no stream to carry the window-size frame.
 	Detached bool
+
+	// Pillar A run mode (docs/superpowers/specs/2026-11-13-pillar-a-run-modes-design.md).
+	// RunModeSet names the run mode (Background true = background, false =
+	// foreground); unset, a resume keeps the task's own. Conditions (nil =
+	// none) are a background run's; a deadline is required there. Prompt is
+	// the agent's first turn, in either mode, carried on its own stream
+	// (at most protocol.PromptMax bytes).
+	RunModeSet bool
+	Background bool
+	Conditions *protocol.BackgroundConditions
+	Prompt     string
 }
 
 // buildOpenInteractiveRequest constructs the wire OpenInteractiveRequest from
@@ -127,6 +138,12 @@ func buildOpenInteractiveRequest(repoPath string, opts SessionOpts) protocol.Ope
 		oi.SetDetached(true) // the discriminator before its block
 		oi.SetInitialRows(opts.InitialRows)
 		oi.SetInitialCols(opts.InitialCols)
+	}
+	oi.SetRunModeSet(opts.RunModeSet)
+	oi.SetBackground(opts.Background)
+	if opts.Conditions != nil {
+		oi.SetConditionsPresent(true) // the discriminator before its block
+		oi.SetConditions(*opts.Conditions)
 	}
 	return oi
 }

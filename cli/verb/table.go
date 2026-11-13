@@ -3050,6 +3050,47 @@ var Verbs = []VerbSpec{
 		Examples: []string{"session resize aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --size 40x150"},
 	},
 	{
+		// Pillar A spec A-D19: switch a running session task between the two
+		// run modes. Gated on cancel over the task: either direction changes
+		// how the run ends.
+		Path: []string{"session", "mode"}, CmdlineSurfaces: CLI | TUI,
+		NoModalSurface: "A2 Task 9: the TUI key and WebUI button arrive in Tasks 10-11, which replace this line with ModalSurfaces",
+		Notes: []string{
+			"switch a running session between foreground and background; background needs --deadline (the run's deadline counts from the switch)",
+			"a turn that ended before the switch does not end the run; a task may not switch itself",
+		},
+		Action: "SessionAction",
+		Const:  map[string]string{"Sub": "mode"},
+		Args: []Arg{
+			{Name: "task-id", Type: ArgTaskID, Field: "TaskID"},
+			{Name: "mode", Type: ArgString, Field: "Mode"},
+		},
+		Flags: []Flag{
+			{Name: "deadline", Type: FlagDuration, Default: time.Duration(0), Field: "Deadline",
+				Help: "to background: the run is cancelled this long after the switch (required)"},
+			{Name: "turn-end", Type: FlagString, Default: "", Field: "TurnEnd",
+				Help: "to background: off|quiet|lifecycle|program|any (default any; a stream session: lifecycle)"},
+			{Name: "quiet", Type: FlagDuration, Default: time.Duration(0), Field: "QuietFor",
+				Help: "to background: output silence that counts as a finished turn (default 5m)"},
+			{Name: "blocked", Type: FlagDuration, Default: time.Duration(0), Field: "BlockedFor",
+				Help: "to background: how long the agent may wait on a human before the run ends (default 5m)"},
+		},
+		// The mode word is checked where the verb runs (ParseRunModeWord), not
+		// here: the table's own probes synthesise positionals.
+		Validate: func(b Bound) error {
+			if te := b.Str("turn-end"); te != "" {
+				if _, err := ParseTurnEnd(te); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+		Examples: []string{
+			"session mode aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa background --deadline 1h",
+			"session mode aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa foreground",
+		},
+	},
+	{
 		// CLI only. It renders a session's screen to STDOUT for something that
 		// reads text -- an agent driving a loop, a script. The TUI has its own
 		// session viewer and the WebUI a live preview panel, so neither has a

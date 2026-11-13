@@ -3,6 +3,9 @@ package verb
 import (
 	"flag"
 	"fmt"
+	"time"
+
+	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 // The spawn family -- submit, session new -- shares almost all of its grammar,
@@ -106,8 +109,28 @@ func spawnFlags(k spawnKind) []Flag {
 			Help: "start the session and exit immediately (don't attach the terminal)"},
 		Flag{Name: "stream", Type: FlagBool, Default: false, Field: "Stream",
 			Help: "open an event-stream session (structured events, no PTY)"},
-		Flag{Name: "rows", Type: FlagUint, Default: uint(0), Field: "Rows", Help: "initial PTY rows (0 = unset; needs --cols too)"},
-		Flag{Name: "cols", Type: FlagUint, Default: uint(0), Field: "Cols", Help: "initial PTY columns (0 = unset; needs --rows too)"},
+		// 40x120 by default (pillar A spec A-D7): a detached session nobody
+		// attaches to is otherwise 0x0 for life, where some agents draw
+		// nothing. 0 with --cols 0 still sends no size, for experiments.
+		Flag{Name: "rows", Type: FlagUint, Default: uint(40), Field: "Rows", Help: "initial PTY rows of a detached/background open; --rows 0 --cols 0 sends no size (PTY 0x0)"},
+		Flag{Name: "cols", Type: FlagUint, Default: uint(120), Field: "Cols", Help: "initial PTY columns of a detached/background open; --rows 0 --cols 0 sends no size (PTY 0x0)"},
+		// Run mode (pillar A spec A-D1, A-D7, A-D15).
+		Flag{Name: "background", Type: FlagBool, Default: false, Field: "Background",
+			Help: "run unattended: queued until a runner is free, ended by its conditions (implies --detach; needs --prompt and --deadline, and --agent when new)"},
+		Flag{Name: "foreground", Type: FlagBool, Default: false, Field: "Foreground",
+			Help: "with --resume: resume a background task in foreground (without either, a resume keeps the task's run mode)"},
+		Flag{Name: "prompt", Type: FlagString, Default: "", Field: "Prompt",
+			Help: "the agent's first turn, in either run mode (at most 16384 bytes)"},
+		Flag{Name: "deadline", Type: FlagDuration, Default: time.Duration(0), Field: "Deadline",
+			Help: "background: the run is cancelled this long after it starts (required; no default)"},
+		Flag{Name: "turn-end", Type: FlagString, Default: "", Field: "TurnEnd",
+			Help: "background: which signal ends the run at a turn's end: off|quiet|lifecycle|program|any (default any; a stream session: lifecycle)"},
+		Flag{Name: "quiet", Type: FlagDuration, Default: time.Duration(0), Field: "QuietFor",
+			Help: "background: output silence that counts as a finished turn (default 5m)"},
+		Flag{Name: "blocked", Type: FlagDuration, Default: time.Duration(0), Field: "BlockedFor",
+			Help: "background: how long the agent may wait on a human before the run ends (default 5m)"},
+		Flag{Name: "queue-timeout", Type: FlagDuration, Default: time.Duration(0), Field: "QueueTimeout",
+			Help: "background: cancel the task if it is still queued this long after it was queued (default none)"},
 	)
 }
 
@@ -139,11 +162,14 @@ func spawnRules(k spawnKind) ([]Rule, []Requirement) {
 			Reason: "a detached session has no client to host the X tunnel"},
 		Rule{Flags: []string{"stream", "x11"},
 			Reason: "X11 is a terminal-session concept; the server refuses the pair too"},
+		Rule{Flags: []string{"background", "foreground"},
+			Reason: "they name the two run modes"},
+		Rule{Flags: []string{"background", "x11"},
+			Reason: "a background session has no client to host the X tunnel"},
 	)
-	return excl, []Requirement{exactNeeds, {
-		Flags: []string{"stream"}, Needs: "detach",
-		Reason: "an event-stream session has no terminal to attach; follow it with `session stream attach`",
-	}}
+	// A stream session needs --detach or --background (which implies it):
+	// checked in spawnValidate, since a Requirement names one flag.
+	return excl, []Requirement{exactNeeds}
 }
 
 func spawnExclusive(k spawnKind) []Rule { r, _ := spawnRules(k); return r }
@@ -156,7 +182,34 @@ func spawnValidate(b Bound) error {
 	if b.Bool("x11") && uintOf(b.Flags["x11-display"]) > 99 {
 		return fmt.Errorf("--x11-display must be 0..99")
 	}
+	if b.Bool("stream") && !b.Bool("detach") && !b.Bool("background") {
+		return fmt.Errorf("--stream needs --detach (or --background): an event-stream session has no terminal to attach; follow it with `session stream attach`")
+	}
+	if te := b.Str("turn-end"); te != "" {
+		if _, err := ParseTurnEnd(te); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// ParseTurnEnd reads --turn-end. "" is the server's default.
+func ParseTurnEnd(s string) (protocol.TurnEndSignal, error) {
+	switch s {
+	case "":
+		return protocol.TurnEndSignal_Unset, nil
+	case "off":
+		return protocol.TurnEndSignal_Off, nil
+	case "quiet":
+		return protocol.TurnEndSignal_Quiet, nil
+	case "lifecycle":
+		return protocol.TurnEndSignal_Lifecycle, nil
+	case "program":
+		return protocol.TurnEndSignal_Program, nil
+	case "any":
+		return protocol.TurnEndSignal_Any, nil
+	}
+	return 0, fmt.Errorf("--turn-end %q: want off|quiet|lifecycle|program|any", s)
 }
 
 // argListValue backs --agent-arg.
@@ -181,4 +234,15 @@ var scopeForValue = &CustomValue{
 		}
 		return []string(nil)
 	},
+}
+
+// ParseRunModeWord reads `session mode`'s mode positional: true = background.
+func ParseRunModeWord(s string) (bool, error) {
+	switch s {
+	case "background":
+		return true, nil
+	case "foreground":
+		return false, nil
+	}
+	return false, fmt.Errorf("session mode: want foreground or background, got %q", s)
 }

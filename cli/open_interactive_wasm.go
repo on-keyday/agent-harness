@@ -135,7 +135,6 @@ func (c *Client) Interactive(ctx context.Context, repo string, opts SessionOpts)
 	if opts.EventStream {
 		opts.Detached = true
 	}
-	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_OpenInteractive}}
 	oi := buildOpenInteractiveRequest(repo, opts)
 	resumeTaskID := opts.ResumeTaskID
 	if resumeTaskID != "" {
@@ -145,9 +144,7 @@ func (c *Client) Interactive(ctx context.Context, repo string, opts SessionOpts)
 		}
 		oi.ResumeTaskId = tid
 	}
-	req.SetOpenInteractive(oi)
-
-	resp, err := c.RoundTripTaskControl(ctx, req)
+	resp, err := c.roundTripOpenRequest(ctx, oi, opts.Prompt)
 	if err != nil {
 		return "", fmt.Errorf("OpenInteractive RPC: %w", err)
 	}
@@ -161,6 +158,9 @@ func (c *Client) Interactive(ctx context.Context, repo string, opts SessionOpts)
 	// The server's own reason, when it gives one, as the native client does.
 	if len(oiResp.ErrorMsg) != 0 && oiResp.Status != protocol.OpenInteractiveStatus_Ok {
 		return "", fmt.Errorf("%s: %s", oiResp.Status, oiResp.ErrorMsg)
+	}
+	if err := runModeStatusError(oiResp.Status); err != nil {
+		return "", err
 	}
 	switch oiResp.Status {
 	case protocol.OpenInteractiveStatus_Ok:

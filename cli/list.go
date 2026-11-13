@@ -266,6 +266,9 @@ func taskLine(t protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo) st
 	if ti := TitleStr(&t); ti != "" {
 		act += "  " + ti
 	}
+	if r := RunStr(&t); r != "" {
+		act += "  " + r
+	}
 	// Observers on the live session, split by what they can do. Printed
 	// whenever the task HAS a session, zeros included — never elided on the
 	// value. A row that omits the pair when it happens to be 0 makes "nobody is
@@ -552,6 +555,17 @@ type taskJSON struct {
 	AuthorityActorHidden bool   `json:"authority_actor_hidden"`
 	AuthorityAt          uint64 `json:"authority_at"`
 	AuthorityAgeMs       uint64 `json:"authority_age_ms"`
+	// Run mode (pillar A, A-D11, A-D14), wire words, all present at zero:
+	// end_reason "none" on a live task, deadline 0 when there is none,
+	// wait_reason "none" unless a queued background task waits.
+	RunMode             string `json:"run_mode"`
+	EndReason           string `json:"end_reason"`
+	CancelledBy         string `json:"cancelled_by"`
+	CancelledByHidden   bool   `json:"cancelled_by_hidden"`
+	DeadlineNs          uint64 `json:"deadline_ns"`
+	DeadlineRemainingMs uint64 `json:"deadline_remaining_ms"`
+	QueueDeadlineNs     uint64 `json:"queue_deadline_ns"`
+	WaitReason          string `json:"wait_reason"`
 }
 
 // listJSON is the top-level `ls --json` document.
@@ -675,6 +689,15 @@ func newTaskJSON(t *protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo
 		AuthorityActorHidden: t.AuthorityActorHidden(),
 		AuthorityAt:          t.AuthorityAt,
 		AuthorityAgeMs:       t.AuthorityAgeMs,
+
+		RunMode:             EnumWireName(t.RunMode.String()),
+		EndReason:           EnumWireName(t.EndReason.String()),
+		CancelledBy:         taskIDHexOrEmpty(t.CancelledBy.Id[:]),
+		CancelledByHidden:   t.CancelledByHidden(),
+		DeadlineNs:          t.DeadlineNs,
+		DeadlineRemainingMs: t.DeadlineRemainingMs,
+		QueueDeadlineNs:     t.QueueDeadlineNs,
+		WaitReason:          EnumWireName(t.WaitReason.String()),
 	}
 }
 

@@ -1204,6 +1204,19 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.cmdresult.Append(OKStyle.Render("cancelled ") + short)
 		return a, nil
 
+	case SessionModeResultMsg:
+		short := shortTaskID(msg.TaskID)
+		if msg.Err != nil {
+			a.cmdresult.Append(ErrorStyle.Render("session mode " + short + ": " + msg.Err.Error()))
+			return a, nil
+		}
+		mode := "foreground"
+		if msg.Background {
+			mode = "background"
+		}
+		a.cmdresult.Append(OKStyle.Render("session "+short+" is now ") + mode)
+		return a, nil
+
 	case AwaitIdleResultMsg:
 		short := shortTaskID(msg.TaskID)
 		if msg.Err != nil {
@@ -2504,8 +2517,8 @@ func (a *App) runSpawnAction(v verb.SpawnAction) (tea.Model, tea.Cmd) {
 	if v.X11 {
 		return a, DoOpenX11Session(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, int(v.X11Display), a.program, auth, capsOverride, v.ResumeConversation, v.Exact, v.Agent)
 	}
-	if v.Detach {
-		return a, DoStartDetachedSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Exact, v.Agent, TermSize{Rows: uint16(a.height), Cols: uint16(a.width)}, v.Stream)
+	if v.Detach || v.Background {
+		return a, DoStartDetachedSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Exact, v.Agent, TermSize{Rows: uint16(a.height), Cols: uint16(a.width)}, v.Stream, spawnRunMode(v))
 	}
 	// Stream without Detach cannot reach here: the declaration refuses it.
 	return a, DoOpenDetachableSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Exact, v.Agent)

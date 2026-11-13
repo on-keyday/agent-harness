@@ -381,7 +381,17 @@ func runSessionNewWith(cid objproto.ConnectionID, a verb.SpawnAction) error {
 	sopts := spawnOpts(a)
 	sopts.EventStream = a.Stream
 	sopts.InitialRows, sopts.InitialCols = uint16(a.Rows), uint16(a.Cols)
-	detach, x11, x11Display := a.Detach, a.X11, int(a.X11Display)
+	turnEnd, err := verb.ParseTurnEnd(a.TurnEnd)
+	if err != nil {
+		return err
+	}
+	cli.RunModeFlags{
+		Background: a.Background, Foreground: a.Foreground, Prompt: a.Prompt,
+		Deadline: a.Deadline, Quiet: a.QuietFor, Blocked: a.BlockedFor, QueueTimeout: a.QueueTimeout,
+		TurnEnd: turnEnd,
+	}.Apply(&sopts)
+	// --background implies --detach (and so does a resume carrying conditions).
+	detach, x11, x11Display := a.Detach || sopts.Detached, a.X11, int(a.X11Display)
 
 	ctx := context.Background()
 	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)
@@ -767,5 +777,33 @@ func runSessionResizeWith(cid objproto.ConnectionID, a verb.SessionAction) error
 	if !*quiet {
 		fmt.Fprintf(os.Stderr, "session resize: %s now %dx%d (rows x cols)\n", taskIDHex, rows, cols)
 	}
+	return nil
+}
+
+// runSessionModeWith switches a running session between foreground and
+// background (pillar A spec, A-D19).
+func runSessionModeWith(cid objproto.ConnectionID, a verb.SessionAction) error {
+	background, err := verb.ParseRunModeWord(a.Mode)
+	if err != nil {
+		return err
+	}
+	var cond *protocol.BackgroundConditions
+	if background {
+		turnEnd, err := verb.ParseTurnEnd(a.TurnEnd)
+		if err != nil {
+			return err
+		}
+		cond = cli.RunModeFlags{Deadline: a.Deadline, Quiet: a.QuietFor, Blocked: a.BlockedFor, TurnEnd: turnEnd}.Conditions()
+	}
+	ctx := context.Background()
+	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	if err := c.SessionMode(ctx, a.TaskID, background, cond); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "session %s is now %s\n", a.TaskID, a.Mode)
 	return nil
 }
