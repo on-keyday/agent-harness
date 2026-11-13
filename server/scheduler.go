@@ -120,7 +120,11 @@ func (s *Scheduler) Tick() {
 				// Assign first, as handleOpenInteractive does: the session
 				// starts on a Running task. A failed start has already failed
 				// the task (finishWithError told the runner and the board).
-				s.store.Assign(task.ID, c.Identity, "", c.SkillsInjected)
+				if !s.store.AssignIfQueued(task.ID, c.Identity, c.SkillsInjected) {
+					// Cancelled since the re-read above.
+					s.reg.UnbindTask(c.ID, task.ID)
+					break
+				}
 				if err := s.start(c.ID, task.ID); err != nil {
 					slog.Error("background start failed", "runner", c.ID, "task", task.ID, "error", err)
 				}

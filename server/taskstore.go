@@ -818,12 +818,24 @@ func (s *TaskStore) Get(id string) (TaskEntry, bool) {
 // names every dispatch site when the value's meaning changes; both
 // (scheduler, handleOpenInteractive) already hold the RunnerEntry.
 func (s *TaskStore) Assign(id string, runner protocol.RunnerID, worktreeDir string, skillsInjected bool) {
+	s.assign(id, runner, worktreeDir, skillsInjected, false)
+}
+
+// AssignIfQueued is Assign for a task that must still be Queued, checked and
+// moved under one hold of the lock: Tick's placement of a background task
+// uses it so a cancel (a human's, or a queue timeout's) landing after Tick's
+// queue snapshot is not turned back into Running. Reports whether it assigned.
+func (s *TaskStore) AssignIfQueued(id string, runner protocol.RunnerID, skillsInjected bool) bool {
+	return s.assign(id, runner, "", skillsInjected, true)
+}
+
+func (s *TaskStore) assign(id string, runner protocol.RunnerID, worktreeDir string, skillsInjected bool, requireQueued bool) bool {
 	now := time.Now()
 	s.mu.Lock()
 	e, ok := s.tasks[id]
-	if !ok {
+	if !ok || (requireQueued && e.Status != protocol.TaskStatus_Queued) {
 		s.mu.Unlock()
-		return
+		return false
 	}
 	wasDetached := e.Status == protocol.TaskStatus_Detached
 	e.Status = protocol.TaskStatus_Running
@@ -865,6 +877,7 @@ func (s *TaskStore) Assign(id string, runner protocol.RunnerID, worktreeDir stri
 		onAssign(id, runner.Hex(), worktreeDir)
 	}
 	s.deadlineSet(deadline)
+	return true
 }
 
 // Finish marks the task terminal. exit==0 → Succeeded; non-zero → Failed.
@@ -1530,6 +1543,13 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 	// never by being swept here, or the whole hold would be undone by the
 	// replay that was supposed to restore it.
 	for _, t := range s.tasks {
+		// A foreground session left Queued (a crash between its create or
+		// resume and its Assign) has nothing to place it: Tick places only
+		// oneshot and background work. Failed like a Running survivor.
+		if t.Status == protocol.TaskStatus_Queued && t.RunMode == protocol.RunMode_Foreground &&
+			(t.Kind == protocol.TaskKind_Interactive || t.Kind == protocol.TaskKind_Stream) {
+			t.Status = protocol.TaskStatus_Running
+		}
 		if t.Status == protocol.TaskStatus_Running {
 			t.Status = protocol.TaskStatus_Failed
 			now := time.Now()

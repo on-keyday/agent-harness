@@ -54,10 +54,25 @@ func (h *TaskHandler) openBackground(b backgroundOpen) protocol.OpenInteractiveR
 		}
 		return r
 	}
+	// A resume of a task still running answers that first, before anything
+	// about the request's own fields.
+	if b.resumeHex != "" {
+		if t, ok := h.Tasks.Get(b.resumeHex); ok {
+			switch t.Status {
+			case protocol.TaskStatus_Succeeded, protocol.TaskStatus_Failed, protocol.TaskStatus_Cancelled:
+			default:
+				return refuse(protocol.OpenInteractiveStatus_ResumeNotTerminal, "")
+			}
+		}
+	}
 	// A background run takes no seat; its size travels only on a detached
 	// open (OpenInteractiveRequest's detached block).
 	if !req.Detached() {
 		return refuse(protocol.OpenInteractiveStatus_DetachRequired, "a background session opens detached")
+	}
+	if req.X11Enabled() {
+		return refuse(protocol.OpenInteractiveStatus_InternalError,
+			"x11 forwarding needs a live client to host the tunnel, and a background session has none")
 	}
 	kind := interactiveKind(req)
 	profile := string(req.AgentProfile)
@@ -79,9 +94,11 @@ func (h *TaskHandler) openBackground(b backgroundOpen) protocol.OpenInteractiveR
 	if b.prompt == "" {
 		return refuse(protocol.OpenInteractiveStatus_PromptRequired, "a background open must carry a prompt")
 	}
-	if kind == protocol.TaskKind_Stream && (wc.TurnEnd == protocol.TurnEndSignal_Quiet || wc.TurnEnd == protocol.TurnEndSignal_Program) {
-		return refuse(protocol.OpenInteractiveStatus_TurnEndUnsupported,
-			fmt.Sprintf("turn end %v is not available on a stream session: it reports lifecycle only", wc.TurnEnd))
+	switch p, msg := checkConditions(wc, kind); p {
+	case condBadDuration:
+		return refuse(protocol.OpenInteractiveStatus_DeadlineRequired, msg)
+	case condBadTurnEnd:
+		return refuse(protocol.OpenInteractiveStatus_TurnEndUnsupported, msg)
 	}
 	if cands := h.Registry.Candidates(b.repo, req.Selector); len(cands) > 0 {
 		offered := false
@@ -126,7 +143,9 @@ func (h *TaskHandler) openBackground(b backgroundOpen) protocol.OpenInteractiveR
 		h.Tasks.SetResumeConversation(taskIDHex, req.ResumeConversation())
 	}
 	if h.OnChange != nil {
-		h.OnChange() // Tick: place it now if a runner can take it
+		// Tick places it now if a runner can take it — after the answer, not
+		// before it (the opener is told queued, which it was).
+		go h.OnChange()
 	}
 	resp := protocol.OpenInteractiveResponse{Status: protocol.OpenInteractiveStatus_Ok}
 	raw, _ := hex.DecodeString(taskIDHex)
@@ -179,4 +198,35 @@ func (h *TaskHandler) waitReasonFor(t TaskEntry) protocol.WaitReason {
 		return protocol.WaitReason_NoCandidate
 	}
 	return protocol.WaitReason_AllBusy
+}
+
+type condProblem int
+
+const (
+	condOK condProblem = iota
+	condBadDuration
+	condBadTurnEnd
+)
+
+// maxConditionMs bounds every *_ms condition: 100 years, far above any real
+// run and far below where milliseconds overflow time.Duration (~292 years) —
+// past it a deadline wraps to zero (no deadline at all) or to microseconds.
+const maxConditionMs = 100 * 365 * 24 * 3600 * 1000
+
+// checkConditions refuses a conditions block the server cannot honour: a
+// duration out of range, a turn-end value the schema does not define, or a
+// leg the kind cannot report (F19).
+func checkConditions(wc *protocol.BackgroundConditions, kind protocol.TaskKind) (condProblem, string) {
+	for name, v := range map[string]uint64{"deadline_ms": wc.DeadlineMs, "quiet_ms": wc.QuietMs, "blocked_ms": wc.BlockedMs, "queue_timeout_ms": wc.QueueTimeoutMs} {
+		if v > maxConditionMs {
+			return condBadDuration, fmt.Sprintf("%s %d is out of range (at most %d)", name, v, uint64(maxConditionMs))
+		}
+	}
+	if wc.TurnEnd > protocol.TurnEndSignal_Any {
+		return condBadTurnEnd, fmt.Sprintf("turn end %d is not defined", wc.TurnEnd)
+	}
+	if kind == protocol.TaskKind_Stream && (wc.TurnEnd == protocol.TurnEndSignal_Quiet || wc.TurnEnd == protocol.TurnEndSignal_Program) {
+		return condBadTurnEnd, fmt.Sprintf("turn end %v is not available on a stream session: it reports lifecycle only", wc.TurnEnd)
+	}
+	return condOK, ""
 }

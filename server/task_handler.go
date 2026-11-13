@@ -505,8 +505,10 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		// A refused open's prompt body is cancelled, not left buffered until
 		// the connection ends (the central gate does the same, payloadStreamOf).
 		deny := func(want protocol.Capability) {
+			// Off the receive loop: the stream's frames arrive on the loop
+			// this runs on, as the central gate's discard knows.
 			if id := payloadStreamOf(&req); id != 0 {
-				discardPayloadStream(conn, id)
+				go discardPayloadStream(conn, id)
 			}
 			h.denyTaskControl(conn, req.Header.Kind, req.Header.RequestId, want)
 		}
@@ -1870,6 +1872,13 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 			resumeHex: existingTaskIDHex, exactRec: exactRec, repo: repo, args: args, prompt: prompt,
 		}), nil
 	}
+	// Background conditions on an open that resolved to foreground would
+	// start an unattended session with no deadline: refused, not dropped.
+	if req.ConditionsPresent() || (!req.RunModeSet() && req.Background()) {
+		resp, body := errResp(protocol.OpenInteractiveStatus_ConditionsWithoutBackground)
+		resp.SetErrorMsg([]byte("background conditions on a foreground open: pass --background"))
+		return resp, body
+	}
 
 	// The scope half of the seat (the bit half is in the dispatch case): the
 	// task must be inside the opener's exec_control scope. Decided before
@@ -2009,8 +2018,14 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 	// Mark the task Running and bound to this runner immediately so the
 	// scheduler doesn't try to AssignTask it. The runner will fill in the
 	// real worktree dir via TaskStarted shortly after open_exec arrives.
+	// Reserve the slot under the registry lock: the capacity check above read
+	// a snapshot, and Tick may have taken the last slot since. On a refusal
+	// the just-created or resumed task is failed (still resumable).
+	if !h.Registry.BindTask(runner.ID, taskIDHex) {
+		h.Tasks.MarkFailed(taskIDHex, "runner_busy")
+		return errResp(protocol.OpenInteractiveStatus_RunnerBusy)
+	}
 	h.Tasks.Assign(taskIDHex, runner.Identity, "", runner.SkillsInjected)
-	h.Registry.BindTask(runner.ID, taskIDHex)
 
 	// From here the session start is shared with Tick's placement of a
 	// queued background task (A-D12): startSession.

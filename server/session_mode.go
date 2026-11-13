@@ -3,7 +3,6 @@ package server
 import (
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/on-keyday/agent-harness/appwire"
@@ -50,9 +49,12 @@ func (h *TaskHandler) handleSessionMode(cid string, conn ConnHandle, req *protoc
 			respond(protocol.SessionModeStatus_DeadlineRequired, "a switch to background must state its deadline")
 			return
 		}
-		if t.Kind == protocol.TaskKind_Stream && (wc.TurnEnd == protocol.TurnEndSignal_Quiet || wc.TurnEnd == protocol.TurnEndSignal_Program) {
-			respond(protocol.SessionModeStatus_TurnEndUnsupported,
-				fmt.Sprintf("turn end %v is not available on a stream session: it reports lifecycle only", wc.TurnEnd))
+		switch p, msg := checkConditions(wc, t.Kind); p {
+		case condBadDuration:
+			respond(protocol.SessionModeStatus_DeadlineRequired, msg)
+			return
+		case condBadTurnEnd:
+			respond(protocol.SessionModeStatus_TurnEndUnsupported, msg)
 			return
 		}
 		cond = ConditionsFromWire(wc).WithDefaults(t.Kind)
