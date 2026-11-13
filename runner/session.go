@@ -1241,38 +1241,17 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 		log.Error("ExecuteCommand error", "task_id", taskIDHex, "error", runErr)
 	}
 
-	// Step 5: TaskFinished.
-	//
-	// This branch used to be unreachable for an agent that actually ran:
-	// ExecuteCommandWithOption returned nil unconditionally, so every
-	// interactive task reported exit 0 and TaskStore mapped that to
-	// Succeeded whatever the agent did (measured: a shell driven to `exit 3`
-	// came back status=succeeded exit_code=0). objtrsf now returns the child's
-	// outcome, which splits three cases that used to be one.
+	// Step 5: TaskFinished (interactiveFinished says how it is classified).
 	{
 		m := &protocol.RunnerMessage{Kind: protocol.RunnerMessageType_TaskFinished}
-		tf := protocol.TaskFinished{TaskId: oer.TaskId}
-		code := exitCode.Load()
-		switch {
-		case runErr == nil && code == 0:
-			// Clean exit.
-		case taskCtx.Err() != nil:
-			// WE killed it — a cancel, or the runner shutting down. The child
-			// dies as "signal: killed", which is the ordinary end of these
-			// sessions rather than a crash. Reporting it as one would relabel
-			// every cancelled task Failed, because TaskStore.Finish
-			// deliberately overwrites Cancelled with what the agent did.
+		// The runner ended it if the context was cancelled (the cancel's
+		// backstop, a shutdown) or a cancel ended the relay's input and the
+		// child answered the hangup (relay.endInput).
+		ended := taskCtx.Err() != nil || relay.wasInputEnded()
+		if ended {
 			log.Info("interactive task ended by cancellation", "task_id", taskIDHex)
-		case code != 0:
-			// The agent exited on its own, non-zero. Report the REAL code
-			// rather than a flat -1.
-			tf.ExitCode = code
-			tf.ErrorMessage = []byte("agent exited " + strconv.Itoa(int(code)))
-		default:
-			// A stream or setup failure, not the agent's own exit.
-			tf.ExitCode = -1
-			tf.ErrorMessage = []byte("interactive_error: " + runErr.Error())
 		}
+		tf := interactiveFinished(oer.TaskId, runErr, exitCode.Load(), ended)
 		m.SetTaskFinished(tf)
 		_ = s.sendTaskMsg(taskIDHex, m.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)}))
 	}
@@ -1426,3 +1405,30 @@ func streamWake(write func([]byte) (int, error)) func() (wakeForm, error) {
 type writeFunc func([]byte) (int, error)
 
 func (f writeFunc) Write(p []byte) (int, error) { return f(p) }
+
+// interactiveFinished is the TaskFinished an interactive session reports.
+// objtrsf returns the child's outcome, which splits three cases that used to be
+// one (until then every interactive task reported exit 0 and read Succeeded
+// whatever the agent did). ended says the runner itself ended the session — a
+// cancel, or its own shutdown: the child's death is then the ordinary end of
+// these sessions rather than a crash, whatever code it died with, because
+// TaskStore.Finish deliberately overwrites Cancelled with what is reported here
+// and anything else would relabel every cancelled task Failed.
+func interactiveFinished(id protocol.TaskID, runErr error, code int32, ended bool) protocol.TaskFinished {
+	tf := protocol.TaskFinished{TaskId: id}
+	switch {
+	case runErr == nil && code == 0:
+		// Clean exit.
+	case ended:
+	case code != 0:
+		// The agent exited on its own, non-zero. Report the REAL code
+		// rather than a flat -1.
+		tf.ExitCode = code
+		tf.ErrorMessage = []byte("agent exited " + strconv.Itoa(int(code)))
+	default:
+		// A stream or setup failure, not the agent's own exit.
+		tf.ExitCode = -1
+		tf.ErrorMessage = []byte("interactive_error: " + runErr.Error())
+	}
+	return tf
+}

@@ -4,6 +4,7 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/on-keyday/agent-harness/runner/protocol"
 	agentexec "github.com/on-keyday/objtrsf/exec"
 )
 
@@ -224,5 +226,28 @@ func TestStreamTaskCancelStopsTheAgentGroupButNotWhatItDetached(t *testing.T) {
 	}
 	if !pidAlive(keep) {
 		t.Fatal("a process the agent detached into its own session was killed")
+	}
+}
+
+// A session the runner ended — a cancel through the relay's input, or the
+// context backstop — reports a clean finish whatever code the hung-up child
+// exited with, as a context-cancelled one always did: TaskStore.Finish
+// overwrites Cancelled with what the runner reports, so anything else would
+// relabel every cancelled task Failed. An agent's own non-zero exit is still
+// reported.
+func TestInteractiveFinishedTreatsARunnerEndAsClean(t *testing.T) {
+	var id protocol.TaskID
+	hup := errors.New("exit status 129")
+	if tf := interactiveFinished(id, hup, 129, true); tf.ExitCode != 0 || len(tf.ErrorMessage) != 0 {
+		t.Fatalf("runner-ended session: exit %d %q, want a clean finish", tf.ExitCode, tf.ErrorMessage)
+	}
+	if tf := interactiveFinished(id, hup, 3, false); tf.ExitCode != 3 {
+		t.Fatalf("agent's own exit: %d, want 3", tf.ExitCode)
+	}
+	if tf := interactiveFinished(id, errors.New("stream broke"), 0, false); tf.ExitCode != -1 {
+		t.Fatalf("setup failure: %d, want -1", tf.ExitCode)
+	}
+	if tf := interactiveFinished(id, nil, 0, false); tf.ExitCode != 0 || len(tf.ErrorMessage) != 0 {
+		t.Fatalf("clean exit: %d %q", tf.ExitCode, tf.ErrorMessage)
 	}
 }

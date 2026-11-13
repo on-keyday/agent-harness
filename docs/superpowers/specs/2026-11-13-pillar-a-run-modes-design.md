@@ -85,6 +85,25 @@ Read on `b3959555`; each was traced to the handler, not inferred.
     `kill -TERM <claude pid>` (and, separately, `kill -HUP`) during the
     tool call: 6 s later claude had exited and the tool process was gone,
     for both signals. Only claude was measured; Esc was not.
+  - **After A-D16's change, PTY kind** (same setup, claude 2.1.323): one
+    prompt had claude run, as three Bash calls, `setsid python3 -c 'import
+    time; time.sleep(301)' >/dev/null 2>&1 </dev/null &`, the same with
+    `nohup … sleep(302) … &`, then `python3 -c 'import time;
+    time.sleep(300)'` in the foreground; `cancel <id>` while the last ran.
+    6 s later (`pgrep -a -x python3`): sleep(300) gone, sleep(301) and
+    sleep(302) still running — the hung-up claude ends its foreground tool,
+    and what it started with a trailing `&` it leaves, `nohup` or not. The
+    task read `Succeeded end=cancelled`, and `session new -d --resume <id>
+    --resume-conversation --foreground` listed all three commands back.
+  - **Stream kind**, the same prompt with `--stream` (approvals answered with
+    `session stream approve … --allow`): the same three outcomes, and the
+    resumed conversation listed the commands back. One of four stream
+    cancels on that instance stayed `Cancelled` rather than `Succeeded`:
+    `afterMuxStopped` (`server/task_handler.go`, since July) unbinds a
+    terminal task when its stream ends, the runner closes the stream before
+    it sends `TaskFinished`, and when the unbind wins the report is refused
+    as from a non-owner and the dispatcher re-sends the cancel for about
+    2.5 minutes. Older than this change; the end reason is right either way.
 - **F6 — the idle evaluator.** `evaluateIdle` (`server/idle_signal.go:100-121`)
   checks program → lifecycle → quiet; `legSatisfied` (`:58-68`) implements
   await-idle D6/D18 with `muxStart` as the floor. It treats lifecycle

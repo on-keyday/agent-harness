@@ -118,6 +118,14 @@ func (r *sessionRelay) current() (trsf.BidirectionalStream, chan struct{}, bool)
 	return r.far, r.wake, r.closed
 }
 
+// wasInputEnded reports whether endInput ran: a cancel, not the far side, ended
+// this session's input.
+func (r *sessionRelay) wasInputEnded() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.inputEnded
+}
+
 func (r *sessionRelay) inputDone() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
