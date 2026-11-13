@@ -18,6 +18,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	agentexec "github.com/on-keyday/objtrsf/exec"
+	"golang.org/x/sys/unix"
 )
 
 // A cancel reaches a child the way every other end of a session does (pillar A
@@ -53,6 +54,25 @@ func readPID(t *testing.T, path string) int {
 	}
 	t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGKILL) })
 	return pid
+}
+
+// readDetachedPID reads the pid of a `setsid … &` child and waits until it has
+// actually left the shell's session. The pid file is written right after the
+// fork, before setsid(2) runs, so a test that signals the group as soon as the
+// file appears can reach the child while it is still a member — and then
+// reports a detached process killed when it never got to detach.
+func readDetachedPID(t *testing.T, path string) int {
+	t.Helper()
+	pid := readPID(t, path)
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if sid, err := unix.Getsid(pid); err == nil && sid == pid {
+			return pid
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("pid %d never became a session leader", pid)
+	return 0
 }
 
 func needSetsid(t *testing.T) {
@@ -110,7 +130,7 @@ func TestEndingTheRelayInputHangsUpThePTYChild(t *testing.T) {
 			"/bin/sh", []string{script}, dir, true, nil, agentexec.ExecuteOption{})
 	}()
 	waitFile(t, ready, 10*time.Second)
-	keep := readPID(t, detached)
+	keep := readDetachedPID(t, detached)
 
 	relay.endInput()
 
@@ -210,7 +230,7 @@ func TestStreamTaskCancelStopsTheAgentGroupButNotWhatItDetached(t *testing.T) {
 	go func() { done <- task.Run(ctx, stream) }()
 
 	inGroup := readPID(t, grouped)
-	keep := readPID(t, detached)
+	keep := readDetachedPID(t, detached)
 	cancel()
 
 	select {
