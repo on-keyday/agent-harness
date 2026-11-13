@@ -54,14 +54,18 @@ type RecordConfig struct {
 const recordFormat = 1
 
 type recordMeta struct {
-	Format          int    `json:"format"`
-	Run             uint32 `json:"run"`
-	StartedNs       int64  `json:"started_ns"`
-	EndedNs         int64  `json:"ended_ns,omitempty"`
-	EndReason       uint8  `json:"end_reason,omitempty"`
-	TruncatedFromNs int64  `json:"truncated_from_ns,omitempty"`
-	Forever         bool   `json:"forever,omitempty"`
-	TTLMs           int64  `json:"ttl_ms,omitempty"`
+	Format    int    `json:"format"`
+	Run       uint32 `json:"run"`
+	StartedNs int64  `json:"started_ns"`
+	// EndedNs is when recording ended (a switch-off, or the run's end);
+	// RunEndedNs when the run itself ended, which retention counts from
+	// (A-D26) — a switched-off record of a run still going never expires.
+	EndedNs         int64 `json:"ended_ns,omitempty"`
+	RunEndedNs      int64 `json:"run_ended_ns,omitempty"`
+	EndReason       uint8 `json:"end_reason,omitempty"`
+	TruncatedFromNs int64 `json:"truncated_from_ns,omitempty"`
+	Forever         bool  `json:"forever,omitempty"`
+	TTLMs           int64 `json:"ttl_ms,omitempty"`
 	// Closed segments, so a restart need not decompress them to learn their
 	// sizes and first entry time.
 	Segments []segmentMeta `json:"segments,omitempty"`
@@ -165,9 +169,13 @@ func (s *RecordStore) loadRun(task string, run uint32) (*recordRun, error) {
 	dir := s.runDir(task, run)
 	rr := &recordRun{task: task, meta: recordMeta{Format: recordFormat, Run: run}}
 	if b, err := os.ReadFile(filepath.Join(dir, "meta.json")); err == nil {
+		// An unreadable meta costs what it held (times, retention), not the
+		// run: the segments are rebuilt from the files (review I5).
 		if err := json.Unmarshal(b, &rr.meta); err != nil {
-			return nil, err
+			slog.Warn("record: unreadable meta.json; rebuilding from the segments", "task", task, "run", run, "err", err)
+			rr.meta = recordMeta{Format: recordFormat, Run: run}
 		}
+		rr.meta.Run = run
 	}
 	known := map[int]segmentMeta{}
 	for _, sm := range rr.meta.Segments {
@@ -177,10 +185,25 @@ func (s *RecordStore) loadRun(task string, run uint32) (*recordRun, error) {
 	if err != nil {
 		return nil, err
 	}
+	// A crash between a segment's rename to .seg.gz and its .seg's removal
+	// leaves both. The .gz is complete — it gets its name only once fully
+	// written — so it wins and the .seg goes (review I3).
+	gz := map[string]bool{}
+	for _, e := range ents {
+		if strings.HasSuffix(e.Name(), ".seg.gz") {
+			gz[strings.TrimSuffix(e.Name(), ".gz")] = true
+		}
+	}
 	for _, e := range ents {
 		name := e.Name()
 		closed := strings.HasSuffix(name, ".seg.gz")
 		if !closed && !strings.HasSuffix(name, ".seg") {
+			continue
+		}
+		if !closed && gz[name] {
+			if err := os.Remove(filepath.Join(dir, name)); err != nil {
+				slog.Warn("record: cannot remove a segment's leftover .seg", "task", task, "run", run, "err", err)
+			}
 			continue
 		}
 		seq, err := strconv.Atoi(strings.TrimSuffix(strings.TrimSuffix(name, ".gz"), ".seg"))
@@ -193,7 +216,9 @@ func (s *RecordStore) loadRun(task string, run uint32) (*recordRun, error) {
 		} else {
 			sc, err := scanSegment(filepath.Join(dir, name), closed)
 			if err != nil {
-				return nil, err
+				// One unreadable segment costs itself, not the run (review I5).
+				slog.Warn("record: skipping an unreadable segment", "task", task, "run", run, "segment", name, "err", err)
+				continue
 			}
 			seg.entryBytes, seg.firstTs = sc.valid, sc.firstTs
 			seg.diskBytes = sc.valid
@@ -239,6 +264,9 @@ func readSegment(path string, closed bool, fn func(protocol.RecordEntry, int64) 
 	var r io.Reader = bufio.NewReader(f)
 	if closed {
 		zr, err := gzip.NewReader(r)
+		if errors.Is(err, io.EOF) {
+			return nil // an empty file: a .gz a power loss left unwritten
+		}
 		if err != nil {
 			return err
 		}
@@ -287,10 +315,28 @@ func (s *RecordStore) saveMetaLocked(rr *recordRun) error {
 	}
 	dir := s.runDir(rr.task, rr.meta.Run)
 	tmp := filepath.Join(dir, "meta.json.tmp")
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+	if err := writeFileSync(tmp, b); err != nil {
 		return err
 	}
 	return os.Rename(tmp, filepath.Join(dir, "meta.json"))
+}
+
+// writeFileSync writes and fsyncs a file before it is renamed into place, so a
+// power loss cannot leave the new name on an empty file (review I5).
+func writeFileSync(path string, b []byte) error {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(b); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 // RunWriter appends one run's entries. It is used by one goroutine at a time
@@ -514,7 +560,11 @@ func (s *RecordStore) closeSegmentFileLocked(rr *recordRun, seg *recordSegment) 
 		seg.closed = false
 		return err
 	}
-	fi, err := dst.Stat()
+	err = dst.Sync()
+	var fi os.FileInfo
+	if err == nil {
+		fi, err = dst.Stat()
+	}
 	if cerr := dst.Close(); err == nil {
 		err = cerr
 	}
@@ -698,7 +748,10 @@ func (s *RecordStore) FinishRun(task string, run uint32, ended time.Time, reason
 			}
 		}
 	}
-	rr.meta.EndedNs = ended.UnixNano()
+	if rr.meta.EndedNs == 0 {
+		rr.meta.EndedNs = ended.UnixNano()
+	}
+	rr.meta.RunEndedNs = ended.UnixNano()
 	rr.meta.EndReason = uint8(reason)
 	return s.saveMetaLocked(rr)
 }
@@ -714,26 +767,42 @@ func (s *RecordStore) CompressLeftovers(isHeld func(task string) bool) error {
 			continue
 		}
 		for _, rr := range runs {
-			n := len(rr.segs)
-			if rr.writer != nil || n == 0 || rr.segs[n-1].closed {
+			if rr.writer != nil {
 				continue
 			}
-			seg := rr.segs[n-1]
-			sc, err := scanSegment(s.segPath(task, rr.meta.Run, seg), false)
-			if err == nil {
-				err = s.closeSegmentFileLocked(rr, seg)
+			changed := false
+			if n := len(rr.segs); n > 0 && !rr.segs[n-1].closed {
+				seg := rr.segs[n-1]
+				sc, err := scanSegment(s.segPath(task, rr.meta.Run, seg), false)
+				if err == nil {
+					err = s.closeSegmentFileLocked(rr, seg)
+				}
+				if err != nil {
+					if firstErr == nil {
+						firstErr = err
+					}
+					continue
+				}
+				if rr.meta.EndedNs == 0 {
+					rr.meta.EndedNs = sc.lastTs
+				}
+				changed = true
 			}
-			if err != nil {
-				if firstErr == nil {
+			// A run not held across this restart cannot still be going (a
+			// crash fails it, an unheld stop kills it), so its record's run
+			// end is known now even if no FinishRun reached it; without one
+			// it would never expire (review I6).
+			if rr.meta.RunEndedNs == 0 {
+				rr.meta.RunEndedNs = rr.meta.EndedNs
+				if rr.meta.RunEndedNs == 0 {
+					rr.meta.RunEndedNs = time.Now().UnixNano()
+				}
+				changed = true
+			}
+			if changed {
+				if err := s.saveMetaLocked(rr); err != nil && firstErr == nil {
 					firstErr = err
 				}
-				continue
-			}
-			if rr.meta.EndedNs == 0 {
-				rr.meta.EndedNs = sc.lastTs
-			}
-			if err := s.saveMetaLocked(rr); err != nil && firstErr == nil {
-				firstErr = err
 			}
 		}
 	}
@@ -758,8 +827,18 @@ func (s *RecordStore) Read(task string, run uint32, fn func(protocol.RecordEntry
 		segs = append(segs, segRef{s.segPath(task, rr.meta.Run, seg), seg.closed})
 	}
 	s.mu.Unlock()
+	each := func(e protocol.RecordEntry, _ int64) error { return fn(e) }
 	for _, sg := range segs {
-		err := readSegment(sg.path, sg.closed, func(e protocol.RecordEntry, _ int64) error { return fn(e) })
+		err := readSegment(sg.path, sg.closed, each)
+		// The listing is a moment old: an open segment may have been closed
+		// (gzipped under a new name) since, and a closed one evicted. Neither
+		// fails a live read (review I1).
+		if errors.Is(err, os.ErrNotExist) && !sg.closed {
+			err = readSegment(sg.path+".gz", true, each)
+		}
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
 		if err != nil {
 			return err
 		}
@@ -820,8 +899,8 @@ func (s *RecordStore) infoLocked(rr *recordRun) protocol.RecordInfo {
 	}
 	info.SetForever(rr.meta.Forever)
 	info.SetRecording(rr.writer != nil)
-	if !rr.meta.Forever && rr.meta.EndedNs != 0 {
-		info.ExpiresNs = uint64(rr.meta.EndedNs + rr.meta.TTLMs*int64(time.Millisecond))
+	if !rr.meta.Forever && rr.meta.RunEndedNs != 0 {
+		info.ExpiresNs = uint64(rr.meta.RunEndedNs + rr.meta.TTLMs*int64(time.Millisecond))
 	}
 	return info
 }
@@ -908,10 +987,10 @@ func (s *RecordStore) sweepExpiredLocked(now time.Time) {
 	var expired []*recordRun
 	for _, runs := range s.runs {
 		for _, rr := range runs {
-			if rr.writer != nil || rr.meta.Forever || rr.meta.EndedNs == 0 {
+			if rr.writer != nil || rr.meta.Forever || rr.meta.RunEndedNs == 0 {
 				continue
 			}
-			if now.UnixNano() >= rr.meta.EndedNs+rr.meta.TTLMs*int64(time.Millisecond) {
+			if now.UnixNano() >= rr.meta.RunEndedNs+rr.meta.TTLMs*int64(time.Millisecond) {
 				expired = append(expired, rr)
 			}
 		}

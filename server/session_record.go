@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"sync"
 	"time"
 
@@ -135,13 +136,22 @@ func synthEntry(ts int64, payload []byte) protocol.RecordEntry {
 type recState struct {
 	recMu    sync.Mutex
 	recorder *sessionRecorder
+	// recStopped: the mux has stopped; a switch-on racing that must not start
+	// a recorder nothing would ever finish (review I2).
+	recStopped bool
 }
+
+// errMuxStopped answers a StartRecording on a mux that has stopped.
+var errMuxStopped = errors.New("session has ended")
 
 // StartRecording begins recording the session into sink. A second call while
 // recording is a no-op.
 func (m *SessionMux) StartRecording(sink ptyRecordSink, how recordStart) error {
 	m.recMu.Lock()
 	defer m.recMu.Unlock()
+	if m.recStopped {
+		return errMuxStopped
+	}
 	if m.recorder != nil {
 		return nil
 	}
@@ -149,6 +159,12 @@ func (m *SessionMux) StartRecording(sink ptyRecordSink, how recordStart) error {
 	now := time.Now().UnixNano()
 	switch how {
 	case recordFromRing:
+		// What an attach puts in front of the same frames: the size and the
+		// terminal modes, so the seed plays at the right geometry and on the
+		// right screen (review I4). Empty at a session's start.
+		for _, e := range m.sizeAndModes(now) {
+			r.add(e)
+		}
 		data := m.replaySnapshot()
 		for off := 0; off+frame.FrameHeaderSize <= len(data); {
 			end := off + frame.FrameHeaderSize + int(frameHeaderAt(data[off:]).Len)
@@ -179,6 +195,9 @@ func (m *SessionMux) endRecording(closeRecord bool) {
 	m.recMu.Lock()
 	r := m.recorder
 	m.recorder = nil
+	if !closeRecord {
+		m.recStopped = true // only the mux's Stop detaches
+	}
 	m.recMu.Unlock()
 	if r != nil {
 		r.finish(closeRecord)
@@ -202,21 +221,27 @@ func (m *SessionMux) Recording() bool {
 // the terminal modes and a repaint of the screen as it is now — what an attach
 // ends its replay with — so the segment plays alone (A-D23).
 func (m *SessionMux) segmentHead(ts int64) []protocol.RecordEntry {
-	var head []protocol.RecordEntry
+	head := m.sizeAndModes(ts)
+	if rp := m.screenRepaint(); len(rp) > 0 {
+		head = append(head, synthEntry(ts, rp))
+	}
+	return head
+}
+
+// sizeAndModes is the size frame (if any) and the mode preamble, as entries.
+func (m *SessionMux) sizeAndModes(ts int64) []protocol.RecordEntry {
+	var out []protocol.RecordEntry
 	m.mu.Lock()
 	size := append([]byte(nil), m.lastWinSize...)
 	pre := m.modes.Preamble()
 	m.mu.Unlock()
 	if e, ok := frameEntry(ts, size); ok {
-		head = append(head, e)
+		out = append(out, e)
 	}
 	if len(pre) > 0 {
-		head = append(head, synthEntry(ts, pre))
+		out = append(out, synthEntry(ts, pre))
 	}
-	if rp := m.screenRepaint(); len(rp) > 0 {
-		head = append(head, synthEntry(ts, rp))
-	}
-	return head
+	return out
 }
 
 // recordOutputLocked queues one frame the session showed, rotating when the

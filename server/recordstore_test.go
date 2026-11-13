@@ -260,10 +260,9 @@ func TestRetentionExpiresRecordNotRun(t *testing.T) {
 	} {
 		w, _ := s.OpenRun(recTask, run, now.Add(-time.Hour))
 		_ = w.Append(recEntry(1, "x"))
-		if keep.end.IsZero() {
-			_ = w.Detach()
-		} else {
-			_ = w.Close(keep.end)
+		_ = w.Detach()
+		if !keep.end.IsZero() {
+			_ = s.FinishRun(recTask, run, keep.end, protocol.EndReason_ProcessExit)
 		}
 		if err := s.SetRetention(recTask, run, keep.forever, keep.ttl, now); err != nil {
 			t.Fatal(err)
