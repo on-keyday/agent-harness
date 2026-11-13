@@ -118,6 +118,11 @@ func main() {
 		"prune":              js.FuncOf(harnessPrune),
 		"startInteractive":   js.FuncOf(harnessStartInteractive),
 		"sessionMode":        js.FuncOf(harnessSessionMode),
+		"recordList":         js.FuncOf(harnessRecordList),
+		"recordGet":          js.FuncOf(harnessRecordGet),
+		"recordDelete":       js.FuncOf(harnessRecordDelete),
+		"recordKeep":         js.FuncOf(harnessRecordKeep),
+		"recordSwitch":       js.FuncOf(harnessRecordSwitch),
 		"sendInteractive":    js.FuncOf(harnessSendInteractive),
 		"resizeInteractive":  js.FuncOf(harnessResizeInteractive),
 		"detachInteractive":  js.FuncOf(harnessDetachInteractive),
@@ -1927,6 +1932,10 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					// (A-D15) — durations in ms, turnEnd a wire word.
 					"runMode": cli.EnumWireName(t.RunMode.String()),
 					"runStr":  cli.RunStr(&t),
+					// The run number and whether the live session is being
+					// recorded (A-D20, A-D22).
+					"run":       float64(t.Run),
+					"recording": t.Recording(),
 					"conditions": map[string]any{
 						"deadlineMs":     float64(t.Conditions.DeadlineMs),
 						"turnEnd":        cli.EnumWireName(t.Conditions.TurnEnd.String()),
@@ -3632,7 +3641,7 @@ func runModeFromOpts(opts js.Value) (cli.RunModeFlags, error) {
 	if f.TurnEnd, err = verb.ParseTurnEnd(optString(opts, "turnEnd")); err != nil {
 		return f, err
 	}
-	return f, nil
+	return f, recordFromOpts(opts, &f)
 }
 
 // harnessSessionMode switches a running session between foreground and

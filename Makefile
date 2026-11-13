@@ -137,6 +137,7 @@ js-test: webui-build
 	              webui/static/board_send_test.mjs webui/static/board_retain_test.mjs webui/static/board_archive_test.mjs \
 	              webui/static/board_membership_test.mjs webui/static/board_older_test.mjs \
 	              webui/static/delegation_test.mjs webui/static/spawn_limit_test.mjs \
+	              webui/static/record_test.mjs \
 	              examples/memory-viewer/maplayout_test.mjs; \
 	else echo "js-test: no node on PATH, skipping"; fi
 

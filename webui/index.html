@@ -127,6 +127,13 @@
       <label for="compose-prompt">Prompt (最大 16384 バイト。background では必須):</label>
       <textarea id="compose-prompt" rows="3" placeholder="エージェントの最初のターン"></textarea>
       <label class="caps-on-resume-toggle" title="端末を開かずにキューへ入れ、runner が空いたら起動する。ターン終了・blocked・deadline のいずれかで終わる"><input type="checkbox" id="compose-background"> background で開く</label>
+      <label class="limit-field" title="この run の PTY 出力をサーバーに記録する (record get で読み出し)。on には record_persist が要る">PTY 記録
+        <select id="compose-record">
+          <option value="default">server 既定</option>
+          <option value="on">on</option>
+          <option value="off">off</option>
+        </select>
+      </label>
       <div id="compose-bg" class="bg-block" hidden>
         <label class="limit-field">deadline <input id="bg-deadline" type="text" size="7" value="1h"></label>
         <label class="limit-field">turn end

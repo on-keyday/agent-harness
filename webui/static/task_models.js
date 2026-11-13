@@ -274,3 +274,32 @@ function renderRunnerRows(container, runners, via) {
     container.appendChild(row);
   }
 }
+
+// --- PTY records (pillar A spec, A-D28) -------------------------------------
+
+// composeRecordOption is Compose's record select as the open's `record`
+// option: "" (the server's --record default), "on" or "off".
+function composeRecordOption(v) {
+  return v === "on" || v === "off" ? v : "";
+}
+
+// recordDownloadName names a downloaded record by its task and run.
+function recordDownloadName(taskId, run, format) {
+  return `${String(taskId).slice(0, 8)}-run${run}.${format === "asciicast" ? "cast" : "raw"}`;
+}
+
+// recordSheetModel is what the task sheet shows for a task's records: each
+// record's row (size and expiry, rendered in Go as `record ls` renders it)
+// with what can be done to it, and which switch a live terminal offers ("on",
+// "off", or "" when there is no live terminal to record).
+function recordSheetModel(t, recs) {
+  const live = !!t.liveTerminal && (t.status === "Running" || t.status === "Detached");
+  return {
+    rows: (recs || []).map((r) => ({
+      run: r.run,
+      text: r.row + (r.recording ? "  (recording)" : ""),
+      actions: ["raw", "asciicast", "delete"],
+    })),
+    switchTo: live ? (t.recording ? "off" : "on") : "",
+  };
+}

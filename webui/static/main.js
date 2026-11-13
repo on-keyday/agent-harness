@@ -376,7 +376,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
                         spawnDepth = null, maxDescendants = null,
                         prompt = "", runMode = "", deadlineMs = 0, quietMs = 0,
                         blockedMs = 0, queueTimeoutMs = 0, turnEnd = "",
-                        rows = 0, cols = 0 }) {
+                        rows = 0, cols = 0, record = "" }) {
     // An exact resume takes the task's recorded agent, args, caps and scope,
     // and the server refuses a request that carries any of them, so none of
     // the Compose state rides along.
@@ -423,6 +423,8 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       // the run mode, the conditions in ms and the PTY size.
       prompt, runMode, deadlineMs, quietMs, blockedMs, queueTimeoutMs, turnEnd,
       rows, cols,
+      // The PTY record (A-D22): "" leaves it to the server's --record.
+      record,
     };
     if (runner) req.runner = runner;
     if (ip) req.ip = ip;
@@ -770,6 +772,10 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // session is auto-included. The global "グリッド表示" button opens the grid of
   // all currently-included sessions (activity-desc).
   const gridExcluded = new Set();
+  // Each task's PTY records as last fetched for its sheet (A-D28). The sheet
+  // is rebuilt on every snapshot tick, so what it shows is kept here, not in
+  // the DOM, and redrawn from here.
+  const recordCache = new Map();
   const gridShowBtn = document.getElementById("grid-show-btn");
   const gridAllOn   = document.getElementById("grid-all-on");
   const gridAllOff  = document.getElementById("grid-all-off");
@@ -3990,6 +3996,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     // already has a kind for, which is what checklist 34a asks.
     eventStream: !!(spawnStreamBox && spawnStreamBox.checked),
     ...composeRunMode(),
+    record: composeRecordOption((document.getElementById("compose-record") || {}).value),
   });
 
   // --- Cap chips (session-default capability set for new-session spawns) ---
@@ -6436,6 +6443,72 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
           }
         });
       }
+    }
+
+    // PTY records (A-D28): listed with size and expiry, downloaded raw or as
+    // asciicast, deleted; a live terminal switches its recording.
+    const recModel = recordSheetModel(t, recordCache.get(t.id) || []);
+    addItem(recordCache.has(t.id) ? "▤ PTY 記録を更新" : "▤ PTY 記録を表示", "", async () => {
+      try {
+        recordCache.set(t.id, await window.harness.recordList(t.id));
+        refreshSnapshot();
+      } catch (e) {
+        appendCmdOutput(`record ls: ${e.message}`, true);
+      }
+    });
+    if (recordCache.has(t.id)) {
+      if (recModel.rows.length === 0) {
+        const none = document.createElement("div");
+        none.className = "task-id";
+        none.textContent = "PTY 記録なし";
+        sheet.appendChild(none);
+      }
+      for (const row of recModel.rows) {
+        const line = document.createElement("div");
+        line.className = "task-id";
+        const text = document.createElement("span");
+        text.className = "task-id-text";
+        text.textContent = row.text;
+        line.appendChild(text);
+        const ref = `${t.id}#${row.run}`;
+        for (const act of row.actions) {
+          const b = document.createElement("button");
+          b.type = "button";
+          b.className = "task-action";
+          b.textContent = act === "delete" ? "🗑 削除" : (act === "raw" ? "⤓ raw" : "⤓ .cast");
+          b.addEventListener("click", async (e) => {
+            e.stopPropagation();
+            try {
+              if (act === "delete") {
+                if (!window.confirm(`${ref} の PTY 記録を削除しますか?`)) return;
+                await window.harness.recordDelete(ref, false);
+                recordCache.set(t.id, await window.harness.recordList(t.id));
+                appendCmdOutput(`record rm ${ref}`, true);
+                refreshSnapshot();
+              } else {
+                const bytes = await window.harness.recordGet(ref, act, true);
+                triggerDownload(bytes, recordDownloadName(t.id, row.run, act));
+              }
+            } catch (err) {
+              appendCmdOutput(`record ${act === "delete" ? "rm" : "get"}: ${err.message}`, true);
+            }
+          });
+          line.appendChild(b);
+        }
+        sheet.appendChild(line);
+      }
+    }
+    if (recModel.switchTo) {
+      addItem(recModel.switchTo === "on" ? "● PTY 記録を開始" : "■ PTY 記録を停止", "", async () => {
+        try {
+          await window.harness.recordSwitch(t.id, recModel.switchTo === "on");
+          appendCmdOutput(`record ${recModel.switchTo} ${t.id.slice(0, 12)}`, true);
+          if (recordCache.has(t.id)) recordCache.set(t.id, await window.harness.recordList(t.id));
+          refreshSnapshot();
+        } catch (e) {
+          appendCmdOutput(`record ${recModel.switchTo}: ${e.message}`, true);
+        }
+      });
     }
 
     addItem("▦ この配下をグリッド", "", async () => {
