@@ -79,15 +79,16 @@ safety boundaries (it is not the same as `bypassPermissions`). Use it
 as the default for delegated work; reserve narrower modes for cases
 where you have an explicit reason.
 
-### Give the session a PTY size if its agent draws a TUI
+### The session's PTY size
 
 ```bash
 harness-cli session new -d --repo /path/to/repo --rows 40 --cols 150
 ```
 
-A detached session has **no size at all** until a client attaches, and the size
-belongs to the CONTROL attach whenever someone holds it. Two ways to give one a
-size without taking it over:
+A `-d` (or `--background`) open is sized 40x120 unless you pass `--rows` and
+`--cols`; `--rows 0 --cols 0` sends no size, and the session then has **no size
+at all** until a client attaches. The size belongs to the CONTROL attach
+whenever someone holds it. Two ways to set one without taking it over:
 
 - size it here, at open — always available to the spawner;
 - later, with **`harness-cli session resize --size 40x150 <id>`** (or
@@ -109,9 +110,9 @@ an unset size. If you intend to READ the screen, size it with `session resize`
 / `send --resize`. The mechanism and the measurement are in `session-debugging`
 under `session resize`; they are not repeated here.
 
-It matters when the worker's agent draws a full-screen TUI: at 0x0 codex and
-agy paint literally nothing, so `snapshot` returns a blank screen and the
-worker looks hung when it is merely undrawn. A claude worker is unaffected.
+It matters when the worker's agent draws a full-screen TUI and you opened it at
+0x0: codex then paints literally nothing, so `snapshot` returns a blank screen
+and the worker looks hung when it is merely undrawn.
 
 ### Reuse the same task id with `--resume`
 
@@ -189,6 +190,41 @@ needs only **`resume_exact`** (which `resume` implies), and it refuses every
 setting flag beside it — `--agent`, `--agent-arg`, `--caps`, `--scope`,
 `--scope-for`, `--delegate-caps`, `--delegate-scope`, and a prompt. Leave `--repo` and `--runner` off: the server
 reopens it on the runner it last ran on. `--resume-conversation` still works.
+
+### Unattended work — `--background`
+
+A background session is a detached session that nobody has to watch: it waits
+in the queue for a free runner instead of being refused, starts the agent with
+a prompt, and ends itself.
+
+```bash
+TASK_ID=$(harness-cli session new --background --repo /path/to/repo --agent claude \
+  --deadline 30m --prompt "Triage the new issues and report on chat.<your-short-id>")
+```
+
+- **Required:** `--prompt` (at most 16384 bytes), `--deadline`, and `--agent` on
+  a new task. `--background` implies `-d`. A profile with no prompt slot in its
+  template (the `bash` preset) cannot take one: the task ends `Failed` with
+  `prompt_unsupported`.
+- **What ends it** — the first of: the deadline; the end of a turn
+  (`--turn-end any|lifecycle|program|quiet|off`, default `any`); the agent waiting
+  on a human for longer than `--blocked` (default 5m); `--queue-timeout` while it
+  is still queued; the agent exiting. The end is a cancel, so the status usually
+  reads `Succeeded`; **read the reason in `ls`**: `run=bg end=turn_done_program`,
+  `end=deadline`, `end=blocked_timeout`, … While it runs the row shows
+  `run=bg deadline=<time left> until=<clock time>`, and while queued
+  `wait=all_busy` (runners that could take it are full) or `wait=no_candidate`
+  (none could).
+- **A directory its agent has never trusted stops the run at the trust
+  dialog**, with the prompt unprocessed. The harness does not answer it: the
+  operator attaches and answers once, and the agent remembers the directory.
+- **A resume reuses nothing but the agent and the run mode.** Resuming a
+  background task is a background resume unless you pass `--foreground`, and
+  it needs `--prompt` and `--deadline` again.
+- **Switch a running session** with `harness-cli session mode <id> foreground`
+  (it then runs until someone ends it) or `session mode --deadline 1h <id>
+  background`. Either direction needs `cancel` over the task, and a task may
+  not switch itself to foreground.
 
 Keep the `-d`. Opening a session WITHOUT `-d` hands you its control seat,
 which needs `exec_control` over it; a refusal reads `detach_required` or names
@@ -650,7 +686,9 @@ assigned → ended transitions are published as status events (`watch` reports
 them). An **interactive session (`session new`) has neither**:
 its output streams over the PTY and is replayed from a ring buffer on attach —
 it is never written to the task log — and it is opened directly rather than
-through the queue/dispatch lifecycle, so it emits no `watch` events. Observe an
+through the queue/dispatch lifecycle, so it emits no `watch` events (a
+`--background` session is the exception: it is queued and placed, so `watch`
+reports its queued → assigned → started transitions). Observe an
 interactive worker over the **agentboard** — it reports back to you there.
 (`session attach` is a human/PTY tool, not for you — see "Listing and killing
 your sessions" above; `logs` / `watch` don't apply to interactive tasks.)

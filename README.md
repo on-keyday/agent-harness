@@ -304,10 +304,11 @@ bin/harness-cli await-progress kill <watcher-id>
 # creates no stream toward you, so it needs no exec_control — opening WITHOUT
 # -d hands you the control seat and needs exec_control, new session or resumed.
 bin/harness-cli session new --repo /abs/path/to/repo
-# --rows/--cols size the session's PTY at open. Only worth it with -d, where
-# they travel in the open request: a detached session has NO size until someone
-# attaches, and only a CONTROL attach carries size authority. Without them a
-# full-screen TUI in that session draws nothing.
+# --rows/--cols size the session's PTY at open. They apply with -d, where they
+# travel in the open request, and default to 40x120 there: otherwise a detached
+# session would have NO size until someone attaches (only a CONTROL attach
+# carries size authority), and some full-screen TUIs draw nothing at 0x0.
+# --rows 0 --cols 0 sends no size and leaves it 0x0.
 bin/harness-cli session new -d --repo /abs/path/to/repo --rows 40 --cols 150
 bin/harness-cli session resize --size 40x150 <task-id>   # size a live session
                                                  # without taking it over
@@ -359,6 +360,30 @@ bin/harness-cli session await-idle kill <watcher-id>
 # found, one warning says so and the resume carries on.
 bin/harness-cli session new --stream --repo /abs/path/to/repo   # open + follow
 bin/harness-cli session new --stream -d --repo /abs/path/to/repo # open detached
+# 5c. Background run mode (either kind; --stream composes). The open is QUEUED
+# rather than refused when no runner is free, starts the agent with --prompt
+# (≤16384 bytes; also accepted in foreground), and ends itself — by cancel, so
+# the status usually reads Succeeded and `ls` carries the reason:
+# run=bg end=deadline | turn_done_lifecycle | turn_done_program | turn_done_quiet
+# | blocked_timeout | queue_timeout | agent_error | process_exit. While queued
+# the row reads wait=all_busy or wait=no_candidate; while running,
+# deadline=<left> until=<clock time>. --deadline is required (no default), so is
+# --agent on a new task; --turn-end any|lifecycle|program|quiet|off (default
+# any; a stream session takes off|lifecycle|any), --blocked (default 5m: how long
+# the agent may wait on a human), --quiet (5m), --queue-timeout (none). A
+# detached or background open with no --rows/--cols gets 40x120; --rows 0
+# --cols 0 sends none. A resume reuses only the agent and the run mode: a
+# background task resumes in background unless --foreground, and needs --prompt
+# and --deadline again. The harness does not answer an agent's folder-trust
+# dialog: in a directory the agent has never trusted, attach and answer it once.
+bin/harness-cli session new --background --repo /abs/path/to/repo --agent claude \
+    --deadline 1h --prompt "triage the new issues"
+# Switch a RUNNING session (needs cancel over it; a task may not make itself
+# foreground). Foreground drops the deadline and conditions; background starts
+# a deadline from now. TUI: `E` on the task row or a grid pane, `N` opens a
+# background form; WebUI: Compose's background section, ⇄ on the task sheet.
+bin/harness-cli session mode <task-id> foreground
+bin/harness-cli session mode --deadline 30m <task-id> background
 bin/harness-cli session stream attach <task-id>  # follow events (read-only,
                                                  #  Ctrl+C detaches)
 # Driving one. Each verb writes ONE line of the adapter protocol and appends the

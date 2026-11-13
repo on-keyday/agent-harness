@@ -57,6 +57,32 @@ Read on `b3959555`; each was traced to the handler, not inferred.
   ends. Two comments say a cancel meets the ladder or that "procTree
   signalled the group" (`server/dispatch.go:183`,
   `runner/session.go:1187-1189`); both are wrong for the PTY path.
+  - **Measured 2026-11-13 (A-D16's check)** on a dummy harness with the
+    harness settings injected (`-- --force-inject-harness-settings`), claude
+    2.1.323 (haiku 4.5), manual mode:
+    `session new --background --agent claude --deadline 15m --turn-end off
+    --prompt "Please run this exact shell command with the Bash tool in the
+    foreground and wait for it to finish: python3 -c 'import time;
+    time.sleep(300)'"`, the permission prompt answered, then `cancel <id>`
+    while the tool ran. (Claude Code itself refuses a standalone long
+    `sleep` in its Bash tool, hence the python form.)
+  - **The tool subprocess outlives the cancel.** `pgrep -a -x python3 | grep
+    'time.sleep(300)'` still listed it 3 s and 13 s after the cancel, with
+    the task already `end=cancelled`. Claude runs each Bash tool call under a
+    `/bin/bash -c` wrapper that is a session leader of its own session
+    (`ps -o pid,ppid,pgid,sid`: SID = the wrapper's pid), so the SIGKILL of
+    claude's pid does not reach it; the wrapper was reparented to the user's
+    `systemd --user`. A shell claude started with `run_in_background`
+    survived the cancel the same way. A human's cancel takes the same path,
+    so this predates A2.
+  - **The conversation resumes intact.** `session new -d --resume <id>
+    --resume-conversation --foreground --agent claude --prompt 'What exact
+    shell command did I ask you to run in my previous message? Reply with
+    only that command.'` showed the killed call as `Interrupted` and
+    answered `python3 -c 'import time; time.sleep(300)'`.
+  - So A-D16's condition holds on its second half: a graceful stop for
+    automatic cancels is part of A2. Whether claude, stopped gracefully
+    (Esc, SIGHUP or SIGTERM), ends its own tool sessions was not measured.
 - **F6 — the idle evaluator.** `evaluateIdle` (`server/idle_signal.go:100-121`)
   checks program → lifecycle → quiet; `legSatisfied` (`:58-68`) implements
   await-idle D6/D18 with `muxStart` as the floor. It treats lifecycle
