@@ -100,7 +100,8 @@ func CapDescription(c protocol.Capability) string {
 		return "cancel / kill tasks"
 	case protocol.Capability_ExecView:
 		return "observe an agent's output, live or recorded: a PTY session " +
-			"(snapshot, grid panes, attach --view), an event-stream session, and task logs"
+			"(snapshot, grid panes, attach --view), an event-stream session, task logs, " +
+			"and PTY records (record ls / record get)"
 	case protocol.Capability_ExecCowrite:
 		return "type into a session someone else is driving, without evicting them (session send / exec); implies exec_view"
 	case protocol.Capability_ExecControl:

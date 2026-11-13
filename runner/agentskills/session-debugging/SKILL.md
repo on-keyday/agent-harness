@@ -436,6 +436,24 @@ agentboard afterwards — and note that an instruction it already carried out
 will be re-read as pending unless you retracted it (`harness-cli skill
 harness-cli` → "A reply retires what it answers", and its `references/retract-purge.md`).
 
+## What a session showed before you looked: `record`
+
+`snapshot --raw` holds only the replay ring (1 MiB by default). A session
+opened with `--record` (or switched on with `record on <id>`, which needs
+`record_persist`) keeps the same bytes for its whole run on the server:
+
+```bash
+harness-cli record ls "$ID"                       # its runs: size, expiry, recording
+harness-cli record get --without-synth "$ID"      # the latest run, as --raw prints it
+harness-cli record get "$ID#2" | grep -a 'FAIL'   # an earlier run
+```
+
+Reading needs `exec_view`, like `snapshot`. Input is never recorded, and an
+event-stream session never is (its transcript is its record). A record past
+the server's cap keeps the most recent part and says `truncated-from` in
+`record ls`. `--format asciicast` writes asciinema's format, for a person to
+replay — it is no easier for you to read than the raw bytes.
+
 ## Parsing raw PTY bytes
 
 A PTY echoes an injected Enter as a **bare `\r` with no LF**. When grepping

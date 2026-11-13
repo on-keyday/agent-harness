@@ -3936,3 +3936,40 @@ omitted: 16 (TUI task table: width-bound, as the delegation bound), 21 (WebUI
          task sheet repeats no authority field), `caps audit` / `reach`
          (bits and target sets; neither limit is either)
 missed:  —
+
+### 2026-11-14 — PTY records (pillar A1): `record` verbs, `--record`, `run` / `recording`
+
+Six verbs, one open switch (an ext byte), two TaskInfo / TaskStatusEvent
+fields, two capability bits. Spec `2026-11-13-pillar-a-run-modes-design.md`
+§A1 (A-D20..A-D28). Walked once after the CLI, TUI and WebUI tasks.
+
+done:    1 (`record ls/get/rm/keep/on/off`, `--record` / `--no-record` in
+         `spawnFlags`), 2 (record/no-record and forever/for exclusive in the
+         declaration; `record rm <id>` without a run or `--all-runs` is
+         `cli.CheckRecordRm`, called by CLI, TUI and wasm — not `Validate`,
+         whose probes synthesise positionals, the `session mode` precedent),
+         5 (TUI background form `record` field; `d` popup records block),
+         6 (Compose "PTY 記録" select; task sheet list / download / delete /
+         switch), 8 (wasm `recordList/Get/Delete/Keep/Switch`), 11 (`rec=on|off`
+         on a live terminal's row), 12/14 (`run`, `recording`), 15 (both bits'
+         `CapDescription`; exec_view's now names `record ls / get` — found by
+         this walk), 17 (records block; `run number:` line — found by this
+         walk), 19 (picker chips derive from GrantableCaps), 20 (WebUI row
+         `rec=` — found by this walk), 21, 23 (`run`, `recording`), 24 (an
+         open that says nothing takes the server default on create AND resume;
+         never the previous run's), 25 (`record_set`), 27 (RunModeFlags →
+         SessionOpts, the one struct every surface's open goes through), 28
+         (`run`, `record`, `task_record_changed`; old records count runs, record
+         off), 28a (CLI `session new`, TUI cmdline + background form, wasm
+         `startInteractive` all set it via RunModeFlags.Apply), 29/30, 31
+         (both answers printed), 32 (raw/asciicast rendered only in Go; the
+         bridge calls `cli.RecordGetWith`), 33, 34a (text field like turn end
+         in the TUI form; a select like turn end in Compose), 35 (README 5d,
+         capability list), 36 (session-debugging, mirrored), 37 (A-D22 amended:
+         exclude_self does not narrow a global base), 39 (A-D28 walked row by
+         row against the code)
+omitted: 7 (the WebUI command input does not take the record verbs; the task
+         sheet does them, per A-D28), 16 (TUI task table: width-bound; the
+         popup and `ls` carry it), 36 (supervising-workers' capability list
+         says it may lag and points at `harness-cli caps`; not updated)
+missed:  —

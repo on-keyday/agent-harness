@@ -6215,6 +6215,9 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       // the page gives no sign anyone is on it.
       if (taskSessionAlive(t)) {
         metaText += `  cowrite=${t.cowriters || 0} viewer=${t.viewers || 0}`;
+        // Whether the live terminal is recorded (A-D22): both answers, as
+        // the CLI row prints them.
+        if (t.liveTerminal) metaText += `  rec=${t.recording ? "on" : "off"}`;
       }
       // Commands running in the task's WORKTREE. A different subject from the
       // session above and NOT gated on one — a task that ended with

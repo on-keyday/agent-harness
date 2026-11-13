@@ -427,6 +427,37 @@ bin/harness-cli session stream answer <task-id> <request-id> \
 # and `session ls`); the TUI `d` popup spells it out as
 # `attached: no control, 1 cowrite, 2 viewer`. Detached ≠ abandoned.
 
+# 5d. PTY records: `session snapshot --raw` kept on the server for a whole run
+# (interactive sessions; never input, never the stream kind). Off by default:
+# the server's --record makes it the default, an open says --record or
+# --no-record (a resume takes the default again, not the last run's), and
+# `record on|off` switches a live session. A record is per RUN — create is run
+# 1, each resume the next — named <task-id>#<n> (bare = the latest). It keeps
+# the most recent part: past --record-run-max (64 MiB of output) the oldest
+# eighth is dropped and `record ls` says truncated-from; past --record-total-max
+# (1 GiB on disk) the oldest segment on the server goes, whichever task's, even
+# from a record kept forever. Kept forever by default (--record-retention), or
+# for a period counted from the run's end; a prune deletes the task's records.
+# Gates: reading is exec_view; switching on, an open that says --record and a
+# longer `record keep` are record_persist (keeping takes disk and pushes older
+# records out); switching off, `record rm` and a shorter keep are record_delete.
+# A grant whose record_delete override has exclude_self keeps a task off its
+# own record — for a subtree, none or id-list base; a global base is every task,
+# the holder included. A deliberate server restart that re-adopts the session
+# continues the same record.
+bin/harness-cli session new -d --repo /abs/path/to/repo --agent bash --record
+bin/harness-cli record ls [<task-id>]            # run, start/end, size, expiry
+bin/harness-cli record get <task-id>#1 > run1.raw  # what snapshot --raw prints
+bin/harness-cli record get --format asciicast -o run1.cast <task-id>#1
+asciinema play run1.cast                        # asciicast v2, at its own pace
+bin/harness-cli record keep --for 168h <task-id>#1   # or --forever
+bin/harness-cli record rm <task-id>#1            # or <task-id> --all-runs
+bin/harness-cli record on|off <task-id>
+# TUI: the N form's record field (default|on|off), the records in `d`, the
+# verbs on the command line (`record get` there needs -o). WebUI: Compose's
+# "PTY 記録" select; the task sheet lists, downloads (raw / .cast), deletes and
+# switches.
+
 # 6. File transfer against a running task's worktree (paths are confined
 # to the worktree root; `..` escapes are rejected).
 bin/harness-cli file ls     <task-id> [subdir]

@@ -278,6 +278,8 @@ func formatTaskDetail(t protocol.TaskInfo, runnerByID map[string]protocol.Runner
 	if r := cli.RunStr(&t); r != "" {
 		fmt.Fprintf(&sb, "run:           %s\n", r)
 	}
+	// The run number names the run's PTY record (A-D20): <id>#<n>.
+	fmt.Fprintf(&sb, "run number:    %d\n", t.Run)
 	// What the task's hooks last reported, beside its own line and the
 	// output age, so the three can be read against each other.
 	// Gated like the badge: not for a finished task, which must not read
