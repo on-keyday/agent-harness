@@ -468,6 +468,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // set of disconnected fragments pretending to be a hierarchy.
   let taskTreeMode = false;
   let lastTaskTree = [];           // wasm-computed order+gutter; see snapshot()
+  let lastRunnerRows = [];         // the snapshot's runners, for a resume's host pin
   // 権限で強調: the capability whose holders the tree marks (0 = none), and a
   // task the caps audit just pointed at, pulsed for a moment.
   const taskTreeBit = document.getElementById("task-tree-bit");
@@ -936,6 +937,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     // (hostname asc, connectedAt asc, joined roots asc) so the three
     // render functions below all observe the same stable ordering.
     const sortedRunners = sortRunners(snap.runners || []);
+    lastRunnerRows = sortedRunners;
     renderRunnerSelect(runnerSelect, sortedRunners);
     renderHostSelect(hostSelect, sortedRunners);
     knownAgentProfiles = collectAgentProfiles(sortedRunners);
@@ -3947,7 +3949,16 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // prefillComposeFromTask fills Compose from a background task's last run
   // (A-D15: the server reuses nothing of it) and scrolls there: the prompt,
   // the agent, the conditions and the resume id, Background checked.
-  function prefillComposeFromTask(t, resumeConversation) {
+  // pinRunner is the runner id an "assigned" resume asks for, or "". Compose
+  // pins by host, which is what keeps a conversation resume on the machine
+  // that holds the agent's transcript; it is set only while that runner is
+  // connected, because a background open is never refused for no runner and a
+  // pin to a gone one would queue it forever.
+  function prefillComposeFromTask(t, resumeConversation, pinRunner = "") {
+    if (hostSelect) {
+      const r = pinRunner ? lastRunnerRows.find((x) => x.id === pinRunner) : null;
+      hostSelect.value = r && r.hostname ? r.hostname : "";
+    }
     if (composePrompt) composePrompt.value = t.prompt || "";
     if (agentSelect) populateAgentSelect(agentSelect, knownAgentProfiles, t.agentProfile || "", t.agentProfile);
     const c = t.conditions || {};
@@ -6469,7 +6480,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
         // nothing of its last run (A-D7): fill Compose from it rather than
         // send an open the server would refuse prompt_required.
         if (t.runMode === "background") {
-          prefillComposeFromTask(t, resumeConversation);
+          prefillComposeFromTask(t, resumeConversation, runner);
           return;
         }
         const req = sessionReq({ agent: agentSel.value || "", agentArgs, resumeTaskId: t.id, resumeConversation, runner });

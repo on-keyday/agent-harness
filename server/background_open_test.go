@@ -317,3 +317,29 @@ func waitReasonOf(t *testing.T, h *TaskHandler, id string) protocol.WaitReason {
 	}
 	return h.waitReasonFor(e)
 }
+
+// Review I1: a cancel makes the task terminal at once, but the runner reports
+// the old run finished only after the agent answers its hangup (up to ~2 s).
+// A resume in that window would be finished, or have its session torn down,
+// by the old run's late report, so it is refused until the runner has let go.
+func TestResumeIsRefusedWhileTheOldRunIsStillBound(t *testing.T) {
+	h := newTestHandler(t)
+	now := time.Now()
+	id := endedBG(t, h, protocol.TaskKind_Interactive)
+	h.Registry.Add(&RunnerEntry{ID: tcid("R"), Identity: testRunnerID("R"), Hostname: "h", AllowedRoots: []string{"/r"},
+		AgentProfiles: []string{"codex"}, MaxTasks: 2, ActiveTasks: map[string]struct{}{id: {}},
+		ConnectedAt: now, LastTaskActivity: now, Conn: &fakeConn{}})
+
+	r := openBG(h, resumeReq(id, bgOpen("")), "second")
+	if r.Status != protocol.OpenInteractiveStatus_ResumeNotTerminal {
+		t.Fatalf("resume while the old run is bound: status %v, want resume_not_terminal", r.Status)
+	}
+	if e, _ := h.Tasks.Get(id); e.Status != protocol.TaskStatus_Cancelled {
+		t.Fatalf("a refused resume changed the task: %v", e.Status)
+	}
+
+	h.Registry.UnbindTask(tcid("R"), id)
+	if r := openBG(h, resumeReq(id, bgOpen("")), "second"); r.Status != protocol.OpenInteractiveStatus_Ok {
+		t.Fatalf("resume after the runner let go: status %v", r.Status)
+	}
+}

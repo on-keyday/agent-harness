@@ -489,7 +489,14 @@ func (a *App) onResume(msg tea.KeyMsg) (tea.Cmd, bool) {
 		// nothing of its last run (A-D7): open the form prefilled from it
 		// rather than send a request that would be refused prompt_required.
 		if t != nil && t.RunMode == protocol.RunMode_Background {
-			a.bgform.OpenResume(*t, a.tasks.SelectedID(), act.ResumeConversation)
+			// r/R pin to where the task last ran, as below — but only while
+			// that runner is connected: a background open is never refused
+			// for no runner, so a dead pin would queue it forever.
+			var pin protocol.RunnerID
+			if !unpinnedResume && a.runners.Connected(t.AssignedTo) {
+				pin = t.AssignedTo
+			}
+			a.bgform.OpenResume(*t, a.tasks.SelectedID(), act.ResumeConversation, pin)
 			return nil, true
 		}
 		// repo is irrelevant on resume — the server reuses the task's

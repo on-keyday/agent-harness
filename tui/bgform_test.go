@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,7 @@ import (
 func TestBgFormPrefillsOneHourDeadline(t *testing.T) {
 	f := NewBgForm()
 	f.OpenNew("/r", "claude")
+	f.prompt.SetValue("triage")
 	flags, agent, err := f.Values()
 	if err != nil {
 		t.Fatal(err)
@@ -105,5 +107,96 @@ func TestGridRunModeKeyOpensSwitchFormOverGrid(t *testing.T) {
 	a = m.(*App)
 	if a.bgform.IsOpen() || !a.grid.IsOpen() {
 		t.Fatalf("esc: form open %v, grid open %v", a.bgform.IsOpen(), a.grid.IsOpen())
+	}
+}
+
+// Review I3: the cap is 16384 BYTES (protocol.PromptMax), so the form neither
+// cuts a long paste down to it silently nor lets a multi-byte prompt under the
+// rune count through; it refuses at Ctrl+J, with the cap in the message.
+func TestBgFormRefusesAnOversizePromptInBytes(t *testing.T) {
+	f := NewBgForm()
+	f.OpenNew("/r", "claude")
+	f.prompt.SetValue(strings.Repeat("a", protocol.PromptMax+100))
+	if _, _, err := f.Values(); err == nil || !strings.Contains(err.Error(), "16384") {
+		t.Fatalf("an over-cap paste: err %v, want a refusal naming the cap", err)
+	}
+	f.prompt.SetValue(strings.Repeat("あ", 6000)) // 6000 runes, 18000 bytes
+	if _, _, err := f.Values(); err == nil {
+		t.Fatal("a multi-byte prompt over the byte cap passed the form")
+	}
+}
+
+// What a background open cannot run without is refused in the form, not after
+// a round trip that would lose what was typed.
+func TestBgFormRequiresPromptAndAgentOnANewOpen(t *testing.T) {
+	f := NewBgForm()
+	f.OpenNew("/r", "")
+	f.prompt.SetValue("triage")
+	if _, _, err := f.Values(); err == nil || !strings.Contains(err.Error(), "agent") {
+		t.Fatalf("no agent: err %v", err)
+	}
+	f.fields[bgFieldAgent].SetValue("claude")
+	f.prompt.SetValue("")
+	if _, _, err := f.Values(); err == nil || !strings.Contains(err.Error(), "prompt") {
+		t.Fatalf("no prompt: err %v", err)
+	}
+}
+
+// Review I3: the form stays open until the server answers, so a refusal leaves
+// the typed prompt in place with the reason shown; a success closes it.
+func TestBgFormStaysOpenUntilTheServerAnswers(t *testing.T) {
+	a := New(Config{})
+	a.bgform.OpenNew("/r", "claude")
+	a.bgform.prompt.SetValue("triage new issues")
+	m, cmd := a.Update(tea.KeyMsg{Type: tea.KeyCtrlJ})
+	a = m.(*App)
+	if cmd == nil || !a.bgform.IsOpen() {
+		t.Fatalf("after Ctrl+J: cmd %v, form open %v; want a request and the form still open", cmd != nil, a.bgform.IsOpen())
+	}
+	m, _ = a.Update(SessionStartedMsg{Err: errors.New("profile_unavailable")})
+	a = m.(*App)
+	if !a.bgform.IsOpen() || a.bgform.prompt.Value() != "triage new issues" || !strings.Contains(a.bgform.View(), "profile_unavailable") {
+		t.Fatalf("after a refusal: open %v prompt %q", a.bgform.IsOpen(), a.bgform.prompt.Value())
+	}
+	m, _ = a.Update(tea.KeyMsg{Type: tea.KeyCtrlJ})
+	a = m.(*App)
+	m, _ = a.Update(SessionStartedMsg{TaskID: "abc"})
+	a = m.(*App)
+	if a.bgform.IsOpen() {
+		t.Fatal("the form stayed open after the server accepted it")
+	}
+}
+
+// Review I4: r/R resume where the task last ran, as they do for a foreground
+// task; u/U leave it to placement. A pin to a runner that is no longer
+// connected would queue forever (a background open is never refused for no
+// runner), so it is dropped then.
+func TestBackgroundResumePinsTheAssignedRunnerWhileConnected(t *testing.T) {
+	var rid protocol.RunnerID
+	rid.Id[0] = 0x7e
+	withRunner := func(connected bool) *App {
+		a := bgTaskApp(t, protocol.TaskStatus_Cancelled, protocol.RunMode_Background)
+		info := *a.tasks.SelectedTask()
+		info.AssignedTo = rid
+		a.tasks.SetRows([]protocol.TaskInfo{info}, nil)
+		if connected {
+			a.runners.SetRows([]protocol.RunnerInfo{{Id: rid}})
+		}
+		return a
+	}
+	a := withRunner(true)
+	m, _ := a.Update(keyRune('r'))
+	if got := m.(*App).bgform.Pin(); got != rid {
+		t.Fatalf("r: pin %v, want the assigned runner", got)
+	}
+	a = withRunner(true)
+	m, _ = a.Update(keyRune('u'))
+	if got := m.(*App).bgform.Pin(); !got.IsZero() {
+		t.Fatalf("u: pin %v, want none", got)
+	}
+	a = withRunner(false)
+	m, _ = a.Update(keyRune('r'))
+	if got := m.(*App).bgform.Pin(); !got.IsZero() {
+		t.Fatalf("r with the runner gone: pin %v, want none", got)
 	}
 }

@@ -378,8 +378,8 @@ bin/harness-cli session new --stream -d --repo /abs/path/to/repo # open detached
 # dialog: in a directory the agent has never trusted, attach and answer it once.
 bin/harness-cli session new --background --repo /abs/path/to/repo --agent claude \
     --deadline 1h --prompt "triage the new issues"
-# Switch a RUNNING session (needs cancel over it; a task may not make itself
-# foreground). Foreground drops the deadline and conditions; background starts
+# Switch a RUNNING session (needs cancel over it; a task may not switch its
+# own run mode, in either direction). Foreground drops the deadline and conditions; background starts
 # a deadline from now. TUI: `E` on the task row or a grid pane, `N` opens a
 # background form; WebUI: Compose's background section, ⇄ on the task sheet.
 bin/harness-cli session mode <task-id> foreground

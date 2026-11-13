@@ -153,6 +153,19 @@ func (m *RunnersModel) swapColumnsAndRebuild(cols []table.Column) {
 }
 
 // SetRows updates the runner rows from a snapshot.
+// Connected reports whether id is among the runners the last snapshot listed.
+func (m *RunnersModel) Connected(id protocol.RunnerID) bool {
+	if id.IsZero() {
+		return false
+	}
+	for _, r := range m.rowRunners {
+		if r.Id == id {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *RunnersModel) SetRows(rs []protocol.RunnerInfo) {
 	m.rowRunners = rs
 	m.rebuild()

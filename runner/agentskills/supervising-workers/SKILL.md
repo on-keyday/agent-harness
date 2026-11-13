@@ -224,7 +224,7 @@ TASK_ID=$(harness-cli session new --background --repo /path/to/repo --agent clau
 - **Switch a running session** with `harness-cli session mode <id> foreground`
   (it then runs until someone ends it) or `session mode --deadline 1h <id>
   background`. Either direction needs `cancel` over the task, and a task may
-  not switch itself to foreground.
+  not switch its own run mode in either direction.
 
 Keep the `-d`. Opening a session WITHOUT `-d` hands you its control seat,
 which needs `exec_control` over it; a refusal reads `detach_required` or names

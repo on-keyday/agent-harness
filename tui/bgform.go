@@ -55,6 +55,13 @@ type BgFormModel struct {
 	prompt             textarea.Model
 	fields             [bgFieldCount]textinput.Model
 	focus              int // -1 = prompt; otherwise a field index
+	// pin is the runner a resume is pinned to (r/R: where the task last ran,
+	// while it is connected); zero leaves it to placement.
+	pin protocol.RunnerID
+	// pending is set while a submitted request is unanswered: the form stays
+	// open until the server answers, so a refusal keeps what was typed.
+	pending bool
+	errMsg  string
 }
 
 func NewBgForm() BgFormModel {
@@ -62,7 +69,11 @@ func NewBgForm() BgFormModel {
 	ta.Placeholder = "the agent's first turn (at most 16384 bytes)"
 	ta.SetWidth(64)
 	ta.SetHeight(6)
-	ta.CharLimit = protocol.PromptMax
+	// No limits in the widget: a rune limit silently cut a paste down (and
+	// counts runes, not the bytes the cap is in), and MaxHeight silently
+	// refused a newline past 99 lines. Values checks the cap and says so.
+	ta.CharLimit = 0
+	ta.MaxHeight = 0
 	m := BgFormModel{prompt: ta}
 	for i := range m.fields {
 		in := textinput.New()
@@ -90,6 +101,7 @@ func (m *BgFormModel) ResumeConversation() bool {
 func (m *BgFormModel) reset(purpose bgFormPurpose) {
 	m.open, m.purpose = true, purpose
 	m.repo, m.resumeID, m.switchID, m.stream, m.resumeConversation = "", "", "", false, false
+	m.pin, m.pending, m.errMsg = protocol.RunnerID{}, false, ""
 	m.prompt.Reset()
 	for i := range m.fields {
 		m.fields[i].SetValue("")
@@ -110,10 +122,11 @@ func (m *BgFormModel) OpenNew(repo, agent string) {
 
 // OpenResume starts a background resume of t, prefilled from its last run:
 // prompt, agent and conditions (the deadline from the run, 1h when it had
-// none).
-func (m *BgFormModel) OpenResume(t protocol.TaskInfo, idHex string, resumeConversation bool) {
+// none). pin is the runner to resume on, zero for any.
+func (m *BgFormModel) OpenResume(t protocol.TaskInfo, idHex string, resumeConversation bool, pin protocol.RunnerID) {
 	m.reset(bgResume)
 	m.resumeID = idHex
+	m.pin = pin
 	m.resumeConversation = resumeConversation
 	m.stream = t.Kind == protocol.TaskKind_Stream
 	m.prompt.SetValue(string(t.Prompt))
@@ -235,11 +248,34 @@ func (m *BgFormModel) Values() (cli.RunModeFlags, string, error) {
 	if f.TurnEnd, err = verb.ParseTurnEnd(strings.TrimSpace(m.fields[bgFieldTurnEnd].Value())); err != nil {
 		return f, "", err
 	}
+	agent := strings.TrimSpace(m.fields[bgFieldAgent].Value())
 	if m.purpose != bgSwitch {
 		f.Background = true
 		f.Prompt = m.prompt.Value()
+		switch {
+		case strings.TrimSpace(f.Prompt) == "":
+			return f, "", fmt.Errorf("prompt: a background run needs one")
+		case len(f.Prompt) > protocol.PromptMax:
+			return f, "", fmt.Errorf("prompt: %d bytes, over the %d-byte cap", len(f.Prompt), protocol.PromptMax)
+		}
 	}
-	return f, strings.TrimSpace(m.fields[bgFieldAgent].Value()), nil
+	if m.purpose == bgOpenNew && agent == "" {
+		return f, "", fmt.Errorf("agent: a new background session names one")
+	}
+	return f, agent, nil
+}
+
+// Submitted marks the form's request as sent; Answered takes the server's
+// answer: success closes the form, a refusal keeps it open with the reason.
+func (m *BgFormModel) Submitted()    { m.pending, m.errMsg = true, "" }
+func (m *BgFormModel) Pending() bool { return m.open && m.pending }
+func (m *BgFormModel) Answered(err error) {
+	m.pending = false
+	if err == nil {
+		m.Close()
+		return
+	}
+	m.errMsg = err.Error()
 }
 
 func (m *BgFormModel) View() string {
@@ -261,6 +297,14 @@ func (m *BgFormModel) View() string {
 		}
 		fmt.Fprintf(&sb, "%-14s %s\n", bgFieldLabels[i]+":", m.fields[i].View())
 	}
+	switch {
+	case m.pending:
+		sb.WriteString("\nsending…")
+	case m.errMsg != "":
+		sb.WriteString("\n" + ErrorStyle.Render(m.errMsg))
+	}
 	sb.WriteString("\nTab/Shift+Tab move · Ctrl+J start · Esc cancel")
 	return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1).Render(sb.String())
 }
+
+func (m *BgFormModel) Pin() protocol.RunnerID { return m.pin }

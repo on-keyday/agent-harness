@@ -1207,6 +1207,9 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case SessionModeResultMsg:
+		if a.bgform.Pending() {
+			a.bgform.Answered(msg.Err)
+		}
 		short := shortTaskID(msg.TaskID)
 		if msg.Err != nil {
 			a.cmdresult.Append(ErrorStyle.Render("session mode " + short + ": " + msg.Err.Error()))
@@ -1564,6 +1567,9 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		})
 
 	case SessionStartedMsg:
+		if a.bgform.Pending() {
+			a.bgform.Answered(msg.Err)
+		}
 		if msg.Err != nil {
 			a.cmdresult.Append(ErrorStyle.Render("session start failed: " + msg.Err.Error()))
 			// A workspace resume that failed is very often the reconnect after a

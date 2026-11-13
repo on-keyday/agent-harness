@@ -1433,6 +1433,19 @@ func (h *TaskHandler) grantFor(g *authority.Granter, r grantRequest, idHex strin
 	return u, nil
 }
 
+// previousRunStopping refuses a resume of a task whose last run a runner has
+// not yet reported finished. The task already reads terminal (a cancel writes
+// that at once), but the runner's report comes only after the agent answers
+// its hangup (A-D16), and a report or session teardown landing after the
+// resume would act on the NEW run: finish it unrun, or drop its session.
+// Reports carry no run identity before A1, so the window is closed here.
+func (h *TaskHandler) previousRunStopping(idHex string) (string, bool) {
+	if h.Registry == nil || !h.Registry.TaskBound(idHex) {
+		return "", false
+	}
+	return "task " + idHex[:8] + "'s previous run is still stopping on its runner; retry in a few seconds", true
+}
+
 // handleSubmitResume implements the resume_task_id branch of handleSubmit.
 // Validation order (mirrors the fresh-submit path in handleSubmit exactly,
 // so the same "roots-matching runner set narrowed by profile before the
@@ -1484,6 +1497,11 @@ func (h *TaskHandler) handleSubmitResume(cid string, req *protocol.SubmitRequest
 	repo, _, ok := h.Tasks.PeekRepo(idHex)
 	if !ok {
 		return protocol.SubmitResponse{Status: protocol.SubmitStatus_ResumeNotFound}, nil
+	}
+	if msg, stopping := h.previousRunStopping(idHex); stopping {
+		resp := protocol.SubmitResponse{Status: protocol.SubmitStatus_ResumeNotTerminal}
+		resp.SetErrorMsg([]byte(msg))
+		return resp, nil
 	}
 	// A background task resumed through submit would become a oneshot with no
 	// session to watch (A-D1).
@@ -1845,6 +1863,11 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 			return errResp(protocol.OpenInteractiveStatus_ResumeNotFound)
 		}
 		existingTaskIDHex = idHex
+		if msg, stopping := h.previousRunStopping(idHex); stopping {
+			resp, body := errResp(protocol.OpenInteractiveStatus_ResumeNotTerminal)
+			resp.SetErrorMsg([]byte(msg))
+			return resp, body
+		}
 		if req.ResumeExact() {
 			rec, ok := h.Tasks.Get(idHex)
 			if !ok {

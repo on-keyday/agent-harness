@@ -1144,18 +1144,23 @@ func (a *App) inBgForm(msg tea.KeyMsg) tea.Cmd {
 		a.bgform.Cycle(-1)
 		return nil
 	case tea.KeyCtrlJ:
+		if a.bgform.Pending() {
+			return nil // one request at a time
+		}
 		flags, agent, err := a.bgform.Values()
 		if err != nil {
-			a.cmdresult.Append(ErrorStyle.Render(err.Error()))
+			a.bgform.Answered(err)
 			return nil
 		}
+		// The form stays open until the answer (SessionStartedMsg /
+		// SessionModeResultMsg), so a refusal does not lose what was typed.
+		a.bgform.Submitted()
 		f := a.bgform
-		a.bgform.Close()
 		if f.IsSwitch() {
 			return DoSessionMode(a.client, f.SwitchID(), true, flags.Conditions())
 		}
 		size := TermSize{Rows: uint16(a.height), Cols: uint16(a.width)}
-		return DoStartDetachedSession(a.client, f.Repo(), cli.SelectorOpts{}, nil, f.ResumeID(), a.authority(),
+		return DoStartDetachedSession(a.client, f.Repo(), resumeSelectorOpts(f.Pin()), nil, f.ResumeID(), a.authority(),
 			false, f.ResumeConversation(), false, agent, size, f.Stream(), flags)
 	}
 	return a.bgform.Update(msg)

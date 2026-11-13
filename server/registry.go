@@ -373,6 +373,21 @@ func (r *Registry) BindTask(id objproto.ConnectionID, taskID string) bool {
 	return true
 }
 
+// TaskBound reports whether any runner still holds a slot for taskID: the
+// runner has not yet reported that task's last run finished. A cancel makes a
+// task terminal at once, but its runner reports the end only once the agent
+// has answered the hangup, so the two can be seconds apart.
+func (r *Registry) TaskBound(taskID string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, e := range r.runners {
+		if _, ok := e.ActiveTasks[taskID]; ok {
+			return true
+		}
+	}
+	return false
+}
+
 // UnbindTask releases a previously-reserved slot. Idempotent: no error if the
 // runner is unknown or did not hold the task. This makes it safe to call
 // from both the dispatcher's rollback path and the runner_handler's
