@@ -1229,6 +1229,11 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 	case protocol.TaskControlKind_SessionMode:
 		h.handleSessionMode(cid, conn, &req)
 
+	case protocol.TaskControlKind_RecordList, protocol.TaskControlKind_RecordGet,
+		protocol.TaskControlKind_RecordDelete, protocol.TaskControlKind_RecordKeep,
+		protocol.TaskControlKind_RecordSwitch:
+		h.handleRecord(cid, conn, &req)
+
 	case protocol.TaskControlKind_DialRunner:
 		dr := req.DialRunner()
 		if dr == nil {

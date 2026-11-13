@@ -43,8 +43,14 @@ import (
 var requiredCap = map[protocol.TaskControlKind]protocol.Capability{
 	protocol.TaskControlKind_Cancel:      protocol.Capability_Cancel,
 	protocol.TaskControlKind_SessionMode: protocol.Capability_Cancel,
-	protocol.TaskControlKind_PruneTasks:  protocol.Capability_Prune,
-	protocol.TaskControlKind_Notify:      protocol.Capability_Notify,
+	// PTY records (pillar A, A1). Reading is exec_view (GD G34); deleting is
+	// record_delete. keep and switch need record_persist or record_delete by
+	// direction, so their handlers check them. All are scoped in the handler.
+	protocol.TaskControlKind_RecordList:   protocol.Capability_ExecView,
+	protocol.TaskControlKind_RecordGet:    protocol.Capability_ExecView,
+	protocol.TaskControlKind_RecordDelete: protocol.Capability_RecordDelete,
+	protocol.TaskControlKind_PruneTasks:   protocol.Capability_Prune,
+	protocol.TaskControlKind_Notify:       protocol.Capability_Notify,
 	// Emptying another task's progress line: whoever may end the task may
 	// empty its status line, which is the weaker act. Target-gated on
 	// cancel's scope in handleProgressClear.

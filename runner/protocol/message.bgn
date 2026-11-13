@@ -751,6 +751,14 @@ enum TaskControlKind:
     session_mode            # appended: switch a running session task between
                             # foreground and background (A-D19). Gated on
                             # cancel: either direction changes how the run ends
+    # PTY records (pillar A spec, A-D20..A-D28). list/get need exec_view;
+    # delete needs record_delete; keep and switch need record_persist or
+    # record_delete by direction, so the handler checks them, not requiredCap.
+    record_list             # appended: the records of one task, or all in scope
+    record_get              # appended: one run's entries, on a stream
+    record_delete           # appended: delete one run's record, or every run's
+    record_keep             # appended: change one run's record's retention
+    record_switch           # appended: switch a live session's recording
 
 # ClientKind tags the kind of caller that opened a TaskControl session.
 # `agent` is an in-task harness-cli that proves its identity via agent_info;
@@ -1119,7 +1127,9 @@ format TaskInfo:
     # see that task, as authority_actor_hidden. A zero cancelled_by alone
     # reads as "the operator".
     cancelled_by_hidden :u1
-    reserved :u3
+    # recording: the task's live session is being recorded now (A-D22).
+    recording :u1
+    reserved :u2
     ring_buffer_bytes :u64    # current bytes buffered (0 for oneshot tasks —
                               # every interactive session has a ring)
     last_output_at :u64   # unix nanos (SERVER clock) of the last Stdout/Stderr
@@ -1239,6 +1249,9 @@ format TaskInfo:
     queue_deadline_ns :u64
     wait_reason :WaitReason
     conditions :BackgroundConditions
+    # The task's current run number (A-D20): 1 at create, one more at each
+    # resume. A record is named by (task, run).
+    run :u32
 
 format ListResult:
     # Server-initiated send-stream id; client reads ListResultBody bytes
@@ -2478,7 +2491,10 @@ format OpenInteractiveRequest:
     # 1 = the client writes a PromptBody on the send stream prompt_stream_id
     # after this request (A-D17).
     prompt_present :u1
-    reserved2 :u1
+    # 1 = an OpenInteractiveExt byte follows the prompt block. It holds the
+    # record switch (A-D22) and six spare bits, so the next open option does
+    # not have to find room in a full bit run again.
+    ext_present :u1
     # X11 block is on the wire ONLY when x11_enabled == 1 (no invisible bytes
     # when disabled).
     if x11_enabled == 1:
@@ -2493,6 +2509,18 @@ format OpenInteractiveRequest:
         conditions :BackgroundConditions
     if prompt_present == 1:
         prompt_stream_id :u64
+    if ext_present == 1:
+        ext :OpenInteractiveExt
+
+# OpenInteractiveExt is the open request's second flag byte (ext_present).
+format OpenInteractiveExt:
+    # record_set = 0: this open says nothing about recording and the server
+    # default applies (also on a resume: nothing is reused, A-D7). record is
+    # meaningful only with record_set == 1. Saying on needs record_persist;
+    # saying off needs nothing (A-D22).
+    record_set :u1
+    record :u1
+    reserved :u6
 
 enum OpenInteractiveStatus:
     :u8
@@ -2534,6 +2562,9 @@ enum OpenInteractiveStatus:
     # the background bit without run_mode_set): refused rather than starting
     # an unattended session with no deadline.
     conditions_without_background = "conditions_without_background"
+    # The open asked for recording on (ext.record_set and ext.record) without
+    # record_persist (A-D22). Appended.
+    record_not_permitted = "record_not_permitted"
 
 # One RUNNER offered when a spawn is ambiguous: more than one (runner, agent
 # profile) choice matched. profiles lists the agents the caller may pick on
@@ -2905,6 +2936,104 @@ format SessionModeResponse:
     error_msg_len :u16
     error_msg :[error_msg_len]u8
 
+# --- PTY records (pillar A spec, A1: A-D20..A-D28) ---------------------------
+
+enum RecordStatus:
+    :u8
+    ok             = "ok"
+    # No such task or run, or the task is outside the caller's scope for the
+    # bit the request needs: the two are one answer, as for GetTaskLog.
+    not_found      = "not_found"
+    # record_switch on a task with no live interactive session: the stream
+    # kind is never recorded (A-D21), and a finished run has nothing to record.
+    not_recordable = "not_recordable"
+    internal_error = "internal_error"
+
+# RecordRef names one run's record. run = 0 means the task's latest run.
+format RecordRef:
+    task_id :TaskID
+    run :u32
+
+# RecordEntry is one unit of a record: when the server received a frame, and
+# the frame (an exec/frame type and its payload; the 4-byte length the frame
+# header carried is payload_len here). The SAME format is a segment's bytes on
+# disk and a record-get stream's body, so the reader of either decodes one
+# thing (A-D23, A-D27). frame_type: Stdout 1, Stderr 2, Control 3 (a size
+# change, the session's TerminalWindowSize frame), Synth 4 (bytes the server
+# made, e.g. a segment's head). Stdin is never recorded.
+format RecordEntry:
+    ts_ns :u64
+    frame_type :u8
+    payload_len :u32
+    payload :[payload_len]u8
+
+# RecordInfo is one run's record as listed (A-D24). Times are unix nanos on
+# the server clock; 0 = none.
+format RecordInfo:
+    task_id :TaskID
+    run :u32
+    started_ns :u64
+    ended_ns :u64            # 0 = still recording
+    end_reason :EndReason    # the run's, once known
+    truncated_from_ns :u64   # 0 = whole; else the oldest kept entry's time
+    entry_bytes :u64
+    disk_bytes :u64
+    forever :u1
+    recording :u1
+    reserved :u6
+    expires_ns :u64          # 0 when forever or not yet ended
+
+# The record list is variable-length, so it travels on a stream (one control
+# message is one datagram).
+format RecordListBody:
+    count :u32
+    records :[count]RecordInfo
+
+format RecordListRequest:
+    task_present :u1         # 0 = every record in the caller's exec_view scope
+    reserved :u7
+    if task_present == 1:
+        task_id :TaskID
+
+format RecordListResponse:
+    status :RecordStatus
+    stream_id :u64           # RecordListBody, then EOF; 0 unless ok
+
+format RecordGetRequest:
+    ref :RecordRef
+
+format RecordGetResponse:
+    status :RecordStatus
+    stream_id :u64           # RecordEntry after RecordEntry, then EOF; 0 unless ok
+
+format RecordDeleteRequest:
+    ref :RecordRef
+    all_runs :u1             # 1 = every run of ref.task_id (ref.run ignored)
+    reserved :u7
+
+format RecordDeleteResponse:
+    status :RecordStatus
+
+# A later expiry or forever needs record_persist; an earlier one needs
+# record_delete (A-D26).
+format RecordKeepRequest:
+    ref :RecordRef
+    forever :u1
+    reserved :u7
+    ttl_ms :u64              # from the run's end; ignored when forever
+
+format RecordKeepResponse:
+    status :RecordStatus
+
+# on needs record_persist, off needs record_delete (A-D22).
+format RecordSwitchRequest:
+    task_id :TaskID
+    on :u1
+    reserved :u7
+
+format RecordSwitchResponse:
+    status :RecordStatus
+
 # OSC 7501 (Program Status Protocol) root-record state and blocked kind, as the
 # server's screen model last parsed them (spec D17). none = never reported.
 enum ProgramState:
@@ -3036,6 +3165,11 @@ format TaskControlRequest:
         TaskControlKind.runner_dial_remove       => runner_dial_remove       :RunnerDialRemoveRequest
         TaskControlKind.runner_kick              => runner_kick              :RunnerKickRequest
         TaskControlKind.session_mode             => session_mode             :SessionModeRequest
+        TaskControlKind.record_list              => record_list              :RecordListRequest
+        TaskControlKind.record_get               => record_get               :RecordGetRequest
+        TaskControlKind.record_delete            => record_delete            :RecordDeleteRequest
+        TaskControlKind.record_keep              => record_keep              :RecordKeepRequest
+        TaskControlKind.record_switch            => record_switch            :RecordSwitchRequest
         .. => error("Unexpected task")
 
 # CancelResult replaces a bare u8 that every reply wrote as 0. ok stays 0, so
@@ -3134,6 +3268,11 @@ format TaskControlResponse:
         TaskControlKind.runner_dial_remove       => runner_dial_remove       :RunnerDialRemoveResponse
         TaskControlKind.runner_kick              => runner_kick              :RunnerKickResponse
         TaskControlKind.session_mode             => session_mode             :SessionModeResponse
+        TaskControlKind.record_list              => record_list              :RecordListResponse
+        TaskControlKind.record_get               => record_get               :RecordGetResponse
+        TaskControlKind.record_delete            => record_delete            :RecordDeleteResponse
+        TaskControlKind.record_keep              => record_keep              :RecordKeepResponse
+        TaskControlKind.record_switch            => record_switch            :RecordSwitchResponse
 
 # --- runner enrollment (2026-10-27-runner-enrollment-design.md) --------------
 # The server lets a runner register under AuthRole.runner only when it signs
@@ -3587,7 +3726,9 @@ format TaskStatusEvent:
     # tick); it rides the next event. A parent-hop subscriber receives these
     # emptied, as redactParentTaskInfo empties its List row.
     live_terminal :u1
-    reserved :u7
+    # recording: as TaskInfo.recording; a switch emits an event (A-D22).
+    recording :u1
+    reserved :u6
     progress_len :u16
     progress :[progress_len]u8
     progress_at :u64
@@ -3614,6 +3755,7 @@ format TaskStatusEvent:
     # would otherwise show a stale or missing deadline.
     deadline_ns :u64
     deadline_remaining_ms :u64
+    run :u32                # appended: TaskInfo.run (A-D20)
 
 format RunnerStatusEvent:
     kind :StatusEventKind
@@ -4649,18 +4791,30 @@ enum Capability:
     # tree.<X>.* outside X's lineage. Default-off, appended. See
     # docs/superpowers/specs/2026-10-31-board-membership-design.md
     board_member   = 0x2000000, "board_member"
+    # record_delete deletes PTY records alone (GD G20, G34: not prune, which
+    # would also forget tasks), switches recording off and shortens a record's
+    # retention — withholding a record is a lesser deletion. Checked within the
+    # task's scope, so an override with exclude_self keeps a task from doing
+    # it to its own record (pillar A spec, A-D22/A-D26). Default-off, appended.
+    record_delete  = 0x4000000, "record_delete"
+    # record_persist switches recording on, opens a session recorded and keeps
+    # a record longer. Keeping is not viewing: a record takes the server's
+    # disk, and under the server-wide cap a new one pushes the oldest out
+    # (A-D22, A-D25, A-D26), as board_persist is apart from reading a topic.
+    record_persist = 0x8000000, "record_persist"
     # `all` is a LITERAL, not "every defined bit", so it widens by hand — the
     # same edit exec_view / exec_cowrite / exec_resize each needed. The WAL
     # persists the NUMBER, so a task already granted `all` holds 0xffff and
     # does NOT gain forward_tap until it is re-granted (nor, at 0x3fffff,
     # forward_link; nor, at 0x7fffff, runner_enroll; nor, at 0xffffff,
-    # board_persist; nor, at 0x1ffffff, board_member). That is the safe
+    # board_persist; nor, at 0x1ffffff, board_member; nor, at 0xfffffff,
+    # record_delete and record_persist). That is the safe
     # direction and needs no migration.
     #
     # Widening it is REQUIRED, not stylistic: callerCaps hands operator
     # connections Capability_All, so a literal left at 0xffff would deny the
     # operator its own feature.
-    all            = 0x3ffffff, "all"
+    all            = 0xfffffff, "all"
 
 # ScopeBase is the base target set a TaskScope starts from, before its explicit
 # id list is unioned in. Self joins that union unless exclude_self removes it,

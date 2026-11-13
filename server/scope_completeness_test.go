@@ -166,10 +166,17 @@ var kindTargetClass = map[protocol.TaskControlKind]targetClass{
 	protocol.TaskControlKind_RunnerKick:       noTarget,
 	// session_mode names a task and checks cancel on it, as cancel does.
 	protocol.TaskControlKind_SessionMode: targetGated,
+	// The record verbs name a task and gate it on their bit's own scope. A
+	// record list with no task filters every record by exec_view's scope.
+	protocol.TaskControlKind_RecordList:   targetGated,
+	protocol.TaskControlKind_RecordGet:    targetGated,
+	protocol.TaskControlKind_RecordDelete: targetGated,
+	protocol.TaskControlKind_RecordKeep:   targetGated,
+	protocol.TaskControlKind_RecordSwitch: targetGated,
 }
 
 func TestEveryTaskControlKindIsClassified(t *testing.T) {
-	for i := 0; i <= int(protocol.TaskControlKind_SessionMode); i++ {
+	for i := 0; i <= int(protocol.TaskControlKind_RecordSwitch); i++ {
 		k := protocol.TaskControlKind(i)
 		if k.String() == fmt.Sprintf("TaskControlKind(%d)", i) {
 			continue // gap in the enum, not a real kind
@@ -184,8 +191,8 @@ func TestEveryTaskControlKindIsClassified(t *testing.T) {
 	}
 }
 
-// session_mode is the last kind; if the enum grows past it the loops above
-// stop short and silently cover nothing new. It has caught fifteen appends now:
+// record_switch is the last kind; if the enum grows past it the loops above
+// stop short and silently cover nothing new. It has caught sixteen appends now:
 // restore_tasks, when the bound was open_forward_tap; trsf_state; the ten
 // agent_* kinds, which arrived together and would otherwise have dispatched
 // with whatever gate their neighbours happened to have; the two
@@ -194,11 +201,11 @@ func TestEveryTaskControlKindIsClassified(t *testing.T) {
 // progress_clear; runner_enroll / runner_unenroll / runner_keys;
 // lifecycle_set; board_retain; board_membership; agent_read_page; the
 // seven flush / archive kinds; runner_dial_add / _list / _remove /
-// runner_kick; and session_mode.
-func TestSessionModeIsStillTheLastKind(t *testing.T) {
-	next := protocol.TaskControlKind(int(protocol.TaskControlKind_SessionMode) + 1)
+// runner_kick; session_mode; and the five record_* kinds.
+func TestRecordSwitchIsStillTheLastKind(t *testing.T) {
+	next := protocol.TaskControlKind(int(protocol.TaskControlKind_RecordSwitch) + 1)
 	if next.String() != fmt.Sprintf("TaskControlKind(%d)", int(next)) {
-		t.Fatalf("a kind was appended after session_mode (%v) — raise the loop bound in "+
+		t.Fatalf("a kind was appended after record_switch (%v) — raise the loop bound in "+
 			"TestEveryTaskControlKindIsClassified and in TestEveryTaskControlKindHasACapVerdict, "+
 			"which otherwise stop before it", next)
 	}

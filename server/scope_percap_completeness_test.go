@@ -125,6 +125,11 @@ var capTargetClasses = map[protocol.Capability]capTargetClass{
 	// board_member names the task it subscribes or joins; the handler checks
 	// that task against this bit's own scope.
 	protocol.Capability_BoardMember: {kind: capResolvedLiteral},
+	// The record bits name the task whose record they act on; the handlers
+	// check that task against the bit's own scope (and its exclude_self).
+	// recordBit is chosen by the request's direction (keep, switch).
+	protocol.Capability_RecordPersist: {kind: capResolvedVia, via: "recordBit"},
+	protocol.Capability_RecordDelete:  {kind: capResolvedVia, via: "recordBit"},
 }
 
 // serverSources concatenates the package's non-test sources, which is what the

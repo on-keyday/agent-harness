@@ -69,6 +69,10 @@ func GrantableCaps() []protocol.Capability {
 		// board_member after board_persist: both change another party's
 		// relation to a topic, and this one names a task.
 		protocol.Capability_BoardMember,
+		// The record bits last: they act on a task's PTY records, not on the
+		// board. record_persist keeps, record_delete destroys (pillar A, A1).
+		protocol.Capability_RecordPersist,
+		protocol.Capability_RecordDelete,
 		protocol.Capability_All,
 	}
 }
@@ -160,6 +164,13 @@ func CapDescription(c protocol.Capability) string {
 		return "subscribe another task to a topic, or make it a member (board subscribe / unsubscribe / join / leave), " +
 			"for tasks in the bit's scope; subscribe only where the target can already read, join only where the holder " +
 			"can itself publish; never chat.*, never a tree.<id> outside its lineage"
+	case protocol.Capability_RecordPersist:
+		return "switch a session's PTY recording on, open a session recorded (session new --record), or keep a record " +
+			"longer (record on / record keep --forever|--for a later expiry), for tasks in the bit's scope. Keeping takes " +
+			"the server's disk, and under its record cap pushes the oldest records out"
+	case protocol.Capability_RecordDelete:
+		return "delete PTY records (record rm), switch recording off (record off), or shorten a record's retention, " +
+			"for tasks in the bit's scope; an override with exclude_self keeps a task from doing it to its own record. NOT prune"
 	case protocol.Capability_All:
 		return "full capability set (operator-equivalent)"
 	default:
@@ -451,6 +462,8 @@ var capAuditTable = map[protocol.Capability]capAuditEntry{
 	protocol.Capability_BoardObserve:  {tier: TierMid, scope: ScopeNone},
 	protocol.Capability_BoardPersist:  {tier: TierMid, scope: ScopeNone},
 	protocol.Capability_BoardMember:   {tier: TierMid},
+	protocol.Capability_RecordPersist: {tier: TierMid},
+	protocol.Capability_RecordDelete:  {tier: TierStrong},
 	protocol.Capability_ResumeExact:   {tier: TierMid, impliedBy: []protocol.Capability{protocol.Capability_Resume}},
 	protocol.Capability_ExecView:      {tier: TierWeak, impliedBy: []protocol.Capability{protocol.Capability_ExecCowrite, protocol.Capability_ExecControl}},
 	protocol.Capability_ExecResize:    {tier: TierWeak},

@@ -379,3 +379,22 @@ func TestWALReplay_OldAllMaskLacksBoardMember(t *testing.T) {
 		t.Fatalf("caps %#x lost board_persist, which the old all mask held", uint32(e.Capabilities))
 	}
 }
+
+// record_delete and record_persist were appended after all widened to
+// 0x3ffffff: a task recorded with that mask keeps the number and gains
+// neither (pillar A, A1).
+func TestWALReplay_OldAllMaskLacksRecordBits(t *testing.T) {
+	s := NewTaskStore()
+	id := "2123456789abcdef0123456789abcdef"
+	s.ReplayEvents([]WALEvent{{Type: "task_created", TaskID: id, Capabilities: 0x3ffffff, Ts: 1}})
+	e, ok := s.Get(id)
+	if !ok {
+		t.Fatal("replayed task missing")
+	}
+	if e.Capabilities&(protocol.Capability_RecordDelete|protocol.Capability_RecordPersist) != 0 {
+		t.Fatalf("caps %#x gained a record bit on replay", uint32(e.Capabilities))
+	}
+	if e.Capabilities&protocol.Capability_BoardMember == 0 {
+		t.Fatalf("caps %#x lost board_member, which the old all mask held", uint32(e.Capabilities))
+	}
+}
