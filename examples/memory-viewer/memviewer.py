@@ -7,8 +7,10 @@
                                          #   /api/payload   the corpus, as JSON
                                          #   /out.html      the self-contained page
     python3 memviewer.py --check         # the maintenance findings, as text
+    python3 memviewer.py --memory-dir /path/to/wiki --check
 
-Reads ~/.claude/projects/*/memory/*.md plus each directory's MEMORY.md index.
+Reads Claude's default memory directories, or the selected --memory-dir roots.
+Supports MEMORY.md entry indexes and on-demand _index.md knowledge wikis.
 Standard library only, by design: this runs on a box where installing a
 package is a decision, not a detail.
 
@@ -29,14 +31,18 @@ import subprocess
 import html
 import json
 import os
+import posixpath
 import re
 import sys
 import time
+import unicodedata
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 PROJECTS = Path.home() / ".claude" / "projects"
+MEMORY_DIRS: list[Path] = []  # explicit roots replace the default Claude scan
+INDEX_NAMES = ("MEMORY.md", "_index.md", "INDEX.md")
 
 # The size at which the harness stops reading the index, from its own warning
 # ("approaching the 24.4KB read limit"). Shown as a bar because the number on
@@ -167,6 +173,7 @@ def load_memory(path: Path, area: str = "") -> Memory:
 
 
 INDEX_LINE_RE = re.compile(r"^\s*-\s*\[(?P<title>[^\]]*)\]\((?P<file>[^)]+)\)\s*(?:[—-]\s*(?P<hook>.*))?$")
+WIKI_INDEX_LINE_RE = re.compile(r"^\s*(?:[-*]\s*)?\[\[(?P<file>[^\]]+)\]\]\s*(?:[—-]\s*(?P<hook>.*))?$")
 
 
 def parse_index(path: Path) -> list[dict]:
@@ -174,11 +181,14 @@ def parse_index(path: Path) -> list[dict]:
         return []
     out = []
     for n, line in enumerate(path.read_text(encoding="utf-8", errors="replace").split("\n"), 1):
-        m = INDEX_LINE_RE.match(line)
+        m = INDEX_LINE_RE.match(line) or WIKI_INDEX_LINE_RE.match(line)
         if m:
             # raw is kept because the index is budgeted by BYTE, and the
             # byte cost of a line is the line, not its parts.
-            out.append({"line": n, "title": m["title"], "file": m["file"],
+            target = m["file"]
+            if m.re is WIKI_INDEX_LINE_RE and not target.endswith(".md"):
+                target += ".md"
+            out.append({"line": n, "title": m.groupdict().get("title") or m["file"], "file": target,
                         "hook": (m["hook"] or "").strip(), "raw": line})
     return out
 
@@ -357,74 +367,129 @@ def project_label(d: Path) -> str:
 
 
 def scan() -> list[dict]:
+    if MEMORY_DIRS:
+        # Explicit roots often all end in "memory"; keep their identities
+        # distinct in the cross-project view and its project filter.
+        roots = [(str(d), str(d), d) for d in MEMORY_DIRS]
+    elif PROJECTS.is_dir():
+        roots = [(p.name, project_label(p), p / "memory") for p in sorted(PROJECTS.iterdir())]
+    else:
+        roots = []
     projects = []
-    if not PROJECTS.is_dir():
-        return projects
-    for pdir in sorted(PROJECTS.iterdir()):
-        mdir = pdir / "memory"
+    for key, label, mdir in roots:
         if not mdir.is_dir():
             continue
-        files = sorted(p for p in mdir.glob("*.md") if p.name != "MEMORY.md")
-        # One level down is an archive: memory/old/, or whatever it is called.
-        # Read it, because a live memory can still link into it and a dangling
-        # link is the wrong answer for a file that is right there.
-        # A subdirectory is one of two things, told apart by whether it holds
-        # its own INDEX.md:
-        #   with one    — a TOPIC: a second-level index, pointed at from
-        #                 MEMORY.md by a line naming the directory. Correct
-        #                 when the file has a row in that INDEX.md.
-        #   without one — an ARCHIVE (old/): correct when something links to
-        #                 it, since nothing else will lead there.
-        sub, sub_index, sub_raw = [], {}, {}
-        for d in sorted(x for x in mdir.iterdir() if x.is_dir()):
-            idx = d / "INDEX.md"
-            if idx.exists():
-                sub_index[d.name] = parse_index(idx)
-                sub_raw[d.name] = idx.read_text(encoding="utf-8", errors="replace")
-            for f in sorted(d.glob("*.md")):
-                if f.name not in ("MEMORY.md", "INDEX.md"):
-                    sub.append((d.name, f))
-        if not files and not sub:
+        files = sorted(mdir.rglob("*.md"))
+        indexes = {p.relative_to(mdir).as_posix(): {"rows": parse_index(p),
+                   "raw": p.read_bytes().decode("utf-8", errors="replace")}
+                   for p in files if p.name in INDEX_NAMES}
+        index_path = next((mdir / n for n in INDEX_NAMES if (mdir / n).is_file()), mdir / "MEMORY.md")
+        # Indexes describe navigation; SKILL.md and _schema.md describe how to
+        # use/maintain a wiki. None is a knowledge note or a duplicate candidate.
+        mems = [load_memory(p, "" if p.parent == mdir else p.parent.relative_to(mdir).as_posix())
+                for p in files if p.name not in (*INDEX_NAMES, "SKILL.md", "_schema.md")]
+        if not mems:
             continue
-        mems = [load_memory(p) for p in files] + [load_memory(p, area) for area, p in sub]
-        index_path = mdir / "MEMORY.md"
-        index_raw = (index_path.read_text(encoding="utf-8", errors="replace")
-                     if index_path.exists() else "")
-        projects.append(
-            {
-                "key": pdir.name,
-                "label": project_label(pdir),
-                "short": pdir.name.rsplit("-", 1)[-1] or pdir.name,
-                "dir": str(mdir),
-                "memories": mems,
-                "index": parse_index(index_path),
-                "sub_index": sub_index,
-                "sub_index_raw": sub_raw,
-                "index_bytes": index_path.stat().st_size if index_path.exists() else 0,
-                # The other half of the load limit (INDEX_LIMIT_LINES). splitlines()
-                # so a trailing newline does not read as one more line than the file
-                # presents — the same count wc -l gives.
-                "index_lines": len(index_raw.splitlines()),
-                "index_raw": index_raw,
-            }
-        )
+        sub_index, sub_raw, sub_names = {}, {}, {}
+        for d in sorted({p.parent for p in files if p.parent != mdir}):
+            idx = next((d / n for n in INDEX_NAMES if (d / n).is_file()), None)
+            if idx is not None:
+                area = d.relative_to(mdir).as_posix()
+                info = indexes[idx.relative_to(mdir).as_posix()]
+                sub_index[area] = info["rows"]
+                sub_raw[area] = info["raw"]
+                sub_names[area] = idx.name
+        index_raw = indexes.get(index_path.name, {}).get("raw", "")
+        projects.append({
+            "key": key, "label": label, "short": label, "dir": str(mdir), "memories": mems,
+            "index": indexes.get(index_path.name, {}).get("rows", []), "index_name": index_path.name,
+            "indexes": indexes,
+            "sub_index": sub_index, "sub_index_raw": sub_raw, "sub_index_names": sub_names,
+            "index_bytes": len(index_raw.encode("utf-8")), "index_lines": len(index_raw.splitlines()),
+            "index_raw": index_raw,
+        })
     projects.sort(key=lambda p: -len(p["memories"]))
     return projects
 
 
 def words(s: str) -> set[str]:
-    return {w for w in re.findall(r"[a-z0-9_]+", s.lower()) if w not in STOPWORDS and len(w) > 2}
+    s = unicodedata.normalize("NFKC", s).casefold()
+    tokens = {w for w in re.findall(r"[a-z0-9_]+", s) if w not in STOPWORDS and len(w) > 2}
+    # Japanese descriptions have no whitespace word boundaries. Character
+    # trigrams provide duplicate CANDIDATES without a tokenizer dependency.
+    for run in re.findall(r"[\u3040-\u30ff\u3400-\u9fff]+", s):
+        tokens.update("ja:" + run[i:i + 3] for i in range(max(1, len(run) - 2)))
+    return tokens
+
+
+def memory_rel(m: Memory) -> str:
+    return f"{m.area}/{m.path.name}" if m.area else m.path.name
+
+
+def navigation(proj: dict):
+    """Resolve local paths and unique wiki slugs against the scanned corpus.
+
+    Indexes are nodes too: an isolated topic index is not an entry point, and
+    two notes pointing at each other are not reachable merely because of that.
+    """
+    texts = {memory_rel(m): m.body for m in proj["memories"]}
+    texts.update({path: info["raw"] for path, info in proj.get("indexes", {}).items()})
+    root = proj.get("index_name", "MEMORY.md")
+    texts[root] = proj["index_raw"]
+    for area, raw in proj.get("sub_index_raw", {}).items():
+        texts[f"{area}/{proj.get('sub_index_names', {}).get(area, 'INDEX.md')}"] = raw
+    aliases: dict[str, set[str]] = {}
+    for path in texts:
+        aliases.setdefault(Path(path).stem, set()).add(path)
+    for m in proj["memories"]:
+        aliases.setdefault(m.name, set()).add(memory_rel(m))
+
+    def resolve(source: str, target: str) -> str | None:
+        target = target.split("#", 1)[0].strip()
+        if not target or re.match(r"[a-zA-Z][a-zA-Z0-9+.-]*:", target) or target.startswith("/"):
+            return None
+        # Relative Markdown paths take precedence over a same-named note in
+        # another topic. The root fallback accepts existing area/file.md rows.
+        for base in (posixpath.dirname(source), ""):
+            path = posixpath.normpath(posixpath.join(base, target))
+            for candidate in (path, path + ".md", *(path.rstrip("/") + "/" + n for n in INDEX_NAMES)):
+                if candidate in texts:
+                    return candidate
+        hits = aliases.get(target.removesuffix(".md"), set())
+        return next(iter(hits)) if len(hits) == 1 else None
+
+    return root, texts, resolve
+
+
+def references(text: str) -> list[str]:
+    return (LINK_RE.findall(text)
+            + re.findall(r"(?<!!)\[[^\]\n]*\]\(([^)\n]+)\)", text)
+            # Existing topic indexes also name their child index in bold/code.
+            + re.findall(r"(?:`|\*\*)([^`*\n]+\.md)(?:`|\*\*)", text))
+
+
+def reachable(root: str, texts: dict, resolve) -> set[str]:
+    raw = texts[root]
+    if root == "MEMORY.md":
+        raw = "".join(raw.splitlines(keepends=True)[:INDEX_LIMIT_LINES])
+        raw = raw.encode("utf-8")[:INDEX_LIMIT_BYTES].decode("utf-8", errors="ignore")
+    seen, pending = set(), [root]
+    while pending:
+        source = pending.pop()
+        if source in seen:
+            continue
+        seen.add(source)
+        for target in references(raw if source == root else texts[source]):
+            path = resolve(source, target)
+            if path is not None and path not in seen:
+                pending.append(path)
+    return seen
 
 
 def analyze(proj: dict) -> dict:
     mems: list[Memory] = proj["memories"]
-    by_name = {m.name: m for m in mems}
-    by_stem = {m.stem: m for m in mems}
-
-    def resolve(target: str) -> Memory | None:
-        # `[[x.md]]` is written occasionally; the file is the same one.
-        t = target[:-3] if target.endswith(".md") else target
-        return by_name.get(t) or by_stem.get(t)
+    root, texts, resolve = navigation(proj)
+    by_path = {memory_rel(m): m for m in mems}
 
     # Two naming conventions live side by side (feedback_jargon_masks_confusion
     # and jargon-masks-confusion), and every link that crosses them dangles.
@@ -456,55 +521,38 @@ def analyze(proj: dict) -> dict:
 
     # inbound links
     for m in mems:
+        m.inbound.clear()
+    for m in mems:
         for t in m.links:
-            tgt = resolve(t)
+            tgt = by_path.get(resolve(memory_rel(m), t))
             if tgt is not None and m.name not in tgt.inbound:
                 tgt.inbound.append(m.name)
 
     dangling = []
     for m in mems:
         for t in sorted(set(m.links)):
-            if resolve(t) is None:
+            if resolve(memory_rel(m), t) is None:
                 dangling.append({"from": m.name, "target": t, "suggest": suggest(t)})
 
     # Orphan = nothing links here. Archived files are judged by `unreachable`
     # instead, which also accounts for the index line.
     orphans = [m.name for m in mems if not m.inbound and not m.area]
 
-    # Compare on the path AS THE INDEX WOULD WRITE IT: a file under memory/old/
-    # is linked "old/x.md", so matching on the bare name would call an indexed
-    # archive file both indexed and missing at once.
-    def rel(m: "Memory") -> str:
-        return f"{m.area}/{m.path.name}" if m.area else m.path.name
+    # Index-row coverage is independent of reachability. A topic note should
+    # have a row; an archived note can instead be reached through other notes.
+    indexes = proj.get("indexes") or {root: {"rows": proj["index"]}}
+    indexed_files = {resolve(source, row["file"]) for source, info in indexes.items() for row in info["rows"]}
+    topical = proj.get("sub_index") or {}
+    missing_line = sorted(memory_rel(m) for m in mems
+                          if (not m.area or m.area in topical) and memory_rel(m) not in indexed_files)
+    missing_file = sorted(posixpath.join(posixpath.dirname(source), row["file"])
+                          for source, info in indexes.items() for row in info["rows"]
+                          if resolve(source, row["file"]) is None)
 
-    indexed_files = {row["file"] for row in proj["index"]}
-    live = [m for m in mems if not m.area]
-    archived = [m for m in mems if m.area]
-
-
-    # A file under a TOPIC directory is indexed by that directory's own
-    # INDEX.md, not by MEMORY.md — that is the point of the second level.
-    sub_index = proj.get("sub_index") or {}
-    topical = {a: {r["file"] for r in rows} for a, rows in sub_index.items()}
-
-    def indexed(m: "Memory") -> bool:
-        if m.area in topical:
-            # Either spelling: the row may name the file bare (it sits beside
-            # the INDEX) or prefixed, and neither is worth calling drift.
-            return m.path.name in topical[m.area] or rel(m) in topical[m.area]
-        return rel(m) in indexed_files
-
-    # Only a LIVE file missing its line is drift. An archived one has no line
-    # on purpose — that is the whole mechanism.
-    missing_line = sorted(rel(m) for m in live if not indexed(m))
-    missing_line += sorted(rel(m) for m in mems if m.area in topical and not indexed(m))
-    missing_file = sorted(indexed_files - {rel(m) for m in mems})
-
-    # What goes wrong for an ARCHIVE is different: filing something away and
-    # leaving nothing that leads back to it. No index line and no inbound link
-    # is not storage, it is deletion that still costs disk.
-    unreachable = sorted(m.name for m in archived
-                         if m.area not in topical and not m.inbound and not indexed(m))
+    # Only paths reachable from the entry index count. Incoming links alone
+    # miss isolated cycles, and an unlinked topic index is not an entry point.
+    seen = reachable(root, texts, resolve)
+    unreachable = sorted(m.name for m in mems if memory_rel(m) not in seen)
 
     similar = []
     descs = [(m, words(m.description)) for m in mems if m.description]
@@ -583,10 +631,13 @@ def index_by_file(p: dict) -> dict:
     lookup has to span both levels or everything below the top looks
     hookless — in the page and in a sent message alike.
     """
-    by_file = {row["file"]: row for row in p["index"]}
-    for a, rows in (p.get("sub_index") or {}).items():
-        for row in rows:
-            by_file.setdefault(f"{a}/{row['file'].split('/')[-1]}", row)
+    _, _, resolve = navigation(p)
+    by_file = {}
+    for source, info in p["indexes"].items():
+        for row in info["rows"]:
+            path = resolve(source, row["file"])
+            if path is not None:
+                by_file.setdefault(path, dict(row, indexName=source))
     return by_file
 
 
@@ -595,6 +646,7 @@ def build_payload() -> dict:
     out = []
     for p in projects:
         checks = analyze(p)
+        _, _, resolve = navigation(p)
         # The hook is markdown like everything else — bold, code spans and the
         # occasional [[link]] — so it goes through the same inline renderer
         # rather than being escaped into literal asterisks. The byte count
@@ -606,9 +658,12 @@ def build_payload() -> dict:
         # lookup and the whole-file view read the same objects. Enriching one
         # level and not the other is how the second level came out rendering
         # its hook as `undefined`.
-        p["index"] = [dict(row, hookHtml=_inline(row["hook"])) for row in p["index"]]
-        p["sub_index"] = {a: [dict(r, hookHtml=_inline(r["hook"])) for r in rows]
-                          for a, rows in (p.get("sub_index") or {}).items()}
+        p["indexes"] = {source: {"raw": info["raw"], "rows": [
+            dict(row, hookHtml=_inline(row["hook"]), target=resolve(source, row["file"]))
+            for row in info["rows"]]} for source, info in p["indexes"].items()}
+        p["index"] = p["indexes"].get(p["index_name"], {}).get("rows", [])
+        p["sub_index"] = {a: p["indexes"][f"{a}/{p['sub_index_names'][a]}"]["rows"]
+                          for a in p["sub_index"]}
         by_file = index_by_file(p)
         for m in p["memories"]:
             m.body_html = render_markdown(m.body)
@@ -619,12 +674,16 @@ def build_payload() -> dict:
                 "dir": p["dir"],
                 "indexBytes": p["index_bytes"],
                 "indexLines": p["index_lines"],
+                "indexName": p["index_name"],
+                "indexLimited": p["index_name"] == "MEMORY.md",
                 # The whole file, because the per-line view has to show the
                 # lines that are NOT index rows too: a heading or a stray costs
                 # the same always-loaded bytes as a memory does.
                 "indexRaw": p["index_raw"],
                 "subIndex": p["sub_index"],
                 "subIndexRaw": p["sub_index_raw"],
+                "subIndexNames": p["sub_index_names"],
+                "indexSources": p["indexes"],
                 "checks": checks,
                 "memories": [
                     {
@@ -902,7 +961,9 @@ function warnBlock() {
   const pct = Math.min(100, Math.max(bFrac, lFrac) * 100);
   const cls = (P.indexBytes >= D.indexLimit || P.indexLines >= D.indexLimitLines) ? "over"
             : (P.indexBytes >= D.indexTarget || P.indexLines >= D.indexTargetLines) ? "hot" : "";
-  let h = `<div class="warn"><h3><a href="#" id="open-index">MEMORY.md ${kb(P.indexBytes)} / ${kb(D.indexLimit)} · ${P.indexLines} / ${D.indexLimitLines} 行</a></h3>
+  let h = P.indexLimited === false
+    ? `<div class="warn"><h3><a href="#" id="open-index">${esc(P.indexName)} · ${kb(P.indexBytes)} · ${P.indexLines} 行</a></h3><div class="meta">必要なときに読む wiki 索引</div></div>`
+    : `<div class="warn"><h3><a href="#" id="open-index">${esc(P.indexName || "MEMORY.md")} ${kb(P.indexBytes)} / ${kb(D.indexLimit)} · ${P.indexLines} / ${D.indexLimitLines} 行</a></h3>
     <div class="bar"><span class="${cls}" style="width:${pct}%"></span></div>
     <div class="meta">${byLines ? "行数" : "バイト"}が先に尽きます ·
       目標 ${kb(D.indexTarget)} / ${D.indexTargetLines} 行</div></div>`;
@@ -923,7 +984,7 @@ function warnBlock() {
   h += item("dangling — リンク先が無い", c.dangling,
     x => `<li><a href="#" data-goto="${esc(x.from)}">${esc(x.from)}</a> → <code>[[${esc(x.target)}]]</code>${
       x.suggest ? ` → <a href="#" data-goto="${esc(x.suggest)}">${esc(x.suggest)}</a>?` : ""}</li>`, "dangling");
-  h += item("退避したが到達不能 — 索引行もリンクも無い", c.unreachable,
+  h += item("入口の索引から辿れない — 読み込み範囲とリンクを確認", c.unreachable,
     x => `<li><a href="#" data-goto="${esc(x)}">${esc(x)}</a></li>`, "unreachable");
   h += item("index に行が無い", c.missing_line, x => `<li><code>${esc(x)}</code></li>`, "missing_line");
   h += item("index の行にファイルが無い", c.missing_file, x => `<li><code>${esc(x)}</code></li>`, "missing_file");
@@ -968,7 +1029,8 @@ function renderDetail() {
   // archive. Per project that is read off P.subIndex; in the cross view there
   // is no single subIndex, so the answer travels with the memory instead.
   const isTopic = P.cross ? !!m.topical : !!(P.subIndex && P.subIndex[m.area]);
-  const idxName = m.area && isTopic ? esc(m.area) + "/INDEX.md" : "MEMORY.md";
+  const idxName = esc(ix?.indexName || (m.area && isTopic
+    ? m.area + "/" + (P.subIndexNames?.[m.area] || "INDEX.md") : (P.indexName || "MEMORY.md")));
   const idxBlock = ix
     ? `<div class="ixrow"><div class="meta">${idxName} ${ix.line} 行目 · ${bytes(ix.raw)}</div>
         <div class="ixline"><span class="ixtitle">${esc(ix.title)}</span>${
@@ -1338,10 +1400,12 @@ function renderIndexView(a) {
   if (a !== undefined) idxArea = a;
   sel = null;
   const enc = new TextEncoder();
-  const top = !idxArea;
-  const name = top ? "MEMORY.md" : `${idxArea}/INDEX.md`;
-  const raw = top ? (P.indexRaw || "") : ((P.subIndexRaw || {})[idxArea] || "");
-  const rowsSrc = top ? P.index : ((P.subIndex || {})[idxArea] || []);
+  const name = !idxArea ? (P.indexName || "MEMORY.md")
+    : P.indexSources?.[idxArea] ? idxArea : `${idxArea}/${P.subIndexNames?.[idxArea] || "INDEX.md"}`;
+  const top = name === (P.indexName || "MEMORY.md");
+  const source = P.indexSources?.[name];
+  const raw = source?.raw ?? (top ? (P.indexRaw || "") : ((P.subIndexRaw || {})[idxArea] || ""));
+  const rowsSrc = source?.rows ?? (top ? P.index : ((P.subIndex || {})[idxArea] || []));
   const lines = raw.split("\n");
   const byFile = {};
   for (const r of rowsSrc) byFile[r.line] = r;
@@ -1360,7 +1424,7 @@ function renderIndexView(a) {
 
   $("detail").innerHTML = `
     <h2>${esc(name)}</h2>
-    <div class="meta">${lines.length} 行 · ${top
+    <div class="meta">${lines.length} 行 · ${top && P.indexLimited !== false
         ? `${kb(P.indexBytes)} / ${kb(D.indexLimit)} · ${P.indexLines} / ${D.indexLimitLines} 行 上限 · 常時読み込み`
         : `${total}B · 触っているときだけ読む`} ·
       索引行 ${rowsSrc.length} · 索引行でない行 ${nonRow.length} (${bytes(nonRow.map(x=>x.text).join("\n"))})</div>
@@ -1378,7 +1442,7 @@ function renderIndexView(a) {
         <td class="n">${x.n}</td>
         <td class="b">${x.bytes}</td>
         <td>${x.row
-          ? `<a href="#" data-goto="${esc(x.row.file.replace(/\.md$/, "").split("/").pop())}">${esc(x.row.title)}</a>`
+          ? `<a href="#" data-goto="${esc(x.row.target || x.row.file)}">${esc(x.row.title)}</a>`
             + (x.row.hook ? ` — ${x.row.hookHtml}` : ` <span class="ixnone">— hook が無い</span>`)
           : (x.text.match(/\*\*([A-Za-z0-9_-]+)\/INDEX\.md\*\*/)
               ? `<a href="#" data-idxarea="${esc(RegExp.$1)}">${esc(x.text)}</a>`
@@ -1392,7 +1456,9 @@ function renderIndexView(a) {
 }
 
 function goto(name) {
-  const m = P.memories.find(x => x.name === name || x.file === name + ".md");
+  if (P.indexSources?.[name]) { renderIndexView(name); return; }
+  const m = P.memories.find(x => x.name === name || x.file === name + ".md"
+    || (x.area ? x.area + "/" : "") + x.file === name);
   if (!m) return;
   sel = m; renderList(); renderDetail();
   // Under 800px the panes stack, so the detail lands below a list that can be
@@ -1975,8 +2041,8 @@ def print_check() -> int:
         c = p["checks"]
         n = (len(c["orphans"]) + len(c["dangling"]) + len(c["missing_line"])
              + len(c["missing_file"]) + len(c["unreachable"]))
-        over = (p["indexBytes"] >= INDEX_TARGET_BYTES
-                or p["indexLines"] >= INDEX_TARGET_LINES)
+        over = p["indexLimited"] and (p["indexBytes"] >= INDEX_TARGET_BYTES
+                                      or p["indexLines"] >= INDEX_TARGET_LINES)
         if not n and not over and not c["similar"]:
             continue
         worst = max(worst, 1)
@@ -2007,7 +2073,7 @@ def print_check() -> int:
         capped(c["dangling"], 12, lambda d:
                f"dangling: {d['from']} -> [[{d['target']}]]" +
                (f"   (did you mean {d['suggest']}?)" if d.get("suggest") else ""), "dangling")
-        capped(c["unreachable"], 10, lambda f: f"archived but unreachable: {f}", "unreachable")
+        capped(c["unreachable"], 10, lambda f: f"unreachable from entry index: {f}", "unreachable")
         capped(c["missing_line"], 10, lambda f: f"no index line: {f}", "no index line")
         capped(c["missing_file"], 10, lambda f: f"index line, no file: {f}", "index line, no file")
         capped(c["similar"], 8, lambda s: f"similar {s['score']}: {s['a']} <-> {s['b']}", "similar")
@@ -2218,8 +2284,9 @@ def find_memory(project_key: str, area: str, filename: str):
                 rel = f"{area}/{filename}" if area else filename
                 # Named the way the page names it: a topic is indexed by its
                 # own INDEX.md, an archive (or the top level) by MEMORY.md.
-                ix_name = f"{area}/INDEX.md" if area in (p.get("sub_index") or {}) else "MEMORY.md"
-                return m, index_by_file(p).get(rel), ix_name
+                ix = index_by_file(p).get(rel)
+                ix_name = ix["indexName"] if ix else p["index_name"]
+                return m, ix, ix_name
     return None, None, None
 
 
@@ -2381,8 +2448,15 @@ def main() -> int:
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--host", default="127.0.0.1", help="loopback by default: this page contains your notes")
     ap.add_argument("--check", action="store_true", help="print the maintenance findings and exit")
+    ap.add_argument("--memory-dir", action="append", type=Path, default=[], metavar="DIR",
+                    help="read this auto-memory/wiki directory instead of all Claude projects (repeatable)")
     ap.add_argument("-o", "--out", default="out.html")
     args = ap.parse_args()
+    global MEMORY_DIRS
+    for directory in args.memory_dir:
+        if not directory.is_dir():
+            ap.error(f"--memory-dir is not a directory: {directory}")
+    MEMORY_DIRS = list(dict.fromkeys(d.resolve() for d in args.memory_dir))
 
     if args.check:
         return print_check()

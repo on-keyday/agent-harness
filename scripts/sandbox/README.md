@@ -504,6 +504,34 @@ The wrapper (`agent-in-podman.sh`) bind-mounts, at identical host paths:
   The redirect lives in `entrypoint.sh`, so it takes effect only after
   `build.sh` rebuilds the image.
 
+### Selected memory (`--memory-seed=DIR`, opt-in)
+
+Pass an existing memory/wiki directory for this task with
+`--agent-arg --memory-seed=/path/to/selected-memory`. The wrapper mounts the
+whole selected directory **read-only** at `/run/harness-memory` and sets
+`HARNESS_MEMORY_DIR` to that container path. The directory needs a `MEMORY.md`
+or `_index.md` entry index, with relative links to the notes the task needs.
+The flag is consumed by the wrapper and never reaches the agent binary.
+Missing/empty values, a missing directory/index, repeated flags and paths
+containing a colon or newline exit 2 before creating any auth/history root.
+
+This works for all wrapper agents and with `--history-window`, without mounting
+additional host configuration. The selected notes are an explicit input to the
+task. Auto-memory in an ephemeral config root is still discarded; report new
+learning to the parent for verification and integration. The new worktree's
+injected instructions point agents at `HARNESS_MEMORY_DIR`; a repository with
+its own instruction file should include the same pointer. A shell or an agent
+that does not load those instructions must be told to read the entry index.
+
+Prepare a task-specific copy if the input must stay fixed while the parent
+updates shared memory. A plain resume does not carry agent args: pass the flag
+again, or use `--exact`. The wrapper's summary names `memory=seed:<host path>`
+or `memory=none`, so the input is visible in the runner log.
+
+Use `harness-cli skill memory-maintenance` for the verification/organization
+workflow, and `python3 examples/memory-viewer/memviewer.py --memory-dir DIR
+--check` (from this repository) to inspect entry paths and duplicate candidates.
+
 ### History window (`--history-window`, claude / pi / codex, opt-in)
 
 Mount auth puts the agent's whole config directory in the container: every
@@ -523,7 +551,8 @@ been there.
 The empty config dir is a host temp dir (`${TMPDIR:-/tmp}/harness-sandbox-root.*`)
 that the reaper removes. Everything else the agent keeps there — claude's
 auto memory, prompt history, `/rewind` checkpoints, user `CLAUDE.md`, skills,
-plugins, MCP config — starts empty every run and is discarded.
+plugins, MCP config — starts empty every run and is discarded. A selected
+read-only memory seed can be supplied separately (below).
 
 - **Enabling it:** per task, `--agent-arg --history-window` (the CLI, the TUI
   submit popup's args field, the WebUI). A slot's `--agent-args` does not work:

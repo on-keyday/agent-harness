@@ -14,7 +14,7 @@ import (
 	"strings"
 )
 
-//go:embed all:codebase-tour all:harness-cli all:harness-cli-from-a-tool all:independent-review all:landing-to-main all:running-parallel-workers all:session-debugging all:supervising-workers
+//go:embed all:codebase-tour all:harness-cli all:harness-cli-from-a-tool all:independent-review all:landing-to-main all:memory-maintenance all:running-parallel-workers all:session-debugging all:supervising-workers
 var FS embed.FS
 
 // Skill returns the SKILL.md bytes for a named skill (e.g. "harness-cli").

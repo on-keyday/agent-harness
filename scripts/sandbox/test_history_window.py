@@ -331,6 +331,64 @@ class WrapperTests(unittest.TestCase):
         self.assertIn("SANDBOX_HISTORY=shared", argv)
         self.assertIn("history=shared", err)
 
+    def test_memory_seed_is_read_only_in_shared_and_window_modes(self):
+        seed = self.tmp / "selected memory"
+        seed.mkdir()
+        (seed / "MEMORY.md").write_text("- [Rule](rule.md)\n")
+        (seed / "rule.md").write_text("Verified rule\n")
+        for agent in ("claude", "pi"):
+            for flags in ((), ("--history-window",)):
+                with self.subTest(agent=agent, flags=flags):
+                    err, argv = self.ok(agent, "--mount-auth", f"--memory-seed={seed}", *flags, "-p", "do work")
+                    self.assertIn(f"{seed}:/run/harness-memory:ro", argv)
+                    self.assertIn("HARNESS_MEMORY_DIR=/run/harness-memory", argv)
+                    self.assertIn(f"memory=seed:{seed}", err)
+                    self.assertFalse(any(a.startswith("--memory-seed") for a in argv))
+                    self.assertEqual(argv[-2:], ["-p", "do work"])
+                    if flags:
+                        self.assertIn("SANDBOX_HISTORY=window", argv)
+                        self.assertNotIn(f"{self.home}/.claude:{self.home}/.claude", argv)
+
+    def test_wiki_memory_seed_can_be_relative(self):
+        seed = self.wt / "wiki"
+        seed.mkdir()
+        (seed / "_index.md").write_text("[[rule]] — When relevant\n")
+        _, argv = self.ok("pi", "--mount-auth", "--memory-seed=wiki")
+        self.assertIn(f"{seed}:/run/harness-memory:ro", argv)
+
+    def test_no_memory_seed_adds_no_memory_mount_or_environment(self):
+        # A stale host value must not advertise a path we did not mount.
+        self.env["HARNESS_MEMORY_DIR"] = "/host/private-memory"
+        executable(self.tools / "harness-cli", "#!/bin/sh\n")
+        err, argv = self.ok("pi", "--mount-auth")
+        self.assertIn("memory=none", err)
+        self.assertFalse(any("/run/harness-memory" in a or "HARNESS_MEMORY_DIR" in a for a in argv))
+        # Exercise the HARNESS_* bridge as well (wrap normally disables it).
+        result = subprocess.run(["bash", str(WRAPPER), "--sandbox-agent=pi", "--mount-auth"],
+                                env=self.env, cwd=self.wt, capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        argv = json.loads(self.capture.read_text())
+        self.assertNotIn("HARNESS_MEMORY_DIR", argv)
+
+    def test_invalid_memory_seeds_fail_before_creating_auth_roots(self):
+        empty = self.tmp / "empty-memory"
+        empty.mkdir()
+        bad_path = self.tmp / "memory:ambiguous"
+        bad_path.mkdir()
+        (bad_path / "MEMORY.md").write_text("# Index\n")
+        cases = (("--memory-seed",), ("--memory-seed=",),
+                 (f"--memory-seed={self.tmp / 'missing'}",),
+                 (f"--memory-seed={empty}",),
+                 (f"--memory-seed={bad_path}",),
+                 (f"--memory-seed={empty}", f"--memory-seed={empty}"))
+        for args in cases:
+            with self.subTest(args=args):
+                rc, err, argv = self.wrap("pi", *args)
+                self.assertEqual(rc, 2, err)
+                self.assertIn("--memory-seed", err)
+                self.assertIsNone(argv)
+                self.assertEqual(list(self.tmp.glob("harness-sandbox-root.*")), [])
+
     def test_container_uses_host_timezone(self):
         # codex names and files rollouts by LOCAL time; a UTC container's
         # rollouts sorted hours behind the host's and `resume --last` on the

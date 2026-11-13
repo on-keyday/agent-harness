@@ -1710,6 +1710,13 @@ mode, and `--agent-arg --no-firewall` opens the network. Processes in the
 container cannot create user namespaces (a seccomp profile derived from
 podman's); `--agent-arg --allow-userns` lifts that for one task.
 
+`--agent-arg --memory-seed=/path/to/selected-memory` supplies selected notes
+read-only, including under `--history-window`. The agent starts at that
+directory's `MEMORY.md` or `_index.md`; new learning goes to the parent for
+verification and integration. `harness-cli skill memory-maintenance` describes
+the workflow; the [memory viewer](examples/memory-viewer/README.md) audits
+entry paths and duplicate candidates for both auto-memory and knowledge wikis.
+
 This is the **OS-layer** half of a two-layer model; the **server-layer**
 half is the capability bitmask (**Capabilities and scope** above), which
 now closes the control-plane escape path by default — an omitted
