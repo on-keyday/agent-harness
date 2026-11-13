@@ -157,3 +157,26 @@ func TestSwitchOffDoesNotStartTheRetentionClock(t *testing.T) {
 		t.Fatal("the record outlived its retention after the run ended")
 	}
 }
+
+// Final review (re-graded Important): open segments cannot be evicted, so
+// they must not count against the server-wide cap — otherwise live sessions
+// alone over the cap made it delete every closed record on the server, kept
+// forever or not.
+func TestOpenSegmentsDoNotEvictClosedRecords(t *testing.T) {
+	s := newRecStore(t, 64<<20, 1<<30)
+	old, _ := s.OpenRun(recTask, 1, time.Unix(0, 1))
+	_ = old.Append(recEntry(1, "kept"))
+	_ = old.Close(time.Unix(0, 2))
+	s.mu.Lock()
+	s.cfg.TotalMax = s.diskTotalLocked() + 4096 // the closed record fits with room to spare
+	s.mu.Unlock()
+	live, _ := s.OpenRun(recTask2, 1, time.Unix(0, 10))
+	_ = live.Append(recEntry(11, strings.Repeat("z", 64<<10))) // an open segment far over the cap
+	_ = live.Flush()
+	other, _ := s.OpenRun(recTask2, 2, time.Unix(0, 20))
+	_ = other.Append(recEntry(21, "t"))
+	_ = other.Rotate(nil) // a close: the caps run
+	if got := payloads(readAll(t, s, recTask, 1)); len(got) != 1 || got[0] != "kept" {
+		t.Fatalf("the closed record was evicted for open segments' bytes: %v", got)
+	}
+}

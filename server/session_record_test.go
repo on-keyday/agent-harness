@@ -261,3 +261,68 @@ func TestRecorderKeepsOrderUnderSlowWriter(t *testing.T) {
 		}
 	}
 }
+
+// blockSink is a sink whose disk has stalled: Append blocks until released.
+type blockSink struct {
+	*memSink
+	release chan struct{}
+}
+
+func (s blockSink) Append(e protocol.RecordEntry) error {
+	<-s.release
+	return s.memSink.Append(e)
+}
+
+// Final review (re-graded Important): one session's stalled disk must not
+// make every listing wait — Recording() is read by List and by every task
+// event, so it must not wait on the lock the stalled pump holds.
+func TestRecordingDoesNotWaitOnAStalledDisk(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	runner := newFakeStream(t)
+	mux := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, runner, NewRingBuffer(1<<20), SessionHooks{})
+	sink := blockSink{memSink: newMemSink(1 << 30), release: make(chan struct{})}
+	defer func() { close(sink.release); mux.Stop() }()
+	_ = mux.StartRecording(sink, recordFresh)
+	for i := 0; i < recorderQueue+50; i++ { // more than the queue holds: the pump blocks
+		runner.QueueRead(encodeFrame(frame.FrameType_Stdout, []byte("x")))
+	}
+	time.Sleep(300 * time.Millisecond)
+	done := make(chan bool, 1)
+	go func() { done <- mux.Recording() }()
+	select {
+	case on := <-done:
+		if !on {
+			t.Fatal("Recording() false while recording")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Recording() blocked behind a stalled disk")
+	}
+}
+
+// Final review (re-graded Important): a deliberate, held stop hands every
+// queued entry to the disk before the process exits, even on a slow disk.
+func TestHeldStopDrainsTheRecordQueue(t *testing.T) {
+	s := New(Config{DataDir: t.TempDir()})
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	runner := newFakeStream(t)
+	mux := NewSessionMux(ctx, "held", protocol.TaskKind_Interactive, runner, NewRingBuffer(1<<20), SessionHooks{})
+	defer mux.Stop()
+	s.taskHandler.Sessions.Add("held", mux)
+	sink := newMemSink(1 << 30)
+	sink.delay = 2 * time.Millisecond // a slow disk: the queue is still full when the drain ends
+	_ = mux.StartRecording(sink, recordFresh)
+	const n = 200
+	for i := 0; i < n; i++ {
+		runner.QueueRead(encodeFrame(frame.FrameType_Stdout, []byte("x")))
+	}
+	waitFor(t, func() bool { return mux.RingAppendCount() == n })
+	s.detachHeldRecords([]string{"held"})
+	sink.mu.Lock()
+	detached := sink.detached
+	sink.mu.Unlock()
+	if got := len(sink.all()); got != n || !detached {
+		t.Fatalf("after the held stop's detach: %d of %d entries reached the sink, detached=%v", got, n, detached)
+	}
+}

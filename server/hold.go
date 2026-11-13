@@ -254,6 +254,7 @@ func (s *Server) RunHoldSequence() int {
 		ids = append(ids, p.taskID)
 	}
 	s.drainHeldSessions(ids)
+	s.detachHeldRecords(ids)
 	if err := os.MkdirAll(holdScreenDir(s.cfg.DataDir), 0o755); err != nil {
 		log.Warn("hold: could not create the screen dir", "err", err)
 	}
@@ -320,6 +321,21 @@ func (s *Server) SetStopAccepting(fn func()) {
 // drainHeldSessions waits for each held session's inbound frames to stop
 // arriving, so the mux's screen model has applied everything the runner sent
 // before it stopped forwarding.
+// detachHeldRecords hands each held session's queued record entries to the
+// disk and releases its writer with the segment open, for the server that
+// re-adopts the run to continue (A-D23). A held stop exits without the mux's
+// own Stop, so without this the queue's tail was lost (final review).
+func (s *Server) detachHeldRecords(taskIDs []string) {
+	if s.taskHandler == nil || s.taskHandler.Sessions == nil {
+		return
+	}
+	for _, id := range taskIDs {
+		if mux := s.taskHandler.Sessions.Get(id); mux != nil {
+			mux.detachRecording()
+		}
+	}
+}
+
 func (s *Server) drainHeldSessions(taskIDs []string) {
 	if s.taskHandler == nil || s.taskHandler.Sessions == nil || len(taskIDs) == 0 {
 		return

@@ -2544,13 +2544,13 @@ func (a *App) runSpawnAction(v verb.SpawnAction) (tea.Model, tea.Cmd) {
 	}
 	sel := cli.SelectorOpts{Host: v.Host, Runner: v.Runner, IP: v.IP}
 	if v.X11 {
-		return a, DoOpenX11Session(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, int(v.X11Display), a.program, auth, capsOverride, v.ResumeConversation, v.Exact, v.Agent)
+		return a, openX11Session(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, int(v.X11Display), a.program, auth, capsOverride, v.ResumeConversation, v.Exact, v.Agent, spawnRunMode(v))
 	}
 	if v.Detach || v.Background {
 		return a, DoStartDetachedSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Exact, v.Agent, TermSize{Rows: uint16(a.height), Cols: uint16(a.width)}, v.Stream, spawnRunMode(v))
 	}
 	// Stream without Detach cannot reach here: the declaration refuses it.
-	return a, DoOpenDetachableSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Exact, v.Agent)
+	return a, openAttachedSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Exact, v.Agent, spawnRunMode(v))
 }
 
 // cmdlinePlaceholder is the cmdline's ghost text: a width-limited SUMMARY, so

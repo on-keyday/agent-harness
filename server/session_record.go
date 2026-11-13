@@ -3,6 +3,7 @@ package server
 import (
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -139,6 +140,10 @@ type recState struct {
 	// recStopped: the mux has stopped; a switch-on racing that must not start
 	// a recorder nothing would ever finish (review I2).
 	recStopped bool
+	// recLive mirrors recorder for readers that must not wait on recMu:
+	// List and every task event ask Recording(), and the pump holds recMu
+	// while a stalled disk keeps the queue full (final review).
+	recLive atomic.Pointer[sessionRecorder]
 }
 
 // errMuxStopped answers a StartRecording on a mux that has stopped.
@@ -180,6 +185,7 @@ func (m *SessionMux) StartRecording(sink ptyRecordSink, how recordStart) error {
 		r.rotate(m.segmentHead(now))
 	}
 	m.recorder = r
+	m.recLive.Store(r)
 	return nil
 }
 
@@ -195,6 +201,7 @@ func (m *SessionMux) endRecording(closeRecord bool) {
 	m.recMu.Lock()
 	r := m.recorder
 	m.recorder = nil
+	m.recLive.Store(nil)
 	if !closeRecord {
 		m.recStopped = true // only the mux's Stop detaches
 	}
@@ -206,12 +213,11 @@ func (m *SessionMux) endRecording(closeRecord bool) {
 
 // Recording reports whether the session is being recorded.
 func (m *SessionMux) Recording() bool {
-	m.recMu.Lock()
-	defer m.recMu.Unlock()
-	if m.recorder == nil {
+	r := m.recLive.Load()
+	if r == nil {
 		return false
 	}
-	if w, ok := m.recorder.sink.(*RunWriter); ok && w.gone.Load() {
+	if w, ok := r.sink.(*RunWriter); ok && w.gone.Load() {
 		return false
 	}
 	return true

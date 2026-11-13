@@ -534,13 +534,13 @@ func (h tuiVerbs) SessionNew(v verb.SpawnAction) tea.Cmd {
 	repo, auth, capsOverride := h.spawnPrologue(v)
 	sel := cli.SelectorOpts{Host: v.Host, Runner: v.Runner, IP: v.IP}
 	if v.X11 {
-		return DoOpenX11Session(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, int(v.X11Display), a.program, auth, capsOverride, v.ResumeConversation, v.Exact, v.Agent)
+		return openX11Session(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, int(v.X11Display), a.program, auth, capsOverride, v.ResumeConversation, v.Exact, v.Agent, spawnRunMode(v))
 	}
 	if v.Detach || v.Background {
 		return DoStartDetachedSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Exact, v.Agent, TermSize{Rows: uint16(a.height), Cols: uint16(a.width)}, v.Stream, spawnRunMode(v))
 	}
 	// Stream without Detach cannot reach here: the declaration refuses it.
-	return DoOpenDetachableSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Exact, v.Agent)
+	return openAttachedSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Exact, v.Agent, spawnRunMode(v))
 }
 
 // --- session -----------------------------------------------------------

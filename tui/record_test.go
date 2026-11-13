@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/cli/verb"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
@@ -89,5 +91,34 @@ func TestTuiRecordGetNeedsOutputFile(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(a.cmdresult.lines, "\n"), "-o") {
 		t.Fatalf("no explanation naming -o: %v", a.cmdresult.lines)
+	}
+}
+
+// Final review I1: an attached `session new` typed on the TUI command line
+// carries --record / --no-record (and the rest of the run-mode flags) like a
+// detached one does.
+func TestAttachedSessionNewCarriesTheRecordSwitch(t *testing.T) {
+	var got []cli.RunModeFlags
+	oldA, oldX := openAttachedSession, openX11Session
+	defer func() { openAttachedSession, openX11Session = oldA, oldX }()
+	openAttachedSession = func(c *cli.Client, repo string, sel cli.SelectorOpts, extraArgs []string, resumeTaskID string, auth Authority, capsOverride, conv, exact bool, agent string, rm cli.RunModeFlags) tea.Cmd {
+		got = append(got, rm)
+		return nil
+	}
+	openX11Session = func(c *cli.Client, repo string, sel cli.SelectorOpts, extraArgs []string, resumeTaskID string, displayN int, program *tea.Program, auth Authority, capsOverride, conv, exact bool, agent string, rm cli.RunModeFlags) tea.Cmd {
+		got = append(got, rm)
+		return nil
+	}
+	a := New(Config{DefaultRepo: "/r"})
+	_ = (tuiVerbs{a}).SessionNew(verb.SpawnAction{Repo: "/r", NoRecord: true})
+	_ = (tuiVerbs{a}).SessionNew(verb.SpawnAction{Repo: "/r", Record: true, X11: true})
+	if len(got) != 2 {
+		t.Fatalf("%d opens, want 2", len(got))
+	}
+	if !got[0].RecordSet || got[0].Record {
+		t.Fatalf("attached --no-record: %+v, want the switch set to off", got[0])
+	}
+	if !got[1].RecordSet || !got[1].Record {
+		t.Fatalf("x11 --record: %+v, want the switch set to on", got[1])
 	}
 }

@@ -69,7 +69,15 @@ type InteractiveDoneMsg struct {
 // resumeCapsOverride, when true, signals the server to re-grant caps from
 // the resumer's caps rather than keeping the persisted caps of the resumed task.
 // Ignored (no-op) when resumeTaskID is empty (fresh session).
-func DoOpenDetachableSession(c *cli.Client, repo string, selOpts cli.SelectorOpts, extraArgs []string, resumeTaskID string, auth Authority, resumeCapsOverride bool, resumeConversation bool, exact bool, agentProfile string) tea.Cmd {
+// openAttachedSession and openX11Session are the `session new` command line's
+// attached opens, as variables so a test can see what a typed line hands them
+// (final review I1: --record / --no-record were dropped on this path).
+var (
+	openAttachedSession = DoOpenDetachableSession
+	openX11Session      = DoOpenX11Session
+)
+
+func DoOpenDetachableSession(c *cli.Client, repo string, selOpts cli.SelectorOpts, extraArgs []string, resumeTaskID string, auth Authority, resumeCapsOverride bool, resumeConversation bool, exact bool, agentProfile string, runMode cli.RunModeFlags) tea.Cmd {
 	return func() tea.Msg {
 		sel, err := cli.BuildSelector(selOpts)
 		if err != nil {
@@ -80,6 +88,7 @@ func DoOpenDetachableSession(c *cli.Client, repo string, selOpts cli.SelectorOpt
 			ResumeCapsOverride: resumeCapsOverride,
 			ResumeConversation: resumeConversation, AgentProfile: agentProfile,
 			ResumeExact: exact,
+			RunMode:     runMode,
 		}))
 		return InteractiveReadyMsg{Stream: stream, TaskID: taskID, Err: err}
 	}
@@ -195,7 +204,7 @@ func DoResumeSessionDetached(c *cli.Client, assignedTo protocol.RunnerID, unpinn
 // resumeCapsOverride, when true, signals the server to re-grant caps from
 // the resumer's caps rather than keeping the persisted caps of the resumed task.
 // Ignored (no-op) when resumeTaskID is empty (fresh session).
-func DoOpenX11Session(c *cli.Client, repo string, selOpts cli.SelectorOpts, extraArgs []string, resumeTaskID string, displayN int, program *tea.Program, auth Authority, resumeCapsOverride bool, resumeConversation bool, exact bool, agentProfile string) tea.Cmd {
+func DoOpenX11Session(c *cli.Client, repo string, selOpts cli.SelectorOpts, extraArgs []string, resumeTaskID string, displayN int, program *tea.Program, auth Authority, resumeCapsOverride bool, resumeConversation bool, exact bool, agentProfile string, runMode cli.RunModeFlags) tea.Cmd {
 	return func() tea.Msg {
 		sel, err := cli.BuildSelector(selOpts)
 		if err != nil {
@@ -206,6 +215,7 @@ func DoOpenX11Session(c *cli.Client, repo string, selOpts cli.SelectorOpts, extr
 			ResumeCapsOverride: resumeCapsOverride,
 			ResumeConversation: resumeConversation, AgentProfile: agentProfile,
 			ResumeExact: exact,
+			RunMode:     runMode,
 		}), displayN)
 		if err != nil {
 			return InteractiveReadyMsg{Stream: stream, TaskID: taskID, Err: err}

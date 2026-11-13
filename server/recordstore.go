@@ -603,7 +603,11 @@ func (s *RecordStore) enforceCapsLocked(rr *recordRun) {
 	for total(rr) > s.cfg.RunMax && len(rr.segs) > 1 && rr.segs[0].closed {
 		s.dropSegmentLocked(rr, rr.segs[0])
 	}
-	for s.diskTotalLocked() > s.cfg.TotalMax {
+	// Only closed segments count against the server-wide cap: they are the
+	// only ones it can evict, so counting live sessions' open segments made it
+	// delete every closed record on the server once those alone were over it
+	// (final review). An open segment is bounded by the per-run cap's eighth.
+	for s.closedDiskLocked() > s.cfg.TotalMax {
 		var victim *recordSegment
 		var owner *recordRun
 		for _, runs := range s.runs {
@@ -657,6 +661,19 @@ func (s *RecordStore) deleteRunLocked(rr *recordRun) {
 			_ = os.Remove(filepath.Join(s.cfg.Dir, rr.task))
 		}
 	}
+}
+
+func (s *RecordStore) closedDiskLocked() (n int64) {
+	for _, runs := range s.runs {
+		for _, r := range runs {
+			for _, seg := range r.segs {
+				if seg.closed {
+					n += seg.diskBytes
+				}
+			}
+		}
+	}
+	return n
 }
 
 func (s *RecordStore) diskTotalLocked() (n int64) {
