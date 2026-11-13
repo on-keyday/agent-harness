@@ -919,15 +919,10 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 		return
 	}
 
-	// Gate: check repo is one of the allowed roots.
-	if len(s.AllowedRoots) > 0 && !s.repoAllowed(repoPath) {
-		_ = stream.CloseBoth()
-		finishWithError(-1, "repo_not_allowed: "+repoPath)
-		return
-	}
-
-	// The session's initial prompt, on its own stream (A-D17). A PTY open
-	// hands it to the agent's argv; a stream open to the adapter's first turn.
+	// The session's initial prompt, on its own stream (A-D17), read before any
+	// gate can refuse the open so a refusal does not leave it buffered. A PTY
+	// open hands it to the agent's argv; a stream open to the adapter's first
+	// turn.
 	var prompt string
 	if oer.PromptPresent() {
 		var id uint64
@@ -941,6 +936,13 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 			return
 		}
 		prompt = p
+	}
+
+	// Gate: check repo is one of the allowed roots.
+	if len(s.AllowedRoots) > 0 && !s.repoAllowed(repoPath) {
+		_ = stream.CloseBoth()
+		finishWithError(-1, "repo_not_allowed: "+repoPath)
+		return
 	}
 
 	// Gate: resolve the requested agent profile + build the interactive argv

@@ -44,7 +44,7 @@ class ExpandAgentsPresetTest(unittest.TestCase):
         )
         self.assertEqual(
             out[out.index("--agent-resume-interactive-argv") + 1],
-            "{args} --continue {prompt}",
+            "{args} --continue -- {prompt}",
         )
 
         # Remaining names (codex) go into a single --agent-profiles JSON
@@ -64,9 +64,9 @@ class ExpandAgentsPresetTest(unittest.TestCase):
         )
         self.assertEqual(
             codex["resumeInteractiveArgv"],
-            ["resume", "--last", "--no-daemon", "{args}", "{prompt}"],
+            ["resume", "--last", "--no-daemon", "{args}", "--", "{prompt}"],
         )
-        self.assertEqual(codex["interactiveArgv"], ["--no-daemon", "{args}", "{prompt}"])
+        self.assertEqual(codex["interactiveArgv"], ["--no-daemon", "{args}", "--", "{prompt}"])
 
     def test_codex_pty_opens_bypass_the_shared_daemon(self) -> None:
         # codex >= 0.157 runs an interactive session's tools inside ONE

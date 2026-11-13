@@ -149,12 +149,19 @@ func hasPromptToken(template []string) bool {
 // token or inside one — with the prompt. With dropEmpty (an interactive open),
 // an empty prompt drops every token holding {prompt}, so neither "" nor a
 // bare flag reaches the agent; a oneshot keeps its historical "" argument.
+//
+// A template `--` directly before a whole {prompt} goes with it: it is there
+// to keep a dash-leading prompt (or one that names a subcommand) from being
+// parsed as an option, and with no prompt it would turn whatever follows the
+// argv — a stream adapter appends its own flags — into positionals.
 func expandAgentArgvTemplate(template, args []string, prompt string, dropEmpty bool) []string {
 	out := make([]string, 0, len(template)+len(args)+1)
-	for _, tok := range template {
+	for i, tok := range template {
 		switch {
 		case tok == agentTemplateArgs:
 			out = append(out, args...)
+		case tok == "--" && dropEmpty && prompt == "" && i+1 < len(template) && template[i+1] == agentTemplatePrompt:
+			continue
 		case strings.Contains(tok, agentTemplatePrompt):
 			if prompt == "" && dropEmpty {
 				continue

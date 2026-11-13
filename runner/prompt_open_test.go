@@ -74,3 +74,25 @@ func TestWaitForPromptBodyRefusesOverCap(t *testing.T) {
 		t.Fatalf("prompt %q, %v", p, err)
 	}
 }
+
+// The prompt stream is read before any gate can refuse the open, so a refused
+// open does not leave it buffered (runner review M1).
+func TestPromptReadBeforeRepoGate(t *testing.T) {
+	ms := &mockSender{}
+	const streamID, promptID trsf.StreamID = 99, 7
+	stream := &noopBidiStream{streamID: streamID}
+	pr := &promptRecv{data: promptBodyBytes("triage")}
+	lookup := &fakeBidiLookup{
+		streams: map[trsf.StreamID]trsf.BidirectionalStream{streamID: stream},
+		recv:    map[trsf.StreamID]trsf.ReceiveStream{promptID: pr},
+	}
+	s := &Session{AllowedRoots: []string{"/allowed"}, Profiles: singleProfile(t, "/bin/true"), Sender: ms, Streams: lookup, Now: time.Now}
+	oer := &protocol.OpenExecRunnerRequest{TaskId: protocol.TaskID{Id: [16]byte{0xCD}}, StreamId: uint64(streamID)}
+	oer.SetRepoPath([]byte("/disallowed"))
+	oer.SetPromptPresent(true)
+	oer.SetPromptStreamId(uint64(promptID))
+	s.handleOpenExec(context.Background(), oer)
+	if !pr.served {
+		t.Fatal("a refused open left its prompt stream unread")
+	}
+}

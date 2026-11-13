@@ -188,3 +188,23 @@ func TestBuildInteractiveArgsPromptUnsupported(t *testing.T) {
 		}
 	}
 }
+
+// A `--` that separates a whole {prompt} from the flags goes with the prompt
+// when there is none: a stream adapter appends its own flags after the argv,
+// and a stray `--` would turn them into positionals (runner review I3).
+func TestDashBeforePromptDroppedWhenEmpty(t *testing.T) {
+	tpl := []string{agentTemplateArgs, "--", agentTemplatePrompt}
+	got, err := buildInteractiveArgs([]string{"-v"}, tpl, nil, false, "")
+	if err != nil || !reflect.DeepEqual(got, []string{"-v"}) {
+		t.Fatalf("empty prompt: %#v, %v", got, err)
+	}
+	got, err = buildInteractiveArgs([]string{"-v"}, tpl, nil, false, "- fix the bug")
+	if err != nil || !reflect.DeepEqual(got, []string{"-v", "--", "- fix the bug"}) {
+		t.Fatalf("prompt: %#v, %v", got, err)
+	}
+	// A `--` the args supplied is theirs, not the template's.
+	got, err = buildInteractiveArgs([]string{"--"}, []string{agentTemplateArgs, agentTemplatePrompt}, nil, false, "")
+	if err != nil || !reflect.DeepEqual(got, []string{"--"}) {
+		t.Fatalf("args' own --: %#v, %v", got, err)
+	}
+}

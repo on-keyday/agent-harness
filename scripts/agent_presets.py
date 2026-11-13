@@ -98,7 +98,10 @@ _STREAM_ADAPTER = str(
 
 # The interactive templates carry {prompt}: a session's initial prompt is the
 # agent's first turn (pillar A spec, A-D3; each form read from the agent's own
-# --help, F18). A token holding {prompt} is dropped when there is no prompt;
+# --help, F18). A positional prompt follows `--` so a prompt starting with a
+# dash, or naming a subcommand, is not parsed as one (codex's own parser
+# recommends it). A token holding {prompt} is dropped when there is no
+# prompt, and the `--` before a whole {prompt} with it;
 # a shell preset has no {prompt}, so a prompt sent to it fails the task
 # prompt_unsupported.
 #
@@ -135,8 +138,8 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         # accepted ahead of -p.
         "oneshotArgv": "--output-format stream-json --verbose {args} -p {prompt}",
         "resumeOneshotArgv": "--output-format stream-json --verbose {args} --continue -p {prompt}",
-        "interactiveArgv": "{args} {prompt}",
-        "resumeInteractiveArgv": "{args} --continue {prompt}",
+        "interactiveArgv": "{args} -- {prompt}",
+        "resumeInteractiveArgv": "{args} --continue -- {prompt}",
         "logFormat": "claude-stream-json",
         # The one preset the adapter speaks for. Its own flags are NOT listed
         # in the argv templates above: the adapter appends them itself and
@@ -163,8 +166,8 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         # 2026-10-07 on 0.160.1 (daemon environ held a Failed task's ids).
         # The one-shot templates do not carry it: `codex exec` never attaches
         # to the daemon and rejects the flag (exit 2 on 0.160.1).
-        "interactiveArgv": "--no-daemon {args} {prompt}",
-        "resumeInteractiveArgv": "resume --last --no-daemon {args} {prompt}",
+        "interactiveArgv": "--no-daemon {args} -- {prompt}",
+        "resumeInteractiveArgv": "resume --last --no-daemon {args} -- {prompt}",
         "logFormat": "codex-jsonl",
         "streamAdapter": "",
         "agentArgs": "",
