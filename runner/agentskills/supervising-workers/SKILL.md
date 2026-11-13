@@ -218,6 +218,10 @@ TASK_ID=$(harness-cli session new --background --repo /path/to/repo --agent clau
 - **A directory its agent has never trusted stops the run at the trust
   dialog**, with the prompt unprocessed. The harness does not answer it: the
   operator attaches and answers once, and the agent remembers the directory.
+  Until then a claude or codex run **ends `turn_done_quiet` after the quiet
+  threshold (5m) although it did nothing** — the dialog's draw is its only
+  output — and that repeats on every resume. A `turn_done_quiet` on a task's
+  first run in a new directory means "look at it", not "done".
 - **A resume reuses nothing but the agent and the run mode.** Resuming a
   background task is a background resume unless you pass `--foreground`, and
   it needs `--prompt` and `--deadline` again.

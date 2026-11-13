@@ -376,6 +376,8 @@ bin/harness-cli session new --stream -d --repo /abs/path/to/repo # open detached
 # background task resumes in background unless --foreground, and needs --prompt
 # and --deadline again. The harness does not answer an agent's folder-trust
 # dialog: in a directory the agent has never trusted, attach and answer it once.
+# Until then claude and codex end turn_done_quiet after --quiet (5m) with the
+# prompt unprocessed, on every resume.
 bin/harness-cli session new --background --repo /abs/path/to/repo --agent claude \
     --deadline 1h --prompt "triage the new issues"
 # Switch a RUNNING session (needs cancel over it; a task may not switch its
