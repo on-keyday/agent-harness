@@ -208,6 +208,7 @@ func TestWALEventJSONRoundTripCopiesEveryField(t *testing.T) {
 		SwitchedAtNs:                1234567895,
 		EndReason:                   uint8(protocol.EndReason_Deadline),
 		CancelledBy:                 "ffeeddccbbaa99887766554433221100",
+		Run:                         5,
 		Ts:                          1234567890,
 		Selector:                    sel,
 	}

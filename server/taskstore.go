@@ -169,6 +169,10 @@ type TaskEntry struct {
 	// cancelled it when EndReason == cancelled (zero = the operator).
 	EndReason   protocol.EndReason
 	CancelledBy protocol.TaskID
+	// Run is the current run's number (A-D20): 1 at create, one more at each
+	// resume; a hold and its re-adoption continue the run. A run's PTY record
+	// is named by (ID, Run).
+	Run uint32
 }
 
 // TaskStore is the in-memory authority for task lifecycle.
@@ -291,6 +295,7 @@ func (s *TaskStore) createLocked(repo, prompt string, kind protocol.TaskKind, or
 		AgentProfile:   agentProfile,
 		Status:         protocol.TaskStatus_Queued,
 		CreatedAt:      now,
+		Run:            1,
 		BoundRunnerID:  boundRunnerID,
 		Selector:       selector,
 		ExtraArgs:      extraArgs,
@@ -310,6 +315,7 @@ func (s *TaskStore) createLocked(repo, prompt string, kind protocol.TaskKind, or
 		ev := WALEvent{
 			Type:          "task_created",
 			TaskID:        id,
+			Run:           1,
 			RepoPath:      repo,
 			Prompt:        prompt,
 			Kind:          uint8(kind),
@@ -731,11 +737,13 @@ func (s *TaskStore) Resume(id, prompt string, extraArgs []string, selector proto
 	// The run mode and conditions are the request's alone (A-D7): nothing of
 	// the previous run's carries over, its end included.
 	e.applyRunSpec(run, time.Now().UnixNano())
+	e.Run++
 
 	if s.wal != nil {
 		ev := WALEvent{
 			Type:          "task_resumed",
 			TaskID:        id,
+			Run:           e.Run,
 			Prompt:        prompt,
 			ExtraArgs:     extraArgs,
 			Selector:      selector,
@@ -1394,6 +1402,8 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 			s.tasks[ev.TaskID].DelegateCaps, s.tasks[ev.TaskID].DelegateScope = delegationFromWAL(ev)
 			s.tasks[ev.TaskID].SpawnDepth, s.tasks[ev.TaskID].MaxDescendants = limitsFromWAL(ev)
 			s.tasks[ev.TaskID].runSpecFromWAL(ev)
+			// A record from before A1 carries no run: a create is run 1.
+			s.tasks[ev.TaskID].Run = max(ev.Run, 1)
 			s.order = append(s.order, ev.TaskID)
 		case "task_assigned":
 			if t, ok := s.tasks[ev.TaskID]; ok {
@@ -1506,6 +1516,13 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 				t.AgentProfile = ev.AgentProfile
 				t.ResumeConversation = ev.ResumeConversation
 				t.runSpecFromWAL(ev)
+				// Each resume opens the next run; a record from before A1
+				// carries none, so it is counted (A-D20).
+				if ev.Run != 0 {
+					t.Run = ev.Run
+				} else {
+					t.Run++
+				}
 			}
 		case "task_caps_changed":
 			if t, ok := s.tasks[ev.TaskID]; ok {

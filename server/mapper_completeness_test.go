@@ -104,15 +104,13 @@ func TestToTaskInfoMapsEveryField(t *testing.T) {
 		QueueDeadlineAt: now.UnixNano(),
 		EndReason:       protocol.EndReason_Deadline,
 		CancelledBy:     protocol.TaskID{Id: [16]byte{0x4e}},
+		Run:             3,
 	}
 	info := toTaskInfo(e)
 	assertNoZeroFields(t, info, map[string]string{
 		// Live-session telemetry: not part of the entry→wire copy. The list
 		// handler fills these from the session registry after toTaskInfo.
 		"LastOutputAt": "filled by the list handler from live session state, not from TaskEntry",
-		// Pillar A1 Task 1 adds the wire field; Task 2 adds TaskEntry.Run and
-		// the copy, and removes this line.
-		"Run": "A1 Task 2 maps it",
 		// Computed when a listing is built, from Registry.Candidates (A-D14);
 		// there is nothing on the entry to copy.
 		"WaitReason":   "computed by the list handler from the registry, not from TaskEntry",

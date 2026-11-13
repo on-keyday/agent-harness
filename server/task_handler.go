@@ -2734,6 +2734,7 @@ func toTaskInfo(t TaskEntry) protocol.TaskInfo {
 	info.DeadlineRemainingMs = remainingMs(t.DeadlineAt)
 	info.QueueDeadlineNs = uint64(t.QueueDeadlineAt)
 	info.Conditions = t.Cond.Wire()
+	info.Run = t.Run
 	info.AuthoritySource = t.AuthoritySource
 	info.AuthorityActor = t.AuthorityActor
 	if !t.AuthorityAt.IsZero() {
