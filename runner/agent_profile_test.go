@@ -125,8 +125,8 @@ func TestExtraProfileAgentArgsReachEveryLaunch(t *testing.T) {
 		`"agentArgs":["--dangerously-bypass-approvals-and-sandbox"],` +
 		`"oneshotArgv":["exec","--json","{args}","{prompt}"],` +
 		`"resumeOneshotArgv":["exec","--json","resume","--last","{args}","{prompt}"],` +
-		`"interactiveArgv":["--no-daemon","{args}"],` +
-		`"resumeInteractiveArgv":["resume","--last","--no-daemon","{args}"]}]`)
+		`"interactiveArgv":["--no-daemon","{args}","{prompt}"],` +
+		`"resumeInteractiveArgv":["resume","--last","--no-daemon","{args}","{prompt}"]}]`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,8 +140,8 @@ func TestExtraProfileAgentArgsReachEveryLaunch(t *testing.T) {
 	}{
 		{true, false, "exec --json --dangerously-bypass-approvals-and-sandbox --task-flag do it"},
 		{true, true, "exec --json resume --last --dangerously-bypass-approvals-and-sandbox --task-flag do it"},
-		{false, false, "--no-daemon --dangerously-bypass-approvals-and-sandbox --task-flag"},
-		{false, true, "resume --last --no-daemon --dangerously-bypass-approvals-and-sandbox --task-flag"},
+		{false, false, "--no-daemon --dangerously-bypass-approvals-and-sandbox --task-flag do it"},
+		{false, true, "resume --last --no-daemon --dangerously-bypass-approvals-and-sandbox --task-flag do it"},
 	} {
 		_, argv, err := resolveExec(ps, "sandbox-codex", c.oneshot, c.resume, []string{"--task-flag"}, "do it")
 		if err != nil {

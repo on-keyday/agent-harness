@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"errors"
 	"reflect"
 	"testing"
 )
@@ -62,7 +63,7 @@ func TestBuildOneshotArgsResumeConversationTemplate(t *testing.T) {
 }
 
 func TestBuildInteractiveArgsDefaultResumeConversation(t *testing.T) {
-	got, err := buildInteractiveArgs([]string{"--foo"}, nil, nil, true)
+	got, err := buildInteractiveArgs([]string{"--foo"}, nil, nil, true, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +74,7 @@ func TestBuildInteractiveArgsDefaultResumeConversation(t *testing.T) {
 }
 
 func TestBuildInteractiveArgsCodexResumeTemplate(t *testing.T) {
-	got, err := buildInteractiveArgs([]string{"--search"}, nil, []string{"resume", "--last", agentTemplateArgs}, true)
+	got, err := buildInteractiveArgs([]string{"--search"}, nil, []string{"resume", "--last", agentTemplateArgs}, true, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,8 +91,8 @@ func TestAgentArgvTemplateValidation(t *testing.T) {
 	if err := ValidateOneshotArgvTemplate([]string{agentTemplatePrompt, agentTemplatePrompt}); err == nil {
 		t.Fatal("oneshot template with two {prompt}: expected error")
 	}
-	if err := ValidateResumeInteractiveArgvTemplate([]string{"resume", agentTemplatePrompt}); err == nil {
-		t.Fatal("resume interactive template with {prompt}: expected error")
+	if err := ValidateResumeInteractiveArgvTemplate([]string{"resume", agentTemplatePrompt, agentTemplatePrompt}); err == nil {
+		t.Fatal("resume interactive template with two {prompt}: expected error")
 	}
 }
 
@@ -102,7 +103,7 @@ func TestAgentArgvTemplateValidation(t *testing.T) {
 // so `session new --agent sandbox-bash` opened Claude Code while the task row
 // read sandbox-bash. These pin the fourth template.
 func TestBuildInteractiveArgsFreshDefaultsToIdentity(t *testing.T) {
-	got, err := buildInteractiveArgs([]string{"--foo", "--bar"}, nil, nil, false)
+	got, err := buildInteractiveArgs([]string{"--foo", "--bar"}, nil, nil, false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +114,7 @@ func TestBuildInteractiveArgsFreshDefaultsToIdentity(t *testing.T) {
 }
 
 func TestBuildInteractiveArgsFreshTemplate(t *testing.T) {
-	got, err := buildInteractiveArgs([]string{"--search"}, []string{"chat", agentTemplateArgs}, []string{"resume", agentTemplateArgs}, false)
+	got, err := buildInteractiveArgs([]string{"--search"}, []string{"chat", agentTemplateArgs}, []string{"resume", agentTemplateArgs}, false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +123,7 @@ func TestBuildInteractiveArgsFreshTemplate(t *testing.T) {
 		t.Fatalf("got %#v, want %#v", got, want)
 	}
 	// The resume template must not leak into a fresh open, and vice versa.
-	got, err = buildInteractiveArgs([]string{"--search"}, []string{"chat", agentTemplateArgs}, []string{"resume", agentTemplateArgs}, true)
+	got, err = buildInteractiveArgs([]string{"--search"}, []string{"chat", agentTemplateArgs}, []string{"resume", agentTemplateArgs}, true, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,14 +133,58 @@ func TestBuildInteractiveArgsFreshTemplate(t *testing.T) {
 	}
 }
 
-func TestValidateInteractiveArgvTemplateRejectsPrompt(t *testing.T) {
-	if err := ValidateInteractiveArgvTemplate([]string{agentTemplateArgs, agentTemplatePrompt}); err == nil {
-		t.Fatal("interactive template with {prompt}: expected error (there is no prompt on this path)")
+// An interactive open takes its initial prompt through {prompt} (pillar A
+// spec A-D3): one token at most, whole or embedded in a flag.
+func TestInteractiveTemplateAcceptsOnePromptToken(t *testing.T) {
+	for _, tpl := range [][]string{
+		{agentTemplateArgs, agentTemplatePrompt},
+		{agentTemplateArgs, "--prompt=" + agentTemplatePrompt},
+		{"chat", agentTemplateArgs},
+		nil,
+	} {
+		if err := ValidateInteractiveArgvTemplate(tpl); err != nil {
+			t.Errorf("%q rejected: %v", tpl, err)
+		}
 	}
-	if err := ValidateInteractiveArgvTemplate([]string{"chat", agentTemplateArgs}); err != nil {
-		t.Fatalf("valid interactive template rejected: %v", err)
+}
+
+func TestInteractiveTemplateRejectsTwoPromptTokens(t *testing.T) {
+	if err := ValidateInteractiveArgvTemplate([]string{agentTemplatePrompt, "--x=" + agentTemplatePrompt}); err == nil {
+		t.Fatal("two {prompt} tokens accepted")
 	}
-	if err := ValidateInteractiveArgvTemplate(nil); err != nil {
-		t.Fatalf("empty template must be valid (means identity): %v", err)
+}
+
+func TestEmbeddedPromptTokenDroppedWhenEmpty(t *testing.T) {
+	tpl := []string{agentTemplateArgs, "--prompt-interactive=" + agentTemplatePrompt}
+	got, err := buildInteractiveArgs([]string{"-v"}, tpl, nil, false, "")
+	if err != nil || !reflect.DeepEqual(got, []string{"-v"}) {
+		t.Fatalf("empty prompt: %#v, %v", got, err)
+	}
+	got, err = buildInteractiveArgs([]string{"-v"}, tpl, nil, false, "triage it")
+	if err != nil || !reflect.DeepEqual(got, []string{"-v", "--prompt-interactive=triage it"}) {
+		t.Fatalf("prompt: %#v, %v", got, err)
+	}
+	whole := []string{agentTemplateArgs, "--", agentTemplatePrompt}
+	got, err = buildInteractiveArgs(nil, whole, nil, false, "-starts with a dash")
+	if err != nil || !reflect.DeepEqual(got, []string{"--", "-starts with a dash"}) {
+		t.Fatalf("whole token: %#v, %v", got, err)
+	}
+}
+
+// A prompt with no {prompt} to carry it is refused, never dropped — the
+// identity template (no template) included.
+func TestBuildInteractiveArgsPromptUnsupported(t *testing.T) {
+	for name, c := range map[string]struct {
+		fresh, resume []string
+		resumeConv    bool
+	}{
+		"no template":          {nil, nil, false},
+		"template no token":    {[]string{"chat", agentTemplateArgs}, nil, false},
+		"default resume":       {[]string{agentTemplateArgs, agentTemplatePrompt}, nil, true},
+		"resume without token": {[]string{agentTemplateArgs, agentTemplatePrompt}, []string{agentTemplateArgs, "--continue"}, true},
+	} {
+		if _, err := buildInteractiveArgs(nil, c.fresh, c.resume, c.resumeConv, "p"); !errors.Is(err, errPromptUnsupported) {
+			t.Errorf("%s: err = %v, want errPromptUnsupported", name, err)
+		}
 	}
 }

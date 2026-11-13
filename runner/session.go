@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -610,8 +611,8 @@ func (s *Session) DeliverChainedRelayResponse(resp protocol.ChainedRelayResponse
 // resolveExec resolves profile against ps (empty name == the default
 // profile) and builds the argv for either a oneshot invocation
 // (oneshot=true — templated with prompt via buildOneshotArgs) or an
-// interactive/PTY invocation (oneshot=false — via buildInteractiveArgs,
-// prompt ignored). resume selects the resume-conversation argv templates.
+// interactive/PTY invocation (oneshot=false — via buildInteractiveArgs, the
+// prompt filling the template's {prompt}, pillar A spec A-D3). resume selects the resume-conversation argv templates.
 // extra is the caller-supplied per-task extra args; it is merged after the
 // profile's own AgentArgs baseline (profile args first, per-task extras
 // last, so a per-task flag wins on conflict).
@@ -628,7 +629,7 @@ func resolveExec(ps ProfileSet, profile string, oneshot, resume bool, extra []st
 	if oneshot {
 		argv, err = buildOneshotArgs(p.OneshotArgv, p.ResumeOneshotArgv, args, prompt, resume)
 	} else {
-		argv, err = buildInteractiveArgs(args, p.InteractiveArgv, p.ResumeInteractiveArgv, resume)
+		argv, err = buildInteractiveArgs(args, p.InteractiveArgv, p.ResumeInteractiveArgv, resume, prompt)
 	}
 	if err != nil {
 		return "", nil, err
@@ -925,12 +926,43 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 		return
 	}
 
+	// The session's initial prompt, on its own stream (A-D17). A PTY open
+	// hands it to the agent's argv; a stream open to the adapter's first turn.
+	var prompt string
+	if oer.PromptPresent() {
+		var id uint64
+		if p := oer.PromptStreamId(); p != nil {
+			id = *p
+		}
+		p, err := waitForPromptBody(ctx, s.Streams, trsf.StreamID(id))
+		if err != nil {
+			_ = stream.CloseBoth()
+			finishWithError(-1, "prompt: "+err.Error())
+			return
+		}
+		prompt = p
+	}
+
 	// Gate: resolve the requested agent profile + build the interactive argv
 	// up front (see resolveExec). An unknown profile fails the task clearly
 	// — no silent fallback to the default profile — and, same as the gate
 	// above, the server-allocated stream must be closed here or the
-	// server's splice goroutine blocks on ReadDirect forever.
-	agentBin, agentArgv, err := resolveExec(s.Profiles, string(oer.AgentProfile), false, oer.ResumeConversation(), oer.ExtraArgs.AsStrings(), "")
+	// server's splice goroutine blocks on ReadDirect forever. A stream open
+	// gives its prompt to the adapter instead, so it is not in this argv.
+	argvPrompt := prompt
+	if oer.EventStream() {
+		argvPrompt = ""
+	}
+	agentBin, agentArgv, err := resolveExec(s.Profiles, string(oer.AgentProfile), false, oer.ResumeConversation(), oer.ExtraArgs.AsStrings(), argvPrompt)
+	if errors.Is(err, errPromptUnsupported) {
+		_ = stream.CloseBoth()
+		name := string(oer.AgentProfile)
+		if name == "" {
+			name = "(default)"
+		}
+		finishWithError(-1, "prompt_unsupported: profile "+name+" has no {prompt} in its interactive template")
+		return
+	}
 	if err != nil {
 		_ = stream.CloseBoth()
 		finishWithError(-1, "agent_profile: "+err.Error())
@@ -1087,8 +1119,9 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 			AgentArgv:   append([]string{agentBin}, agentArgv...),
 			Dir:         dir,
 			Env:         env,
-			// No prompt: an event-stream session starts idle and the client
-			// sends the first user turn, the same shape `session new` has.
+			// The initial prompt, if any, is the adapter's first user turn;
+			// without one the session starts idle and a client sends it.
+			Prompt:             prompt,
 			ResumeConversation: oer.ResumeConversation(),
 			Logger:             log,
 			OnStdinWriter: func(write func([]byte) (int, error)) {
@@ -1184,9 +1217,11 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 			// How the child ended, always: for a held task this is the only
 			// place the answer exists, and "it died during the hold" is
 			// otherwise indistinguishable from "the relay ended the session".
-			// taskCtx.Err() separates the two ladders that both take ~2s:
-			// non-nil means OUR cancel ran and procTree signalled the group;
-			// nil means agentexec's own EOF ladder did it.
+			// taskCtx.Err() separates the two endings: non-nil means OUR
+			// cancel ran — on a PTY child that is go-pty's default Cancel, an
+			// immediate SIGKILL of the child pid alone (pillar A spec, F5);
+			// nil means agentexec's own stdin-EOF ladder (SIGHUP → SIGTERM →
+			// SIGKILL, ~2s) or the child's own exit did it.
 			log.Info("agent child exited", "task_id", taskIDHex,
 				"state", fmt.Sprint(st), "wait_err", werr,
 				"held", s.reg.holdArmed(), "task_ctx_err", taskCtx.Err())

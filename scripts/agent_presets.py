@@ -96,6 +96,12 @@ _STREAM_ADAPTER = str(
     _BIN_DIR / ("harness-stream-adapter.exe" if os.name == "nt" else "harness-stream-adapter")
 )
 
+# The interactive templates carry {prompt}: a session's initial prompt is the
+# agent's first turn (pillar A spec, A-D3; each form read from the agent's own
+# --help, F18). A token holding {prompt} is dropped when there is no prompt;
+# a shell preset has no {prompt}, so a prompt sent to it fails the task
+# prompt_unsupported.
+#
 # name -> {bin, oneshotArgv, resumeOneshotArgv, interactiveArgv,
 # resumeInteractiveArgv, logFormat, streamAdapter, agentArgs}. agentArgs is
 # empty here and set only by the sandbox derivation below. The argv values are the
@@ -129,8 +135,8 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         # accepted ahead of -p.
         "oneshotArgv": "--output-format stream-json --verbose {args} -p {prompt}",
         "resumeOneshotArgv": "--output-format stream-json --verbose {args} --continue -p {prompt}",
-        "interactiveArgv": "{args}",
-        "resumeInteractiveArgv": "{args} --continue",
+        "interactiveArgv": "{args} {prompt}",
+        "resumeInteractiveArgv": "{args} --continue {prompt}",
         "logFormat": "claude-stream-json",
         # The one preset the adapter speaks for. Its own flags are NOT listed
         # in the argv templates above: the adapter appends them itself and
@@ -157,8 +163,8 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         # 2026-10-07 on 0.160.1 (daemon environ held a Failed task's ids).
         # The one-shot templates do not carry it: `codex exec` never attaches
         # to the daemon and rejects the flag (exit 2 on 0.160.1).
-        "interactiveArgv": "--no-daemon {args}",
-        "resumeInteractiveArgv": "resume --last --no-daemon {args}",
+        "interactiveArgv": "--no-daemon {args} {prompt}",
+        "resumeInteractiveArgv": "resume --last --no-daemon {args} {prompt}",
         "logFormat": "codex-jsonl",
         "streamAdapter": "",
         "agentArgs": "",
@@ -186,8 +192,8 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         # the interactive path working as intended).
         "oneshotArgv": "{args} --print {prompt}",
         "resumeOneshotArgv": "{args} --continue --print {prompt}",
-        "interactiveArgv": "{args}",
-        "resumeInteractiveArgv": "{args} --continue",
+        "interactiveArgv": "{args} --prompt-interactive={prompt}",
+        "resumeInteractiveArgv": "{args} --continue --prompt-interactive={prompt}",
         "logFormat": "",
         "streamAdapter": "",
         "agentArgs": "",
@@ -224,8 +230,8 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         # so a non-PTY launch fails by timeout rather than by error.
         "oneshotArgv": "run {args} {prompt}",
         "resumeOneshotArgv": "run --continue {args} {prompt}",
-        "interactiveArgv": "{args}",
-        "resumeInteractiveArgv": "{args} --continue",
+        "interactiveArgv": "{args} --prompt={prompt}",
+        "resumeInteractiveArgv": "{args} --continue --prompt={prompt}",
         "logFormat": "",
         "streamAdapter": "",
         "agentArgs": "",
@@ -282,8 +288,8 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         # would run Claude Code while the task row read agent=sandbox-pi.
         "oneshotArgv": "{args} --print -- {prompt}",
         "resumeOneshotArgv": "{args} --continue --print -- {prompt}",
-        "interactiveArgv": "{args}",
-        "resumeInteractiveArgv": "{args} --continue",
+        "interactiveArgv": "{args} -- {prompt}",
+        "resumeInteractiveArgv": "{args} --continue -- {prompt}",
         "logFormat": "",
         "streamAdapter": "",
         "agentArgs": "",

@@ -44,7 +44,7 @@ class ExpandAgentsPresetTest(unittest.TestCase):
         )
         self.assertEqual(
             out[out.index("--agent-resume-interactive-argv") + 1],
-            "{args} --continue",
+            "{args} --continue {prompt}",
         )
 
         # Remaining names (codex) go into a single --agent-profiles JSON
@@ -64,9 +64,9 @@ class ExpandAgentsPresetTest(unittest.TestCase):
         )
         self.assertEqual(
             codex["resumeInteractiveArgv"],
-            ["resume", "--last", "--no-daemon", "{args}"],
+            ["resume", "--last", "--no-daemon", "{args}", "{prompt}"],
         )
-        self.assertEqual(codex["interactiveArgv"], ["--no-daemon", "{args}"])
+        self.assertEqual(codex["interactiveArgv"], ["--no-daemon", "{args}", "{prompt}"])
 
     def test_codex_pty_opens_bypass_the_shared_daemon(self) -> None:
         # codex >= 0.157 runs an interactive session's tools inside ONE
@@ -84,11 +84,21 @@ class ExpandAgentsPresetTest(unittest.TestCase):
 
     def test_every_preset_declares_a_fresh_interactive_template(self) -> None:
         # The fresh PTY open is a launch mode of its own; a preset without the
-        # key would make agent_profiles_json raise for that name.
+        # key would make agent_profiles_json raise for that name. A
+        # conversational agent takes the session's initial prompt through
+        # {prompt} on both PTY opens (pillar A spec, A-D3, F18); a shell has no
+        # form that runs a command and stays interactive, so it has none.
+        conversational = {"claude", "codex", "agy", "opencode", "pi"}
         for name, preset in agent_presets.KNOWN_AGENT_PRESETS.items():
+            base = name.removeprefix("sandbox-") if name != "sandbox" else "claude"
             with self.subTest(agent=name):
                 self.assertIn("{args}", preset["interactiveArgv"].split())
-                self.assertNotIn("{prompt}", preset["interactiveArgv"].split())
+                for key in ("interactiveArgv", "resumeInteractiveArgv"):
+                    holds = [t for t in preset[key].split() if "{prompt}" in t]
+                    if base in conversational:
+                        self.assertEqual(len(holds), 1, key)
+                    else:
+                        self.assertEqual(holds, [], key)
 
     def test_agy_preset_argv(self) -> None:
         out = expand_agents_preset("claude,agy", [])
@@ -104,7 +114,10 @@ class ExpandAgentsPresetTest(unittest.TestCase):
             agy["resumeOneshotArgv"],
             ["{args}", "--continue", "--print", "{prompt}"],
         )
-        self.assertEqual(agy["resumeInteractiveArgv"], ["{args}", "--continue"])
+        self.assertEqual(
+            agy["resumeInteractiveArgv"],
+            ["{args}", "--continue", "--prompt-interactive={prompt}"],
+        )
         # agentlog has no decoder for agy's stream-json schema, so the preset
         # must NOT request structured output nor claim a decoder.
         self.assertEqual(agy["logFormat"], "")
@@ -125,7 +138,9 @@ class ExpandAgentsPresetTest(unittest.TestCase):
         # The resume flag must stay on the `run` subcommand for the one-shot
         # and on the bare binary for the TUI — opencode accepts --continue in
         # both places and they are different launch paths.
-        self.assertEqual(oc["resumeInteractiveArgv"], ["{args}", "--continue"])
+        self.assertEqual(
+            oc["resumeInteractiveArgv"], ["{args}", "--continue", "--prompt={prompt}"]
+        )
         # agentlog has no decoder for opencode's `--format json` event schema,
         # so the preset must neither request it nor claim a decoder.
         self.assertEqual(oc["logFormat"], "")

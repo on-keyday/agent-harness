@@ -1043,6 +1043,24 @@ func endpointLegsFor(schemes []string) (endpointLegs, error) {
 	return legs, nil
 }
 
+// waitForPromptBody reads a session's initial prompt (a PromptBody) from the
+// server's send stream (pillar A spec, A-D17), refusing one over
+// protocol.PromptMax.
+func waitForPromptBody(ctx context.Context, p peer.BidirectionalStreamLookup, id trsf.StreamID) (string, error) {
+	raw, err := waitForStreamBody(ctx, p, id, "prompt")
+	if err != nil {
+		return "", err
+	}
+	if len(raw) > protocol.PromptMax+4 {
+		return "", fmt.Errorf("prompt body of %d bytes exceeds %d", len(raw), protocol.PromptMax)
+	}
+	var body protocol.PromptBody
+	if err := body.DecodeExact(raw); err != nil {
+		return "", fmt.Errorf("decode PromptBody (%d bytes): %w", len(raw), err)
+	}
+	return string(body.Prompt), nil
+}
+
 // waitForStreamBody resolves a server-initiated send-stream, reads it to EOF
 // and returns the bytes. AssignTask and exec both ship their bodies this way
 // (a small envelope over the control channel, the variable-length part on a
