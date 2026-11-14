@@ -2593,6 +2593,9 @@ enum OpenInteractiveStatus:
     # its roots, …). error_msg is the reason the runner recorded on the task.
     # Appended.
     session_ended = "session_ended"
+    # --oneshot with event_stream: a one-shot runs in a PTY, and a stream
+    # session has none (A3, A-D29).
+    oneshot_stream = "oneshot_stream"
 
 # One RUNNER offered when a spawn is ambiguous: more than one (runner, agent
 # profile) choice matched. profiles lists the agents the caller may pick on

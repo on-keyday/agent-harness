@@ -152,3 +152,25 @@ func TestOneshotFlagSurvivesReplay(t *testing.T) {
 		t.Fatal("oneshot lost across replay")
 	}
 }
+
+// Checkpoint review I1: --oneshot is a PTY session (A-D29). With --stream the
+// open is refused here — the WebUI can send both — rather than created as a
+// stream task the runner refuses later, or queued forever in background.
+func TestOneshotWithStreamRefused(t *testing.T) {
+	h := newTestHandler(t)
+	oneshotRunner(h, "A", true)
+	fg := withOneshot(detachedOpen(40, 120))
+	fg.SetAgentProfile([]byte("claude"))
+	fg.SetEventStream(true)
+	if resp, _ := h.handleOpenInteractive("", nil, fg, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All, "p"); resp.Status != protocol.OpenInteractiveStatus_OneshotStream {
+		t.Fatalf("foreground: %v", resp.Status)
+	}
+	bg := withOneshot(bgOpen("claude"))
+	bg.SetEventStream(true)
+	if r := openBG(h, bg, "p"); r.Status != protocol.OpenInteractiveStatus_OneshotStream {
+		t.Fatalf("background: %v", r.Status)
+	}
+	if n := len(h.Tasks.List(0)); n != 0 {
+		t.Fatalf("%d tasks created", n)
+	}
+}

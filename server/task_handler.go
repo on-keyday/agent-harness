@@ -1923,6 +1923,11 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 		resp.SetErrorMsg([]byte("--oneshot needs a prompt"))
 		return resp, body
 	}
+	if oneshot && req.EventStream() {
+		resp, body := errResp(protocol.OpenInteractiveStatus_OneshotStream)
+		resp.SetErrorMsg([]byte("--oneshot runs in a PTY; an event-stream session has none"))
+		return resp, body
+	}
 
 	// A background open is queued, never placed here (A-D4); Tick places it.
 	if h.resolveRunMode(req, existingTaskIDHex) == protocol.RunMode_Background {
