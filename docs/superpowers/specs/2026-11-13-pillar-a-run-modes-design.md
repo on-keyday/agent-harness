@@ -554,7 +554,7 @@ its ledger.
   `task_created` / `task_resumed` (`server/wal.go`); `Tick` skips a runner
   without the hello bit for it (`server/scheduler.go`). Zero is an ordinary
   session, and a resume still takes the flag from its own request only (A-D7,
-  A-D29).
+  A-D29), except an exact resume, which takes the recorded one (below).
 - **A new status, `OpenInteractiveStatus.oneshot_stream`**
   (`runner/protocol/message.bgn`): an open carrying both `--oneshot` and
   `--stream` is refused, foreground and background alike
@@ -597,16 +597,32 @@ its ledger.
   --agent A`, and the retired `submit` answer, the CLI's retired-verb hint
   (`cmd/harness-cli/main.go`) and the agent skills say so. The recommended
   option was taken; the operator has not yet confirmed it.
+- **An exact resume runs the last run's prompt and `--oneshot`, and refuses a
+  request that carries either** (`resume_exact_mismatch` naming `prompt` or
+  `--oneshot`, `exactMismatch` in `server/task_handler.go`). `resume_exact`
+  permits a resume that changes only the runner, `--resume-conversation`,
+  X11, `-d` and the size; a new prompt or the oneshot bit would run new work
+  under the task's recorded caps. The recorded prompt (`TaskEntry.Prompt`)
+  also meets A-D7's prompt requirement, so an exact background resume works.
+  The verb table refuses `--exact` with `--prompt` or `--oneshot`
+  (`cli/verb/spawn.go`), and the WebUI's `sessionReq` drops both on an exact
+  resume. Read from the code, not run: with `--resume-conversation` the
+  agent receives that prompt again, as a new turn of the continued
+  conversation.
+- **A `--oneshot` child gets `PAGER`, `GIT_PAGER` and `SYSTEMD_PAGER` set to
+  `cat`** (`OneshotPagerEnv`, `runner/agentenv.go`), after the inherited
+  environment so they win, because it runs in a PTY: `git log`, `systemctl
+  status` and `journalctl` would start a pager and wait for a key, and nothing
+  bounds a foreground run (F35). An interactive session keeps the user's
+  pager. A command that reads stdin still blocks under a PTY; give it
+  `< /dev/null`.
+- **A `--oneshot` child gets no agentboard wake** (`runner/session.go`): a
+  wake types a marker and Enter into the terminal, which a print-mode agent
+  or a shell command would read as input. The retired path had no stdin
+  writer, so a wake was a no-op there.
 
 Open:
 
-- **An exact resume and a prompt.** On the open path `exactMismatch`
-  (`server/task_handler.go`) is not handed the prompt, which travels on its
-  own stream (A-D17), so `--exact --prompt …` is neither refused nor
-  replaced by the recorded prompt; `cli/verb/spawn.go` does not refuse the
-  pair either, though `--exact`'s help says "no new prompt". Refusing it
-  would make an exact background resume impossible, since A-D7 requires a
-  prompt there. Needs a decision.
 - **The WebUI command line has no spawn verb.** `submit` was its only one
   (`webui/static/main.js` `runCmd`); `session new` declares no
   `WebUIDispatch` (`cli/verb/table.go`). Compose and the task sheet still

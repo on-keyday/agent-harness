@@ -86,6 +86,8 @@ func TestDeclaredRulesRefuseWhatTheBuildsRefused(t *testing.T) {
 		{"session new", []string{"--resume", id, "--exact", "--caps", "none"}, "mutually exclusive"},
 		{"session new", []string{"--resume", id, "--exact", "--scope", "none"}, "mutually exclusive"},
 		{"session new", []string{"--resume", id, "--exact", "--scope-for", "cancel=none"}, "mutually exclusive"},
+		{"session new", []string{"--resume", id, "--exact", "--prompt", "x"}, "mutually exclusive"},
+		{"session new", []string{"--resume", id, "--exact", "--oneshot"}, "mutually exclusive"},
 		// spawn names no task, so an override for it would bound nothing; the
 		// refusal points at the bits that do bound a resume.
 		{"session new", []string{"--repo", "/r", "--scope-for", "spawn=none"}, "resume"},

@@ -144,6 +144,15 @@ func AgentCwdEnv(dir string) []string {
 	return []string{"PWD=" + dir}
 }
 
+// OneshotPagerEnv names cat as the pager for a --oneshot child. That child
+// runs in a PTY, so git, systemctl and journalctl see a terminal and start a
+// pager, which waits for a key nobody sends, and nothing bounds a foreground
+// run. An interactive session keeps the user's pager. Appended after the
+// inherited environment, so it wins (see AgentCwdEnv).
+func OneshotPagerEnv() []string {
+	return []string{"PAGER=cat", "GIT_PAGER=cat", "SYSTEMD_PAGER=cat"}
+}
+
 // rewriteProxyViaForLocalDial converts a runner-listen-side bind address
 // inside a ConnectionID string into one suitable for the agent (same host)
 // to dial.

@@ -1346,9 +1346,11 @@ func filterByProfile(cands []RunnerEntry, profile string) []RunnerEntry {
 }
 
 // exactFields are the settings an exact resume request must leave empty, plus
-// the kind the request's path opens. Both handlers fill it from their request.
+// the kind the request's path opens. handleOpenInteractive fills it from its
+// request.
 type exactFields struct {
 	Prompt       string
+	Oneshot      bool
 	ExtraArgs    []string
 	AgentProfile string
 	CapsOverride bool
@@ -1370,6 +1372,8 @@ func exactMismatch(req exactFields, rec TaskEntry) string {
 	switch {
 	case req.Prompt != "":
 		return "prompt"
+	case req.Oneshot:
+		return "--oneshot"
 	case len(req.ExtraArgs) != 0:
 		return "--agent-arg"
 	case req.AgentProfile != "":
@@ -1573,6 +1577,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 				return errResp(protocol.OpenInteractiveStatus_ResumeNotFound)
 			}
 			if field := exactMismatch(exactFields{
+				Prompt: prompt, Oneshot: oneshotOpen(req),
 				ExtraArgs: args, AgentProfile: string(req.AgentProfile),
 				CapsOverride: req.ResumeCapsOverride(), ScopePresent: req.ScopePresent(),
 				DelegateCapsPresent: req.DelegateCapsPresent(), DelegateScopePresent: req.DelegateScopePresent(),
@@ -1585,6 +1590,9 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 			}
 			exactRec = &rec
 			args = rec.ExtraArgs
+			// The prompt is the last run's too: resume_exact permits no new
+			// one, and a background open needs one.
+			prompt = rec.Prompt
 		}
 	} else {
 		repo = path.Clean(string(req.RepoPath))
@@ -1603,7 +1611,11 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 	}
 	// --oneshot (A3, A-D29) runs the profile's oneshot argv, which exists to
 	// run a prompt: none is refused here, in either run mode.
+	// An exact resume runs as the last run did, --oneshot or not.
 	oneshot := oneshotOpen(req)
+	if exactRec != nil {
+		oneshot = exactRec.Oneshot
+	}
 	if oneshot && prompt == "" {
 		resp, body := errResp(protocol.OpenInteractiveStatus_PromptRequired)
 		resp.SetErrorMsg([]byte("--oneshot needs a prompt"))

@@ -281,25 +281,12 @@ type SessionStartedMsg struct {
 	Retry pickerRetry
 }
 
-// DoStartDetachedSession opens a detachable interactive session without
-// attaching to it, and returns SessionStartedMsg with the task id.
-// Equivalent to `harness-cli session new -d`.
-// selOpts pins the runner; zero-value SelectorOpts selects any matching runner.
-// auth carries RequestedCaps and the target scope; pass
-// Authority{Caps: protocol.Capability_All} for the inherit-all behaviour.
-// resumeCapsOverride, when true, signals the server to re-grant caps from
-// the resumer's caps rather than keeping the persisted caps of the resumed task.
-// Ignored (no-op) when resumeTaskID is empty (fresh session).
 // TermSize is the initial PTY size handed to a detached session start. A named
 // type rather than two bare uint16 parameters: rows and cols are the classic
-// transposition pair, and this function's argument list is already long enough
+// transposition pair, and DoStartDetachedSession's argument list is long enough
 // that a silent swap would survive review.
 type TermSize struct{ Rows, Cols uint16 }
 
-// eventStream opens the session as TaskKind_Stream (`session new --stream -d`):
-// the runner spawns the profile's stream adapter, and the TUI drives it from
-// the chat view (r/R on the task) rather than a terminal splice. The initial size is still sent — the runner ignores it for
-// this kind (no PTY exists to size).
 // startDetachedSession is DoStartDetachedSession, a variable so a test can
 // see what the `s` popup opens without a server.
 var startDetachedSession = DoStartDetachedSession
@@ -314,6 +301,19 @@ func startDetachedWithRetry(c *cli.Client, repo string, selOpts cli.SelectorOpts
 		})
 }
 
+// DoStartDetachedSession opens a detachable interactive session without
+// attaching to it, and returns SessionStartedMsg with the task id.
+// Equivalent to `harness-cli session new -d`.
+// selOpts pins the runner; zero-value SelectorOpts selects any matching runner.
+// auth carries RequestedCaps and the target scope; pass
+// Authority{Caps: protocol.Capability_All} for the inherit-all behaviour.
+// resumeCapsOverride, when true, signals the server to re-grant caps from
+// the resumer's caps rather than keeping the persisted caps of the resumed task.
+// Ignored (no-op) when resumeTaskID is empty (fresh session).
+// eventStream opens the session as TaskKind_Stream (`session new --stream -d`):
+// the runner spawns the profile's stream adapter, and the TUI drives it from
+// the chat view (r/R on the task) rather than a terminal splice. The initial size is still sent — the runner ignores it for
+// this kind (no PTY exists to size).
 func DoStartDetachedSession(c *cli.Client, repo string, selOpts cli.SelectorOpts, extraArgs []string, resumeTaskID string, auth Authority, resumeCapsOverride bool, resumeConversation bool, exact bool, agentProfile string, size TermSize, eventStream bool, runMode cli.RunModeFlags) tea.Cmd {
 	return func() tea.Msg {
 		sel, err := cli.BuildSelector(selOpts)

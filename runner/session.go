@@ -906,6 +906,9 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 	// for why the chdir alone leaves some agents pointed at the runner's
 	// directory instead of the task's.
 	env = append(env, AgentCwdEnv(dir)...)
+	if oneshot {
+		env = append(env, OneshotPagerEnv()...)
+	}
 
 	// The event-stream kind: same stream, same lifecycle, a different thing on
 	// the far end of it. StreamTask runs the adapter through agentexec with
@@ -1005,7 +1008,12 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 	runErr := agentexec.ExecuteCommandWithOption(taskCtx, relay, log, agentBin, agentArgv, dir, true, env, agentexec.ExecuteOption{
 		Audit: ptyModeTap{modes: modes},
 		OnStdinWriter: func(write func([]byte) (int, error)) {
-			s.setWake(taskIDHex, ptyWake(write, modes, wakeInputFor(runtime.GOOS)))
+			// A --oneshot child is `claude -p` or a command, not a prompt
+			// reading turns: a wake would only type the marker and an Enter
+			// into whatever it is running.
+			if !oneshot {
+				s.setWake(taskIDHex, ptyWake(write, modes, wakeInputFor(runtime.GOOS)))
+			}
 			// The child's stdin is wired, so there IS a child now. This is
 			// the earliest observable "started" on this path, and a hold may
 			// only promise tasks that have one.
@@ -1073,10 +1081,10 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 // one delivery per wakeDebounceWindow and one in flight at a time. Safe to
 // call from any goroutine, and called from its own: the write can block for as
 // long as the agent leaves its input unread. No-op
-// if the task is unknown, or if its agent never wired a stdin writer — both
-// handleOpenExec paths do (PTY and event-stream), and since A3 they are the
-// only spawn paths, so the second case is a task registered whose child's
-// stdin is not wired yet (setWake runs once it exists).
+// if the task is unknown, or if it has no wake installed — both handleOpenExec
+// paths install one (PTY and event-stream) once the child's stdin exists, and
+// since A3 they are the only spawn paths, so the second case is a task whose
+// child's stdin is not wired yet, or a --oneshot child, which never gets one.
 //
 // Coalescing rationale: subsequent agentboard messages within the window
 // are not lost — they are read by the agent's next `agent inbox
@@ -1091,11 +1099,11 @@ func (s *Session) WakeStdin(taskIDHex string) {
 	}
 	if e.wake == nil {
 		s.mu.Unlock()
-		// Registered, but setWake has not run yet: the child's stdin does
-		// not exist. Worth a line anyway — from
+		// Registered, but no wake: the child's stdin does not exist yet,
+		// or it is a --oneshot child. Worth a line anyway — from
 		// the outside this is identical to a wake that was written and ignored,
 		// and telling the two apart is the whole reason these logs exist.
-		s.logger().Info("wake skipped", "task_id", taskIDHex, "reason", "task has no stdin writer (not wired yet)")
+		s.logger().Info("wake skipped", "task_id", taskIDHex, "reason", "task has no stdin writer (not wired yet, or a --oneshot)")
 		return
 	}
 	if e.waking {

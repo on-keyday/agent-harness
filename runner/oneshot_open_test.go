@@ -3,6 +3,7 @@ package runner
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strings"
@@ -63,13 +64,22 @@ type oneshotRun struct {
 // whose resume template writes "resumed" instead.
 func openOneshot(t *testing.T, prompt string, resume, eventStream bool, out string) oneshotRun {
 	t.Helper()
-	repo := t.TempDir()
-	ps, err := NewProfileSet(AgentProfile{
+	return openExec(t, AgentProfile{
 		Name:              "default",
 		Bin:               "/bin/sh",
 		OneshotArgv:       []string{"-c", `printf %s "$1" > ` + out + `; exit 3`, "sh", "{prompt}"},
 		ResumeOneshotArgv: []string{"-c", `printf resumed > ` + out + `; exit 4`, "sh", "{prompt}"},
-	}, nil)
+	}, true, prompt, resume, eventStream, nil)
+}
+
+// openExec runs handleOpenExec for profile p with the given oneshot bit. A
+// non-nil running is called once the child's stdin is wired (the task's
+// entry is started), with the session and the task's hex id, while the child
+// still runs; handleOpenExec returns once the child exits.
+func openExec(t *testing.T, p AgentProfile, oneshot bool, prompt string, resume, eventStream bool, running func(s *Session, taskIDHex string)) oneshotRun {
+	t.Helper()
+	repo := t.TempDir()
+	ps, err := NewProfileSet(p, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +93,7 @@ func openOneshot(t *testing.T, prompt string, resume, eventStream bool, out stri
 	oer := &protocol.OpenExecRunnerRequest{StreamId: uint64(streamID)}
 	oer.TaskId.Id[0] = 0xC3
 	oer.SetRepoPath([]byte(repo))
-	oer.SetOneshot(true)
+	oer.SetOneshot(oneshot)
 	oer.SetResumeConversation(resume)
 	oer.SetEventStream(eventStream)
 	if prompt != "" {
@@ -92,8 +102,97 @@ func openOneshot(t *testing.T, prompt string, resume, eventStream bool, out stri
 		oer.SetPromptStreamId(uint64(promptID))
 	}
 	s := &Session{AllowedRoots: []string{repo}, Profiles: ps, Sender: ms, Streams: lookup, Now: time.Now, NoWorktree: true}
-	s.handleOpenExec(context.Background(), oer)
+	if running == nil {
+		s.handleOpenExec(context.Background(), oer)
+		return oneshotRun{ms: ms, stream: stream}
+	}
+	done := make(chan struct{})
+	go func() { defer close(done); s.handleOpenExec(context.Background(), oer) }()
+	taskIDHex := hex.EncodeToString(oer.TaskId.Id[:])
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		s.mu.Lock()
+		e, ok := s.reg.get(taskIDHex)
+		started := ok && e != nil && e.started.Load()
+		s.mu.Unlock()
+		if started {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the child's stdin was never wired")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	running(s, taskIDHex)
+	<-done
 	return oneshotRun{ms: ms, stream: stream}
+}
+
+// gatedSh is a /bin/sh argv that waits for the file gate to exist and exits.
+func gatedSh(gate string) []string {
+	return []string{"-c", `while [ ! -e "` + gate + `" ]; do sleep 0.02; done`, "sh", "{prompt}"}
+}
+
+// A --oneshot child runs in a PTY, where git, systemctl and journalctl start
+// a pager and wait for a key that never comes. Its environment names cat as
+// the pager; an interactive session's environment is left as the user's.
+func TestOneshotOpenDisablesPagers(t *testing.T) {
+	for _, k := range []string{"PAGER", "GIT_PAGER", "SYSTEMD_PAGER"} {
+		t.Setenv(k, "")
+		os.Unsetenv(k)
+	}
+	report := `printf '%s|%s|%s' "${PAGER-unset}" "${GIT_PAGER-unset}" "${SYSTEMD_PAGER-unset}" > `
+	for _, tc := range []struct {
+		name    string
+		oneshot bool
+		want    string
+	}{
+		{"oneshot", true, "cat|cat|cat"},
+		{"interactive", false, "unset|unset|unset"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := filepath.Join(t.TempDir(), "out")
+			argv := []string{"-c", report + out, "sh", "{prompt}"}
+			openExec(t, AgentProfile{Name: "default", Bin: "/bin/sh", OneshotArgv: argv, InteractiveArgv: argv},
+				tc.oneshot, "p", false, false, nil)
+			if b, err := os.ReadFile(out); err != nil || string(b) != tc.want {
+				t.Fatalf("PAGER|GIT_PAGER|SYSTEMD_PAGER = %q (err %v), want %q", b, err, tc.want)
+			}
+		})
+	}
+}
+
+// An agentboard wake types a marker and Enter into the agent's terminal. A
+// --oneshot child is claude -p or a command, not a prompt waiting for input,
+// so it gets no wake; an interactive session does.
+func TestOneshotOpenInstallsNoWake(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		oneshot  bool
+		wantWake bool
+	}{
+		{"oneshot", true, false},
+		{"interactive", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gate := filepath.Join(t.TempDir(), "gate")
+			argv := gatedSh(gate)
+			var hasWake bool
+			openExec(t, AgentProfile{Name: "default", Bin: "/bin/sh", OneshotArgv: argv, InteractiveArgv: argv},
+				tc.oneshot, "p", false, false, func(s *Session, id string) {
+					s.mu.Lock()
+					e, _ := s.reg.get(id)
+					hasWake = e.wake != nil
+					s.mu.Unlock()
+					if err := os.WriteFile(gate, nil, 0o600); err != nil {
+						t.Error(err)
+					}
+				})
+			if hasWake != tc.wantWake {
+				t.Fatalf("wake installed = %v, want %v", hasWake, tc.wantWake)
+			}
+		})
+	}
 }
 
 func (r oneshotRun) finished(t *testing.T) *protocol.TaskFinished {

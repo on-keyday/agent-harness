@@ -377,12 +377,14 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
                         prompt = "", runMode = "", deadlineMs = 0, quietMs = 0,
                         blockedMs = 0, queueTimeoutMs = 0, turnEnd = "",
                         rows = 0, cols = 0, record = "", oneshot = false }) {
-    // An exact resume takes the task's recorded agent, args, caps and scope,
-    // and the server refuses a request that carries any of them, so none of
-    // the Compose state rides along.
+    // An exact resume takes the task's recorded agent, args, prompt,
+    // --oneshot, caps and scope, and the server refuses a request that
+    // carries any of them, so none of the Compose state rides along.
     if (resumeExact) {
       agent = "";
       agentArgs = [];
+      prompt = "";
+      oneshot = false;
     }
     const req = {
       repo, task, host, agent,

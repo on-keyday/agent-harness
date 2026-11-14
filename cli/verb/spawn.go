@@ -148,9 +148,9 @@ func spawnRules(k spawnKind) ([]Rule, []Requirement) {
 		Flags:  []string{"runner", "host", "ip"},
 		Reason: "they each name one runner, and two of them name two",
 	}}
-	// --exact takes the task's recorded settings, so every flag that sets one
-	// contradicts it.
-	exactConflicts := []string{"agent", "agent-arg", "caps", "scope", "scope-for", "delegate-caps", "delegate-scope", "spawn-depth", "max-descendants"}
+	// --exact takes the task's recorded settings — the last run's prompt and
+	// --oneshot among them — so every flag that sets one contradicts it.
+	exactConflicts := []string{"prompt", "oneshot", "agent", "agent-arg", "caps", "scope", "scope-for", "delegate-caps", "delegate-scope", "spawn-depth", "max-descendants"}
 	for _, f := range exactConflicts {
 		excl = append(excl, Rule{Flags: []string{"exact", f}, Reason: "an exact resume takes the task's recorded settings"})
 	}
@@ -184,7 +184,9 @@ func spawnValidate(b Bound) error {
 	if b.Bool("x11") && uintOf(b.Flags["x11-display"]) > 99 {
 		return fmt.Errorf("--x11-display must be 0..99")
 	}
-	if b.Bool("oneshot") && b.Str("prompt") == "" {
+	// With --exact the declared rule refuses --oneshot itself, which says
+	// more than asking for a prompt it would refuse next.
+	if b.Bool("oneshot") && !b.Bool("exact") && b.Str("prompt") == "" {
 		return fmt.Errorf("--oneshot needs --prompt: it runs the agent's one-shot argv on that prompt")
 	}
 	if b.Bool("stream") && !b.Bool("detach") && !b.Bool("background") {

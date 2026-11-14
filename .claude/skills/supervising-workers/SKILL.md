@@ -188,10 +188,11 @@ harness-cli session new --resume "$TASK_ID" --exact -d
 harness-cli session send -enter "$TASK_ID" 'echo back'
 ```
 
-`--exact` takes the task's recorded agent, args, kind, caps and scope, so it
-needs only **`resume_exact`** (which `resume` implies), and it refuses every
-setting flag beside it — `--agent`, `--agent-arg`, `--caps`, `--scope`,
-`--scope-for`, `--delegate-caps`, `--delegate-scope`, and a prompt. Leave `--repo` and `--runner` off: the server
+`--exact` takes the task's recorded agent, args, kind, caps and scope, and the
+last run's prompt and `--oneshot` (that prompt is sent again), so it needs only
+**`resume_exact`** (which `resume` implies), and it refuses every setting flag
+beside it — `--agent`, `--agent-arg`, `--caps`, `--scope`, `--scope-for`,
+`--delegate-caps`, `--delegate-scope`, `--prompt` and `--oneshot`. Leave `--repo` and `--runner` off: the server
 reopens it on the runner it last ran on. `--resume-conversation` still works.
 
 ### Unattended work — `--background`
@@ -705,7 +706,12 @@ TASK_ID=$(harness-cli session new -d --oneshot --repo /path/to/repo --agent clau
   print-mode agent prints nothing while a long tool call runs, so the default
   `any` can end the run on its quiet leg before the answer arrives.
 - **A resume reuses nothing**: pass `--oneshot` again with `--resume`, or the
-  resumed session runs the interactive template.
+  resumed session runs the interactive template. `--resume --exact` is the
+  exception: it reruns the last run as it was, `--oneshot` and prompt included.
+- **The child runs in a PTY**, so it gets `PAGER`, `GIT_PAGER` and
+  `SYSTEMD_PAGER` set to `cat` — `git log` or `journalctl` would otherwise wait
+  for a key. A command that reads stdin still waits forever: give it
+  `< /dev/null`.
 
 ### Getting a one-shot's answer back
 

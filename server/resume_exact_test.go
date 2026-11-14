@@ -240,3 +240,91 @@ func TestExactPrefersProfileOverLastRunner(t *testing.T) {
 		t.Fatalf("open bound to %q, want B", e.BoundRunnerID)
 	}
 }
+
+// The prompt and --oneshot are settings like the rest: resume_exact permits a
+// resume that changes none of them, so a request carrying one is refused
+// rather than run under the task's recorded caps.
+func TestExactRefusesPromptAndOneshot(t *testing.T) {
+	for _, c := range []struct {
+		field   string
+		oneshot bool
+		prompt  string
+	}{
+		{"prompt", false, "anything"},
+		{"--oneshot", true, ""},
+	} {
+		t.Run(c.field, func(t *testing.T) {
+			h := newTestHandler(t)
+			oneshotRunner(h, "A", true)
+			id := recordedOneshot(t, h, "P", "A")
+			req := exactOpen(t, id)
+			if c.oneshot {
+				withOneshot(req)
+			}
+			resp, _ := h.handleOpenInteractive("", nil, req, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All, c.prompt)
+			if resp.Status != protocol.OpenInteractiveStatus_ResumeExactMismatch {
+				t.Fatalf("status = %v (%q), want resume_exact_mismatch", resp.Status, resp.ErrorMsg)
+			}
+			if !strings.Contains(string(resp.ErrorMsg), c.field) {
+				t.Fatalf("error_msg %q does not name %s", resp.ErrorMsg, c.field)
+			}
+		})
+	}
+}
+
+// recordedOneshot creates a finished task on /r whose last run was a
+// --oneshot with prompt, run on runner `on`.
+func recordedOneshot(t *testing.T, h *TaskHandler, prompt, on string) string {
+	t.Helper()
+	id, err := h.Tasks.CreateWithinLimits("/r", prompt, protocol.TaskKind_Interactive, protocol.ClientKind_Cli,
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_None, Scope: authority.DefaultScope()},
+		"claude", RunSpec{Mode: protocol.RunMode_Foreground, Oneshot: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.Tasks.Assign(id, testRunnerID(on), "/wt", false)
+	h.Tasks.Finish(id, 0, nil)
+	return id
+}
+
+// An exact resume runs what was recorded: the last run's prompt and its
+// --oneshot bit reach the runner without the request carrying either.
+func TestExactRunsRecordedPromptAndOneshot(t *testing.T) {
+	h := newTestHandler(t)
+	rc := oneshotRunner(h, "A", true)
+	id := recordedOneshot(t, h, "P", "A")
+	resp, _ := openExact(h, exactOpen(t, id))
+	if resp.Status != protocol.OpenInteractiveStatus_Ok {
+		t.Fatalf("status %v %q", resp.Status, resp.ErrorMsg)
+	}
+	oer := sentOpenExec(t, rc)
+	if !oer.Oneshot() || !oer.PromptPresent() {
+		t.Fatalf("OpenExec oneshot=%v prompt=%v, want the recorded --oneshot with its prompt", oer.Oneshot(), oer.PromptPresent())
+	}
+	var body protocol.PromptBody
+	if len(rc.sendStreams) != 1 || body.DecodeExact(rc.sendStreams[0].bytes) != nil || string(body.Prompt) != "P" {
+		t.Fatalf("prompt stream: %d streams, body %q, want the recorded P", len(rc.sendStreams), body.Prompt)
+	}
+	if e, _ := h.Tasks.Get(id); !e.Oneshot || e.Prompt != "P" {
+		t.Fatalf("after exact resume: oneshot=%v prompt=%q, want the record", e.Oneshot, e.Prompt)
+	}
+}
+
+// A background open needs a prompt; an exact one has the recorded prompt.
+func TestExactBackgroundUsesRecordedPrompt(t *testing.T) {
+	h := newTestHandler(t)
+	oneshotRunner(h, "A", true)
+	id := recordedOneshot(t, h, "P", "A")
+	req := exactOpen(t, id)
+	req.SetRunModeSet(true)
+	req.SetBackground(true)
+	req.SetConditionsPresent(true)
+	req.SetConditions(protocol.BackgroundConditions{DeadlineMs: 3600000})
+	resp, _ := openExact(h, req)
+	if resp.Status != protocol.OpenInteractiveStatus_Ok || !resp.Queued() {
+		t.Fatalf("status %v (%q) queued %v, want queued", resp.Status, resp.ErrorMsg, resp.Queued())
+	}
+	if e, _ := h.Tasks.Get(id); e.Prompt != "P" || !e.Oneshot || e.RunMode != protocol.RunMode_Background {
+		t.Fatalf("queued: prompt %q oneshot %v mode %v, want the recorded P, oneshot, background", e.Prompt, e.Oneshot, e.RunMode)
+	}
+}
