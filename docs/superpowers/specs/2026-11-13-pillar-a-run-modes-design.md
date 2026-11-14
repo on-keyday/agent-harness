@@ -457,9 +457,38 @@ skills under `runner/agentskills/` document `submit`, `logs` and `watch`);
 `task.<id>.log` and its producer, consumers and authorization go; the TUI's
 permanent log pane goes.
 
-Open, to settle before A3's plan, with the operator: what the TUI's freed
-space shows (G23); whether `session new --oneshot` (G7) selects a print-mode
-template in background mode only or in both.
+Settled with the operator on 2026-11-14, before A3's plan:
+
+- **A3 comes after pillar B, not right after A1** (operator, 2026-11-14;
+  amends GD G14's order for this stage). A3 removes the only log a oneshot
+  run leaves on the server. For an agent, B's transcript fetch is what
+  replaces it, so B lands first and no run's answer becomes unreadable
+  between the two.
+- **`session new --oneshot` runs the profile's existing print-mode template
+  in the PTY unchanged**, JSON output included (claude `--output-format
+  stream-json`, codex `exec --json`) (operator, 2026-11-14). Nothing is
+  converted on the way. A plain `-p` was considered and dropped: it prints
+  nothing until the run ends. Converting on the runner was dropped too: the
+  record would then hold the converter's output, not the agent's. Attaching to
+  such a session and `session snapshot` show the JSON as it was emitted.
+- **`logs` reads what the run left and renders it on read.** For an agent
+  with a transcript, it reads B's transcript. For a program with none (bash,
+  cmd), it reads the run's PTY record. A profile's JSON is decoded the way
+  the task log decodes it today (`runner/agentlog`, chosen by the profile's
+  `logFormat`), so `logs` prints what it prints today. Whether `logFormat`
+  reaches the reader is to be checked in the plan. It is configured on the
+  runner today, and if nothing carries it further, the runner advertises it
+  per profile. The raw JSON stays readable through `record get`.
+- **`--oneshot` does not turn recording on.** With B first, an agent's run
+  is readable from its transcript. A shell oneshot whose output matters is
+  opened with `--record`, under A-D22's gate.
+
+Still open (the author's proposals, not confirmed by the operator):
+
+- **The TUI's freed space (G23)** goes to the task table, which is fixed at
+  10 rows today.
+- **`--oneshot` is accepted in both run modes.** Watching one answer arrive
+  in the foreground has no reason to be refused.
 
 ## Testing (A2)
 
