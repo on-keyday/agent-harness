@@ -46,3 +46,11 @@ test("the sheet lists each record with its size and expiry, and what can be done
   const ended = page.recordSheetModel({ status: "Succeeded", liveTerminal: false, recording: false }, recs);
   assert.equal(ended.switchTo, "", "no switch without a live terminal");
 });
+
+// Gap F (A3): a prefill from a task sets BOTH kind boxes from its last run, so
+// neither is left as the previous use of Compose left it.
+test("a prefill from a task sets Compose's stream and one-shot boxes", () => {
+  assert.deepEqual({ ...page.composeBoxesFromTask({ kind: "Interactive", oneshot: true }) }, { stream: false, oneshot: true });
+  assert.deepEqual({ ...page.composeBoxesFromTask({ kind: "Interactive", oneshot: false }) }, { stream: false, oneshot: false });
+  assert.deepEqual({ ...page.composeBoxesFromTask({ kind: "Stream" }) }, { stream: true, oneshot: false });
+});

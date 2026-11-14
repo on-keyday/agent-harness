@@ -177,3 +177,29 @@ func TestRenderListJSONRunConditions(t *testing.T) {
 		t.Fatalf("row %+v", got.Tasks[0])
 	}
 }
+
+// `oneshot` is always present: true for a `session new --oneshot` run, false
+// for an ordinary session. The kind stays interactive for both (A-D29), so a
+// script that filters on kind keeps working.
+func TestRenderListJSONOneshot(t *testing.T) {
+	one := protocol.TaskInfo{Kind: protocol.TaskKind_Interactive}
+	one.SetOneshot(true)
+	plain := protocol.TaskInfo{Kind: protocol.TaskKind_Interactive}
+	var buf bytes.Buffer
+	renderListJSON(&protocol.ListResultBody{Tasks: []protocol.TaskInfo{one, plain}}, &buf)
+	var got struct {
+		Tasks []map[string]any `json:"tasks"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	for i, want := range []bool{true, false} {
+		tk := got.Tasks[i]
+		if v, ok := tk["oneshot"]; !ok || v != want {
+			t.Errorf("task %d: oneshot=%v present=%v, want %v", i, v, ok, want)
+		}
+		if tk["kind"] != "interactive" {
+			t.Errorf("task %d: kind=%v, want interactive", i, tk["kind"])
+		}
+	}
+}

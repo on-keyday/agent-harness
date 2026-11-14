@@ -280,3 +280,27 @@ func TestTaskIDStr(t *testing.T) {
 		t.Errorf("taskIDStr(16 bytes) = %q", got)
 	}
 }
+
+// A `session new --oneshot` task is kind interactive (A-D29); the row marks the
+// run in the kind column as one token, so a one-shot is told apart from an
+// ordinary session and the columns after it stay whitespace-separated. An
+// ordinary session carries no mark: absence is the answer for it.
+func TestLsTaskKindOneshotSession(t *testing.T) {
+	one := protocol.TaskInfo{Status: protocol.TaskStatus_Running, Kind: protocol.TaskKind_Interactive}
+	one.Id.Id[0] = 0x01
+	one.SetOneshot(true)
+	plain := protocol.TaskInfo{Status: protocol.TaskStatus_Running, Kind: protocol.TaskKind_Interactive}
+	plain.Id.Id[0] = 0x02
+	if got := taskLine(one, nil); !strings.Contains(got, "  interactive+oneshot  repo=") {
+		t.Errorf("one-shot row lacks the kind mark:\n%s", got)
+	}
+	if got := taskLine(plain, nil); strings.Contains(got, "oneshot") || !strings.Contains(got, "  interactive  repo=") {
+		t.Errorf("plain session row:\n%s", got)
+	}
+	if got := KindLabel(&one); got != "interactive+oneshot" {
+		t.Errorf("KindLabel(one-shot) = %q", got)
+	}
+	if got := KindLabel(&plain); got != "interactive" {
+		t.Errorf("KindLabel(plain) = %q", got)
+	}
+}

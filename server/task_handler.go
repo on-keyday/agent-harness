@@ -2378,6 +2378,9 @@ func toTaskInfo(t TaskEntry) protocol.TaskInfo {
 	// confined caller receives zero runners from handleList, so a
 	// runner-side lookup is unavailable to exactly the callers that need it.
 	info.SetSkillsInjected(t.SkillsInjected)
+	// The current run is a --oneshot (A-D29). The kind is interactive either
+	// way, so without this no surface can tell the two apart.
+	info.SetOneshot(t.Oneshot)
 	info.RingBufferBytes = t.RingBufferBytes
 	info.SetProgress([]byte(t.Progress))
 	info.ProgressAt = uint64(t.ProgressAt)

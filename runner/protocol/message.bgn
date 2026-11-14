@@ -1153,7 +1153,11 @@ format TaskInfo:
     cancelled_by_hidden :u1
     # recording: the task's live session is being recorded now (A-D22).
     recording :u1
-    reserved :u2
+    # oneshot: the current run is a `session new --oneshot` (A3, A-D29). The
+    # kind stays interactive; this bit is what tells the run apart from an
+    # ordinary session.
+    oneshot :u1
+    reserved :u1
     ring_buffer_bytes :u64    # current bytes buffered (0 for oneshot tasks —
                               # every interactive session has a ring)
     last_output_at :u64   # unix nanos (SERVER clock) of the last Stdout/Stderr
@@ -3772,7 +3776,10 @@ format TaskStatusEvent:
     live_terminal :u1
     # recording: as TaskInfo.recording; a switch emits an event (A-D22).
     recording :u1
-    reserved :u6
+    # oneshot: as TaskInfo.oneshot. Stamped on every event because a resume
+    # changes it per run (A-D29) and the TUI polls no snapshot of its own.
+    oneshot :u1
+    reserved :u5
     progress_len :u16
     progress :[progress_len]u8
     progress_at :u64

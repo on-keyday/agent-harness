@@ -283,6 +283,13 @@ function composeRecordOption(v) {
   return v === "on" || v === "off" ? v : "";
 }
 
+// composeBoxesFromTask is the kind half of prefilling Compose from a task:
+// the stream box and the one-shot box (A3, A-D29) each say what its last run
+// was, so a prefill never leaves either as Compose's previous use left it.
+function composeBoxesFromTask(t) {
+  return { stream: !!t && t.kind === "Stream", oneshot: !!t && !!t.oneshot };
+}
+
 // recordDownloadName names a downloaded record by its task and run.
 function recordDownloadName(taskId, run, format) {
   return `${String(taskId).slice(0, 8)}-run${run}.${format === "asciicast" ? "cast" : "raw"}`;

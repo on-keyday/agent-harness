@@ -4108,7 +4108,9 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     bgInput("bg-blocked").value = msDurationStr(c.blockedMs);
     bgInput("bg-queue").value = msDurationStr(c.queueTimeoutMs);
     if (composeBgBox) { composeBgBox.checked = true; composeBg.hidden = false; }
-    if (spawnStreamBox) spawnStreamBox.checked = isStreamKind(t);
+    const boxes = composeBoxesFromTask(t);
+    if (spawnStreamBox) spawnStreamBox.checked = boxes.stream;
+    if (composeOneshotBox) composeOneshotBox.checked = boxes.oneshot;
     if (resumeConvBox) resumeConvBox.checked = !!resumeConversation;
     if (taskIdInput) taskIdInput.value = t.id;
     setActiveTab("tasks");
@@ -6313,7 +6315,9 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
 
       const meta = document.createElement("div");
       meta.className = "task-row-meta";
-      let metaText = `${t.id.slice(0, 12)}…  ${t.kind}  from=${t.origin || "-"}`;
+      // kindLabel is cli.KindLabel, the ls row's kind column: a
+      // `session new --oneshot` run reads interactive+oneshot (A-D29).
+      let metaText = `${t.id.slice(0, 12)}…  ${t.kindLabel || t.kind}  from=${t.origin || "-"}`;
       if (t.createdBy) metaText += `  by=${t.createdBy}`;
       if (t.resumedBy) metaText += `  resumed_by=${t.resumedBy}`;
       if (t.caps) metaText += `  caps=${t.caps}`;
@@ -6721,6 +6725,16 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
         try { fit.fit(); } catch (_) {}
         window.harness.resizeInteractive({ cols: term.cols, rows: term.rows });
       };
+      // A resume reuses nothing of the last run (A-D29): a foreground resume
+      // of a one-shot opens the interactive argv. Said here, where the
+      // buttons are, since the row's interactive+oneshot would suggest
+      // otherwise. A background one goes to Compose with its one-shot box set.
+      if (t.oneshot && t.runMode !== "background") {
+        const note = document.createElement("div");
+        note.className = "notify-meta";
+        note.textContent = "one-shot の run: Resume は対話セッションとして開く (--oneshot は引き継がない)";
+        sheet.appendChild(note);
+      }
       if (assignedRunner) {
         addItem("▶ Resume assigned", "", () => doResume(currentAgentArgs(), "resumed assigned", false, assignedRunner));
         addItem("▶ Resume conversation assigned", "", () => doResume(currentAgentArgs(), "resumed conversation assigned", true, assignedRunner));

@@ -8,6 +8,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/agent-harness/topics"
 	"github.com/on-keyday/objtrsf/objproto"
 )
 
@@ -171,5 +172,71 @@ func TestOneshotWithStreamRefused(t *testing.T) {
 	}
 	if n := len(h.Tasks.List(0)); n != 0 {
 		t.Fatalf("%d tasks created", n)
+	}
+}
+
+// A --oneshot task is an interactive task (A-D29), so the kind alone cannot
+// tell it from an ordinary session on any display surface. The listing carries
+// the run's flag; a plain session's row reads false.
+func TestListCarriesOneshot(t *testing.T) {
+	h := newTestHandler(t)
+	mk := func(oneshot bool) string {
+		id, err := h.Tasks.CreateWithinLimits("/r", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Cli,
+			protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All}, "claude",
+			RunSpec{Mode: protocol.RunMode_Foreground, Oneshot: oneshot})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	oneID, plainID := mk(true), mk(false)
+
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_List}}
+	req.SetList(protocol.ListQuery{})
+	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9830-1"), nextSendStreamID: 10}
+	h.Handle(conn, encodeTaskControlRequest(t, req))
+	if len(conn.sendStreams) != 1 {
+		t.Fatalf("list: %d send streams", len(conn.sendStreams))
+	}
+	got := map[string]bool{}
+	for _, ti := range decodeListBody(t, conn.sendStreams[0].bytes).Tasks {
+		got[fmt.Sprintf("%x", ti.Id.Id[:])] = ti.Oneshot()
+	}
+	if v, ok := got[oneID]; !ok || !v {
+		t.Errorf("--oneshot task: listed=%v oneshot=%v, want oneshot", ok, v)
+	}
+	if v, ok := got[plainID]; !ok || v {
+		t.Errorf("plain session: listed=%v oneshot=%v, want not oneshot", ok, v)
+	}
+}
+
+// The task event carries the run's flag too: a resume changes it (A-D29), and
+// the TUI updates a known row from events alone.
+func TestTaskEventCarriesOneshot(t *testing.T) {
+	s := New(Config{})
+	getEvents := captureTaskEvents(s, topics.TasksStatus())
+	oneID, err := s.tasks.CreateWithinLimits("/repo", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Cli,
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All}, "claude",
+		RunSpec{Mode: protocol.RunMode_Foreground, Oneshot: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plainID := detachedTask(t, s)
+	for _, id := range []string{oneID, plainID} {
+		s.tasks.Assign(id, testRunnerID("ws:127.0.0.1:8539-40"), "", false)
+		_ = s.tasks.SetDetached(id)
+		s.tasks.MarkFailed(id, "runner_disconnected")
+	}
+	ended := map[string]bool{}
+	for _, ev := range getEvents() {
+		if ev.Kind == protocol.StatusEventKind_TaskEnded {
+			ended[fmt.Sprintf("%x", ev.TaskId.Id[:])] = ev.Oneshot()
+		}
+	}
+	if v, ok := ended[oneID]; !ok || !v {
+		t.Errorf("--oneshot task's event: seen=%v oneshot=%v, want oneshot", ok, v)
+	}
+	if v, ok := ended[plainID]; !ok || v {
+		t.Errorf("plain task's event: seen=%v oneshot=%v, want not oneshot", ok, v)
 	}
 }

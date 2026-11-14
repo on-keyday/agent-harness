@@ -647,6 +647,13 @@ func actCell(t protocol.TaskInfo, merged bool) string {
 func renderPromptCell(t protocol.TaskInfo) string {
 	switch t.Kind {
 	case protocol.TaskKind_Interactive:
+		// A `session new --oneshot` run (A-D29) is this kind too, but it was
+		// started with a prompt to answer, and that prompt is what tells one
+		// row from another. Marked in plain text, like "(title)", so it reads
+		// as a one-shot rather than as a submit row from before A3.
+		if t.Oneshot() {
+			return "(oneshot) " + truncatePrompt(string(t.Prompt))
+		}
 		return "<interactive>"
 	case protocol.TaskKind_Stream:
 		// Distinct from <interactive>: same "no prompt" reason, different

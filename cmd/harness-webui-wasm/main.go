@@ -1823,6 +1823,11 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					// recorded (A-D20, A-D22).
 					"run":       float64(t.Run),
 					"recording": t.Recording(),
+					// A `session new --oneshot` run (A3, A-D29): the raw bit a
+					// Compose prefill sets its one-shot box from, and the
+					// kind as the ls row words it (interactive+oneshot).
+					"oneshot":   t.Oneshot(),
+					"kindLabel": cli.KindLabel(&t),
 					"conditions": map[string]any{
 						"deadlineMs":     float64(t.Conditions.DeadlineMs),
 						"turnEnd":        cli.EnumWireName(t.Conditions.TurnEnd.String()),

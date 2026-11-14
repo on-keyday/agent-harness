@@ -327,10 +327,12 @@ func taskLine(t protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo) st
 	// Who wrote that authority. Always printed, `unknown` included, for the
 	// reason scope is.
 	caps += "  granter=" + AuthorityLabel(t)
-	return fmt.Sprintf("%s  %s  %s  repo=%s  from=%s%s%s%s%s%s%s%s  prompt=%q%s",
+	// The kind column is fixed-width; a one-shot run's longer label pushes
+	// only its own row's repo= right.
+	return fmt.Sprintf("%s  %s  %-11s  repo=%s  from=%s%s%s%s%s%s%s%s  prompt=%q%s",
 		taskIDStr(t.Id.Id[:]),
 		taskStatusStr(t.Status),
-		taskKindStr(t.Kind),
+		KindLabel(&t),
 		string(t.RepoPath),
 		originStr(t.OriginKind),
 		agent,
@@ -579,6 +581,9 @@ type taskJSON struct {
 	// recorded now (A-D22).
 	Run       uint32 `json:"run"`
 	Recording bool   `json:"recording"`
+	// Whether the current run is a `session new --oneshot` (A3, A-D29); kind
+	// stays "interactive" for one.
+	Oneshot bool `json:"oneshot"`
 	// The current (or last) run's background conditions, as stored on the
 	// task (A-D7): what a front-end prefills a resume from (A-D15).
 	Conditions conditionsJSON `json:"conditions"`
@@ -725,6 +730,7 @@ func newTaskJSON(t *protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo
 		WaitReason:          EnumWireName(t.WaitReason.String()),
 		Run:                 t.Run,
 		Recording:           t.Recording(),
+		Oneshot:             t.Oneshot(),
 		Conditions: conditionsJSON{
 			DeadlineMs: t.Conditions.DeadlineMs, TurnEnd: EnumWireName(t.Conditions.TurnEnd.String()),
 			QuietMs: t.Conditions.QuietMs, BlockedMs: t.Conditions.BlockedMs, QueueTimeoutMs: t.Conditions.QueueTimeoutMs,
@@ -811,6 +817,24 @@ func taskStatusJSON(s protocol.TaskStatus) string {
 // interactive / "?"), the trimmed counterpart of taskKindStr.
 func taskKindJSON(k protocol.TaskKind) string {
 	return strings.TrimSpace(taskKindStr(k))
+}
+
+// KindLabel is a task's kind word with its current run's mark: a
+// `session new --oneshot` run is kind interactive (A-D29) and reads
+// "interactive+oneshot". One token, as agent= carries "+skills", so the `ls`
+// row's columns stay whitespace-separated. An ordinary session carries no
+// mark. Shared by the `ls` row, the TUI detail popup and the WebUI row.
+func KindLabel(t *protocol.TaskInfo) string {
+	return taskKindJSON(t.Kind) + OneshotMark(t)
+}
+
+// OneshotMark is KindLabel's mark alone, for a surface that words the kind
+// itself (the TUI detail popup).
+func OneshotMark(t *protocol.TaskInfo) string {
+	if t.Oneshot() {
+		return "+oneshot"
+	}
+	return ""
 }
 
 // agentProfileNames returns a runner's advertised agent profile names, falling
