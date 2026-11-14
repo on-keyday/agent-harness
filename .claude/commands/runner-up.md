@@ -1,6 +1,6 @@
 ---
 description: Spawn an agent-runner slot via scripts/runner.sh up (auto-resolves server-cid from env). `persist` keyword routes via runner-autostart.py register for boot/login persistence.
-argument-hint: "<tag> [persist] [roots=PATH,PATH] [no-worktree] [agent-bin=PATH] [max-tasks=N] [hostname=LABEL] [runner-key-file=PATH] [agent-args=\"...\"] [agent-oneshot-argv=\"...\"] [agent-resume-oneshot-argv=\"...\"] [agent-interactive-argv=\"...\"] [agent-resume-interactive-argv=\"...\"] [agent-log-format=NAME] [agent-stream-adapter=PATH] [server-cid=CID]"
+argument-hint: "<tag> [persist] [roots=PATH,PATH] [no-worktree] [agent-bin=PATH] [max-tasks=N] [hostname=LABEL] [runner-key-file=PATH] [agent-args=\"...\"] [agent-oneshot-argv=\"...\"] [agent-resume-oneshot-argv=\"...\"] [agent-interactive-argv=\"...\"] [agent-resume-interactive-argv=\"...\"] [agent-log-format=NAME] [agent-stream-adapter=PATH] [agent-transcript-store=NAME] [server-cid=CID]"
 allowed-tools: Bash
 ---
 
@@ -328,7 +328,8 @@ Arguments: $ARGUMENTS
          [--agent-interactive-argv "<...>"] \
          [--agent-resume-interactive-argv "<...>"] \
          [--agent-log-format "<claude-stream-json|codex-jsonl>"] \
-         [--agent-stream-adapter <path to bin/harness-stream-adapter>]
+         [--agent-stream-adapter <path to bin/harness-stream-adapter>] \
+         [--agent-transcript-store "<claude|codex|pi|agy|opencode>"]
      ```
 
    - **`persist` in `$ARGUMENTS`** — runner is also registered with the OS login-autostart (Linux systemd user unit / Windows Task Scheduler) so it comes back after reboot / sign-out. Build instead:
@@ -348,8 +349,14 @@ Arguments: $ARGUMENTS
          [--agent-interactive-argv "<...>"] \
          [--agent-resume-interactive-argv "<...>"] \
          [--agent-log-format "<claude-stream-json|codex-jsonl>"] \
-         [--agent-stream-adapter <path to bin/harness-stream-adapter>]
+         [--agent-stream-adapter <path to bin/harness-stream-adapter>] \
+         [--agent-transcript-store "<claude|codex|pi|agy|opencode>"]
      ```
+
+     `--agent-transcript-store` names where the default profile's agent keeps
+     its transcripts, for `transcript ls/get`; empty (a shell) means none.
+     `--agents` sets it from `scripts/agent_presets.py`, so passing it
+     explicitly alongside `--agents` is refused as a conflict.
 
      `runner-autostart.py register` writes the autostart entry, then starts the slot immediately by default (same as `--now` semantics), so a single invocation registers + brings it up.
 

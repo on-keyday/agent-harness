@@ -1824,6 +1824,7 @@ stale.
 
 The cmdline accepts `submit / session {new,attach,ls,kill}
 / session await-idle [ls,kill] / await-progress [ls,kill] / session stream attach / file {ls,push,pull,delete} / git / exec
+/ record {ls,get,rm,keep,on,off} / transcript {ls,get}
 / forward {ls,kill,tap} / conns
 / grid / caps / scope
 / caps set / caps set-parent / caps audit / caps reach / caps what-if / workspace {save,apply,detach,ls,show,rm} / workspace forward {add,rm}
@@ -1832,6 +1833,7 @@ The cmdline accepts `submit / session {new,attach,ls,kill}
 its output into the cmdresult pane, stdout marked `1|` and stderr `2|`;
 `exec ls` / `exec kill <exec-id>` / `exec tap <exec-id>` list, stop and watch
 the running ones; `t` on the execs modal (`e`) taps the selected row.
+`record get` and `transcript get` there need `-o FILE`.
 `ssh-gateway [start [bind:port] | stop]` hosts the SSH front door from the TUI
 itself (see **SSH gateway**); with no argument it reports the address it is
 listening on, or that it is not running. It dies with the TUI, and with the

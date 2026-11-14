@@ -227,3 +227,90 @@ binding (B-D1).
 Field names, the list body's encoding, how the runner reads SQLite (a pure-Go
 driver or the `sqlite3` binary: weigh the dependency, and say which), and the
 TUI/WebUI layout within B-D7.
+
+## Amendments (as built, 2026-11-15)
+
+Plan: `docs/superpowers/plans/2026-11-14-pillar-b-transcripts.md`.
+
+### Where the shipped code differs from the text above
+
+- **Statuses (Wire).** `TranscriptStatus` (`runner/protocol/message.bgn`) is
+  `ok`, `no_such_task`, `runner_offline`, `internal_error`,
+  `no_such_session`, `no_such_file`, `store_error`, `runner_unsupported`.
+  There is no "not permitted" status. A task out of `transcript_read`'s scope
+  answers `no_such_task`, so the answer is no existence oracle
+  (`server/transcript.go`). A caller without the bit gets the shared
+  `PermissionDenied` response, through `requiredCap`
+  (`server/capabilities.go`). "An agent without transcripts" is
+  `store_error` with a message naming `--agent-transcript-store` and the
+  restart through the unit (see Deployment), given only when no profile on the
+  runner names a store; a shell profile
+  beside agent profiles is skipped (`runner/transcript_query.go`).
+- **Shared sessions without `exec_run` (B-D2).** `ls <task>` answers `ok`
+  with no rows and a message saying the sessions are listed only to a caller
+  holding `exec_run`. `ls <task> <session>` and `get` answer
+  `no_such_session` (`runner/transcript_query.go`).
+- **The shared-row filter runs on the runner, not the server (B-D2).** The
+  server sends `include_shared`, set when the caller holds `exec_run` and the
+  task is inside `exec_run`'s scope. The runner applies it
+  (`server/transcript.go`, `runner/transcript_query.go`). The runner does not
+  classify each session. It reads the task's directory from its own
+  `--no-worktree` mode: the worktree path, all sessions the task's own, or the
+  repo, all sessions shared. On a worktree runner, sessions recorded in the
+  repo itself are not listed for any task.
+- **Runner capability bit.** `RunnerHello` carries `transcripts`. The server
+  keeps it on `RunnerEntry.Transcripts` and never sends a transcript request to
+  a runner without it, because an older runner drops the connection on an
+  unknown request type. Such a task answers `runner_unsupported`
+  (`server/registry.go`, `server/transcript.go`, `runner/connect.go`).
+- **Bounds.** A session id is at most 128 bytes and a file name at most 512.
+  Both are declared once in `runner/protocol/transcript_bounds.go`, so the
+  control messages that carry them fit one datagram. The client checks them
+  before sending (`cli/transcript.go`), the server before relaying
+  (`no_such_session` / `no_such_file`, `server/transcript.go`), and the runner
+  before looking anything up.
+- **agy's index is read with the `sqlite3` CLI** (operator, 2026-11-15), as
+  `sqlite3 -readonly -json`, run through `runner/hostcmd`
+  (`runner/transcript/agy.go`). The whole index is read and matched in Go, so
+  no caller-supplied path reaches the SQL.
+  - Only the first URI in `workspace_uris` counts as the conversation's
+    directory. Later ones are directories added with `--add-dir`.
+  - agy writes a zero `last_modified_time` for some conversations. The updated
+    time then falls back to the newest mtime among the conversation's files.
+    The index keeps no creation time, so agy rows have none (B-D1's created
+    time is empty for agy).
+  - The store root comes from `HOME` (`USERPROFILE` on Windows).
+  - If `~/.gemini/antigravity-cli` is absent, the list is empty. If the root
+    exists but the index file, a column or `sqlite3` is missing, the result is
+    an error that names it, shown as the `ls` note. So a format change by agy
+    appears as an error, not as an empty list.
+- **"The agent's environment" (B-D5) is the runner process's environment**,
+  which the agents it starts inherit (`Session.transcriptEnv`, nil →
+  `os.Getenv`, `runner/session.go`). Per-profile or per-run settings are not
+  consulted. In particular, pi's per-run `--session-dir` is **not** read. pi
+  resolves only `PI_CODING_AGENT_SESSION_DIR`, then
+  `$PI_CODING_AGENT_DIR/sessions`, then `~/.pi/agent/sessions`
+  (`newPi`, `runner/transcript/jsonl.go`).
+- **Client time bounds.** The client bounds only the wait for the server's
+  `TranscriptResponse`, at 15 s. A timeout is reported as a server older than
+  transcripts, which drops the request. The stream body has no fixed bound. It
+  is read under the caller's context, so Ctrl-C or a closed WebUI sheet ends it
+  (`transcriptAnswerWait`, `streamCtxReader`, `cli/transcript.go`).
+- **WebUI download memory.** The wasm bridge returns a download as an array
+  of `Uint8Array` parts, one per write (`jsChunks`,
+  `cmd/harness-webui-wasm/transcript.go`). `triggerDownload`
+  (`webui/static/files.js`) joins them into one `Blob`. So the wasm heap never
+  holds a whole transcript, but the browser's `Blob` does: no download API
+  that streams to disk exists in every browser.
+- **Deliberately shown on no surface.** The `transcripts` bit stays on the
+  server's `RunnerEntry`. It is not copied to `RunnerInfo`, so `ls` does not
+  show it: it only reveals version skew, and `runner_unsupported` names the
+  skew when it matters. A profile's `transcriptStore` is not displayed either.
+- **Deployment.** A runner restarted by replaying its old argv
+  (`scripts/restart.py`, `build_and_restart_all.py`) gets the new binary, which
+  sets `transcripts`. Its argv carries no `--agent-transcript-store`, and its
+  `--agent-profiles` JSON has no `transcriptStore`. Every fetch then answers
+  `store_error`, whose message names the flag and this restart. Restart slots
+  through their systemd units (`runner-autostart.py`'s `ExecStart` runs
+  `runner.py up`, which re-expands `scripts/agent_presets.py`), so the preset
+  change takes effect.
