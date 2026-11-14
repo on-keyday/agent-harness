@@ -2,6 +2,8 @@ package cli
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -109,5 +111,26 @@ func TestCheckTranscriptNames(t *testing.T) {
 	}
 	if err := CheckTranscriptNames("s", strings.Repeat("f", 513)); err == nil {
 		t.Fatal("a 513-byte file name was accepted")
+	}
+}
+
+// The server answers a transcript request at once — the runner's work comes
+// on the stream — so a missing answer is a server that dropped a request it
+// could not decode (one older than transcripts), and the error says so
+// instead of hanging (Task 5 review, client obligation 8). A caller's own
+// cancel stays a cancel.
+func TestTranscriptNoAnswerNamesAnOlderServer(t *testing.T) {
+	never := func(ctx context.Context) (*protocol.TaskControlResponse, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	_, err := awaitTranscriptAnswer(context.Background(), "ls", 20*time.Millisecond, never)
+	if err == nil || !strings.Contains(err.Error(), "older than transcripts") {
+		t.Fatalf("err %v, want one naming a server older than transcripts", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := awaitTranscriptAnswer(ctx, "ls", time.Minute, never); !errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "older") {
+		t.Fatalf("cancelled: err %v, want context.Canceled alone", err)
 	}
 }

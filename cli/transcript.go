@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -77,9 +78,38 @@ func readTranscriptAnswer(verb string, r io.Reader, w io.Writer) (protocol.Trans
 	return res, nil
 }
 
+// transcriptAnswerWait bounds the wait for the server's response. The server
+// answers at once and the runner's work arrives on the stream, which has no
+// such bound: a whole session's tar may take long to come.
+const transcriptAnswerWait = 15 * time.Second
+
+// awaitTranscriptAnswer runs rt with the response bound. A server older than
+// transcripts drops the request it cannot decode and never answers, so the
+// bound running out is named as that, not as a bare deadline.
+func awaitTranscriptAnswer(ctx context.Context, verb string, wait time.Duration, rt func(context.Context) (*protocol.TaskControlResponse, error)) (*protocol.TaskControlResponse, error) {
+	rctx, cancel := context.WithTimeout(ctx, wait)
+	defer cancel()
+	resp, err := rt(rctx)
+	if err != nil && ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded) {
+		return nil, fmt.Errorf("transcript %s: no answer from the server in %s — a server older than transcripts drops the request", verb, wait)
+	}
+	return resp, err
+}
+
+// streamCtxReader reads the stream under ctx, so a cancel (Ctrl-C, a closed
+// sheet) ends the read; the caller's CloseBoth then fails the runner's write.
+type streamCtxReader struct {
+	ctx context.Context
+	st  trsf.BidirectionalStream
+}
+
+func (r streamCtxReader) Read(p []byte) (int, error) { return r.st.ReadContext(r.ctx, p) }
+
 // transcriptRoundTrip sends one request and reads the answer on its stream.
 func (c *Client) transcriptRoundTrip(ctx context.Context, verb string, req *protocol.TaskControlRequest, w io.Writer) (protocol.TranscriptResult, error) {
-	resp, err := c.RoundTripTaskControl(ctx, req)
+	resp, err := awaitTranscriptAnswer(ctx, verb, transcriptAnswerWait, func(ctx context.Context) (*protocol.TaskControlResponse, error) {
+		return c.RoundTripTaskControl(ctx, req)
+	})
 	if err != nil {
 		return protocol.TranscriptResult{}, err
 	}
@@ -106,7 +136,7 @@ func (c *Client) transcriptRoundTrip(ctx context.Context, verb string, req *prot
 	if err := st.AppendData(true); err != nil {
 		return protocol.TranscriptResult{}, fmt.Errorf("transcript %s: half-close: %w", verb, err)
 	}
-	return readTranscriptAnswer(verb, bufio.NewReaderSize(st, 64<<10), w)
+	return readTranscriptAnswer(verb, bufio.NewReaderSize(streamCtxReader{ctx, st}, 64<<10), w)
 }
 
 // TranscriptSessions lists the sessions the agents stored for the task's
