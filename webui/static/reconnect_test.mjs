@@ -68,6 +68,9 @@ test("a start that timed out reads as waiting for the connection, not as an erro
   const g = page.previewStartFailure(new Error("no such task"));
   assert.equal(g.waiting, false);
   assert.match(g.text, /preview error: no such task/);
+  // A server-side "runner not connected" is an answer about the session, not a
+  // silent link: it must not be mistaken for the waiting case.
+  assert.equal(page.previewStartFailure(new Error("runner not connected")).waiting, false);
 });
 
 test("after 'connected' every pane that wants to be live restarts; a paused one does not", async () => {
@@ -79,4 +82,35 @@ test("after 'connected' every pane that wants to be live restarts; a paused one 
   const started = [];
   page.resumePanes(panes, (k) => started.push(k));
   assert.deepEqual(started.sort(), ["g1", "preview"]);
+});
+
+test("a timed-out start retries when the connection turns out to be alive, at most 3 times", async () => {
+  const mk = (alive) => {
+    const p = { wantLive: true, live: false, epoch: 1 };
+    const panes = new Map([["k", p]]);
+    const started = [];
+    const harness = { probeConnection: async () => alive };
+    return { p, panes, started, harness, start: (k) => started.push(k) };
+  };
+  // Alive link: the pane is started again.
+  let t = mk(true);
+  assert.equal(await page.retryTimedOutStart(t.harness, t.panes, "k", t.p, 1, t.start), "retried");
+  assert.deepEqual(t.started, ["k"]);
+  // Dead link: the probe closes it and 'connected' restarts the pane (resumePanes); nothing here.
+  t = mk(false);
+  assert.equal(await page.retryTimedOutStart(t.harness, t.panes, "k", t.p, 1, t.start), "left-to-reconnect");
+  assert.deepEqual(t.started, []);
+  // Superseded / paused / replaced panes are left alone.
+  t = mk(true); t.p.epoch = 2;
+  assert.equal(await page.retryTimedOutStart(t.harness, t.panes, "k", t.p, 1, t.start), "stale");
+  t = mk(true); t.p.wantLive = false;
+  assert.equal(await page.retryTimedOutStart(t.harness, t.panes, "k", t.p, 1, t.start), "stale");
+  t = mk(true); t.panes.set("k", {});
+  assert.equal(await page.retryTimedOutStart(t.harness, t.panes, "k", t.p, 1, t.start), "stale");
+  // A link that answers probes while the attach keeps timing out is a server
+  // problem, not a sleeping phone: stop after 3 retries.
+  t = mk(true);
+  const r = [];
+  for (let i = 0; i < 4; i++) r.push(await page.retryTimedOutStart(t.harness, t.panes, "k", t.p, 1, t.start));
+  assert.deepEqual(r, ["retried", "retried", "retried", "gave-up"]);
 });

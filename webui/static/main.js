@@ -5756,6 +5756,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     p.wantLive = true;   // resumePanes restarts it after a reconnect until the operator pauses it
     try {
       await window.harness.previewStart(key, p.taskId, !!p.capReplay);
+      p.timeoutRetries = 0;
     } catch (e) {
       // Guard against a stale continuation: teardown paths (stopPane /
       // teardownGridPanes / dismissPane) flip p.live off and stop the wasm
@@ -5768,9 +5769,14 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       // A start that timed out (the bridge gives it ~10s) is the connection
       // not answering, not an error in the session: say so, and let the
       // registerOnConnected handler below restart the pane.
-      note.textContent = previewStartFailure(e).text;
+      const failure = previewStartFailure(e);
+      note.textContent = failure.text;
       p.live = false;
       if (p.onClosed) p.onClosed();
+      if (failure.waiting) {
+        retryTimedOutStart(window.harness, previewPanes, key, p, epoch, startPane)
+          .catch((err) => console.error("preview retry", err));
+      }
       return;
     }
     // Reconcile a narrow race: if the PREVIOUS stream's death was delivered

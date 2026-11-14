@@ -43,7 +43,7 @@ function installWakeReconnect(win, doc, harness, isUp) {
 // resumePanes restarts it after the next 'connected'.
 function previewStartFailure(err) {
   const msg = (err && err.message) || String(err);
-  if ((err && err.code === "timeout") || /not connected/.test(msg)) {
+  if (err && err.code === "timeout") {
     return { waiting: true, text: "接続待ち — 再接続後に自動で再開します" };
   }
   return { waiting: false, text: `preview error: ${msg}` };
@@ -59,4 +59,20 @@ function resumePanes(panes, start) {
   for (const [key, p] of panes) {
     if (p.wantLive) start(key, p);
   }
+}
+
+// retryTimedOutStart runs after a pane's start timed out. If the connection
+// answers a probe it was only slow (or came back without a reconnect, so no
+// 'connected' will fire): start the pane again. If it does not answer, the
+// probe has already closed it and the persist loop's next 'connected' restarts
+// the pane through resumePanes. Gives up after 3 retries — a link that answers
+// probes while the attach keeps timing out is the server's problem.
+async function retryTimedOutStart(harness, panes, key, p, epoch, start) {
+  const alive = await harness.probeConnection(WAKE_PROBE_MS);
+  if (epoch !== p.epoch || panes.get(key) !== p || !p.wantLive) return "stale";
+  if (!alive) return "left-to-reconnect";
+  p.timeoutRetries = (p.timeoutRetries || 0) + 1;
+  if (p.timeoutRetries > 3) return "gave-up";
+  start(key, p);
+  return "retried";
 }
