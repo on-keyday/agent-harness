@@ -2874,9 +2874,9 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   }
 
   // appendCmdOutput appends a line to the cmd-output history pane
-  // (newest at the bottom, terminal-style) and scrolls the pane / page
-  // so the new entry is visible. Caps the buffer at MAX_OUTPUT_LINES
-  // by dropping the oldest entries.
+  // (newest at the bottom, terminal-style) and, with scroll, makes sure the
+  // operator sees it. Caps the buffer at MAX_OUTPUT_LINES by dropping the
+  // oldest entries.
   const MAX_OUTPUT_LINES = 2000;
   const appendCmdOutput = (text, scroll = false) => {
     const cur = cmdOutput.textContent;
@@ -2888,11 +2888,52 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     cmdOutput.textContent = next;
     // Always keep the pane's own tail visible (harmless, in-element scroll).
     cmdOutput.scrollTop = cmdOutput.scrollHeight;
-    // Only scroll the *page* to the pane when the user ran a command — doing it
-    // for background appends (task events, takeover notices) yanks the page out
-    // from under whatever the operator was reading in the tasks tab.
-    if (scroll) cmdOutput.scrollIntoView({ block: "end", behavior: "auto" });
+    // Background appends (task events, takeover notices) are never shown
+    // beyond the pane. A result (scroll) is: the page scrolls to the pane only
+    // when the pane is already on screen — a typed command, whose input sits
+    // just above it. A button lower or higher on the page (the task sheet)
+    // gets a toast instead, since scrolling yanked the operator away from the
+    // sheet on every press.
+    if (!scroll) return;
+    if (cmdOutputOnScreen(cmdOutput.getBoundingClientRect(), window.innerHeight)) {
+      cmdOutput.scrollIntoView({ block: "end", behavior: "auto" });
+    } else {
+      showResultToast(text);
+    }
   };
+
+  // showResultToast is appendCmdOutput's toast: the result's first line in
+  // the notification toast's frame; a tap goes to the full output.
+  function showResultToast(text) {
+    const host = document.getElementById("toast-host");
+    const line = cmdResultToastText(text);
+    if (!host || line === "") return;
+    const t = document.createElement("div");
+    t.className = "toast notify-level-info";
+    const head = document.createElement("div");
+    head.className = "notify-head";
+    const badge = document.createElement("span");
+    badge.className = "notify-badge";
+    badge.textContent = "OUTPUT";
+    const x = document.createElement("button");
+    x.type = "button";
+    x.className = "toast-close";
+    x.textContent = "✕";
+    x.addEventListener("click", (ev) => { ev.stopPropagation(); dismissToast(t); });
+    head.append(badge, x);
+    const bodyEl = document.createElement("div");
+    bodyEl.className = "notify-body";
+    bodyEl.textContent = line;
+    t.append(head, bodyEl);
+    t.addEventListener("click", () => {
+      cmdOutput.scrollIntoView({ block: "end", behavior: "auto" });
+      dismissToast(t);
+    });
+    host.appendChild(t);
+    const cap = window.matchMedia("(max-width: 600px)").matches ? 2 : 4;
+    while (host.children.length > cap) host.removeChild(host.firstChild);
+    setTimeout(() => dismissToast(t), TOAST_TTL_MS);
+  }
 
   // makeExecSink buffers one of an exec's two streams into whole lines and
   // marks each with its stream number.

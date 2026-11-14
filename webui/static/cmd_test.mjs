@@ -803,3 +803,22 @@ test("watch menu: choices follow the task, and each choice arms its own verb", (
   eq(page.watchArm(progress, live), { fn: "awaitProgress", opts: { taskId: ID, since: "17", sink: "notify" } });
   eq(page.watchArm(progress, { id: ID, kind: "Oneshot", status: "Running" }).opts.since, "0");
 });
+
+// A button's result is written to the command output at the bottom of the
+// page. When that pane is off screen the page is NOT scrolled to it (that
+// yanked the operator away from the task sheet on every press); the result
+// is shown as a toast instead, its first line, with how many lines follow.
+test("a result toasts only when the command output is off screen", () => {
+  const vh = 800;
+  assert.equal(page.cmdOutputOnScreen({ top: 500, bottom: 700, height: 200 }, vh), true);
+  assert.equal(page.cmdOutputOnScreen({ top: 1600, bottom: 1800, height: 200 }, vh), false, "below the fold");
+  assert.equal(page.cmdOutputOnScreen({ top: -400, bottom: -100, height: 300 }, vh), false, "scrolled past");
+  assert.equal(page.cmdOutputOnScreen({ top: 0, bottom: 0, height: 0 }, vh), false, "hidden (another tab)");
+});
+
+test("a result toast carries the first line and a count of the rest", () => {
+  assert.equal(page.cmdResultToastText("record keep: abc#1 is kept forever"), "record keep: abc#1 is kept forever");
+  assert.equal(page.cmdResultToastText("\nfirst\nsecond\nthird"), "first (+2 行)");
+  assert.equal(page.cmdResultToastText("x".repeat(300)).length, 201, "200 characters and an ellipsis");
+  assert.equal(page.cmdResultToastText(""), "");
+});

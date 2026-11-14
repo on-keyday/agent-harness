@@ -1,7 +1,26 @@
 "use strict";
 
 // The command line: tokenizer, verb dispatch (runVerbCommand) and the git /
-// watcher helpers it calls, plus two shared text helpers (pad, agentLabel).
+// watcher helpers it calls, plus two shared text helpers (pad, agentLabel) and
+// the result-toast decision for the output pane (cmdOutputOnScreen,
+// cmdResultToastText).
+
+// cmdOutputOnScreen says whether any of the command output pane (its
+// getBoundingClientRect) is inside a viewport vh tall. A pane with no height is
+// not drawn (its tab is hidden), so it is not on screen either.
+function cmdOutputOnScreen(rect, vh) {
+  return rect.height > 0 && rect.bottom > 0 && rect.top < vh;
+}
+
+// cmdResultToastText is what a result toast says: the result's first non-empty
+// line, cut at 200 characters, and how many lines follow it in the pane.
+function cmdResultToastText(text) {
+  const lines = String(text).split("\n").filter((l) => l.trim() !== "");
+  if (lines.length === 0) return "";
+  let head = lines[0];
+  if (head.length > 200) head = head.slice(0, 200) + "…";
+  return lines.length > 1 ? `${head} (+${lines.length - 1} 行)` : head;
+}
 
 function pad(s, n) {
   s = String(s);
