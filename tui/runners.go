@@ -6,6 +6,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/mattn/go-runewidth"
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
@@ -234,13 +235,24 @@ func runnerStatusStr(s protocol.RunnerStatus) string {
 	}
 }
 
-// truncateLeft keeps the right-most part of s within max chars (left side gets "…").
-// Repo paths are most informative on the right (the last directory).
+// truncateLeft keeps the right-most part of s within max terminal cells
+// (left side gets "…"). Repo paths are most informative on the right (the last
+// directory). Measured with go-runewidth, as bubbles' table measures the cell
+// it then truncates at the END: under a CJK locale "…" is two cells, and a
+// cell one over its column loses the repo name's last character to a second
+// "…".
 func truncateLeft(s string, max int) string {
-	if len(s) <= max {
+	if runewidth.StringWidth(s) <= max {
 		return s
 	}
-	return "…" + s[len(s)-(max-1):]
+	rs := []rune(s)
+	w := runewidth.StringWidth("…")
+	i := len(rs)
+	for i > 0 && w+runewidth.RuneWidth(rs[i-1]) <= max {
+		i--
+		w += runewidth.RuneWidth(rs[i])
+	}
+	return "…" + string(rs[i:])
 }
 
 // formatTaskID is a small helper used by tests / debug.

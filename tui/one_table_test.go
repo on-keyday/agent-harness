@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mattn/go-runewidth"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -176,5 +177,82 @@ func TestTableStripNamesTheKeyToTheOtherTable(t *testing.T) {
 	}
 	if s := tableStrip(true, nil); !strings.Contains(s, "Tab: tasks") || strings.Contains(s, "Shift-Tab") {
 		t.Errorf("runners shown: %q", s)
+	}
+}
+
+// The Repo cell is cut to the column's FITTED width. Cut to the declared width
+// instead, a column fitColumns has narrowed gets cut a second time by bubbles,
+// at the end — the repo name — leaving "…aku-security/sisakulint-…".
+func TestRepoCellFitsItsFittedColumn(t *testing.T) {
+	eastAsian(t)
+	const repo = "/home/someone/workspace/an-org-security/sisakulint-long-name"
+	for _, w := range []int{80, 120, 160} {
+		a := oneTableApp(w, 40)
+		tk := liveTask(1, 0, 0)
+		tk.RepoPath = []byte(repo)
+		a.Update(SnapshotMsg{Tasks: []protocol.TaskInfo{tk}})
+		repoW, ri := -1, -1
+		for i, c := range a.tasks.table.Columns() {
+			if c.Title == "Repo" {
+				repoW, ri = c.Width, i
+			}
+		}
+		if ri < 0 {
+			t.Fatalf("w=%d: no Repo column", w)
+		}
+		cell := a.tasks.table.Rows()[0][ri]
+		if runewidth.StringWidth(cell) > repoW {
+			t.Errorf("w=%d: Repo cell %q is %d wide, column is %d", w, cell, runewidth.StringWidth(cell), repoW)
+		}
+		if !strings.HasSuffix(cell, "-long-name") {
+			t.Errorf("w=%d: Repo cell %q lost the repo name's tail", w, cell)
+		}
+	}
+}
+
+// A resize that keeps the column set still changes the Repo column's fitted
+// width, so the cells must follow it.
+func TestRepoCellFollowsAResize(t *testing.T) {
+	eastAsian(t)
+	const repo = "/home/someone/workspace/an-org-security/sisakulint-long-name"
+	a := oneTableApp(160, 40)
+	tk := liveTask(1, 0, 0)
+	tk.RepoPath = []byte(repo)
+	a.Update(SnapshotMsg{Tasks: []protocol.TaskInfo{tk}})
+	before := len(a.tasks.table.Columns())
+	a.width = 100
+	a.layout()
+	if len(a.tasks.table.Columns()) != before {
+		t.Fatalf("the column set changed (%d → %d); pick widths that keep it", before, len(a.tasks.table.Columns()))
+	}
+	for i, c := range a.tasks.table.Columns() {
+		if c.Title == "Repo" {
+			if cell := a.tasks.table.Rows()[0][i]; runewidth.StringWidth(cell) > c.Width {
+				t.Errorf("after resize: Repo cell %q is %d wide, column is %d", cell, runewidth.StringWidth(cell), c.Width)
+			}
+		}
+	}
+}
+
+// eastAsian measures as bubbles does under a CJK locale (LANG=ja_JP…), where
+// go-runewidth counts the ambiguous-width "…" as two cells. bubbles truncates
+// every cell with runewidth, so a cell must fit by THAT measure.
+func eastAsian(t *testing.T) {
+	t.Helper()
+	old := runewidth.DefaultCondition.EastAsianWidth
+	runewidth.DefaultCondition.EastAsianWidth = true
+	t.Cleanup(func() { runewidth.DefaultCondition.EastAsianWidth = old })
+}
+
+func TestTruncateLeftFitsUnderEastAsianWidth(t *testing.T) {
+	eastAsian(t)
+	for _, w := range []int{5, 14, 28} {
+		got := truncateLeft("/home/someone/workspace/an-org/sisakulint-long-name", w)
+		if runewidth.StringWidth(got) > w || !strings.HasSuffix(got, "ame") || runewidth.StringWidth(got) < w-1 {
+			t.Errorf("w=%d: %q is %d wide", w, got, runewidth.StringWidth(got))
+		}
+	}
+	if got := truncateLeft("/short", 28); got != "/short" {
+		t.Errorf("a fitting string changed: %q", got)
 	}
 }

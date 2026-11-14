@@ -263,7 +263,11 @@ func (m *TasksModel) SetSize(w, h int) {
 	// highlighted off-screen — which showed up as "the row I picked
 	// disappeared" after returning from an attach, since re-entering the alt
 	// screen fires a WindowSizeMsg.
-	if len(cols) == len(m.table.Columns()) {
+	// Unless the Repo column's fitted width moved: its cells are cut to that
+	// width (repoCellWidth), so they are rebuilt — through
+	// swapColumnsAndRebuild, which restores the cursor the way that keeps it on
+	// screen.
+	if len(cols) == len(m.table.Columns()) && m.repoCellWidth() == repoWidthIn(cols) {
 		m.table.SetColumns(cols)
 		return
 	}
@@ -398,7 +402,7 @@ func (m *TasksModel) rebuild() {
 			row = append(row, actCell(t, true))
 		}
 		row = append(row,
-			truncateLeft(string(t.RepoPath), repoCellWidth(m.tree)),
+			truncateLeft(string(t.RepoPath), m.repoCellWidth()),
 			aboutCell(t),
 		)
 		rows = append(rows, row)
@@ -464,11 +468,31 @@ func observerCell(t protocol.TaskInfo) string {
 // `d` detail popup instead; the CLI row, ls --json and the WebUI carry them
 // unconditionally. Revisit only with width-conditional column sets.
 
-// repoCellWidth matches the Repo column width of the active column set; the
-// tree's wider ID column takes its space from Repo.
-func repoCellWidth(tree bool) int {
-	if tree {
-		return 18
+// repoCellWidth is the Repo column's width as fitted to the panel, so the
+// cell is cut once, at its start: cut to the declared width, a narrowed column
+// would be cut again by bubbles at its end — the repo's name. Rows are always
+// built after the columns they go under are set (applyColumns), so the table
+// holds the fitted set here; the declared width is the fallback before any.
+// repoWidthIn is the Repo column's width in cols, or -1 without one.
+func repoWidthIn(cols []table.Column) int {
+	for _, c := range cols {
+		if c.Title == "Repo" {
+			return c.Width
+		}
+	}
+	return -1
+}
+
+func (m *TasksModel) repoCellWidth() int {
+	for _, c := range m.table.Columns() {
+		if c.Title == "Repo" {
+			return c.Width
+		}
+	}
+	for _, c := range m.columns() {
+		if c.Title == "Repo" {
+			return c.Width
+		}
 	}
 	return 28
 }
