@@ -142,9 +142,13 @@ type PersistConfig struct {
 	StableReset time.Duration // connection alive ≥ this resets attempt counter (default 60s)
 	// Kick, when non-nil, is a "retry now" signal: a receive during a backoff
 	// sleep ends the sleep at once and resets the attempt counter to 0, so the
-	// next failure starts the ladder over. A kick while connected or dialling is
-	// ignored (stale ones are drained on connect). nil = today's behaviour; the
-	// TUI/CLI/runner leave it nil.
+	// next failure starts the ladder over. A kick is remembered (one slot,
+	// bursts coalesce) until a sleep consumes it, except that one still pending
+	// when a dial succeeds is dropped. So a kick sent while connected or
+	// dialling is NOT ignored: it ends the next backoff sleep. The WebUI relies
+	// on that — it closes a dead connection and kicks in the same breath, and
+	// the kick lands before the loop has left the connected state. nil = today's
+	// behaviour; the TUI/CLI/runner leave it nil.
 	Kick <-chan struct{}
 	// MaxBackoffFn, when non-nil, replaces MaxBackoff on every backoff
 	// computation (a page caps the ladder low while visible, high while hidden).

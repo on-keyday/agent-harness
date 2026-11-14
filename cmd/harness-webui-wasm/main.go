@@ -3745,18 +3745,23 @@ func harnessPreviewStart(this js.Value, args []js.Value) any {
 			// otherwise wait for the transport to notice, with no bound.
 			ctx, cancel := context.WithTimeout(rootCtx, previewStartTimeout)
 			defer cancel()
+			paneKey := args[0].String()
+			taskID := args[1].String()
+			// Reserve the pane's generation BEFORE waiting: a stop, a dismissed
+			// grid pane, or a newer start for this key during the wait supersedes
+			// this one (reserving after the wait would let whichever start
+			// reserves second win, which is not always the newer).
+			gen := cli.ReservePreview(paneKey)
 			c, err := waitForClient(ctx)
 			if err != nil {
 				rejectCoded(reject, errPreviewTimeout, "timeout")
 				return
 			}
-			paneKey := args[0].String()
-			taskID := args[1].String()
 			var replayLimit uint32
 			if len(args) >= 3 && args[2].Truthy() {
 				replayLimit = cli.GridPaneReplayLimit
 			}
-			if err := c.StartPreview(ctx, paneKey, taskID, replayLimit); err != nil {
+			if err := c.StartReservedPreview(ctx, paneKey, gen, taskID, replayLimit); err != nil {
 				if ctx.Err() != nil && rootCtx.Err() == nil {
 					rejectCoded(reject, errPreviewTimeout, "timeout")
 					return

@@ -4,40 +4,11 @@ package cli
 
 import (
 	"context"
-	"sync"
-	"sync/atomic"
 	"syscall/js"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	agentexec "github.com/on-keyday/objtrsf/exec"
 )
-
-// previewSlot is one live pane's stream plus a generation guard, so a
-// superseded StartPreview (or a StopPreview) makes the old pump exit
-// silently. Panes are keyed by an opaque paneKey string chosen by the JS
-// side, so N panes can each hold an independent cowrite stream over the one
-// shared client — the single preview the WebUI has today is just one pane
-// keyed "preview".
-//
-// previewGen mirrors the interactiveGen pattern, but is shared across ALL
-// panes rather than per-pane: every Start/Stop of any pane reserves the
-// next generation, and a pump whose reserved generation no longer matches
-// its slot's current generation stops invoking JS hooks and exits.
-// StartPreview reserves its generation BEFORE the attach RPC (not after),
-// so a StopPreview or a newer StartPreview for the same paneKey landing
-// while the RPC is still in flight supersedes it and the stop-wins
-// invariant holds across that window too — the attach result is discarded
-// instead of silently installing a stream nobody asked for anymore.
-var (
-	previewMu    sync.Mutex
-	previewSlots = map[string]*previewSlot{}
-	previewGen   atomic.Uint64 // monotonic across all panes; each start/stop reserves one
-)
-
-type previewSlot struct {
-	stream *agentexec.CommandExecutionStream
-	gen    uint64
-}
 
 // GridPaneReplayLimit caps a grid pane's replay the same way the TUI does — a
 // pane shows a small crop, not the full ~1 MiB ring. The single preview passes
@@ -64,21 +35,15 @@ const GridPaneReplayLimit = 128 * 1024
 //
 // replayLimit caps the replayed ring (0 = uncapped); see GridPaneReplayLimit.
 func (c *Client) StartPreview(ctx context.Context, paneKey, taskIDHex string, replayLimit uint32) error {
-	// Reserve a generation BEFORE the RPC: a StopPreview (modal close) or a
-	// newer StartPreview for this paneKey that lands while our attach is
-	// still in flight supersedes us, and we discard our stream instead of
-	// installing it (stop-wins). The old stream for paneKey is closed here
-	// too so it cannot outlive its (now stale) generation while our RPC
-	// runs.
-	previewMu.Lock()
-	old := previewSlots[paneKey]
-	gen := previewGen.Add(1)
-	previewSlots[paneKey] = &previewSlot{gen: gen}
-	previewMu.Unlock()
-	if old != nil && old.stream != nil {
-		_ = old.stream.Close()
-	}
+	return c.StartReservedPreview(ctx, paneKey, ReservePreview(paneKey), taskIDHex, replayLimit)
+}
 
+// StartReservedPreview is StartPreview for a generation already reserved with
+// ReservePreview. A superseded reservation returns nil without attaching.
+func (c *Client) StartReservedPreview(ctx context.Context, paneKey string, gen uint64, taskIDHex string, replayLimit uint32) error {
+	if !PreviewReserved(paneKey, gen) {
+		return nil // superseded while the caller waited: whoever superseded us owns paneKey
+	}
 	st, _, err := c.attachSessionRPC(ctx, taskIDHex, protocol.AttachMode_Cowrite, replayLimit)
 	if err != nil {
 		return err
@@ -99,20 +64,6 @@ func (c *Client) StartPreview(ctx context.Context, paneKey, taskIDHex string, re
 
 	go previewPump(paneKey, stream, gen)
 	return nil
-}
-
-// StopPreview closes paneKey's preview stream, if any. Idempotent. The
-// generation bump silences the pump's remaining callbacks immediately, so
-// JS sees no harness_previewClosed for a locally-initiated stop.
-func StopPreview(paneKey string) {
-	previewMu.Lock()
-	old := previewSlots[paneKey]
-	delete(previewSlots, paneKey)
-	previewGen.Add(1)
-	previewMu.Unlock()
-	if old != nil && old.stream != nil {
-		_ = old.stream.Close()
-	}
 }
 
 // SendPreviewInput forwards raw bytes (a key's xterm data) to paneKey's session

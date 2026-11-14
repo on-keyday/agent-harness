@@ -70,23 +70,15 @@ func harnessSetPageVisible(this js.Value, args []js.Value) any {
 	return js.Undefined()
 }
 
-// probeLive asks the server for the caller's identity (whoami: no capability,
-// one small datagram each way, already part of the wire) and reports whether
-// an answer came within d. A connection the network dropped while the phone
-// slept gives no close event, so only an unanswered request reveals it. An
-// answer of any kind — even an error response — proves the link is alive; only
-// the deadline expiring counts as dead.
-func probeLive(c *cli.Client, d time.Duration) bool {
-	ctx, cancel := context.WithTimeout(rootCtx, d)
-	defer cancel()
-	_, err := cli.WhoAmIWith(ctx, c)
-	return !(err != nil && ctx.Err() != nil)
-}
-
 // harnessProbeConnection verifies the current connection answers within
-// timeoutMs. On no answer it closes that connection — which makes the persist
-// loop's watcher see Done and dial again — and kicks the loop so the dial is
-// immediate and the attempt count restarts.
+// timeoutMs (cli.ProbeLive: whoami, no capability, one small datagram each way,
+// already part of the wire). A connection the network dropped while the phone
+// slept gives no close event, so only an unanswered request reveals it. The
+// wait for a client is inside the same deadline: right after a reconnect the
+// client is installed a moment after 'connected'. On no answer the probed
+// connection is closed — which makes the persist loop's watcher see Done and
+// dial again — and the loop is kicked so the dial is immediate and the attempt
+// count restarts.
 //
 //	harness.probeConnection(timeoutMs) -> Promise<bool>   (false = declared dead)
 func harnessProbeConnection(this js.Value, args []js.Value) any {
@@ -97,17 +89,20 @@ func harnessProbeConnection(this js.Value, args []js.Value) any {
 	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
 		resolve := promiseArgs[0]
 		go func() {
-			c, err := currentClient()
-			if err != nil {
-				sendKick() // not connected: nothing to probe, just dial now
-				resolve.Invoke(false)
-				return
-			}
-			if probeLive(c, d) {
+			alive, c := cli.ProbeLive(rootCtx, d, func(ctx context.Context) (cli.TaskControlClient, error) {
+				cl, err := waitForClient(ctx)
+				if err != nil {
+					return nil, err // a nil *Client must not become a non-nil interface
+				}
+				return cl, nil
+			})
+			if alive {
 				resolve.Invoke(true)
 				return
 			}
-			c.Close()
+			if cl, ok := c.(*cli.Client); ok {
+				cl.Close()
+			}
 			sendKick()
 			resolve.Invoke(false)
 		}()
