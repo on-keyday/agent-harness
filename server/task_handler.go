@@ -396,7 +396,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		// verb that replaces it rather than dropped.
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_Submit, RequestId: req.Header.RequestId}
 		sr := protocol.SubmitResponse{Status: protocol.SubmitStatus_InternalError}
-		sr.SetErrorMsg([]byte("submit is retired: use session new --oneshot"))
+		sr.SetErrorMsg([]byte("submit is retired: use session new --oneshot (with --background --deadline D --agent A to queue it while every runner is busy)"))
 		resp.SetSubmit(sr)
 		conn.SendMessage(resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})) //nolint:errcheck
 

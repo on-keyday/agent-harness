@@ -72,7 +72,8 @@ func TestSubmitIsRetired(t *testing.T) {
 	h.Handle(conn, encodeTaskControlRequest(t, req))
 	resp := lastTaskControlResponse(t, conn)
 	r := resp.Submit()
-	if r == nil || r.Status != protocol.SubmitStatus_InternalError || !strings.Contains(string(r.ErrorMsg), "session new --oneshot") {
+	if r == nil || r.Status != protocol.SubmitStatus_InternalError || !strings.Contains(string(r.ErrorMsg), "session new --oneshot") ||
+		!strings.Contains(string(r.ErrorMsg), "--background") {
 		t.Fatalf("submit answered %+v, want internal_error naming session new --oneshot", r)
 	}
 	if n := len(h.Tasks.List(0)); n != 0 {
