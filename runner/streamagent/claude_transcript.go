@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/on-keyday/agent-harness/runner/agentlog"
+	"github.com/on-keyday/agent-harness/runner/transcript"
 )
 
 // Transcript replay: a resumed session shows the operator the conversation the
@@ -39,39 +40,17 @@ type transcriptReplay struct {
 	Total     int     // conversation events before the bound was applied
 }
 
-// claudeConfigDir is where claude keeps its state: $CLAUDE_CONFIG_DIR, else
-// ~/.claude. getenv is the agent's environment, which is the adapter's own.
-func claudeConfigDir(getenv func(string) string) (string, error) {
-	if d := getenv("CLAUDE_CONFIG_DIR"); d != "" {
-		return d, nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".claude"), nil
-}
+// claudeConfigDir, encodeProjectDirName and projectDirNameLimit are claude's
+// storage rules, kept once in runner/transcript (pillar B reads the same
+// store). getenv is the agent's environment, which is the adapter's own.
+var (
+	claudeConfigDir      = transcript.ClaudeConfigDir
+	encodeProjectDirName = transcript.ClaudeProjectDirName
+)
 
-// encodeProjectDirName is claude's name for a working directory under
-// projects/: every character that is not an ASCII letter or digit becomes '-'.
-// Documented at code.claude.com/docs/en/agent-sdk/sessions.
-func encodeProjectDirName(absDir string) string {
-	var b strings.Builder
-	for i := 0; i < len(absDir); i++ {
-		c := absDir[i]
-		if ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z') || ('0' <= c && c <= '9') {
-			b.WriteByte(c)
-		} else {
-			b.WriteByte('-')
-		}
-	}
-	return b.String()
-}
-
-// projectDirNameLimit is the length past which claude truncates a project
-// directory name and appends a hash. The hash is not documented, so a longer
-// name is matched on this prefix instead.
-const projectDirNameLimit = 200
+// projectDirNameLimit: past it claude truncates the name and appends an
+// undocumented hash, so a longer name is matched on this prefix instead.
+const projectDirNameLimit = transcript.ClaudeProjectDirNameLimit
 
 // findClaudeTranscript returns the transcript `--continue` resumes in dir: the
 // newest *.jsonl under the project directory claude uses for it. That is the
