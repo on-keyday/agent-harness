@@ -603,6 +603,7 @@ func buildRunnerHello(cfg Config) protocol.RunnerHello {
 	// This build answers RunnerRequestType.transcript (pillar B); the server
 	// asks no runner that does not say so.
 	hh.SetTranscripts(true)
+	hh.SetOneshotSessions(true)
 	return hh
 }
 

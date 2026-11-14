@@ -967,7 +967,19 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 	if oer.EventStream() {
 		argvPrompt = ""
 	}
-	agentBin, agentArgv, err := resolveExec(s.Profiles, string(oer.AgentProfile), false, oer.ResumeConversation(), oer.ExtraArgs.AsStrings(), argvPrompt)
+	// --oneshot (A3, A-D29): the profile's oneshot argv in the PTY, which ends
+	// when the agent answers. It needs the prompt it exists to run, and it is
+	// a terminal session, not an event stream.
+	oneshot := oer.Oneshot()
+	if oneshot && oer.EventStream() {
+		refuse("oneshot_unsupported: --oneshot runs in a PTY, not as an event stream")
+		return
+	}
+	if oneshot && prompt == "" {
+		refuse("prompt_required: --oneshot runs the profile's oneshot argv, which needs a prompt")
+		return
+	}
+	agentBin, agentArgv, err := resolveExec(s.Profiles, string(oer.AgentProfile), oneshot, oer.ResumeConversation(), oer.ExtraArgs.AsStrings(), argvPrompt)
 	if errors.Is(err, errPromptUnsupported) {
 		name := string(oer.AgentProfile)
 		if name == "" {
