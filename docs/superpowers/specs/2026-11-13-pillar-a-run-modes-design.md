@@ -471,28 +471,74 @@ Settled with the operator on 2026-11-14, before A3's plan:
   nothing until the run ends. Converting on the runner was dropped too: the
   record would then hold the converter's output, not the agent's. Attaching to
   such a session and `session snapshot` show the JSON as it was emitted.
-- **`logs` reads what the run left and renders it on read.** For an agent
-  with a transcript, it reads B's transcript. For a program with none (bash,
-  cmd), it reads the run's PTY record. A PTY record of a print-mode run holds
-  the profile's stdout JSON, which the existing decoders read (`runner/agentlog`,
-  chosen by the profile's `logFormat`). A transcript is the agent's stored
-  format, which those decoders do not read (codex's rollout file starts with
-  `session_meta`). So `logs` over a transcript needs its own reading per agent,
-  or prints the transcript raw. Which one is decided in A3's plan (found by
-  pillar B's builder check, 2026-11-14). Whether `logFormat`
-  reaches the reader is to be checked in the plan. It is configured on the
-  runner today, and if nothing carries it further, the runner advertises it
-  per profile. The raw JSON stays readable through `record get`.
+- **`logs` goes, with the task log it reads** (operator, 2026-11-15;
+  supersedes the 2026-11-14 bullet that had `logs` render transcripts and
+  records on read). Nobody reads runs through `logs` today (operator). Once
+  `task.<id>.log` is gone, everything `logs` could show already has its verb:
+  an agent's conversation is `transcript get` (pillar B), what a PTY showed is
+  `record get` (A1), and a live screen is `session snapshot` /
+  `session attach --view`. A renderer over each agent's stored format would add
+  a second layer that breaks when an agent changes its format, which B
+  already carries for fetching. A text rendering, if wanted later, belongs on
+  the transcript side (a `transcript get` option), not in a revived `logs`.
+  `watch` is a different verb (task and runner status events) and stays.
+  Who loses something: the skills that tell an agent to read a worker's result
+  with `logs` (`runner/agentskills/`) are rewritten to the agentboard reply a
+  worker already sends, or to `transcript get`.
 - **`--oneshot` does not turn recording on.** With B first, an agent's run
   is readable from its transcript. A shell oneshot whose output matters is
   opened with `--record`, under A-D22's gate.
 
-Still open (the author's proposals, not confirmed by the operator):
+The author's calls (proposed to the operator on 2026-11-15, not objected to;
+not confirmed either):
 
 - **The TUI's freed space (G23)** goes to the task table, which is fixed at
   10 rows today.
 - **`--oneshot` is accepted in both run modes.** Watching one answer arrive
   in the foreground has no reason to be refused.
+
+### Facts (A3)
+
+Read on the pillar B branch's tip (2026-11-15), traced to the code.
+
+- **F29 — only a oneshot writes the task log.** The single producer is the
+  runner's `handleAssign` (`runner/session.go`, the `topics.TaskLog` sink fed
+  by `Process.Run`). The server registers a log tap for every task, but
+  interactive and stream tasks never publish, so no `<id>.log` is created for
+  them. `last_output_at` / `output_idle_ms` come from the `SessionMux`, and
+  `harness-cli progress` is written by the agent; neither reads the log.
+- **F30 — the runner's pubsub publish path exists only for the task log**
+  (`TaskSender.Publish`, `TaskRegistry.publishWhenConnected`,
+  `peer.Conn.Publish`; on the server the publish grant in `authorizeJoin` and
+  `taskLogDelivery`).
+- **F31 — `logFormat` is read only on the oneshot path** (`runner/process.go`,
+  `handleAssign`, and the startup check of unrecognised formats). `agentlog`
+  itself stays: the stream adapter and the TUI's stream driver use it.
+- **F32 — `submit` is used in-repo mostly to get a running task with a
+  worktree**: ten integration test files and `scripts/netem-lab` submit a
+  long `bash` command and then test forwarding or file transfer against it;
+  none reads the log. `scripts/e2e-oneshot-progress.sh` and
+  `scripts/sandbox/probe.sh` do read it.
+- **F33 — the queue and the hold know oneshot.** `Tick` places a Queued
+  oneshot (`server/scheduler.go`); a Held oneshot is re-adopted as Running
+  (`server/readopt.go`); replay fails only foreground session kinds left
+  Queued.
+- **F34 — wire.** `submit` and `get_task_log` are `TaskControlKind` ordinals
+  0 and 4 (client↔server). `assign_task` is `RunnerRequestType` ordinal 0 and
+  is decoded by the runner; a runner that stops decoding it logs and drops
+  it, after the server has already marked the task Running. Retired ordinals
+  stay reserved, as `trsf_state` is.
+- **F35 — a oneshot has a 30-minute default timeout** (`Process.Run`); a
+  session has none.
+
+### Decisions (A3)
+
+| # | Decision | Decided by |
+|---|---|---|
+| A-D29 | **`session new --oneshot` opens a session whose argv is the profile's oneshot template** (`oneshotArgv`, or `resumeOneshotArgv` with `--resume-conversation`), with the prompt required (`prompt_required` otherwise). The session ends when the process exits; its exit code is the task's. The task's kind is interactive: it is a session like any other, attachable, viewable and recordable (A-D22, off by default). A resume reuses nothing (A-D7): `--oneshot` is stated again or the resume opens the interactive template. The open request carries it as one bit of A1's flags byte, and `OpenExecRunnerRequest` as one bit the runner decodes; a runner advertises support with a `RunnerHello` bit, and a `--oneshot` open is never placed on a runner without it (refused at open in foreground, left Queued in background, as a missing profile is), since an older runner would ignore the bit and start the interactive template | operator (the template in the PTY, both run modes), this spec (kind, wire, hello bit) |
+| A-D30 | **The task log goes whole**: the runner's oneshot path and its publish path (F30); the server's log store, taps, publish grant and delivery filter; `GetTaskLog`; the `logs` verb; the TUI pane; prune's removal of `<id>.log`. Files already under `<data-dir>/logs/` are left on disk, unread; nothing deletes them | operator (`logs` goes), this spec (leave old files) |
+| A-D31 | **`submit` goes on every surface.** Its callers move to `session new --oneshot` (F32: `--agent bash --oneshot --prompt "sleep 3600"` keeps a task running with a worktree). The TUI's `s` key and popup open a `--oneshot` session instead of submitting. The retired wire ordinals stay reserved (F34) | GD (G7), this spec (the `s` key, the bash replacement) |
+| A-D32 | **Upgrade.** The server stops creating and placing oneshots. At replay a oneshot left Queued or Held fails with `oneshot_retired`: nothing would place it or read its output. Old records still replay and display. The server is restarted first, so a new runner never meets an old server's `assign_task`. `--agent-log-format` and the preset key `logFormat` are accepted and ignored for one release, because `restart.py` replays a runner's argv and a removed flag would stop the runner from starting | GD (G22), this spec |
 
 ## Testing (A2)
 
