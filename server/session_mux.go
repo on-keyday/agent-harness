@@ -215,6 +215,9 @@ type SessionMux struct {
 	// the busy/idle signal: an in-flight agent TUI repaints its spinner
 	// ~every 100ms, an idle prompt emits nothing at all.
 	lastOutput atomic.Int64
+	// endReason is the runner's End frame reason, once one arrived: why it
+	// ended the session (e.g. refusing to start it). See EndReason.
+	endReason atomic.Pointer[string]
 
 	// The stamps await-idle's lifecycle/program legs compare (await-idle
 	// signal spec D6, D7, D18), all server-clock unix nanos, 0 = never.
@@ -564,6 +567,9 @@ func (m *SessionMux) runnerPump() {
 		frameBytes, err := readOneFrame(m.runner)
 		if err != nil {
 			return
+		}
+		if reason, ok := endReasonOf(frameBytes); ok {
+			m.endReason.Store(&reason)
 		}
 		m.recordFrame(frameBytes)
 		m.mu.Lock()
@@ -1025,6 +1031,37 @@ func (m *SessionMux) writeFrameToRunner(fb []byte) error {
 	m.runnerWriteMu.Lock()
 	defer m.runnerWriteMu.Unlock()
 	return m.runner.AppendData(false, fb)
+}
+
+// EndReason is why the runner ended the session, from the End frame it sends
+// ahead of closing; ok is false when none arrived. Read after the mux stopped,
+// it is final: the frame precedes the close on the same stream.
+func (m *SessionMux) EndReason() (string, bool) {
+	if r := m.endReason.Load(); r != nil {
+		return *r, true
+	}
+	return "", false
+}
+
+// endReasonOf decodes fb as an End control frame, reporting false for
+// anything else.
+func endReasonOf(fb []byte) (string, bool) {
+	if len(fb) < frame.FrameHeaderSize || frame.FrameType(fb[0]) != frame.FrameType_Control {
+		return "", false
+	}
+	f := &frame.Frame{}
+	if err := f.Read(bytes.NewReader(fb)); err != nil {
+		return "", false
+	}
+	ctrl := f.Control()
+	if ctrl == nil || ctrl.Type != frame.ControlType_End {
+		return "", false
+	}
+	e := ctrl.End()
+	if e == nil {
+		return "", false
+	}
+	return string(e.Reason), true
 }
 
 // winSizeOf decodes fb as a TerminalWindowSize control frame, reporting false

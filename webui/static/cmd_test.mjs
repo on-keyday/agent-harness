@@ -822,3 +822,19 @@ test("a result toast carries the first line and a count of the rest", () => {
   assert.equal(page.cmdResultToastText("x".repeat(300)).length, 201, "200 characters and an ellipsis");
   assert.equal(page.cmdResultToastText(""), "");
 });
+
+// The notice for a session whose stream closed from the far side. A reason
+// (the End frame the runner sent ahead of the close) is the answer; without
+// one the task's state tells a takeover from an end.
+test("a far-side close names the End reason when one came", () => {
+  const ended = page.interactiveClosedNotice("prompt_unsupported: no {prompt}", { status: "Running" });
+  assert.equal(ended.kind, "セッション終了: prompt_unsupported: no {prompt}");
+  assert.equal(ended.ended, true);
+  assert.equal(ended.reattachable, false);
+  const takeover = page.interactiveClosedNotice("", { status: "Detached" });
+  assert.equal(takeover.kind, "他のクライアントが takeover しました");
+  assert.equal(takeover.reattachable, true);
+  assert.equal(takeover.ended, false);
+  assert.equal(page.interactiveClosedNotice("", { status: "Failed" }).kind, "セッション終了 (Failed)");
+  assert.equal(page.interactiveClosedNotice("", null).kind, "セッション終了");
+});

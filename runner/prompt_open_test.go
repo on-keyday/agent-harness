@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/exec/frame"
 	"github.com/on-keyday/objtrsf/trsf"
 )
 
@@ -60,6 +61,37 @@ func TestOpenExecWithPromptOnProfileWithoutTokenFinishesPromptUnsupported(t *tes
 	if tf == nil || tf.ExitCode != -1 || !bytes.HasPrefix(tf.ErrorMessage, []byte("prompt_unsupported:")) {
 		t.Fatalf("TaskFinished = %+v", tf)
 	}
+	// The client attached to the stream is told why, ahead of the close.
+	if reason := endFrameSent(t, stream); reason != string(tf.ErrorMessage) {
+		t.Fatalf("End frame reason %q, want the task's %q", reason, tf.ErrorMessage)
+	}
+}
+
+// endFrameSent decodes what the runner wrote to stream and returns the End
+// frame's reason, failing when there is none or it came after the close.
+func endFrameSent(t *testing.T, stream *noopBidiStream) string {
+	t.Helper()
+	sent, late := stream.sentBytes()
+	if late {
+		t.Fatal("a frame was written after the stream was closed")
+	}
+	r := bytes.NewReader(sent)
+	for r.Len() > 0 {
+		f := &frame.Frame{}
+		if err := f.Read(r); err != nil {
+			t.Fatalf("decode sent frames: %v", err)
+		}
+		if ctrl := f.Control(); ctrl != nil && ctrl.Type == frame.ControlType_End {
+			if e := ctrl.End(); e != nil {
+				if e.ExitCode != -1 {
+					t.Fatalf("End exit %d, want -1 (no process ran)", e.ExitCode)
+				}
+				return string(e.Reason)
+			}
+		}
+	}
+	t.Fatal("no End frame was sent before the close")
+	return ""
 }
 
 func TestWaitForPromptBodyRefusesOverCap(t *testing.T) {

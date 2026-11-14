@@ -3331,9 +3331,11 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // from the far side: another client took it over, or the session itself
   // exited. We leave the terminal completely untouched (no marker write, no
   // clear) — its output stays intact for debugging — and surface the event only
-  // via the attached indicator and the command log. A snapshot tells the two
-  // cases apart: a still-running task means we were taken over; a terminal/
-  // absent task means the session ended.
+  // via the attached indicator and the command log. reason is the runner's End
+  // frame (why it ended the session, e.g. refusing to start it), which arrives
+  // ahead of the close; without one a snapshot tells the two cases apart: a
+  // still-running task means we were taken over; a terminal/absent task means
+  // the session ended. interactiveClosedNotice (cmdline.js) decides.
   // attachEpoch bumps on every (re)attach / open. The close handler below awaits
   // a snapshot; if the user (re)attaches during that await, the epoch changes
   // and the handler must NOT clobber the now-correct "attached" display.
@@ -3344,21 +3346,18 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // hideQuickReattach and re-verified by the registerOnConnected handler below
   // after the persist loop reconnects.
   let pendingReattachTaskID = null;
-  window.harness_onInteractiveClosed = async (taskID) => {
+  window.harness_onInteractiveClosed = async (taskID, reason) => {
     const myEpoch = attachEpoch;
     let kind = "切断 (takeover またはセッション終了)";
     let reattachable = false;
+    let ended = false;
     try {
-      const snap = await window.harness.snapshot();
-      const t = (snap.tasks || []).find(x => x.id === taskID);
-      if (t && (t.status === "Running" || t.status === "Detached")) {
-        kind = "他のクライアントが takeover しました";
-        reattachable = true;   // session still alive elsewhere → can re-attach
-      } else if (t) {
-        kind = `セッション終了 (${t.status})`;
-      } else {
-        kind = "セッション終了";
+      let t = null;
+      if (!reason) {
+        const snap = await window.harness.snapshot();
+        t = (snap.tasks || []).find(x => x.id === taskID) || null;
       }
+      ({ kind, reattachable, ended } = interactiveClosedNotice(reason, t));
     } catch (_) {
       // Snapshot failed — almost always because the connection itself dropped
       // (the interactive stream rides the same connection, so a network/sleep
@@ -3376,8 +3375,9 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     if (attachEpoch !== myEpoch) return;
     const short = (taskID || "").slice(0, 12);
     attachedTask.textContent = `detached: ${short}… (${kind})`;
-    // Echo into the command log so it's visible from the タスク/ファイル tab too.
-    appendCmdOutput(`[interactive] ${short}… ${kind}`);
+    // Echo into the command log so it's visible from the タスク/ファイル tab too;
+    // an end is a result (a toast when the log is off screen), a takeover not.
+    appendCmdOutput(`[interactive] ${short}… ${kind}`, ended);
     // Offer one-tap re-attach right here when the session is still alive, so the
     // user doesn't have to go back to the task list.
     if (reattachable) showQuickReattach(taskID); else hideQuickReattach();

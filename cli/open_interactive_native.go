@@ -56,6 +56,9 @@ func (c *Client) openInteractive(ctx context.Context, repoPath string, opts Sess
 	// through. A detached open (OpenDetached) has no stream and sends its size
 	// in the request instead.
 	if err := applyInitialWindowSize(stream, opts); err != nil {
+		if reason, _, ok := attachEnd(stream, err); ok {
+			return nil, taskIDHex, fmt.Errorf("interactive session_ended: %s", reason)
+		}
 		return nil, taskIDHex, fmt.Errorf("OpenInteractive: initial window size: %w", err)
 	}
 	return stream, taskIDHex, nil
@@ -153,6 +156,8 @@ func openInteractiveStatusError(repo, agentProfile string, status protocol.OpenI
 		return fmt.Errorf("interactive resume_exact_mismatch: an exact resume takes the task's recorded settings and kind; drop the setting flags (or --stream to match the task) or drop --exact")
 	case protocol.OpenInteractiveStatus_ScopeNotPermitted:
 		return fmt.Errorf("interactive scope_not_permitted: a scope id is outside your own scope, or the scope is inconsistent (overlapping or empty overrides, or one naming spawn — narrow resume / resume_exact instead)")
+	case protocol.OpenInteractiveStatus_SessionEnded:
+		return fmt.Errorf("interactive session_ended: the runner ended the session before it could be attached")
 	case protocol.OpenInteractiveStatus_DetachRequired:
 		return fmt.Errorf("interactive detach_required: you may open this task but not hold its seat (it is outside your exec_control scope); add -d")
 	case protocol.OpenInteractiveStatus_InternalError:
@@ -182,9 +187,5 @@ func (c *Client) Interactive(ctx context.Context, repo string, opts SessionOpts)
 	// RemoteShell returns with the local terminal already back in cooked mode
 	// and its screen and input modes reset — it does that on the way out
 	// whether it is returning cleanly or not (objtrsf exec.WriteTerminalReset).
-	err = stream.RemoteShell()
-	if err != nil {
-		return taskIDHex, err
-	}
-	return taskIDHex, nil
+	return taskIDHex, finishAttach(stream, stream.RemoteShell(), os.Stderr)
 }

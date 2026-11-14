@@ -47,6 +47,9 @@ type InteractiveSession struct {
 	done   chan struct{}
 	mu     sync.Mutex
 	closed bool
+	// endReason is the far side's End frame reason, set by recvPump (its only
+	// writer) and read by it when the stream closes.
+	endReason string
 }
 
 // activeInteractiveSession is the singleton current session. Browser UX only
@@ -295,7 +298,7 @@ func (s *InteractiveSession) recvPump() {
 			activeInteractiveMu.Unlock()
 			s.markClosed()
 			if wasActive {
-				notifyInteractiveClosed(s.taskIDHex)
+				notifyInteractiveClosed(s.taskIDHex, s.endReason)
 			}
 			return
 		}
@@ -324,9 +327,18 @@ func (s *InteractiveSession) recvPump() {
 			arr := js.Global().Get("Uint8Array").New(len(data))
 			js.CopyBytesToJS(arr, data)
 			js.Global().Call("harness_xtermWrite", arr)
+		case frame.FrameType_Control:
+			// The runner's last frame before it ends the session says why
+			// (End); the close that follows reports it. Other control frames
+			// (signal echoes) are not part of the contract.
+			if ctrl := f.Control(); ctrl != nil && ctrl.Type == frame.ControlType_End {
+				if e := ctrl.End(); e != nil {
+					s.endReason = string(e.Reason)
+				}
+			}
 		default:
-			// Stdin / Control frames going *back* to the client are not
-			// part of the contract. Ignore.
+			// Stdin frames going *back* to the client are not part of the
+			// contract. Ignore.
 		}
 	}
 }
@@ -463,7 +475,7 @@ func (s *InteractiveSession) markClosed() {
 // leaving it. The handler (window.harness_onInteractiveClosed) decides how to
 // surface it and intentionally does NOT clear the terminal. The call is guarded
 // so a missing handler (e.g. a non-WebUI wasm host) is a no-op.
-func notifyInteractiveClosed(taskIDHex string) {
+func notifyInteractiveClosed(taskIDHex, reason string) {
 	// Self-supersede in disguise: our own AttachSession RPC for this task is
 	// in flight, and this close is the server tearing down the stream we are
 	// replacing — not a foreign takeover. Stay silent (see pendingAttachTask).
@@ -474,7 +486,7 @@ func notifyInteractiveClosed(taskIDHex string) {
 	if fn.Type() != js.TypeFunction {
 		return
 	}
-	fn.Invoke(taskIDHex)
+	fn.Invoke(taskIDHex, reason)
 }
 
 func (s *InteractiveSession) detach() {

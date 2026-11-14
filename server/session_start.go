@@ -36,7 +36,7 @@ type sessionStart struct {
 // send stream first, as sendAssign sends AssignTask's body — and builds the
 // session's mux. On any failure the task is finished with the reason, unbound
 // and revoked, and a non-ok status is returned; the caller answers with it.
-func (h *TaskHandler) startSession(ss sessionStart) (trsf.BidirectionalStream, protocol.OpenInteractiveStatus) {
+func (h *TaskHandler) startSession(ss sessionStart) (trsf.BidirectionalStream, protocol.OpenInteractiveStatus, string) {
 	runner := ss.Runner
 	taskIDHex := ss.TaskIDHex
 	var tid protocol.TaskID
@@ -55,7 +55,7 @@ func (h *TaskHandler) startSession(ss sessionStart) (trsf.BidirectionalStream, p
 	var ticket [16]byte
 	if _, err := rand.Read(ticket[:]); err != nil {
 		finishWithError("ticket gen failed: " + err.Error())
-		return nil, internal
+		return nil, internal, ""
 	}
 	boardRegisterTask(h.Board, runner.Identity, taskIDHex, ticket, ss.Profile, conversationOf(ss.ResumeConversation))
 
@@ -69,31 +69,31 @@ func (h *TaskHandler) startSession(ss sessionStart) (trsf.BidirectionalStream, p
 	if !ss.Detached {
 		if ss.TUIConn == nil {
 			finishWithError("attached open with no client connection")
-			return nil, internal
+			return nil, internal, ""
 		}
 		tuiStream = ss.TUIConn.CreateBidirectionalStream()
 		if tuiStream == nil {
 			finishWithError("create client-side stream failed")
-			return nil, internal
+			return nil, internal, ""
 		}
 	}
 	runnerConn := runner.Conn
 	if runnerConn == nil {
 		closeTui()
 		finishWithError("runner conn nil")
-		return nil, internal
+		return nil, internal, ""
 	}
 	runnerStream := runnerConn.CreateBidirectionalStream()
 	if runnerStream == nil {
 		closeTui()
 		finishWithError("create runner-side stream failed")
-		return nil, internal
+		return nil, internal, ""
 	}
-	fail := func(reason string) (trsf.BidirectionalStream, protocol.OpenInteractiveStatus) {
+	fail := func(reason string) (trsf.BidirectionalStream, protocol.OpenInteractiveStatus, string) {
 		closeTui()
 		_ = runnerStream.CloseBoth()
 		finishWithError(reason)
-		return nil, internal
+		return nil, internal, ""
 	}
 
 	// Tell the runner to wire its stream end to the agent.
@@ -191,7 +191,14 @@ func (h *TaskHandler) startSession(ss sessionStart) (trsf.BidirectionalStream, p
 		mux.Stop()
 		h.Sessions.Remove(taskIDHex)
 		finishWithError("initial attach failed: " + err.Error())
-		return nil, internal
+		// The usual cause is the runner refusing the open: it sends an End
+		// frame and closes, and the mux can stop before the opener is
+		// attached. The mux read the End before the close, so its reason is
+		// the answer rather than an internal error.
+		if reason, ok := mux.EndReason(); ok {
+			return nil, protocol.OpenInteractiveStatus_SessionEnded, reason
+		}
+		return nil, internal, ""
 	}
 
 	if t, ok := h.Tasks.Get(taskIDHex); ok && t.RunMode == protocol.RunMode_Background {
@@ -205,7 +212,7 @@ func (h *TaskHandler) startSession(ss sessionStart) (trsf.BidirectionalStream, p
 		<-mux.Wait()
 		h.afterMuxStopped(taskIDHex, runner.ID)
 	}()
-	return tuiStream, protocol.OpenInteractiveStatus_Ok
+	return tuiStream, protocol.OpenInteractiveStatus_Ok, ""
 }
 
 // StartQueuedSession is Tick's start for a queued background session task,
@@ -223,7 +230,7 @@ func (h *TaskHandler) StartQueuedSession(runnerID objproto.ConnectionID, taskID 
 		h.Registry.UnbindTask(runnerID, taskID)
 		return fmt.Errorf("start queued session %s: runner %v gone", taskID, runnerID)
 	}
-	_, st := h.startSession(sessionStart{
+	_, st, msg := h.startSession(sessionStart{
 		TaskIDHex:          taskID,
 		Runner:             runner,
 		Profile:            t.AgentProfile,
@@ -237,7 +244,7 @@ func (h *TaskHandler) StartQueuedSession(runnerID objproto.ConnectionID, taskID 
 		Prompt:             t.Prompt,
 	})
 	if st != protocol.OpenInteractiveStatus_Ok {
-		return fmt.Errorf("start queued session %s: %v", taskID, st)
+		return fmt.Errorf("start queued session %s: %v %s", taskID, st, msg)
 	}
 	return nil
 }

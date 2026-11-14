@@ -919,6 +919,15 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 		return
 	}
 
+	// refuse ends the open before any agent runs: an End frame first, so a
+	// client attached to the stream is told why rather than seeing it close,
+	// then the close and the task's failure with the same reason.
+	refuse := func(reason string) {
+		writeEndFrame(stream, -1, reason)
+		_ = stream.CloseBoth()
+		finishWithError(-1, reason)
+	}
+
 	// The session's initial prompt, on its own stream (A-D17), read before any
 	// gate can refuse the open so a refusal does not leave it buffered. A PTY
 	// open hands it to the agent's argv; a stream open to the adapter's first
@@ -931,8 +940,7 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 		}
 		p, err := waitForPromptBody(ctx, s.Streams, trsf.StreamID(id))
 		if err != nil {
-			_ = stream.CloseBoth()
-			finishWithError(-1, "prompt: "+err.Error())
+			refuse("prompt: " + err.Error())
 			return
 		}
 		prompt = p
@@ -940,8 +948,7 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 
 	// Gate: check repo is one of the allowed roots.
 	if len(s.AllowedRoots) > 0 && !s.repoAllowed(repoPath) {
-		_ = stream.CloseBoth()
-		finishWithError(-1, "repo_not_allowed: "+repoPath)
+		refuse("repo_not_allowed: " + repoPath)
 		return
 	}
 
@@ -957,17 +964,15 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 	}
 	agentBin, agentArgv, err := resolveExec(s.Profiles, string(oer.AgentProfile), false, oer.ResumeConversation(), oer.ExtraArgs.AsStrings(), argvPrompt)
 	if errors.Is(err, errPromptUnsupported) {
-		_ = stream.CloseBoth()
 		name := string(oer.AgentProfile)
 		if name == "" {
 			name = "(default)"
 		}
-		finishWithError(-1, "prompt_unsupported: profile "+name+" has no {prompt} in its interactive template")
+		refuse("prompt_unsupported: profile " + name + " has no {prompt} in its interactive template")
 		return
 	}
 	if err != nil {
-		_ = stream.CloseBoth()
-		finishWithError(-1, "agent_profile: "+err.Error())
+		refuse("agent_profile: " + err.Error())
 		return
 	}
 
@@ -980,13 +985,11 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 	if oer.EventStream() {
 		p, perr := s.Profiles.Resolve(string(oer.AgentProfile))
 		if perr != nil {
-			_ = stream.CloseBoth()
-			finishWithError(-1, "agent_profile: "+perr.Error())
+			refuse("agent_profile: " + perr.Error())
 			return
 		}
 		if !p.ServesStream() {
-			_ = stream.CloseBoth()
-			finishWithError(-1, "agent_profile "+p.Name+": no stream adapter configured; "+
+			refuse("agent_profile " + p.Name + ": no stream adapter configured; " +
 				"this profile cannot serve an event-stream task")
 			return
 		}
@@ -1012,8 +1015,7 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 	s.mu.Unlock()
 	if !registered {
 		cancel()
-		_ = stream.CloseBoth()
-		finishWithError(-1, cancelledBeforeStart)
+		refuse(cancelledBeforeStart)
 		return
 	}
 	defer func() {
@@ -1033,8 +1035,7 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 		wm = s.getWorktreeManager(repoPath)
 		d, err := wm.Create(taskIDHex)
 		if err != nil {
-			_ = stream.CloseBoth()
-			finishWithError(-1, "worktree_error: "+err.Error())
+			refuse("worktree_error: " + err.Error())
 			return
 		}
 		dir = d

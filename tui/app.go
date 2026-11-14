@@ -1594,8 +1594,9 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		a.cmdresult.Append(OKStyle.Render("attaching ") + short + " — Ctrl+] to detach client; Ctrl+D / `exit` ends the session")
 		a.termReleased = true
-		return a, execWithoutSuspend(a.program, &interactiveExec{stream: msg.Stream}, func(err error) tea.Msg {
-			return InteractiveDoneMsg{TaskID: msg.TaskID, Err: err}
+		ex := &interactiveExec{stream: msg.Stream}
+		return a, execWithoutSuspend(a.program, ex, func(err error) tea.Msg {
+			return InteractiveDoneMsg{TaskID: msg.TaskID, Err: err, EndReason: ex.endReason}
 		})
 
 	case SessionStartedMsg:
@@ -1643,6 +1644,9 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.cmdresult.Append(WarnStyle.Render("interactive ended: ") + short + " (" + msg.Err.Error() + ")")
 		} else {
 			a.cmdresult.Append(OKStyle.Render("interactive ended: ") + short)
+		}
+		if msg.EndReason != "" {
+			a.cmdresult.Append(WarnStyle.Render(short+": session ended: ") + msg.EndReason)
 		}
 		return a, RefreshSnapshot(a.client)
 

@@ -3,7 +3,8 @@
 // The command line: tokenizer, verb dispatch (runVerbCommand) and the git /
 // watcher helpers it calls, plus two shared text helpers (pad, agentLabel) and
 // the result-toast decision for the output pane (cmdOutputOnScreen,
-// cmdResultToastText).
+// cmdResultToastText), and the notice for a session closed from the far side
+// (interactiveClosedNotice).
 
 // cmdOutputOnScreen says whether any of the command output pane (its
 // getBoundingClientRect) is inside a viewport vh tall. A pane with no height is
@@ -20,6 +21,19 @@ function cmdResultToastText(text) {
   let head = lines[0];
   if (head.length > 200) head = head.slice(0, 200) + "…";
   return lines.length > 1 ? `${head} (+${lines.length - 1} 行)` : head;
+}
+
+// interactiveClosedNotice is what the page says when the attached session's
+// stream closed from the far side. reason is the End frame the runner sent
+// ahead of the close (e.g. it refused to start the session), "" when none
+// came; task is the task as a snapshot read it afterwards, or null when gone.
+function interactiveClosedNotice(reason, task) {
+  if (reason) return { kind: `セッション終了: ${reason}`, reattachable: false, ended: true };
+  if (task && (task.status === "Running" || task.status === "Detached")) {
+    // Still alive elsewhere: another client took it over.
+    return { kind: "他のクライアントが takeover しました", reattachable: true, ended: false };
+  }
+  return { kind: task ? `セッション終了 (${task.status})` : "セッション終了", reattachable: false, ended: true };
 }
 
 function pad(s, n) {

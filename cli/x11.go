@@ -169,9 +169,5 @@ func (c *Client) RunInteractiveX11(ctx context.Context, repo string, opts Sessio
 	// RemoteShell returns with the local terminal already back in cooked mode
 	// and its screen and input modes reset — it does that on the way out
 	// whether it is returning cleanly or not (objtrsf exec.WriteTerminalReset).
-	err = stream.RemoteShell()
-	if err != nil {
-		return taskIDHex, err
-	}
-	return taskIDHex, nil
+	return taskIDHex, finishAttach(stream, stream.RemoteShell(), os.Stderr)
 }

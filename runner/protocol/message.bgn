@@ -2565,6 +2565,11 @@ enum OpenInteractiveStatus:
     # The open asked for recording on (ext.record_set and ext.record) without
     # record_persist (A-D22). Appended.
     record_not_permitted = "record_not_permitted"
+    # The runner ended the session before the opener could be attached — it
+    # refused the open (no {prompt} in the profile's template, a repo outside
+    # its roots, …). error_msg is the reason the runner recorded on the task.
+    # Appended.
+    session_ended = "session_ended"
 
 # One RUNNER offered when a spawn is ambiguous: more than one (runner, agent
 # profile) choice matched. profiles lists the agents the caller may pick on

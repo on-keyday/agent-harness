@@ -55,6 +55,10 @@ func withRetry(cmd tea.Cmd, retry pickerRetry) tea.Cmd {
 type InteractiveDoneMsg struct {
 	TaskID string
 	Err    error
+	// EndReason is why the far side ended the session, from the End frame it
+	// sent ahead of the close (e.g. a runner refusing to start it); empty for
+	// a detach or a plain close.
+	EndReason string
 }
 
 // DoOpenDetachableSession opens a new detachable interactive session (equivalent
@@ -318,6 +322,10 @@ func DoStartDetachedSession(c *cli.Client, repo string, selOpts cli.SelectorOpts
 // been released by the time Run is called; see suspend.go).
 type interactiveExec struct {
 	stream *agentexec.CommandExecutionStream
+	// endReason is why the far side ended the session (cli.AttachEndReason),
+	// read in Run before the stream is closed — closing it cuts off the read
+	// side the End frame may still be waiting on.
+	endReason string
 }
 
 func (e *interactiveExec) SetStdin(io.Reader)  {}
@@ -331,5 +339,10 @@ func (e *interactiveExec) Run() error {
 	// reporting or bracketed paste on, bubbletea re-establishes its own modes
 	// on resume and cannot fight that, and leaving them set would feed the
 	// resumed UI events it never asked for.
-	return e.stream.RemoteShell()
+	err := e.stream.RemoteShell()
+	if reason, ok := cli.AttachEndReason(e.stream, err); ok {
+		// The reason replaces the send error the closed stream caused.
+		e.endReason, err = reason, nil
+	}
+	return err
 }

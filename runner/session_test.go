@@ -496,6 +496,17 @@ func (l *fakeBidiLookup) GetReceiveStream(id trsf.StreamID) trsf.ReceiveStream {
 type noopBidiStream struct {
 	streamID trsf.StreamID
 	closed   atomic.Bool
+	// sent is what AppendData carried, and lateSend whether any of it came
+	// after CloseBoth — a frame written then never reaches the peer.
+	mu       sync.Mutex
+	sent     []byte
+	lateSend bool
+}
+
+func (s *noopBidiStream) sentBytes() ([]byte, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]byte(nil), s.sent...), s.lateSend
 }
 
 func (s *noopBidiStream) ID() trsf.StreamID           { return s.streamID }
@@ -504,9 +515,19 @@ func (s *noopBidiStream) Close() error                { return nil }
 func (s *noopBidiStream) WriteContext(_ context.Context, p []byte) (int, error) {
 	return len(p), nil
 }
-func (s *noopBidiStream) HasSendData() bool                    { return false }
-func (s *noopBidiStream) Completed() bool                      { return true }
-func (s *noopBidiStream) AppendData(_ bool, _ ...[]byte) error { return nil }
+func (s *noopBidiStream) HasSendData() bool { return false }
+func (s *noopBidiStream) Completed() bool   { return true }
+func (s *noopBidiStream) AppendData(_ bool, bs ...[]byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, b := range bs {
+		s.sent = append(s.sent, b...)
+	}
+	if s.closed.Load() {
+		s.lateSend = true
+	}
+	return nil
+}
 func (s *noopBidiStream) AppendDataContext(_ context.Context, _ bool, _ ...[]byte) error {
 	return nil
 }
@@ -676,6 +697,9 @@ func TestHandleOpenExecGateFailureClosesStream(t *testing.T) {
 	}
 	if !bytes.Contains(tf.ErrorMessage, []byte("repo_not_allowed")) {
 		t.Fatalf("ErrorMessage=%q want repo_not_allowed reason", tf.ErrorMessage)
+	}
+	if reason := endFrameSent(t, stream); reason != string(tf.ErrorMessage) {
+		t.Fatalf("End frame reason %q, want the task's %q", reason, tf.ErrorMessage)
 	}
 }
 

@@ -2086,13 +2086,17 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 	if r, c := req.InitialRows(), req.InitialCols(); r != nil && c != nil {
 		rows, cols = *r, *c
 	}
-	tuiStream, st := h.startSession(sessionStart{
+	tuiStream, st, msg := h.startSession(sessionStart{
 		TaskIDHex: taskIDHex, Runner: runner, Profile: resolved, Repo: repo, Args: args,
 		ResumeConversation: req.ResumeConversation(), EventStream: req.EventStream(),
 		Detached: req.Detached(), Rows: rows, Cols: cols, X11: x11, TUIConn: tuiConn, Prompt: prompt,
 	})
 	if st != protocol.OpenInteractiveStatus_Ok {
-		return errResp(st)
+		resp, cands := errResp(st)
+		if msg != "" {
+			resp.SetErrorMsg([]byte(msg))
+		}
+		return resp, cands
 	}
 
 	resp := protocol.OpenInteractiveResponse{Status: protocol.OpenInteractiveStatus_Ok, TaskId: tid}
