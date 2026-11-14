@@ -51,7 +51,7 @@ func fullSchedule(t *testing.T, id string, n int) Schedule {
 			Outcome: protocol.ScheduleOutcome_ResumedBy, DueAt: base, At: base.Add(time.Second), ExpectRun: 4,
 			TaskID: strings.Repeat("ab", 16), QueuedAt: base.Add(2 * time.Second), StartedAt: base.Add(3 * time.Second),
 			EndedAt: base.Add(4 * time.Second), EndReason: protocol.EndReason_Deadline,
-			ByKind: protocol.ClientKind_Webui, By: "someone", Message: "m",
+			ByKind: protocol.ClientKind_Webui, By: "someone", Message: "m", Creates: true,
 		}},
 	}
 	return s
@@ -178,7 +178,8 @@ func TestSettlePending(t *testing.T) {
 	mk := func(n int, state protocol.ScheduleTaskState, taskID string, expect uint32) Schedule {
 		s := fullSchedule(t, scheduleID(n), n)
 		s.State, s.TaskID = state, taskID
-		s.History = []HistoryEntry{{Outcome: protocol.ScheduleOutcome_Pending, TaskID: taskID, ExpectRun: expect}}
+		s.History = []HistoryEntry{{Outcome: protocol.ScheduleOutcome_Pending, TaskID: taskID, ExpectRun: expect,
+			Creates: state == protocol.ScheduleTaskState_PendingCreate}}
 		return s
 	}
 	ta, tb, tc, td := strings.Repeat("a1", 16), strings.Repeat("b2", 16), strings.Repeat("c3", 16), strings.Repeat("d4", 16)
@@ -236,6 +237,11 @@ func TestSettleEveryPendingEntry(t *testing.T) {
 	pend := func(task string, run uint32) HistoryEntry {
 		return HistoryEntry{Outcome: protocol.ScheduleOutcome_Pending, TaskID: task, ExpectRun: run}
 	}
+	create := func(task string) HistoryEntry {
+		e := pend(task, 1)
+		e.Creates = true
+		return e
+	}
 	// Bound: two pending resumes, the task's Run reached the second.
 	s1 := fullSchedule(t, scheduleID(1), 0)
 	s1.State, s1.TaskID = protocol.ScheduleTaskState_Bound, ta
@@ -249,7 +255,7 @@ func TestSettleEveryPendingEntry(t *testing.T) {
 	// task the first one just bound.
 	s3 := fullSchedule(t, scheduleID(3), 2)
 	s3.State, s3.TaskID = protocol.ScheduleTaskState_PendingCreate, tb
-	s3.History = []HistoryEntry{pend(ta, 0), pend(tb, 0)}
+	s3.History = []HistoryEntry{create(ta), create(tb)}
 	for _, s := range []Schedule{s1, s2, s3} {
 		if err := st.Put(s); err != nil {
 			t.Fatal(err)
@@ -274,6 +280,47 @@ func TestSettleEveryPendingEntry(t *testing.T) {
 	}
 	if s, _ := st.Get(scheduleID(3)); s.State != protocol.ScheduleTaskState_Bound || s.TaskID != ta {
 		t.Errorf("schedule 3: state %v task %q, want Bound to the first id that exists", s.State, s.TaskID)
+	}
+}
+
+// R12: each pending entry is judged by its own marker, not by the schedule's
+// state at the moment Settle reaches it. The first creation's pre-chosen task
+// is absent (lost), the second's exists: the second is a creation that
+// happened, so the schedule binds to it; a resume-rule reading (state still
+// pending_create only by luck) must not decide it.
+func TestSettleSecondCreationEntryExists(t *testing.T) {
+	st, _ := LoadScheduleStore("")
+	ta, tb := strings.Repeat("a1", 16), strings.Repeat("b2", 16)
+	mkEntry := func(task string) HistoryEntry {
+		return HistoryEntry{Outcome: protocol.ScheduleOutcome_Pending, TaskID: task, ExpectRun: 1, Creates: true}
+	}
+	s := fullSchedule(t, scheduleID(1), 0)
+	s.State, s.TaskID = protocol.ScheduleTaskState_PendingCreate, ""
+	s.History = []HistoryEntry{mkEntry(ta), mkEntry(tb)}
+	// Bound by an edit while a creation entry is still pending: the entry is
+	// still judged a creation, and does not rebind the schedule.
+	b := fullSchedule(t, scheduleID(2), 1)
+	b.State, b.TaskID = protocol.ScheduleTaskState_Bound, ta
+	b.History = []HistoryEntry{mkEntry(tb)}
+	for _, x := range []Schedule{s, b} {
+		if err := st.Put(x); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tasks := map[string]uint32{tb: 1}
+	if err := st.Settle(func(id string) (uint32, bool) { r, ok := tasks[id]; return r, ok }); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := st.Get(scheduleID(1))
+	if got.History[0].Outcome != protocol.ScheduleOutcome_Lost || got.History[1].Outcome != protocol.ScheduleOutcome_Fired {
+		t.Errorf("outcomes %v %v, want lost fired", got.History[0].Outcome, got.History[1].Outcome)
+	}
+	if got.State != protocol.ScheduleTaskState_Bound || got.TaskID != tb {
+		t.Errorf("state %v task %q, want bound to the second creation's task", got.State, got.TaskID)
+	}
+	gb, _ := st.Get(scheduleID(2))
+	if gb.History[0].Outcome != protocol.ScheduleOutcome_Fired || gb.TaskID != ta {
+		t.Errorf("edited-bound schedule: outcome %v task %q, want fired and still bound to %q", gb.History[0].Outcome, gb.TaskID, ta)
 	}
 }
 
@@ -394,7 +441,8 @@ const schedulesFixtureV1 = `{
           "end_reason": 4,
           "by_kind": 3,
           "by": "someone",
-          "message": "m"
+          "message": "m",
+          "creates": true
         }
       ]
     }
@@ -450,7 +498,7 @@ func TestScheduleFileFixtureV1(t *testing.T) {
 			Outcome: protocol.ScheduleOutcome_ResumedBy, DueAt: base, At: base.Add(time.Second), ExpectRun: 4,
 			TaskID: cid("ab"), QueuedAt: base.Add(2 * time.Second), StartedAt: base.Add(3 * time.Second),
 			EndedAt: base.Add(4 * time.Second), EndReason: protocol.EndReason_Deadline,
-			ByKind: protocol.ClientKind_Webui, By: "someone", Message: "m",
+			ByKind: protocol.ClientKind_Webui, By: "someone", Message: "m", Creates: true,
 		}},
 	}
 	if !reflect.DeepEqual(got, want) {

@@ -50,7 +50,8 @@ type Schedule struct {
 type HistoryEntry struct {
 	Outcome                      protocol.ScheduleOutcome
 	DueAt, At                    time.Time
-	ExpectRun                    uint32 // S-D22: the task's Run after this firing's resume
+	ExpectRun                    uint32 // S-D22: the task's Run after this firing's resume (1 for a creation)
+	Creates                      bool   // S-D22, R12: this entry is a creation intent, judged by TaskID alone
 	TaskID                       string // the task the entry is about (bound or pre-chosen)
 	QueuedAt, StartedAt, EndedAt time.Time
 	EndReason                    protocol.EndReason
@@ -212,12 +213,14 @@ func (st *ScheduleStore) EarliestNext() (time.Time, bool) {
 }
 
 // Settle resolves every pending history entry from the task store's view
-// (S-D22). task reports a task's persisted Run and whether it exists.
+// (S-D22). task reports a task's persisted Run and whether it exists. Each
+// entry is judged by its own marker, never by the schedule's state when
+// Settle reaches it (R12):
 //
-//   - A schedule still pending_create: the entry is a creation. The pre-chosen
-//     id existing means the creation happened: fired, and the schedule is
-//     bound to it. Absent: lost, and the state stays pending_create.
-//   - Otherwise the entry is a resume: fired when the task's Run reached
+//   - A creation entry (Creates): the pre-chosen id existing means the
+//     creation happened: fired, and a schedule still pending_create is bound
+//     to it. Absent: lost.
+//   - Any other entry is a resume: fired when the task's Run reached
 //     ExpectRun, lost when it did not (or the task is gone).
 func (st *ScheduleStore) Settle(task func(id string) (run uint32, exists bool)) error {
 	st.mu.Lock()
@@ -236,11 +239,13 @@ func (st *ScheduleStore) Settle(task func(id string) (run uint32, exists bool)) 
 			e := &upd.History[i]
 			run, exists := task(e.TaskID)
 			switch {
-			case upd.State == protocol.ScheduleTaskState_PendingCreate:
+			case e.Creates:
 				if exists {
 					e.Outcome = protocol.ScheduleOutcome_Fired
-					upd.State = protocol.ScheduleTaskState_Bound
-					upd.TaskID = e.TaskID
+					if upd.State == protocol.ScheduleTaskState_PendingCreate {
+						upd.State = protocol.ScheduleTaskState_Bound
+						upd.TaskID = e.TaskID
+					}
 				} else {
 					e.Outcome = protocol.ScheduleOutcome_Lost
 				}
@@ -259,6 +264,45 @@ func (st *ScheduleStore) Settle(task func(id string) (run uint32, exists bool)) 
 		return nil
 	}
 	return st.saveLocked()
+}
+
+// UpdateForTask runs f on the schedule that task id belongs to: bound to it,
+// or holding a pending creation entry for it. f reports whether it changed
+// anything; only then is the file rewritten (and rolled back if that fails).
+// It returns false when no schedule matches. Like Update, f runs under the
+// store lock and must not call a store method.
+func (st *ScheduleStore) UpdateForTask(taskID string, f func(*Schedule) bool) (matched bool, err error) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	var id string
+	for k, s := range st.m {
+		if s.State == protocol.ScheduleTaskState_Bound && s.TaskID == taskID {
+			id = k
+			break
+		}
+		for _, e := range s.History {
+			if e.Outcome == protocol.ScheduleOutcome_Pending && e.Creates && e.TaskID == taskID {
+				id = k
+			}
+		}
+		if id != "" {
+			break
+		}
+	}
+	if id == "" {
+		return false, nil
+	}
+	prev := st.m[id]
+	cur := prev.clone()
+	if !f(&cur) {
+		return true, nil
+	}
+	st.m[id] = cur
+	if err := st.saveLocked(); err != nil {
+		st.restoreLocked(id, prev, true)
+		return true, err
+	}
+	return true, nil
 }
 
 func (st *ScheduleStore) restoreLocked(id string, prev Schedule, had bool) {
@@ -436,6 +480,7 @@ type historyEntryJSON struct {
 	DueAt     time.Time                `json:"due_at"`
 	At        time.Time                `json:"at"`
 	ExpectRun uint32                   `json:"expect_run"`
+	Creates   bool                     `json:"creates"`
 	TaskID    string                   `json:"task_id"`
 	QueuedAt  time.Time                `json:"queued_at"`
 	StartedAt time.Time                `json:"started_at"`
@@ -523,7 +568,7 @@ func (s Schedule) toJSON() (scheduleJSON, error) {
 	}
 	for _, e := range s.History {
 		j.History = append(j.History, historyEntryJSON{
-			Outcome: e.Outcome, DueAt: utc(e.DueAt), At: utc(e.At), ExpectRun: e.ExpectRun, TaskID: e.TaskID,
+			Outcome: e.Outcome, DueAt: utc(e.DueAt), At: utc(e.At), ExpectRun: e.ExpectRun, Creates: e.Creates, TaskID: e.TaskID,
 			QueuedAt: utc(e.QueuedAt), StartedAt: utc(e.StartedAt), EndedAt: utc(e.EndedAt),
 			EndReason: e.EndReason, ByKind: e.ByKind, By: e.By, Message: e.Message,
 		})
@@ -562,7 +607,7 @@ func (j scheduleJSON) schedule() (Schedule, error) {
 	}
 	for _, e := range j.History {
 		s.History = append(s.History, HistoryEntry{
-			Outcome: e.Outcome, DueAt: e.DueAt, At: e.At, ExpectRun: e.ExpectRun, TaskID: e.TaskID,
+			Outcome: e.Outcome, DueAt: e.DueAt, At: e.At, ExpectRun: e.ExpectRun, Creates: e.Creates, TaskID: e.TaskID,
 			QueuedAt: e.QueuedAt, StartedAt: e.StartedAt, EndedAt: e.EndedAt,
 			EndReason: e.EndReason, ByKind: e.ByKind, By: e.By, Message: e.Message,
 		})

@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/hex"
+	"errors"
 	"fmt"
 
 	"github.com/on-keyday/agent-harness/authority"
@@ -47,10 +48,34 @@ func (e *SpawnLimitError) Error() string {
 // only creation production code uses (TestOnlyCreateWithinLimitsInProduction);
 // Create stays unchecked for tests that build trees directly.
 func (s *TaskStore) CreateWithinLimits(repo, prompt string, kind protocol.TaskKind, origin protocol.ClientKind, creatorTaskID protocol.TaskID, boundRunnerID string, selector protocol.RunnerSelector, extraArgs []string, g authority.Grant, agentProfile string, run RunSpec) (string, error) {
+	id := newTaskID()
+	if err := s.createWithinLimits(id, repo, prompt, kind, origin, creatorTaskID, boundRunnerID, selector, extraArgs, g, agentProfile, run); err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+// ErrTaskIDInUse is CreateWithinLimitsID refusing an id the store holds.
+var ErrTaskIDInUse = errors.New("task id already exists")
+
+// CreateWithinLimitsID is CreateWithinLimits under a caller-chosen id: the
+// same checks, in the same hold of the lock (S-D22, a schedule's first firing
+// chooses the id before it acts). It is a creation like the other, so
+// TestOnlyCreateWithinLimitsInProduction covers it. Unbound to a runner:
+// the background scheduler places the task.
+func (s *TaskStore) CreateWithinLimitsID(id, repo, prompt string, kind protocol.TaskKind, origin protocol.ClientKind, creator protocol.TaskID, selector protocol.RunnerSelector, extraArgs []string, g authority.Grant, agentProfile string, run RunSpec) error {
+	return s.createWithinLimits(id, repo, prompt, kind, origin, creator, "", selector, extraArgs, g, agentProfile, run)
+}
+
+func (s *TaskStore) createWithinLimits(id, repo, prompt string, kind protocol.TaskKind, origin protocol.ClientKind, creatorTaskID protocol.TaskID, boundRunnerID string, selector protocol.RunnerSelector, extraArgs []string, g authority.Grant, agentProfile string, run RunSpec) error {
 	s.mu.Lock()
+	if _, taken := s.tasks[id]; taken {
+		s.mu.Unlock()
+		return ErrTaskIDInUse
+	}
 	if err := s.checkSpawnLimitsLocked(creatorTaskID); err != nil {
 		s.mu.Unlock()
-		return "", err
+		return err
 	}
 	// The child's depth against the creator's as it stands now: the caller
 	// computed g from a read taken before this lock, and a caps set in
@@ -60,7 +85,7 @@ func (s *TaskStore) CreateWithinLimits(repo, prompt string, kind protocol.TaskKi
 			g.SpawnDepth = authority.MinLimit(g.SpawnDepth, authority.DecLimit(c.SpawnDepth))
 		}
 	}
-	id := s.createLocked(repo, prompt, kind, origin, creatorTaskID, boundRunnerID, selector, extraArgs, g, agentProfile, run)
+	s.createLockedID(id, repo, prompt, kind, origin, creatorTaskID, boundRunnerID, selector, extraArgs, g, agentProfile, run)
 	queueDeadline := s.tasks[id].QueueDeadlineAt != 0
 	onCreate := s.OnCreate
 	s.mu.Unlock()
@@ -68,7 +93,7 @@ func (s *TaskStore) CreateWithinLimits(repo, prompt string, kind protocol.TaskKi
 		onCreate(id)
 	}
 	s.deadlineSet(queueDeadline)
-	return id, nil
+	return nil
 }
 
 // CheckSpawnLimits is the check alone, for refusing early (before runner

@@ -284,7 +284,12 @@ func (s *TaskStore) Create(repo, prompt string, kind protocol.TaskKind, origin p
 // createLocked inserts a task and writes its task_created record. Caller holds
 // s.mu and fires OnCreate after releasing it.
 func (s *TaskStore) createLocked(repo, prompt string, kind protocol.TaskKind, origin protocol.ClientKind, creatorTaskID protocol.TaskID, boundRunnerID string, selector protocol.RunnerSelector, extraArgs []string, g authority.Grant, agentProfile string, run RunSpec) string {
-	id := newTaskID()
+	return s.createLockedID(newTaskID(), repo, prompt, kind, origin, creatorTaskID, boundRunnerID, selector, extraArgs, g, agentProfile, run)
+}
+
+// createLockedID is createLocked under a caller-chosen id (a schedule's
+// pre-chosen creation id, S-D22). The caller has checked the id is free.
+func (s *TaskStore) createLockedID(id, repo, prompt string, kind protocol.TaskKind, origin protocol.ClientKind, creatorTaskID protocol.TaskID, boundRunnerID string, selector protocol.RunnerSelector, extraArgs []string, g authority.Grant, agentProfile string, run RunSpec) string {
 	now := time.Now()
 	s.tasks[id] = &TaskEntry{
 		ID:             id,

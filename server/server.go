@@ -137,6 +137,9 @@ type Server struct {
 	dials      *dialManager
 	notifyRing *notifyRing
 
+	// sched is the schedule firing machinery (server/schedule_fire.go).
+	sched scheduleRuntime
+
 	// Board is the agentboard instance, wired in by the server binary (Task 9).
 	// When nil, agent_message payloads are ignored silently.
 	Board *agentboard.Board
@@ -564,6 +567,9 @@ func New(cfg Config) *Server {
 		if err == nil {
 			copy(ev.TaskId.Id[:], raw)
 		}
+		// Schedule history (S-D7): outside the TaskStore's lock, which every
+		// caller of this closure has released.
+		s.scheduleTaskEvent(ev)
 		payload := ev.MustAppend(nil)
 		// A task that ended or was forgotten will write no more progress:
 		// end its progress watchers rather than leave them armed forever.
@@ -992,6 +998,10 @@ func (s *Server) serve(ctx context.Context, ep objproto.Endpoint, mux *http.Serv
 		s.sweepHeldScreens()
 		go s.watchHeldDeadlines(ctx)
 	}
+
+	// Schedules (pillar S): settle and run what was missed, then the loop.
+	s.startSchedules()
+	go s.runSchedules(ctx)
 
 	// PTY records (pillar A, A1): close the open segment of every run a
 	// crash or a non-held stop left open, then expire records by retention.
