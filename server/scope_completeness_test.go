@@ -178,10 +178,19 @@ var kindTargetClass = map[protocol.TaskControlKind]targetClass{
 	// against transcript_read's scope (and exec_run's for a shared session).
 	protocol.TaskControlKind_TranscriptList: targetGated,
 	protocol.TaskControlKind_TranscriptGet:  targetGated,
+	// Schedules (pillar S, S-D17): create (--task), edit, delete and run act on
+	// a schedule whose task, or creator while it has none, the caller must
+	// reach; list / show are filtered by the same reach.
+	protocol.TaskControlKind_ScheduleCreate: targetGated,
+	protocol.TaskControlKind_ScheduleEdit:   targetGated,
+	protocol.TaskControlKind_ScheduleDelete: targetGated,
+	protocol.TaskControlKind_ScheduleRun:    targetGated,
+	protocol.TaskControlKind_ScheduleList:   infoScoped,
+	protocol.TaskControlKind_ScheduleShow:   infoScoped,
 }
 
 func TestEveryTaskControlKindIsClassified(t *testing.T) {
-	for i := 0; i <= int(protocol.TaskControlKind_TranscriptGet); i++ {
+	for i := 0; i <= int(protocol.TaskControlKind_ScheduleShow); i++ {
 		k := protocol.TaskControlKind(i)
 		if k.String() == fmt.Sprintf("TaskControlKind(%d)", i) {
 			continue // gap in the enum, not a real kind
@@ -207,11 +216,11 @@ func TestEveryTaskControlKindIsClassified(t *testing.T) {
 // lifecycle_set; board_retain; board_membership; agent_read_page; the
 // seven flush / archive kinds; runner_dial_add / _list / _remove /
 // runner_kick; session_mode; the five record_* kinds; and transcript_list /
-// transcript_get.
-func TestTranscriptGetIsStillTheLastKind(t *testing.T) {
-	next := protocol.TaskControlKind(int(protocol.TaskControlKind_TranscriptGet) + 1)
+// transcript_get; and the six schedule_* kinds.
+func TestScheduleShowIsStillTheLastKind(t *testing.T) {
+	next := protocol.TaskControlKind(int(protocol.TaskControlKind_ScheduleShow) + 1)
 	if next.String() != fmt.Sprintf("TaskControlKind(%d)", int(next)) {
-		t.Fatalf("a kind was appended after transcript_get (%v) — raise the loop bound in "+
+		t.Fatalf("a kind was appended after schedule_show (%v) — raise the loop bound in "+
 			"TestEveryTaskControlKindIsClassified and in TestEveryTaskControlKindHasACapVerdict, "+
 			"which otherwise stop before it", next)
 	}

@@ -788,6 +788,14 @@ enum TaskControlKind:
     # session recorded in a shared directory needs exec_run as well.
     transcript_list         # appended: a task's sessions, or one session's files
     transcript_get          # appended: one file of a session, or all as a tar
+    # Server-kept cron schedules (pillar S). create / edit / delete / run need
+    # the schedule bit; list / show need none (reach decides what they return).
+    schedule_create         # appended: a new schedule
+    schedule_edit           # appended: change future firings only
+    schedule_delete         # appended
+    schedule_run            # appended: fire now (S-D13)
+    schedule_list           # appended: rows on a stream
+    schedule_show           # appended: one schedule's detail on a stream
 
 # ClientKind tags the kind of caller that opened a TaskControl session.
 # `agent` is an in-task harness-cli that proves its identity via agent_info;
@@ -803,6 +811,9 @@ enum ClientKind:
                 # bytes, redeeming a DataPlaneGrant the server pushed to the
                 # runner. Not a principal: it speaks for one request, not for
                 # a task.
+    schedule    # appended (pillar S, S-D18): a schedule's own firing. Only ever
+                # seen as resumed_by_kind / origin_kind on a task a schedule
+                # created or resumed; a ClientHello claiming it is refused.
 
 # AgentInfo names the task an in-task agent speaks for. It carries no
 # credential: under AuthRole.client the agent proves its ticket with the
@@ -1291,6 +1302,12 @@ format TaskInfo:
     # The task's current run number (A-D20): 1 at create, one more at each
     # resume. A record is named by (task, run).
     run :u32
+    # appended (A-D20 precedent: the bit group above has no reserved bit left).
+    # schedule_present: the task is bound to a schedule (pillar S).
+    schedule_present :u1
+    reserved :u7
+    if schedule_present == 1:
+        schedule_id :ScheduleID
 
 format ListResult:
     # Server-initiated send-stream id; client reads ListResultBody bytes
@@ -3236,6 +3253,12 @@ format TaskControlRequest:
         TaskControlKind.record_switch            => record_switch            :RecordSwitchRequest
         TaskControlKind.transcript_list          => transcript_list          :TranscriptListRequest
         TaskControlKind.transcript_get           => transcript_get           :TranscriptGetRequest
+        TaskControlKind.schedule_create          => schedule_create          :ScheduleCreateRequest
+        TaskControlKind.schedule_edit            => schedule_edit            :ScheduleEditRequest
+        TaskControlKind.schedule_delete          => schedule_delete          :ScheduleIDRequest
+        TaskControlKind.schedule_run             => schedule_run             :ScheduleIDRequest
+        TaskControlKind.schedule_list            => schedule_list            :ScheduleListRequest
+        TaskControlKind.schedule_show            => schedule_show            :ScheduleIDRequest
         .. => error("Unexpected task")
 
 # CancelResult replaces a bare u8 that every reply wrote as 0. ok stays 0, so
@@ -3341,6 +3364,12 @@ format TaskControlResponse:
         TaskControlKind.record_switch            => record_switch            :RecordSwitchResponse
         TaskControlKind.transcript_list          => transcript_list          :TranscriptResponse
         TaskControlKind.transcript_get           => transcript_get           :TranscriptResponse
+        TaskControlKind.schedule_create          => schedule_create          :ScheduleResponse
+        TaskControlKind.schedule_edit            => schedule_edit            :ScheduleResponse
+        TaskControlKind.schedule_delete          => schedule_delete          :ScheduleResponse
+        TaskControlKind.schedule_run             => schedule_run             :ScheduleResponse
+        TaskControlKind.schedule_list            => schedule_list            :ScheduleResponse
+        TaskControlKind.schedule_show            => schedule_show            :ScheduleResponse
 
 # --- runner enrollment (2026-10-27-runner-enrollment-design.md) --------------
 # The server lets a runner register under AuthRole.runner only when it signs
@@ -3801,7 +3830,9 @@ format TaskStatusEvent:
     oneshot :u1
     # no_pty: as TaskInfo.no_pty, stamped on every event for oneshot's reason.
     no_pty :u1
-    reserved :u4
+    # schedule_present: as TaskInfo.schedule_present (pillar S).
+    schedule_present :u1
+    reserved :u3
     progress_len :u16
     progress :[progress_len]u8
     progress_at :u64
@@ -3829,6 +3860,8 @@ format TaskStatusEvent:
     deadline_ns :u64
     deadline_remaining_ms :u64
     run :u32                # appended: TaskInfo.run (A-D20)
+    if schedule_present == 1:
+        schedule_id :ScheduleID  # appended: TaskInfo.schedule_id (pillar S)
 
 format RunnerStatusEvent:
     kind :StatusEventKind
@@ -4879,20 +4912,26 @@ enum Capability:
     # B, B-D10). Not exec_view: a transcript carries what never reached a
     # screen (files the agent read, subagents, past runs). Default-off, appended.
     transcript_read = 0x10000000, "transcript_read"
+    # schedule creates, edits, deletes and runs server-kept cron schedules, and
+    # unbinds a task from one (a foreground resume, `session mode ... foreground`).
+    # Strong: a schedule fires on its own with the authority stored at create or
+    # edit, for as long as it exists (pillar S, S-D17). Default-off, appended.
+    schedule       = 0x20000000, "schedule"
     # `all` is a LITERAL, not "every defined bit", so it widens by hand — the
     # same edit exec_view / exec_cowrite / exec_resize each needed. The WAL
     # persists the NUMBER, so a task already granted `all` holds 0xffff and
     # does NOT gain forward_tap until it is re-granted (nor, at 0x3fffff,
     # forward_link; nor, at 0x7fffff, runner_enroll; nor, at 0xffffff,
     # board_persist; nor, at 0x1ffffff, board_member; nor, at 0xfffffff,
-    # record_delete and record_persist; nor, at 0x1fffffff, transcript_read).
+    # record_delete and record_persist; nor, at 0x1fffffff, transcript_read; nor, at
+    # 0x3fffffff, schedule).
     # That is the safe
     # direction and needs no migration.
     #
     # Widening it is REQUIRED, not stylistic: callerCaps hands operator
     # connections Capability_All, so a literal left at 0xffff would deny the
     # operator its own feature.
-    all            = 0x1fffffff, "all"
+    all            = 0x3fffffff, "all"
 
 # ScopeBase is the base target set a TaskScope starts from, before its explicit
 # id list is unioned in. Self joins that union unless exclude_self removes it,
@@ -6024,3 +6063,215 @@ format ExecTapRecord:
         ExecTapRecordKind.eof        => eof        :ExecTapEof
         ExecTapRecordKind.exec_ended => exec_ended :ExecTapExecEnded
         .. => error("Unexpected exec tap record")
+
+# ---------------------------------------------------------------------------
+# Server-kept cron schedules (pillar S, docs/superpowers/specs/2026-11-15-pillar-s-schedules-design.md).
+# Every control message is one datagram: cron <= ScheduleCronMax, tz <=
+# ScheduleZoneMax (schedule_bounds.go); the prompt travels on a send stream
+# (prompt_stream_id) as an open's does; list and show answer on a stream.
+
+format ScheduleID:
+    id :[16]u8
+
+# What create and edit carry. Every field has a presence bit so an edit changes
+# only what it names; a create needs the ones the server's checks name (S-D12).
+# The authority block is OpenInteractiveRequest's, field for field: scope_present
+# gates scope and overrides together.
+format ScheduleSpec:
+    cron_present :u1
+    tz_present :u1
+    repo_present :u1
+    task_present :u1            # --task: bind this task (S-D14)
+    agent_present :u1
+    selector_present :u1
+    extra_args_present :u1
+    requested_caps_present :u1
+    resume_conversation_set :u1
+    resume_conversation :u1     # meaningful only with resume_conversation_set == 1
+    oneshot_set :u1
+    oneshot :u1                 # meaningful only with oneshot_set == 1
+    record_set :u1
+    record :u1                  # meaningful only with record_set == 1
+    pty_set :u1
+    pty :u1                     # meaningful only with pty_set == 1
+    scope_present :u1           # gates scope AND overrides
+    delegate_caps_present :u1
+    delegate_scope_present :u1
+    spawn_depth_present :u1
+    max_descendants_present :u1
+    conditions_present :u1
+    prompt_present :u1          # 1 = a PromptBody follows on prompt_stream_id
+    reserved :u1
+    if cron_present == 1:
+        cron_len :u16
+        cron :[cron_len]u8
+    if tz_present == 1:
+        tz_len :u8
+        tz :[tz_len]u8
+    if repo_present == 1:
+        repo_path_len :u16
+        repo_path :[repo_path_len]u8
+    if task_present == 1:
+        task_id :TaskID
+    if agent_present == 1:
+        agent_profile_len :u8
+        agent_profile :[agent_profile_len]u8
+    if selector_present == 1:
+        selector :RunnerSelector
+    if extra_args_present == 1:
+        extra_args :AgentArgs
+    if requested_caps_present == 1:
+        requested_caps :Capability
+    if scope_present == 1:
+        scope :TaskScope
+        overrides_len :u8
+        overrides :[overrides_len]ScopeOverride
+    if delegate_caps_present == 1:
+        delegate_caps :Capability
+    if delegate_scope_present == 1:
+        delegate_scope :TaskScope
+    if spawn_depth_present == 1:
+        spawn_depth :SpawnLimit
+    if max_descendants_present == 1:
+        max_descendants :SpawnLimit
+    if conditions_present == 1:
+        conditions :BackgroundConditions
+    if prompt_present == 1:
+        prompt_stream_id :u64
+
+format ScheduleCreateRequest:
+    spec :ScheduleSpec
+
+format ScheduleEditRequest:
+    id :ScheduleID
+    spec :ScheduleSpec
+
+# delete, run and show.
+format ScheduleIDRequest:
+    id :ScheduleID
+
+format ScheduleListRequest:
+    reserved :u8
+
+enum ScheduleStatus:
+    :u8
+    ok
+    no_such_schedule        # unknown, or out of the caller's reach
+    invalid_cron
+    invalid_zone
+    no_candidate
+    deadline_required
+    prompt_required
+    profile_required
+    profile_unavailable
+    stream_refused
+    task_not_reachable
+    task_running_foreground
+    self_refused
+    spawn_limit
+    prompt_too_large
+    internal_error
+
+# message: why, for the statuses that have more to say. stream_id is non-zero
+# for list and show (a ScheduleRow list / a ScheduleDetail on that stream).
+format ScheduleResponse:
+    status :ScheduleStatus
+    message_len :u16
+    message :[message_len]u8
+    id :ScheduleID
+    stream_id :u64
+
+# S-D21: stored, not derived from history.
+enum ScheduleTaskState:
+    :u8
+    pending_create
+    bound
+    unbound
+
+enum ScheduleOutcome:
+    :u8
+    pending
+    lost
+    fired
+    run_now
+    skipped_busy
+    skipped_no_task
+    skipped_task_gone
+    skipped_refused
+    resumed_by
+    unbound
+
+# Times are unix nanos; 0 = absent. queued_at / started_at / ended_at /
+# end_reason are filled in as the started run's events arrive. by_kind / by
+# name the resumer (resumed_by) or the one who unbound (unbound).
+format ScheduleHistoryEntry:
+    outcome :ScheduleOutcome
+    due_at :u64
+    at :u64
+    queued_at :u64
+    started_at :u64
+    ended_at :u64
+    end_reason :EndReason
+    by_kind :ClientKind
+    by :TaskID
+    message_len :u16
+    message :[message_len]u8
+
+# One line of `schedule ls`; the list stream carries rows_len of them.
+format ScheduleRow:
+    id :ScheduleID
+    task_state :ScheduleTaskState
+    task_status :TaskStatus     # meaningful only with task_state == bound
+    prompt_hidden :u1           # the caller could not read the bound task's prompt
+    last_present :u1            # last below is on the wire
+    reserved :u6
+    task_id :TaskID             # zero unless task_state == bound
+    next_at :u64
+    cron_len :u16
+    cron :[cron_len]u8
+    tz_len :u8
+    tz :[tz_len]u8
+    agent_len :u8
+    agent :[agent_len]u8
+    repo_len :u16
+    repo :[repo_len]u8
+    prompt_head_len :u8         # at most ScheduleHeadMax; empty when prompt_hidden
+    prompt_head :[prompt_head_len]u8
+    if last_present == 1:
+        last :ScheduleHistoryEntry
+
+format ScheduleListBody:
+    rows_len :u16
+    rows :[rows_len]ScheduleRow
+
+# `schedule show`: the row, the whole prompt (empty when hidden), the
+# definition's other fields and the stored authority, and the history, oldest
+# first.
+format ScheduleDetail:
+    row :ScheduleRow
+    resume_conversation :u1
+    oneshot :u1
+    record :u1
+    pty_set :u1
+    pty :u1
+    reserved :u3
+    prompt_len :u32
+    prompt :[prompt_len]u8
+    extra_args :AgentArgs
+    selector :RunnerSelector
+    conditions :BackgroundConditions
+    caps :Capability
+    scope :TaskScope
+    overrides_len :u8
+    overrides :[overrides_len]ScopeOverride
+    delegate_caps :Capability
+    delegate_scope :TaskScope
+    spawn_depth :SpawnLimit
+    max_descendants :SpawnLimit
+    creator :TaskID             # zero = the operator
+    created_at :u64
+    edited_at :u64
+    edited_by_kind :ClientKind
+    edited_by :TaskID
+    count :u8
+    history :[count]ScheduleHistoryEntry

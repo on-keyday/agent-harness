@@ -169,10 +169,18 @@ var kindCapClass = map[protocol.TaskControlKind]capClass{
 	protocol.TaskControlKind_RecordSwitch:   capInHandler,
 	protocol.TaskControlKind_TranscriptList: capInMap,
 	protocol.TaskControlKind_TranscriptGet:  capInMap,
+	// Schedules (pillar S): create / edit / delete / run are gated by the
+	// schedule bit; list / show by reach alone (S-D17).
+	protocol.TaskControlKind_ScheduleCreate: capInMap,
+	protocol.TaskControlKind_ScheduleEdit:   capInMap,
+	protocol.TaskControlKind_ScheduleDelete: capInMap,
+	protocol.TaskControlKind_ScheduleRun:    capInMap,
+	protocol.TaskControlKind_ScheduleList:   capNone,
+	protocol.TaskControlKind_ScheduleShow:   capNone,
 }
 
 func TestEveryTaskControlKindHasACapVerdict(t *testing.T) {
-	for i := 0; i <= int(protocol.TaskControlKind_TranscriptGet); i++ {
+	for i := 0; i <= int(protocol.TaskControlKind_ScheduleShow); i++ {
 		k := protocol.TaskControlKind(i)
 		if k.String() == fmt.Sprintf("TaskControlKind(%d)", i) {
 			continue // gap in the enum, not a real kind

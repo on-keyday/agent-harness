@@ -76,6 +76,9 @@ func GrantableCaps() []protocol.Capability {
 		// transcript_read after the record bits: it reads an agent's own
 		// transcripts of the task's directory, not the server's records (pillar B).
 		protocol.Capability_TranscriptRead,
+		// schedule after transcript_read: it makes the server fire an agent on
+		// its own, with an authority stored now (pillar S).
+		protocol.Capability_Schedule,
 		protocol.Capability_All,
 	}
 }
@@ -179,6 +182,11 @@ func CapDescription(c protocol.Capability) string {
 		return "list and read the agents' transcripts of a task's working directory (transcript ls / get), " +
 			"for tasks in the bit's scope; a session recorded in a shared directory (the repo itself) also needs exec_run. " +
 			"NOT exec_view: a transcript holds what never reached a screen — files the agent read, subagents, past runs"
+	case protocol.Capability_Schedule:
+		return "create, edit, delete or run server-kept cron schedules (schedule new / edit / rm / run), " +
+			"and unbind a task from one with a foreground resume or `session mode … foreground` of a task bound to a schedule; " +
+			"each target must be within reach. Reading schedules (schedule ls / show) needs no bit. " +
+			"Strong: a schedule fires on its own, with the authority stored when it was created or edited"
 	case protocol.Capability_All:
 		return "full capability set (operator-equivalent)"
 	default:
@@ -473,11 +481,17 @@ var capAuditTable = map[protocol.Capability]capAuditEntry{
 	protocol.Capability_RecordDelete:  {tier: TierStrong},
 	// Strong: a transcript carries the full text of every file the agent read.
 	protocol.Capability_TranscriptRead: {tier: TierStrong},
-	protocol.Capability_ResumeExact:    {tier: TierMid, impliedBy: []protocol.Capability{protocol.Capability_Resume}},
-	protocol.Capability_ExecView:       {tier: TierWeak, impliedBy: []protocol.Capability{protocol.Capability_ExecCowrite, protocol.Capability_ExecControl}},
-	protocol.Capability_ExecResize:     {tier: TierWeak},
-	protocol.Capability_FileRead:       {tier: TierWeak},
-	protocol.Capability_Notify:         {tier: TierWeak, scope: ScopeNone},
+	// Strong: a schedule starts an agent unattended, over and over, with a
+	// stored grant (pillar S, S-D16/S-D17).
+	// scope ScopeNone only until the handler (pillar S Task 4) resolves the
+	// schedule's task through the bit; it then becomes a scoped bit, together
+	// with its capTargetClasses entry (TestAuditScopeKindAgreesWithTargetClasses).
+	protocol.Capability_Schedule:    {tier: TierStrong, scope: ScopeNone},
+	protocol.Capability_ResumeExact: {tier: TierMid, impliedBy: []protocol.Capability{protocol.Capability_Resume}},
+	protocol.Capability_ExecView:    {tier: TierWeak, impliedBy: []protocol.Capability{protocol.Capability_ExecCowrite, protocol.Capability_ExecControl}},
+	protocol.Capability_ExecResize:  {tier: TierWeak},
+	protocol.Capability_FileRead:    {tier: TierWeak},
+	protocol.Capability_Notify:      {tier: TierWeak, scope: ScopeNone},
 }
 
 // CapTierOf is c's audit tier. A bit missing from the table reads as strong,

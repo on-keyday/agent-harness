@@ -305,6 +305,11 @@ func (h *TaskHandler) lookupPrincipal(connID string) protocol.TaskID {
 // PskAuthResponse is the sole client handshake ack).
 func (h *TaskHandler) RecordClientIdentity(cid string, conn ConnHandle, hello *protocol.ClientHello) protocol.ClientHelloStatus {
 	status := protocol.ClientHelloStatus_Ok
+	// S-D18: ClientKind.schedule is the server's own mark on what a schedule
+	// started (resumed_by_kind / origin_kind); no connection may claim it.
+	if hello.Kind == protocol.ClientKind_Schedule {
+		return protocol.ClientHelloStatus_NotPermitted
+	}
 	if hello.Kind == protocol.ClientKind_Agent {
 		if info := hello.AgentInfo(); info != nil && h.OnAgentHello != nil {
 			status = h.OnAgentHello(conn, info)
