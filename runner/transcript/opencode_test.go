@@ -59,7 +59,7 @@ func TestOpencodeListsByDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ss) != 1 || ss[0].ID != "ses_a" || ss[0].Agent != "opencode" {
+	if len(ss) != 1 || ss[0].ID != "ses_a" || ss[0].Agent != "opencode" || ss[0].SizeKnown {
 		t.Fatalf("sessions %+v, want ses_a", ss)
 	}
 	if want := time.UnixMilli(1787143409223); !ss[0].Created.Equal(want) {

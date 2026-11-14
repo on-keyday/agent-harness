@@ -89,7 +89,7 @@ func (s *lineStore) Sessions(dir string) ([]Session, error) {
 	var out []Session
 	for _, m := range ms {
 		base, fs := s.files(m)
-		row := Session{Agent: s.agent, ID: m.h.id, Created: m.h.created}
+		row := Session{Agent: s.agent, ID: m.h.id, Created: m.h.created, SizeKnown: true}
 		for _, f := range fs {
 			row.Size += f.Size
 			if fi, err := os.Stat(filepath.Join(base, filepath.FromSlash(f.Name))); err == nil && fi.ModTime().After(row.Updated) {

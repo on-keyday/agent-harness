@@ -332,6 +332,11 @@ func (e *taskEntry) childLive() bool {
 type Session struct {
 	AllowedRoots []string // absolute paths this runner is allowed to serve
 
+	// transcriptEnv is the environment the agents' transcript stores are
+	// resolved through (pillar B, B-D5); nil means this process's, which the
+	// agents it starts inherit. A test points the stores at temp dirs.
+	transcriptEnv func(string) string
+
 	// execCancels holds the cancel func of every out-of-band exec running on
 	// this runner (execId -> cancel), so a close_exec_run request can stop one.
 	// A dedicated map because an exec belongs to no task entry: it may target a

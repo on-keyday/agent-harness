@@ -106,7 +106,9 @@ _STREAM_ADAPTER = str(
 # prompt_unsupported.
 #
 # name -> {bin, oneshotArgv, resumeOneshotArgv, interactiveArgv,
-# resumeInteractiveArgv, logFormat, streamAdapter, agentArgs}. agentArgs is
+# resumeInteractiveArgv, logFormat, streamAdapter, transcriptStore, agentArgs}.
+# transcriptStore names where the agent keeps its transcripts, as
+# runner/transcript knows them (pillar B); "" for a shell. agentArgs is
 # empty here and set only by the sandbox derivation below. The argv values are the
 # flag-STRING template form ({args}/{prompt} tokens, shlex-split by agent-runner itself for the
 # default profile — see cmd/agent-runner/main.go parseAgentArgsFlag). For
@@ -141,6 +143,7 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         "interactiveArgv": "{args} -- {prompt}",
         "resumeInteractiveArgv": "{args} --continue -- {prompt}",
         "logFormat": "claude-stream-json",
+        "transcriptStore": "claude",
         # The one preset the adapter speaks for. Its own flags are NOT listed
         # in the argv templates above: the adapter appends them itself and
         # refuses an argv that already names one, so the oneshot templates and
@@ -169,6 +172,7 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         "interactiveArgv": "--no-daemon {args} -- {prompt}",
         "resumeInteractiveArgv": "resume --last --no-daemon {args} -- {prompt}",
         "logFormat": "codex-jsonl",
+        "transcriptStore": "codex",
         "streamAdapter": "",
         "agentArgs": "",
     },
@@ -198,6 +202,7 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         "interactiveArgv": "{args} --prompt-interactive={prompt}",
         "resumeInteractiveArgv": "{args} --continue --prompt-interactive={prompt}",
         "logFormat": "",
+        "transcriptStore": "agy",
         "streamAdapter": "",
         "agentArgs": "",
     },
@@ -236,6 +241,7 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         "interactiveArgv": "{args} --prompt={prompt}",
         "resumeInteractiveArgv": "{args} --continue --prompt={prompt}",
         "logFormat": "",
+        "transcriptStore": "opencode",
         "streamAdapter": "",
         "agentArgs": "",
     },
@@ -294,6 +300,7 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         "interactiveArgv": "{args} -- {prompt}",
         "resumeInteractiveArgv": "{args} --continue -- {prompt}",
         "logFormat": "",
+        "transcriptStore": "pi",
         "streamAdapter": "",
         "agentArgs": "",
     },
@@ -315,6 +322,7 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         "interactiveArgv": "{args}",
         "resumeInteractiveArgv": "{args}",
         "logFormat": "",
+        "transcriptStore": "",
         "streamAdapter": "",
         "agentArgs": "",
     },
@@ -331,6 +339,7 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         "interactiveArgv": "{args}",
         "resumeInteractiveArgv": "{args}",
         "logFormat": "",
+        "transcriptStore": "",
         "streamAdapter": "",
         "agentArgs": "",
     },
@@ -418,6 +427,7 @@ _CONFLICTING_FLAGS = (
     "--agent-resume-interactive-argv",
     "--agent-log-format",
     "--agent-stream-adapter",
+    "--agent-transcript-store",
     "--agent-profiles",
 )
 
@@ -486,6 +496,7 @@ def agent_profiles_json(names: list[str]) -> str:
                 "resumeInteractiveArgv": p["resumeInteractiveArgv"].split(),
                 "logFormat": p["logFormat"],
                 "streamAdapter": p["streamAdapter"],
+                "transcriptStore": p["transcriptStore"],
                 "agentArgs": p["agentArgs"].split(),
             }
         )
@@ -498,7 +509,8 @@ def expand_agents_preset(agents_csv: str, existing_args: list[str]) -> list[str]
     The FIRST name in *agents_csv* becomes the default profile: emitted as
     ``--agent-bin``, ``--agent-oneshot-argv``, ``--agent-resume-oneshot-argv``,
     ``--agent-interactive-argv``, ``--agent-resume-interactive-argv``,
-    ``--agent-log-format`` and ``--agent-stream-adapter``. All seven are
+    ``--agent-log-format``, ``--agent-stream-adapter`` and
+    ``--agent-transcript-store``. All eight are
     always emitted together for the
     default profile — agent-runner's startup validation requires
     --agent-resume-oneshot-argv whenever --agent-oneshot-argv is customized
@@ -514,14 +526,15 @@ def expand_agents_preset(agents_csv: str, existing_args: list[str]) -> list[str]
     JSON array flag, matching the wire shape
     runner.ParseAgentProfilesJSON expects: objects with
     name/bin/oneshotArgv/resumeOneshotArgv/interactiveArgv/
-    resumeInteractiveArgv/logFormat/streamAdapter/agentArgs, argv fields as
+    resumeInteractiveArgv/logFormat/streamAdapter/transcriptStore/agentArgs, argv fields as
     JSON string arrays (runner/agent_profile.go).
 
     Conflict policy: if *existing_args* already contains any of
     --agent-bin/--agent-oneshot-argv/
     --agent-resume-oneshot-argv/--agent-interactive-argv/
     --agent-resume-interactive-argv/
-    --agent-log-format/--agent-stream-adapter/--agent-profiles, this raises
+    --agent-log-format/--agent-stream-adapter/--agent-transcript-store/
+    --agent-profiles, this raises
     AgentsPresetError instead of silently overriding or merging. --agents is
     an all-or-nothing shortcut for the known presets; use the explicit
     per-flag form instead of mixing it with --agents in the same invocation.
@@ -579,6 +592,7 @@ def expand_agents_preset(agents_csv: str, existing_args: list[str]) -> list[str]
         "--agent-resume-interactive-argv", default["resumeInteractiveArgv"],
         "--agent-log-format", default["logFormat"],
         "--agent-stream-adapter", default["streamAdapter"],
+        "--agent-transcript-store", default["transcriptStore"],
     ]
     if default["agentArgs"]:
         out += ["--agent-args", default["agentArgs"]]

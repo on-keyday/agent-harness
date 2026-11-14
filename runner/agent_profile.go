@@ -9,6 +9,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/runner/agentlog"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/agent-harness/runner/transcript"
 )
 
 // AgentProfile is one named agent launch profile: a binary plus the argv
@@ -30,6 +31,12 @@ type AgentProfile struct {
 	// unrecognised value resolves to passthrough rather than failing, so a
 	// typo degrades to raw lines instead of stopping the runner.
 	LogFormat string
+
+	// TranscriptStore names where this agent keeps its transcripts, as
+	// runner/transcript.New knows them ("claude", "codex", "pi", "agy",
+	// "opencode"); "" for an agent with none (a shell). Pillar B lists and
+	// reads them by it, as LogFormat names a decoder.
+	TranscriptStore string
 
 	// StreamAdapter is the binary that runs this agent as an EVENT-STREAM
 	// task: the runner execs the adapter and hands it the resolved agent argv,
@@ -213,6 +220,7 @@ type agentProfileJSON struct {
 	ResumeInteractiveArgv []string `json:"resumeInteractiveArgv"`
 	LogFormat             string   `json:"logFormat"`
 	StreamAdapter         string   `json:"streamAdapter"`
+	TranscriptStore       string   `json:"transcriptStore"`
 }
 
 // ParseAgentProfilesJSON parses the JSON array accepted by --agent-profiles
@@ -240,7 +248,44 @@ func ParseAgentProfilesJSON(s string) ([]AgentProfile, error) {
 			ResumeInteractiveArgv: r.ResumeInteractiveArgv,
 			LogFormat:             r.LogFormat,
 			StreamAdapter:         r.StreamAdapter,
+			TranscriptStore:       r.TranscriptStore,
 		})
 	}
 	return out, nil
+}
+
+// UnrecognisedTranscriptStores returns `<name>: "<value>"` for every profile
+// whose TranscriptStore is neither empty nor a kind runner/transcript knows,
+// for the same startup warning UnrecognisedLogFormats gives.
+func (ps ProfileSet) UnrecognisedTranscriptStores() []string {
+	known := map[string]bool{}
+	for _, k := range transcript.Kinds {
+		known[k] = true
+	}
+	var out []string
+	for _, p := range ps.profiles {
+		if p.TranscriptStore != "" && !known[p.TranscriptStore] {
+			out = append(out, fmt.Sprintf("%s: %q", p.Name, p.TranscriptStore))
+		}
+	}
+	return out
+}
+
+// TranscriptStores returns the distinct, recognised store kinds of the
+// profiles, in profile order: several profiles (an agent and its sandboxed
+// variant) share one store, which is asked once.
+func (ps ProfileSet) TranscriptStores() []string {
+	known := map[string]bool{}
+	for _, k := range transcript.Kinds {
+		known[k] = true
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, p := range ps.profiles {
+		if k := p.TranscriptStore; known[k] && !seen[k] {
+			seen[k] = true
+			out = append(out, k)
+		}
+	}
+	return out
 }

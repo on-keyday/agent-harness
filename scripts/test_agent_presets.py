@@ -284,6 +284,27 @@ class ExpandAgentsPresetTest(unittest.TestCase):
         with self.assertRaises(AgentsPresetError):
             expand_agents_preset("claude", ["--agent-stream-adapter", "/opt/mine"])
 
+    # Pillar B: every agent that keeps transcripts names its store, the same
+    # store for its sandboxed variant (which writes to the host store), and a
+    # shell names none.
+    def test_every_preset_names_its_transcript_store(self) -> None:
+        want = {"claude": "claude", "codex": "codex", "agy": "agy", "opencode": "opencode", "pi": "pi", "bash": "", "cmd": ""}
+        for name, store in want.items():
+            self.assertEqual(agent_presets.KNOWN_AGENT_PRESETS[name]["transcriptStore"], store, name)
+            sandboxed = agent_presets.KNOWN_AGENT_PRESETS.get(f"sandbox-{name}")
+            if sandboxed is not None:
+                self.assertEqual(sandboxed["transcriptStore"], store, f"sandbox-{name}")
+
+    def test_transcript_store_reaches_the_runner(self) -> None:
+        out = expand_agents_preset("claude,codex", [])
+        self.assertEqual(out[out.index("--agent-transcript-store") + 1], "claude")
+        profiles = json.loads(out[out.index("--agent-profiles") + 1])
+        self.assertEqual(profiles[0]["transcriptStore"], "codex")
+
+    def test_conflict_with_explicit_transcript_store_rejected(self) -> None:
+        with self.assertRaises(AgentsPresetError):
+            expand_agents_preset("claude", ["--agent-transcript-store", "claude"])
+
     def test_sandbox_presets_derive_their_base_agent(self) -> None:
         # Each sandbox-* preset runs its BASE agent through a pass-through
         # wrapper, so its argv must be the base's with only the wrapper's own

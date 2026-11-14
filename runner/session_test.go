@@ -509,9 +509,12 @@ func (s *noopBidiStream) sentBytes() ([]byte, bool) {
 	return append([]byte(nil), s.sent...), s.lateSend
 }
 
-func (s *noopBidiStream) ID() trsf.StreamID           { return s.streamID }
-func (s *noopBidiStream) Write(p []byte) (int, error) { return len(p), nil }
-func (s *noopBidiStream) Close() error                { return nil }
+func (s *noopBidiStream) ID() trsf.StreamID { return s.streamID }
+func (s *noopBidiStream) Write(p []byte) (int, error) {
+	_ = s.AppendData(false, p)
+	return len(p), nil
+}
+func (s *noopBidiStream) Close() error { return nil }
 func (s *noopBidiStream) WriteContext(_ context.Context, p []byte) (int, error) {
 	return len(p), nil
 }

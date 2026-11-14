@@ -509,3 +509,11 @@ func TestRunnerHandshake_UndecodableReplyIsRetryable(t *testing.T) {
 		t.Fatal("must not be a PskRejectedError")
 	}
 }
+
+// A runner that answers transcript requests says so in its hello; the server
+// asks no runner that does not (an unknown request type would drop it).
+func TestBuildRunnerHelloAdvertisesTranscripts(t *testing.T) {
+	if hh := buildRunnerHello(Config{MaxTasks: 1}); !hh.Transcripts() {
+		t.Fatal("hello does not advertise transcripts")
+	}
+}

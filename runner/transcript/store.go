@@ -24,6 +24,7 @@ type Session struct {
 	Agent, ID        string
 	Created, Updated time.Time
 	Size             int64 // all of the session's files
+	SizeKnown        bool  // false when the size exists only once read (opencode)
 }
 
 // File is one file a session is made of, named relative to the session.

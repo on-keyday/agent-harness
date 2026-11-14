@@ -67,7 +67,7 @@ func TestClaudeSessionsMatchRecordedCwd(t *testing.T) {
 		t.Fatalf("sessions %v, want s1,s2", got)
 	}
 	for _, s := range ss {
-		if s.Agent != "claude" || s.Size == 0 || s.Created.IsZero() || s.Updated.IsZero() {
+		if s.Agent != "claude" || s.Size == 0 || !s.SizeKnown || s.Created.IsZero() || s.Updated.IsZero() {
 			t.Fatalf("row %+v lacks agent, size or times", s)
 		}
 	}

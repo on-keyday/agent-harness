@@ -600,6 +600,9 @@ func buildRunnerHello(cfg Config) protocol.RunnerHello {
 	}
 	hh.SetAgentProfiles(profileNames)
 	hh.SetSkillsInjected(skillsInjected(cfg.NoWorktree, cfg.ForceInjectHarnessSettings))
+	// This build answers RunnerRequestType.transcript (pillar B); the server
+	// asks no runner that does not say so.
+	hh.SetTranscripts(true)
 	return hh
 }
 
@@ -855,6 +858,12 @@ func dispatchRunnerRequest(ctx context.Context, session *Session, log *slog.Logg
 			return
 		}
 		go session.handleGitQuery(ctx, gq)
+	case protocol.RunnerRequestType_Transcript:
+		tr := req.Transcript()
+		if tr == nil {
+			return
+		}
+		go session.handleTranscript(ctx, tr)
 	case protocol.RunnerRequestType_OpenExecRun:
 		er := req.OpenExecRun()
 		if er == nil {
