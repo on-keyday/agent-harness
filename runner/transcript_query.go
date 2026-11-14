@@ -19,13 +19,6 @@ import (
 	"github.com/on-keyday/objtrsf/trsf"
 )
 
-// Bounds on what a transcript request names (pillar B plan, Global
-// Constraints): longer ones are refused, not looked up.
-const (
-	transcriptSessionMax = 128
-	transcriptFileMax    = 512
-)
-
 // handleTranscript answers one transcript request on the stream the server
 // allocated, shaped like handleGitQuery: wait for the stream, always write an
 // answer, always close.
@@ -94,10 +87,10 @@ func (s *Session) transcriptAnswer(req *protocol.RunnerTranscriptRequest) (proto
 		return transcriptFail(op, protocol.TranscriptStatus_StoreError, "repo "+repo+" is not one of this runner's roots"), nil
 	}
 	session, file := string(req.Session), string(req.File)
-	if len(session) > transcriptSessionMax {
+	if len(session) > protocol.TranscriptSessionMax {
 		return transcriptFail(op, protocol.TranscriptStatus_NoSuchSession, "session id too long"), nil
 	}
-	if len(file) > transcriptFileMax {
+	if len(file) > protocol.TranscriptFileMax {
 		return transcriptFail(op, protocol.TranscriptStatus_NoSuchFile, "file name too long"), nil
 	}
 

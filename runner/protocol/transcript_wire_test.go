@@ -91,12 +91,12 @@ func TestRunnerHelloTranscriptsBit(t *testing.T) {
 	}
 }
 
-// Bounds of the pillar B plan: a session id ≤ 128 bytes and a file name ≤ 512
-// keep both control messages that carry them in one datagram (the review of
-// Task 1 measured 1306 and 1374 bytes at the plan's first bounds of 256/1024).
+// The bounds in transcript_bounds.go keep both control messages in one
+// datagram (the review of Task 1 measured 1306 and 1374 bytes at the plan's
+// first bounds of 256/1024).
 const (
-	transcriptSessionBound = 128
-	transcriptFileBound    = 512
+	transcriptSessionBound = TranscriptSessionMax
+	transcriptFileBound    = TranscriptFileMax
 	transcriptRepoAssumed  = 400 // a repo path longer than any the fleet serves
 )
 

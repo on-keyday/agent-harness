@@ -48,7 +48,16 @@ func (h *TaskHandler) handleTranscript(cid string, conn ConnHandle, req *protoco
 	}
 	idHex := hex.EncodeToString(taskID.Id[:])
 	out := protocol.TranscriptResponse{Status: protocol.TranscriptStatus_NoSuchTask}
-	if h.inScope(cid, protocol.Capability_TranscriptRead, idHex) {
+	// A name past the bounds answers the status the runner would give, before
+	// a relay that could not fit one datagram (Task 5 review, I2).
+	switch {
+	case !h.inScope(cid, protocol.Capability_TranscriptRead, idHex):
+		// no_such_task, as out was initialised: no existence oracle.
+	case len(session) > protocol.TranscriptSessionMax:
+		out.Status = protocol.TranscriptStatus_NoSuchSession
+	case len(file) > protocol.TranscriptFileMax:
+		out.Status = protocol.TranscriptStatus_NoSuchFile
+	default:
 		includeShared := hasCap(h.callerCaps(cid), protocol.Capability_ExecRun) &&
 			h.inScope(cid, protocol.Capability_ExecRun, idHex)
 		out = h.transcriptQuery(conn, taskID, op, session, file, includeShared)

@@ -12,9 +12,10 @@ import (
 // a file there can be swapped for a symlink to anything on the runner host
 // between listing and reading, or be a FIFO or a device that never ends
 // (review of pillar B Tasks 2–4, C1 and I2). os.Root keeps every path
-// component inside base; noFollow refuses a symlink as the last one where the
-// OS can (O_NOFOLLOW); and the opened file must be the one Lstat saw, a
-// regular file, which also catches a swap on an OS without O_NOFOLLOW.
+// component inside base, and the opened file must be the one Lstat saw, a
+// regular file: a symlink (os.Root follows one that stays inside base), a
+// FIFO or a device swapped in between is refused. openFlags keeps that open
+// from blocking on a FIFO (Task 5 review, I1).
 func openRegular(base, rel string) (*os.File, os.FileInfo, error) {
 	root, err := os.OpenRoot(base)
 	if err != nil {
@@ -29,7 +30,7 @@ func openRegular(base, rel string) (*os.File, os.FileInfo, error) {
 	if !lfi.Mode().IsRegular() {
 		return nil, nil, ErrNoFile
 	}
-	f, err := root.OpenFile(rel, os.O_RDONLY|noFollow, 0)
+	f, err := root.OpenFile(rel, os.O_RDONLY|openFlags, 0)
 	if err != nil {
 		return nil, nil, ErrNoFile
 	}

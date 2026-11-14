@@ -2,7 +2,8 @@
 
 package transcript
 
-// noFollow: Windows (and js/wasm, which only links this package through
-// streamagent) has no O_NOFOLLOW; os.Root keeps the open inside the
-// store, and openRegular's Lstat/SameFile check refuses a swapped file.
-const noFollow = 0
+// openFlags: nothing to add. Windows has no FIFO in the file system (named
+// pipes live under \\.\pipe\), and js/wasm only links this package through
+// streamagent; openRegular's Lstat/SameFile check still refuses anything but
+// the regular file it saw.
+const openFlags = 0

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -174,5 +175,39 @@ func TestRunnerTranscriptRequestCopiesEveryField(t *testing.T) {
 	if r.TaskId != tid || r.Op != protocol.TranscriptOp_Get || string(r.Session) != "sess" || string(r.File) != "file" ||
 		string(r.RepoPath) != "/repo" || !r.IncludeShared() || r.StreamId != 77 {
 		t.Fatalf("relayed %+v", r)
+	}
+}
+
+// Names past the bounds are refused here with the status the runner would
+// give, before a relay that could not fit one datagram is built — never an
+// internal_error that depends on the transport (Task 5 review, I2).
+func TestTranscriptOverlongNamesRefusedBeforeTheRunner(t *testing.T) {
+	f := newTranscriptServerFixture(t, true)
+	conn := f.operator(t)
+	tid := hexToTaskID(t, f.taskHex)
+
+	var list protocol.TranscriptListRequest
+	list.TaskId = tid
+	list.SetSession([]byte(strings.Repeat("s", protocol.TranscriptSessionMax+1)))
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_TranscriptList, RequestId: 4}}
+	req.SetTranscriptList(list)
+	f.h.Handle(conn, encodeTaskControlRequest(t, req))
+	if st := transcriptStatus(t, lastTaskControlResponse(t, conn)); st != protocol.TranscriptStatus_NoSuchSession {
+		t.Fatalf("overlong session: %v, want no_such_session", st)
+	}
+
+	var get protocol.TranscriptGetRequest
+	get.TaskId = tid
+	get.SetSession([]byte("s"))
+	get.SetFile([]byte(strings.Repeat("f", protocol.TranscriptFileMax+1)))
+	req = &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_TranscriptGet, RequestId: 5}}
+	req.SetTranscriptGet(get)
+	f.h.Handle(conn, encodeTaskControlRequest(t, req))
+	r := lastTaskControlResponse(t, conn)
+	if g := r.TranscriptGet(); g == nil || g.Status != protocol.TranscriptStatus_NoSuchFile {
+		t.Fatalf("overlong file: %+v, want no_such_file", r)
+	}
+	if n := len(f.sentTranscriptRequests(t)); n != 0 {
+		t.Fatalf("%d requests reached the runner", n)
 	}
 }

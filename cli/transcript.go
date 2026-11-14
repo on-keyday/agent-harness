@@ -19,21 +19,14 @@ import (
 // and the answer — a TranscriptResult header, then for a get exactly
 // get.size bytes — is spliced to the caller on a stream.
 
-// Bounds on what a request names: both control messages that carry them stay
-// in one datagram (runner/protocol TestTranscriptControlMessagesFitOneDatagram).
-const (
-	TranscriptSessionMax = 128
-	TranscriptFileMax    = 512
-)
-
 // CheckTranscriptNames refuses a session id or file name past the bounds
-// before a request is built.
+// (protocol.TranscriptSessionMax / TranscriptFileMax) before a request is built.
 func CheckTranscriptNames(session, file string) error {
-	if len(session) > TranscriptSessionMax {
-		return fmt.Errorf("transcript: session id is %d bytes, at most %d", len(session), TranscriptSessionMax)
+	if len(session) > protocol.TranscriptSessionMax {
+		return fmt.Errorf("transcript: session id is %d bytes, at most %d", len(session), protocol.TranscriptSessionMax)
 	}
-	if len(file) > TranscriptFileMax {
-		return fmt.Errorf("transcript: file name is %d bytes, at most %d", len(file), TranscriptFileMax)
+	if len(file) > protocol.TranscriptFileMax {
+		return fmt.Errorf("transcript: file name is %d bytes, at most %d", len(file), protocol.TranscriptFileMax)
 	}
 	return nil
 }
