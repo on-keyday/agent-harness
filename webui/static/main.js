@@ -297,6 +297,10 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     }
   });
 
+  // The phone woke: end the persist loop's backoff, or prove a "connected"
+  // link is alive (reconnect.js). Registered here, next to connectionIsUp.
+  installWakeReconnect(window, document, window.harness, () => connectionIsUp);
+
   // Live-apply a #psk edit. A rejected connect (BadPsk) is fatal in the persist
   // loop (cli/persist.go), so after it the wasm never re-dials and editing the
   // #psk fragment has no effect until a reload re-runs GetPSK (cli/psk_js.go).
@@ -5749,6 +5753,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     disposePaneTerm(p);
     const note = paneNote(p, "connecting…");
     p.live = true;
+    p.wantLive = true;   // resumePanes restarts it after a reconnect until the operator pauses it
     try {
       await window.harness.previewStart(key, p.taskId, !!p.capReplay);
     } catch (e) {
@@ -5760,7 +5765,10 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       // object is what actually distinguishes them.
       if (epoch !== p.epoch) return; // superseded/closed meanwhile
       if (previewPanes.get(key) !== p) return; // key now owned by a different (recreated) pane
-      note.textContent = `preview error: ${e.message}`;
+      // A start that timed out (the bridge gives it ~10s) is the connection
+      // not answering, not an error in the session: say so, and let the
+      // registerOnConnected handler below restart the pane.
+      note.textContent = previewStartFailure(e).text;
       p.live = false;
       if (p.onClosed) p.onClosed();
       return;
@@ -5790,8 +5798,14 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     const p = previewPanes.get(key);
     if (!p) return;
     p.live = false;
+    p.wantLive = false;  // an operator pause: not restarted by a reconnect
     window.harness.previewStop(key);
   }
+
+  // After a reconnect every preview stream of the old connection is gone, and a
+  // start that timed out never began: restart each pane the operator still
+  // wants live (single preview and grid cells alike).
+  registerOnConnected(() => resumePanes(previewPanes, (key, p) => startPane(key, p)));
 
   // Pane terminals open at PANE_FONT_BASE and are shrunk by fitPaneScale to fit
   // their pane. PANE_FONT_MIN is only a positivity guard, NOT a legibility
@@ -6051,6 +6065,8 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     if (!p || !p.live) return;
     p.live = false;
     if (!p.term && p.bodyEl) p.bodyEl.replaceChildren(); // died before the grid arrived
+    // The note holds if the connection stays up; after a reconnect the pane
+    // restarts on its own (resumePanes), which replaces it.
     paneNote(p, "(ストリーム終了 — ▶ で再接続)");
     if (p.onClosed) p.onClosed();
   };

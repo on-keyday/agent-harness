@@ -140,10 +140,20 @@ type PersistConfig struct {
 	// use the default 0.25.
 	Jitter      float64
 	StableReset time.Duration // connection alive ≥ this resets attempt counter (default 60s)
-	Logger      *slog.Logger  // default slog.Default
-	OnState     func(PersistState)
-	Now         func() time.Time
-	Sleep       func(ctx context.Context, d time.Duration) error
+	// Kick, when non-nil, is a "retry now" signal: a receive during a backoff
+	// sleep ends the sleep at once and resets the attempt counter to 0, so the
+	// next failure starts the ladder over. A kick while connected or dialling is
+	// ignored (stale ones are drained on connect). nil = today's behaviour; the
+	// TUI/CLI/runner leave it nil.
+	Kick <-chan struct{}
+	// MaxBackoffFn, when non-nil, replaces MaxBackoff on every backoff
+	// computation (a page caps the ladder low while visible, high while hidden).
+	// A result ≤ 0 falls back to MaxBackoff.
+	MaxBackoffFn func() time.Duration
+	Logger       *slog.Logger // default slog.Default
+	OnState      func(PersistState)
+	Now          func() time.Time
+	Sleep        func(ctx context.Context, d time.Duration) error
 }
 
 func (c *PersistConfig) defaults() {
@@ -201,6 +211,26 @@ func PersistLoop(
 	cfg.defaults()
 	defer cfg.emit(PersistState{Phase: PersistPhaseClosed})
 
+	// One pump for the whole loop: it moves external kicks into kickCh, so a
+	// kick is never consumed by a sleep that has already ended.
+	var kickCh chan struct{}
+	if cfg.Kick != nil {
+		kickCh = make(chan struct{}, 1)
+		go func() {
+			for {
+				select {
+				case <-cfg.Kick:
+					select {
+					case kickCh <- struct{}{}:
+					default:
+					}
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+	}
+
 	attempt := 0
 	for {
 		if err := ctx.Err(); err != nil {
@@ -222,8 +252,12 @@ func PersistLoop(
 			if ctx.Err() != nil {
 				return nil
 			}
-			if !sleepBackoff(ctx, &cfg, attempt+1, err) {
+			ok, kicked := sleepBackoff(ctx, &cfg, kickCh, attempt+1, err)
+			if !ok {
 				return nil
+			}
+			if kicked {
+				attempt = 0
 			}
 			continue
 		}
@@ -233,6 +267,10 @@ func PersistLoop(
 		runCtx, runCancel := context.WithCancel(ctx)
 		connectedAt := cfg.Now()
 		cfg.emit(PersistState{Phase: PersistPhaseConnected, Attempt: attempt})
+		select { // a kick that arrived while we were dialling has nothing left to do
+		case <-kickCh:
+		default:
+		}
 
 		// peerClosed is set by the watcher when h.Done() fires first,
 		// allowing Enabled=false callers to distinguish peer-drop from clean
@@ -281,16 +319,27 @@ func PersistLoop(
 		if cfg.Now().Sub(connectedAt) >= cfg.StableReset {
 			attempt = 0
 		}
-		if !sleepBackoff(ctx, &cfg, attempt+1, ocErr) {
+		ok, kicked := sleepBackoff(ctx, &cfg, kickCh, attempt+1, ocErr)
+		if !ok {
 			return nil
+		}
+		if kicked {
+			attempt = 0
 		}
 	}
 }
 
 // sleepBackoff computes the next delay, emits Reconnecting, and sleeps.
-// Returns false if ctx was cancelled during sleep.
-func sleepBackoff(ctx context.Context, cfg *PersistConfig, attempt int, lastErr error) bool {
-	d := computeBackoff(cfg.InitialBackoff, cfg.MaxBackoff, cfg.BackoffFactor, cfg.Jitter, attempt)
+// ok is false if ctx was cancelled during sleep; kicked is true when cfg.Kick
+// ended the sleep early.
+func sleepBackoff(ctx context.Context, cfg *PersistConfig, kick <-chan struct{}, attempt int, lastErr error) (ok, kicked bool) {
+	maxB := cfg.MaxBackoff
+	if cfg.MaxBackoffFn != nil {
+		if m := cfg.MaxBackoffFn(); m > 0 {
+			maxB = m
+		}
+	}
+	d := computeBackoff(cfg.InitialBackoff, maxB, cfg.BackoffFactor, cfg.Jitter, attempt)
 	cfg.emit(PersistState{
 		Phase:     PersistPhaseReconnecting,
 		Attempt:   attempt,
@@ -298,10 +347,30 @@ func sleepBackoff(ctx context.Context, cfg *PersistConfig, attempt int, lastErr 
 		LastError: lastErr,
 	})
 	cfg.Logger.Info("persist: reconnecting", "attempt", attempt, "next_retry", d, "err", lastErr)
-	if err := cfg.Sleep(ctx, d); err != nil {
-		return false
+
+	sleepCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	var kickedFlag atomic.Bool
+	stop := make(chan struct{})
+	exited := make(chan struct{})
+	go func() {
+		defer close(exited)
+		select {
+		case <-kick: // nil kick blocks forever; stop ends it
+			kickedFlag.Store(true)
+			cancel()
+		case <-stop:
+		}
+	}()
+	err := cfg.Sleep(sleepCtx, d)
+	// Join the watcher before deciding: a kick it took between Sleep returning
+	// and now still counts, and it never outlives this call to steal the next one.
+	close(stop)
+	<-exited
+	if kickedFlag.Load() && ctx.Err() == nil {
+		return true, true
 	}
-	return true
+	return err == nil, false
 }
 
 func computeBackoff(initial, max time.Duration, factor, jitter float64, attempt int) time.Duration {

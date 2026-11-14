@@ -111,6 +111,9 @@ func main() {
 		"streamInterrupt":    js.FuncOf(harnessStreamInterrupt),
 		"streamFinish":       js.FuncOf(harnessStreamFinish),
 		"previewStop":        js.FuncOf(harnessPreviewStop),
+		"reconnectNow":       js.FuncOf(harnessReconnectNow),
+		"setPageVisible":     js.FuncOf(harnessSetPageVisible),
+		"probeConnection":    js.FuncOf(harnessProbeConnection),
 		"previewInput":       js.FuncOf(harnessPreviewInput),
 		"cancel":             js.FuncOf(harnessCancel),
 		"watch":              js.FuncOf(harnessWatch),
@@ -509,7 +512,9 @@ func harnessConnect(this js.Value, args []js.Value) any {
 						return nil
 					},
 					cli.PersistConfig{
-						Enabled: persist,
+						Enabled:      persist,
+						Kick:         reconnectKick,
+						MaxBackoffFn: persistMaxBackoff,
 						OnState: func(s cli.PersistState) {
 							notifyConnState(s)
 						},
@@ -3730,13 +3735,19 @@ func harnessPreviewStart(this js.Value, args []js.Value) any {
 		resolve := promiseArgs[0]
 		reject := promiseArgs[1]
 		go func() {
-			c, err := currentClient()
-			if err != nil {
-				rejectErr(reject, err)
-				return
-			}
 			if len(args) < 2 {
 				rejectErr(reject, errors.New("previewStart: missing paneKey/taskIDHex arg"))
+				return
+			}
+			// One deadline over "wait for a client" AND the attach RPC: right after
+			// a reconnect the client is installed a moment after 'connected' (see
+			// waitForClient), and on a link that died unnoticed the RPC would
+			// otherwise wait for the transport to notice, with no bound.
+			ctx, cancel := context.WithTimeout(rootCtx, previewStartTimeout)
+			defer cancel()
+			c, err := waitForClient(ctx)
+			if err != nil {
+				rejectCoded(reject, errPreviewTimeout, "timeout")
 				return
 			}
 			paneKey := args[0].String()
@@ -3745,7 +3756,11 @@ func harnessPreviewStart(this js.Value, args []js.Value) any {
 			if len(args) >= 3 && args[2].Truthy() {
 				replayLimit = cli.GridPaneReplayLimit
 			}
-			if err := c.StartPreview(rootCtx, paneKey, taskID, replayLimit); err != nil {
+			if err := c.StartPreview(ctx, paneKey, taskID, replayLimit); err != nil {
+				if ctx.Err() != nil && rootCtx.Err() == nil {
+					rejectCoded(reject, errPreviewTimeout, "timeout")
+					return
+				}
 				rejectErr(reject, err)
 				return
 			}

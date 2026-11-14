@@ -331,3 +331,104 @@ func TestPersistLoop_StableResetClearsAttemptCounter(t *testing.T) {
 			sleepDurations[0])
 	}
 }
+
+// A Kick during a backoff sleep ends the sleep at once (the next dial does not
+// wait out the climbed delay) and restarts the backoff ladder: the sleep after
+// the kicked dial fails is the same length as the very first one.
+func TestPersistLoop_KickEndsBackoffAndResetsAttempt(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var mu sync.Mutex
+	var sleeps []time.Duration
+	blocked := make(chan struct{}, 1)
+	sleep := func(ctx context.Context, d time.Duration) error {
+		mu.Lock()
+		sleeps = append(sleeps, d)
+		n := len(sleeps)
+		mu.Unlock()
+		if n == 4 {
+			blocked <- struct{}{}
+			<-ctx.Done() // a long backoff: only the kick (or ctx) ends it
+			return ctx.Err()
+		}
+		return nil
+	}
+	var dials int32
+	dial := func(context.Context) (PersistHandle, error) {
+		atomic.AddInt32(&dials, 1)
+		return nil, errors.New("network down")
+	}
+	kick := make(chan struct{}, 1)
+	done := make(chan error, 1)
+	go func() {
+		done <- PersistLoop(ctx, dial,
+			func(context.Context, PersistHandle) error { return nil },
+			PersistConfig{Enabled: true, Jitter: 0, Sleep: sleep, Kick: kick})
+	}()
+
+	<-blocked
+	before := atomic.LoadInt32(&dials) // 4 failed dials, parked in sleep #4
+	kick <- struct{}{}
+	deadline := time.After(2 * time.Second)
+	for atomic.LoadInt32(&dials) == before {
+		select {
+		case <-deadline:
+			t.Fatal("kick did not end the backoff sleep")
+		case <-time.After(time.Millisecond):
+		}
+	}
+	// Wait for the sleep that follows the kicked dial.
+	for {
+		mu.Lock()
+		n := len(sleeps)
+		mu.Unlock()
+		if n >= 5 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("no sleep after the kicked dial")
+		case <-time.After(time.Millisecond):
+		}
+	}
+	mu.Lock()
+	first, after := sleeps[0], sleeps[4]
+	mu.Unlock()
+	if after != first {
+		t.Fatalf("attempt not reset by kick: sleep after kick %v, first sleep %v", after, first)
+	}
+	cancel()
+	<-done
+}
+
+// MaxBackoffFn overrides MaxBackoff per computation, so a page can cap the
+// ladder low while visible and let it grow while hidden.
+func TestPersistLoop_MaxBackoffFnCapsEachSleep(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var mu sync.Mutex
+	var sleeps []time.Duration
+	sleep := func(ctx context.Context, d time.Duration) error {
+		mu.Lock()
+		sleeps = append(sleeps, d)
+		n := len(sleeps)
+		mu.Unlock()
+		if n >= 8 {
+			cancel()
+		}
+		return ctx.Err()
+	}
+	_ = PersistLoop(ctx,
+		func(context.Context) (PersistHandle, error) { return nil, errors.New("down") },
+		func(context.Context, PersistHandle) error { return nil },
+		PersistConfig{Enabled: true, Jitter: 0, Sleep: sleep,
+			MaxBackoffFn: func() time.Duration { return 2 * time.Second }})
+	mu.Lock()
+	defer mu.Unlock()
+	for i, d := range sleeps {
+		if d > 2*time.Second {
+			t.Fatalf("sleep %d = %v exceeds the MaxBackoffFn cap", i, d)
+		}
+	}
+}
