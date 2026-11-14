@@ -288,6 +288,36 @@ function recordDownloadName(taskId, run, format) {
   return `${String(taskId).slice(0, 8)}-run${run}.${format === "asciicast" ? "cast" : "raw"}`;
 }
 
+// --- Agent transcripts (pillar B) --------------------------------------------
+
+// transcriptDownloadName names a downloaded transcript by its task, agent and
+// session: the whole session as a .tar, one file by its own base name (a
+// companion's directories do not become the download's).
+function transcriptDownloadName(taskId, agent, session, file) {
+  const head = `${String(taskId).slice(0, 8)}-${agent}-${String(session).slice(0, 8)}`;
+  if (!file) return `${head}.tar`;
+  const parts = String(file).split("/");
+  return `${head}-${parts[parts.length - 1]}`;
+}
+
+// transcriptSheetModel is what the task sheet shows for a task's agent
+// sessions: each session's row (rendered in Go as `transcript ls` renders it)
+// with its actions, the files of each session the operator opened (null when
+// not opened), and the note naming any store that could not be read.
+function transcriptSheetModel(list, filesBySession) {
+  const files = filesBySession || new Map();
+  return {
+    note: (list && list.note) || "",
+    rows: ((list && list.sessions) || []).map((s) => ({
+      agent: s.agent,
+      id: s.id,
+      text: s.row,
+      actions: ["files", "tar"],
+      files: files.has(s.id) ? files.get(s.id).map((f) => ({ name: f.name, text: f.row })) : null,
+    })),
+  };
+}
+
 // recordSheetModel is what the task sheet shows for a task's records: each
 // record's row (size and expiry, rendered in Go as `record ls` renders it)
 // with what can be done to it, and which switch a live terminal offers ("on",

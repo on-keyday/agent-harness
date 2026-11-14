@@ -331,8 +331,10 @@ function beginFileProgress(label) {
 // native save dialog (which handles overwrite confirmation per its own
 // rules — Firefox prompts every time, Chrome's behavior depends on the
 // "ask where to save each file" preference).
+// bytes is one Uint8Array, or an array of them (a transcript arrives in parts
+// so the wasm heap never holds it whole).
 function triggerDownload(bytes, filename) {
-  const blob = new Blob([bytes], { type: "application/octet-stream" });
+  const blob = new Blob(Array.isArray(bytes) ? bytes : [bytes], { type: "application/octet-stream" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;

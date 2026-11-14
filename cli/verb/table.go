@@ -3196,7 +3196,10 @@ var Verbs = []VerbSpec{
 	// fetched from the task's runner on demand; nothing is kept on the server.
 	{
 		Path: []string{"transcript", "ls"}, CmdlineSurfaces: CLI | TUI,
-		ModalSurfaces: []ModalSurface{{Surface: TUI, At: "tui/detail.go:formatTranscriptsBlock"}},
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/detail.go:formatTranscriptsBlock"},
+			{Surface: WebUI, At: "webui/static/main.js:buildTaskSheet"},
+		},
 		Notes: []string{
 			"list the agent sessions recorded for a task's working directory (transcript_read): agent, id, times, size",
 			"with a session id, list the files that session is made of",
@@ -3214,7 +3217,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"transcript", "get"}, CmdlineSurfaces: CLI | TUI,
-		NoModalSurface: "none yet: the WebUI task sheet's download comes with pillar B Task 8; the TUI popup lists, and `transcript get -o` on its command line fetches",
+		ModalSurfaces: []ModalSurface{{Surface: WebUI, At: "webui/static/main.js:buildTaskSheet"}},
 		Notes: []string{
 			"write one file of an agent session as the agent stored it, or with no file the whole session as a tar (transcript_read)",
 		},

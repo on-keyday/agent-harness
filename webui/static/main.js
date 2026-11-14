@@ -776,6 +776,9 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // is rebuilt on every snapshot tick, so what it shows is kept here, not in
   // the DOM, and redrawn from here.
   const recordCache = new Map();
+  // Agent transcripts per task (pillar B): { list: {sessions, note}, files:
+  // Map(session id → files) }, kept across the sheet's rebuild on every tick.
+  const transcriptCache = new Map();
   const gridShowBtn = document.getElementById("grid-show-btn");
   const gridAllOn   = document.getElementById("grid-all-on");
   const gridAllOff  = document.getElementById("grid-all-off");
@@ -6562,6 +6565,91 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
           appendCmdOutput(e.message, true);
         }
       });
+    }
+
+    // Agent transcripts (pillar B): read from the task's runner on demand —
+    // nothing is kept on the server. A session opens to list its files; each
+    // file, or the whole session as a tar, downloads.
+    const trState = transcriptCache.get(t.id);
+    addItem(trState ? "✎ 会話記録を更新" : "✎ 会話記録を表示", "", async () => {
+      try {
+        const list = await window.harness.transcriptSessions(t.id);
+        transcriptCache.set(t.id, { list, files: new Map() });
+        refreshSnapshot();
+      } catch (e) {
+        appendCmdOutput(e.message, true);
+      }
+    });
+    if (trState) {
+      const trModel = transcriptSheetModel(trState.list, trState.files);
+      const infoLine = (text) => {
+        const line = document.createElement("div");
+        line.className = "task-id";
+        line.textContent = text;
+        sheet.appendChild(line);
+      };
+      if (trModel.rows.length === 0) infoLine("会話記録なし");
+      if (trModel.note) infoLine("note: " + trModel.note);
+      const download = async (row, file) => {
+        const name = transcriptDownloadName(t.id, row.agent, row.id, file);
+        appendCmdOutput(`transcript get ${row.id}${file ? "/" + file : ""}: 取得中…`, true);
+        const parts = await window.harness.transcriptGet(t.id, row.id, file);
+        triggerDownload(parts, name);
+        appendCmdOutput(`transcript get ${row.id}${file ? "/" + file : ""}: ${name}`, true);
+      };
+      for (const row of trModel.rows) {
+        const line = document.createElement("div");
+        line.className = "task-id";
+        const text = document.createElement("span");
+        text.className = "task-id-text";
+        text.textContent = row.text;
+        line.appendChild(text);
+        for (const act of row.actions) {
+          const b = document.createElement("button");
+          b.type = "button";
+          b.className = "task-action";
+          b.textContent = act === "files" ? (row.files ? "📂 閉じる" : "📂 ファイル") : "⤓ .tar";
+          b.addEventListener("click", async (e) => {
+            e.stopPropagation();
+            try {
+              if (act === "files") {
+                if (row.files) trState.files.delete(row.id);
+                else trState.files.set(row.id, await window.harness.transcriptFiles(t.id, row.id));
+                refreshSnapshot();
+              } else {
+                await download(row, "");
+              }
+            } catch (err) {
+              // The bridge already names the verb ("transcript get: …").
+              appendCmdOutput(err.message, true);
+            }
+          });
+          line.appendChild(b);
+        }
+        sheet.appendChild(line);
+        for (const f of row.files || []) {
+          const fl = document.createElement("div");
+          fl.className = "task-id";
+          const ft = document.createElement("span");
+          ft.className = "task-id-text";
+          ft.textContent = "  " + f.text;
+          fl.appendChild(ft);
+          const b = document.createElement("button");
+          b.type = "button";
+          b.className = "task-action";
+          b.textContent = "⤓";
+          b.addEventListener("click", async (e) => {
+            e.stopPropagation();
+            try {
+              await download(row, f.name);
+            } catch (err) {
+              appendCmdOutput(err.message, true);
+            }
+          });
+          fl.appendChild(b);
+          sheet.appendChild(fl);
+        }
+      }
     }
 
     addItem("▦ この配下をグリッド", "", async () => {
