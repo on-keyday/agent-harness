@@ -636,6 +636,17 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
 /* .picker-modal.regrant-modal (two classes) so this outranks .picker-modal's
    own width, which is declared LATER in this file and ties on specificity. */
 .picker-modal.regrant-modal { width: min(94vw, 36rem); }
+/* The transcripts dialog: rows are `transcript ls` lines (long, monospace),
+   each with its buttons on a line of their own so nothing wraps mid-row. */
+.picker-modal.transcript-modal { width: min(96vw, 52rem); }
+.transcript-modal .picker-form { width: 100%; box-sizing: border-box; }
+.transcript-list { display: flex; flex-direction: column; gap: 0.6rem; min-width: 0; }
+.transcript-session { border-top: 1px solid #3a3a3a; padding-top: 0.5rem; min-width: 0; }
+.transcript-row { font-family: monospace; font-size: 0.85rem; overflow-wrap: anywhere; }
+.transcript-note { font-size: 0.85rem; color: #aaa; overflow-wrap: anywhere; }
+.transcript-actions { display: flex; gap: 0.5rem; margin-top: 0.35rem; }
+.transcript-file { display: flex; align-items: center; gap: 0.5rem; margin: 0.35rem 0 0 1rem; min-width: 0; }
+.transcript-file .transcript-row { flex: 1; min-width: 0; }
 .regrant-modal .picker-form { width: 100%; box-sizing: border-box; }
 /* Board composer under the topic view: the stream chat's input row, plus a
    line of options. The reply-to field takes the palette of the textarea. */

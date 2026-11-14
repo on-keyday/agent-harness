@@ -35,10 +35,22 @@ test("the sheet lists each session, its note, and an opened session's files", ()
   const files = new Map([["s-1", [{ name: "s-1.jsonl", row: "s-1.jsonl  size=3.0MiB" }]]]);
   const m = page.transcriptSheetModel(list, files);
   assert.equal(m.note, "unavailable: agy: not built");
-  assert.deepEqual(m.rows.map((r) => r.text), [list.sessions[0].row, list.sessions[1].row]);
+  assert.deepEqual([...m.rows.map((r) => r.text)], [list.sessions[0].row, list.sessions[1].row]); // copied out of the vm realm
   assert.deepEqual([...m.rows[0].actions], ["files", "tar"]);
   assert.deepEqual(m.rows[0].files.map((f) => [f.name, f.text]), [["s-1.jsonl", "s-1.jsonl  size=3.0MiB"]]);
   assert.equal(m.rows[1].files, null, "a session not opened lists no files");
   const empty = page.transcriptSheetModel({ sessions: [], note: "" }, new Map());
   assert.equal(empty.rows.length, 0);
+});
+
+test("the newest session comes first", () => {
+  const list = {
+    sessions: [
+      { agent: "claude", id: "old", row: "old", updatedMs: 1000 },
+      { agent: "codex", id: "new", row: "new", updatedMs: 3000 },
+      { agent: "pi", id: "mid", row: "mid", updatedMs: 2000 },
+    ],
+    note: "",
+  };
+  assert.deepEqual([...page.transcriptSheetModel(list, new Map()).rows.map((r) => r.id)], ["new", "mid", "old"]);
 });

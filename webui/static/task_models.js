@@ -300,15 +300,17 @@ function transcriptDownloadName(taskId, agent, session, file) {
   return `${head}-${parts[parts.length - 1]}`;
 }
 
-// transcriptSheetModel is what the task sheet shows for a task's agent
-// sessions: each session's row (rendered in Go as `transcript ls` renders it)
-// with its actions, the files of each session the operator opened (null when
-// not opened), and the note naming any store that could not be read.
+// transcriptSheetModel is what the transcripts dialog shows for a task's
+// agent sessions, newest first: each session's row (rendered in Go as
+// `transcript ls` renders it) with its actions, the files of each session the
+// operator opened (null when not opened), and the note naming any store that
+// could not be read.
 function transcriptSheetModel(list, filesBySession) {
   const files = filesBySession || new Map();
+  const sessions = [...((list && list.sessions) || [])].sort((a, b) => (b.updatedMs || 0) - (a.updatedMs || 0));
   return {
     note: (list && list.note) || "",
-    rows: ((list && list.sessions) || []).map((s) => ({
+    rows: sessions.map((s) => ({
       agent: s.agent,
       id: s.id,
       text: s.row,

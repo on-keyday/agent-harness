@@ -677,6 +677,16 @@
 <!-- The one watch menu (🔔): what to be notified about — an await-idle
      signal or the next progress line. Body-level for the top-layer reason the
      other picker dialogs are. -->
+<dialog id="transcript-modal" class="picker-modal transcript-modal">
+  <form method="dialog" class="picker-form">
+    <h3 class="picker-title" id="transcript-modal-title">会話記録</h3>
+    <div id="transcript-modal-list" class="transcript-list"></div>
+    <menu class="picker-actions">
+      <button type="button" id="transcript-modal-refresh">↻ 更新</button>
+      <button type="button" id="transcript-modal-close">Close</button>
+    </menu>
+  </form>
+</dialog>
 <dialog id="watch-modal" class="picker-modal">
   <form method="dialog" class="picker-form">
     <h3 class="picker-title" id="watch-modal-title">何で知らせる?</h3>
