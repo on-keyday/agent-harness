@@ -453,10 +453,11 @@ asciinema play run1.cast                        # asciicast v2, at its own pace
 bin/harness-cli record keep --for 168h <task-id>#1   # or --forever
 bin/harness-cli record rm <task-id>#1            # or <task-id> --all-runs
 bin/harness-cli record on|off <task-id>
-# TUI: the N form's record field (default|on|off), the records in `d`, the
-# verbs on the command line (`record get` there needs -o). WebUI: Compose's
-# "PTY 記録" select; the task sheet lists, downloads (raw / .cast), deletes and
-# switches.
+# TUI: the N form's record field (default|on|off), the records in `d` (`t`
+# there changes a record's retention: forever or a duration), the verbs on the
+# command line (`record get` there needs -o). WebUI: Compose's "PTY 記録"
+# select; the task sheet lists, downloads (raw / .cast), changes the retention
+# (⏲ 期限), deletes and switches.
 
 # 6. File transfer against a running task's worktree (paths are confined
 # to the worktree root; `..` escapes are rejected).

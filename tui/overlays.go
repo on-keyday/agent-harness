@@ -20,6 +20,8 @@ type overlay struct {
 }
 
 var appOverlays = []overlay{
+	// Opened from the d popup and drawn over it, so it comes first.
+	{func(a *App) bool { return a.recordKeep.IsOpen() }, (*App).inRecordKeep},
 	{func(a *App) bool { return a.detail.IsOpen() }, (*App).inDetail},
 	{func(a *App) bool { return a.connsModal.IsOpen() }, (*App).inConnsModal},
 	// Opened from the forwards pane or the execs modal and drawn over both,
@@ -54,6 +56,12 @@ func (a *App) inDetail(msg tea.KeyMsg) tea.Cmd {
 	if msg.Type == tea.KeyEsc {
 		a.detail.Close()
 		return nil
+	}
+	if msg.String() == modalKeys.DetailRecordKeep {
+		if id, rs := a.detail.Records(); len(rs) > 0 {
+			a.recordKeep.Open(id, rs)
+			return nil
+		}
 	}
 	// Everything else scrolls: the body can be taller than the screen
 	// (`?` is), and a popup you cannot scroll hides its own top.
@@ -1129,6 +1137,34 @@ func (a *App) inCapsAuditModal(msg tea.KeyMsg) tea.Cmd {
 		}
 	}
 	return nil
+}
+
+// The keep form (opened with t from the d popup) owns every key while open:
+// ↑/↓ pick the run, Enter sends, Esc returns to the popup.
+func (a *App) inRecordKeep(msg tea.KeyMsg) tea.Cmd {
+	switch msg.Type {
+	case tea.KeyEsc:
+		a.recordKeep.Close()
+		return nil
+	case tea.KeyUp:
+		a.recordKeep.Step(-1)
+		return nil
+	case tea.KeyDown:
+		a.recordKeep.Step(+1)
+		return nil
+	case tea.KeyEnter:
+		if a.recordKeep.Pending() {
+			return nil // one request at a time
+		}
+		forever, ttl, err := a.recordKeep.Values()
+		if err != nil {
+			a.recordKeep.Answered(err)
+			return nil
+		}
+		a.recordKeep.Submitted()
+		return recordKeepCmd(a.client, a.recordKeep.Ref(), forever, ttl)
+	}
+	return a.recordKeep.Update(msg)
 }
 
 // Background form intercepts ALL keys when open (pillar A spec, A-D15).

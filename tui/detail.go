@@ -48,6 +48,8 @@ type DetailPopup struct {
 	// popup opens (A-D28), so it is appended when it does.
 	recordsFor string
 	base       string
+	// records is what the block lists, for the keep form (t).
+	records []protocol.RecordInfo
 }
 
 func NewDetailPopup() DetailPopup {
@@ -60,7 +62,7 @@ func (d *DetailPopup) Open(title, body string) {
 	d.open = true
 	d.title = title
 	d.body = body
-	d.base, d.recordsFor = body, ""
+	d.base, d.recordsFor, d.records = body, "", nil
 	d.vp.SetContent(body)
 	d.vp.GotoTop()
 }
@@ -68,16 +70,26 @@ func (d *DetailPopup) Open(title, body string) {
 // WatchRecords marks the open popup as the task's, and shows block (the
 // records, or that they are on their way) under its body.
 func (d *DetailPopup) WatchRecords(taskID, block string) {
-	d.recordsFor = taskID
+	d.recordsFor, d.records = taskID, nil
 	d.setRecords(block)
 }
 
-// SetRecords replaces the records block when the popup still shows taskID.
-func (d *DetailPopup) SetRecords(taskID, block string) {
+// SetRecordList shows a task's records (or why they could not be listed)
+// when the popup still shows taskID, and keeps them for the keep form.
+func (d *DetailPopup) SetRecordList(taskID string, rs []protocol.RecordInfo, err error) {
 	if !d.open || d.recordsFor != taskID {
 		return
 	}
-	d.setRecords(block)
+	d.records = rs
+	if err != nil {
+		d.records = nil
+	}
+	d.setRecords(formatRecordsBlock(rs, err))
+}
+
+// Records is the task the popup lists records for and those records.
+func (d *DetailPopup) Records() (taskID string, rs []protocol.RecordInfo) {
+	return d.recordsFor, d.records
 }
 
 func (d *DetailPopup) setRecords(block string) {
@@ -152,8 +164,11 @@ func (d *DetailPopup) View() string {
 		Padding(1, 2)
 	header := HeaderStyle.Render(d.title)
 	hint := "Esc: close"
+	if len(d.records) > 0 {
+		hint = modalKeys.DetailRecordKeep + ": keep · " + hint
+	}
 	if d.overflow {
-		hint = scrollHint + " · Esc: close"
+		hint = scrollHint + " · " + hint
 	}
 	footer := FooterStyle.Render(hint)
 	return box.Render(header + "\n\n" + d.vp.View() + "\n\n" + footer)

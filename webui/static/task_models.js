@@ -298,7 +298,7 @@ function recordSheetModel(t, recs) {
     rows: (recs || []).map((r) => ({
       run: r.run,
       text: r.row + (r.recording ? "  (recording)" : ""),
-      actions: ["raw", "asciicast", "delete"],
+      actions: ["raw", "asciicast", "keep", "delete"],
     })),
     switchTo: live ? (t.recording ? "off" : "on") : "",
   };

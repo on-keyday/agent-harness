@@ -56,6 +56,7 @@ type App struct {
 	cmdHistoryDraft string
 	popup           PopupModel
 	bgform          BgFormModel
+	recordKeep      RecordKeepForm
 	detail          DetailPopup
 	filepicker      FilePickerModel
 	fileEditor      FileEditModel
@@ -399,6 +400,7 @@ func New(cfg Config) *App {
 		cmdHistoryIndex:   -1,
 		popup:             NewPopup(cfg.DefaultRepo),
 		bgform:            NewBgForm(),
+		recordKeep:        NewRecordKeepForm(),
 		filepicker:        NewFilePicker(),
 		fileEditor:        NewFileEdit(),
 		connsModal:        NewConnsModal(),
@@ -1186,7 +1188,25 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, RefreshSnapshot(a.client)
 
 	case RecordListMsg:
-		a.detail.SetRecords(msg.TaskID, formatRecordsBlock(msg.Records, msg.Err))
+		a.detail.SetRecordList(msg.TaskID, msg.Records, msg.Err)
+		return a, nil
+	case RecordKeepResultMsg:
+		if a.recordKeep.IsOpen() && a.recordKeep.Ref() == msg.Ref {
+			if msg.Err != nil {
+				a.recordKeep.Answered(msg.Err)
+				return a, nil
+			}
+			a.recordKeep.Close()
+		}
+		if msg.Err != nil {
+			a.cmdresult.Append(ErrorStyle.Render(msg.Err.Error()))
+			return a, nil
+		}
+		a.cmdresult.Append(msg.Text)
+		// The popup lists the new expiry.
+		if id, _ := a.detail.Records(); a.detail.IsOpen() && id != "" && a.client != nil {
+			return a, DoRecordList(a.client, id)
+		}
 		return a, nil
 	case RecordResultMsg:
 		if msg.Err != nil {
@@ -2075,6 +2095,9 @@ func (a *App) View() string {
 	}
 	if a.popup.IsOpen() {
 		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.popup.View())
+	}
+	if a.recordKeep.IsOpen() {
+		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.recordKeep.View())
 	}
 	if a.detail.IsOpen() {
 		a.detail.SetSize(a.width, a.height)

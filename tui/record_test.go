@@ -122,3 +122,83 @@ func TestAttachedSessionNewCarriesTheRecordSwitch(t *testing.T) {
 		t.Fatalf("x11 --record: %+v, want the switch set to on", got[1])
 	}
 }
+
+// The d popup changes a record's retention (A-D28: keep is offered wherever
+// records are listed): t opens a form on the latest run, ↑/↓ pick another
+// listed run, and Enter sends what was typed — "forever" or a duration, read
+// by cli.ParseRecordRetention as the WebUI's sheet reads it. The form stays
+// open until the answer, as the background form does: the popup covers the
+// results pane, so a refusal shown there would not be seen.
+func TestDetailPopupKeepsARecord(t *testing.T) {
+	type sent struct {
+		ref     string
+		forever bool
+		ttl     time.Duration
+	}
+	var got []sent
+	old := recordKeepCmd
+	defer func() { recordKeepCmd = old }()
+	recordKeepCmd = func(c *cli.Client, ref string, forever bool, ttl time.Duration) tea.Cmd {
+		got = append(got, sent{ref, forever, ttl})
+		return func() tea.Msg { return nil }
+	}
+	a := bgTaskApp(t, protocol.TaskStatus_Detached, protocol.RunMode_Background)
+	a.focus = focusTasks
+	id := a.tasks.SelectedID()
+	a.onDetail(keyRune('d'))
+	a.detail.SetSize(120, 40)
+	if strings.Contains(a.detail.View(), modalKeys.DetailRecordKeep+": keep") {
+		t.Fatal("keep is offered before any record is listed")
+	}
+	var r1, r2 protocol.RecordInfo
+	copy(r1.TaskId.Id[:], a.tasks.SelectedTask().Id.Id[:])
+	r2.TaskId = r1.TaskId
+	r1.Run, r2.Run = 1, 2
+	m, _ := a.Update(RecordListMsg{TaskID: id, Records: []protocol.RecordInfo{r1, r2}})
+	a = m.(*App)
+	if !strings.Contains(a.detail.View(), modalKeys.DetailRecordKeep+": keep") {
+		t.Fatalf("the popup footer does not offer keep:\n%s", a.detail.View())
+	}
+	a.updateKey(key(modalKeys.DetailRecordKeep))
+	if !a.recordKeep.IsOpen() || a.recordKeep.Ref() != id+"#2" {
+		t.Fatalf("form open=%v ref=%q, want the latest run %s#2", a.recordKeep.IsOpen(), a.recordKeep.Ref(), id)
+	}
+	a.updateKey(tea.KeyMsg{Type: tea.KeyUp})
+	if a.recordKeep.Ref() != id+"#1" {
+		t.Fatalf("↑ picked %q, want run 1", a.recordKeep.Ref())
+	}
+	a.updateKey(keyRunes("7d"))
+	if _, cmd := a.updateKey(tea.KeyMsg{Type: tea.KeyEnter}); cmd != nil || len(got) != 0 {
+		t.Fatalf("7d was sent (cmd %v, sent %v)", cmd != nil, got)
+	}
+	if !strings.Contains(a.recordKeep.View(), "positive duration") {
+		t.Fatalf("the refusal is not shown:\n%s", a.recordKeep.View())
+	}
+	a.recordKeep.input.SetValue("168h")
+	if _, cmd := a.updateKey(tea.KeyMsg{Type: tea.KeyEnter}); cmd == nil {
+		t.Fatal("168h not sent")
+	}
+	if len(got) != 1 || got[0] != (sent{id + "#1", false, 168 * time.Hour}) {
+		t.Fatalf("sent %+v, want %s#1 for 168h", got, id)
+	}
+	m, _ = a.Update(RecordKeepResultMsg{Ref: id + "#1", Err: errors.New("record_persist not held")})
+	a = m.(*App)
+	if !a.recordKeep.IsOpen() || !strings.Contains(a.recordKeep.View(), "record_persist not held") {
+		t.Fatalf("a refusal closed the form or is not shown:\n%s", a.recordKeep.View())
+	}
+	a.updateKey(tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = a.Update(RecordKeepResultMsg{Ref: id + "#1", Text: "record keep: " + id + "#1 is kept for 168h0m0s after its run ends"})
+	a = m.(*App)
+	if a.recordKeep.IsOpen() || !a.detail.IsOpen() {
+		t.Fatalf("after the answer: form open=%v popup open=%v, want only the popup", a.recordKeep.IsOpen(), a.detail.IsOpen())
+	}
+	if !strings.Contains(strings.Join(a.cmdresult.lines, "\n"), "is kept for 168h") {
+		t.Fatalf("the result is not in the results pane: %v", a.cmdresult.lines)
+	}
+	a.updateKey(key(modalKeys.DetailRecordKeep))
+	a.recordKeep.input.SetValue("forever")
+	a.updateKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if len(got) != 3 || got[2] != (sent{id + "#2", true, 0}) {
+		t.Fatalf("sent %+v, want %s#2 forever last", got, id)
+	}
+}

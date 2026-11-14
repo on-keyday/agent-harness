@@ -168,6 +168,8 @@ type modalKeyMap struct {
 	ConnsTrsf       string
 	ConnsReadRunner string
 	ConnsReadServer string
+	// DetailRecordKeep opens the retention form on the d popup's records.
+	DetailRecordKeep string
 }
 
 var modalKeys = modalKeyMap{
@@ -211,6 +213,9 @@ var modalKeys = modalKeyMap{
 	// letter, because keeping is not a form of purging, waking or sending,
 	// and k is a scroll key.
 	BoardRetain: "t",
+	// The same letter in the d popup, for the same act: how long a record is
+	// kept. Not a scroll key there either.
+	DetailRecordKeep: "t",
 	// o (open) reads a topic by name rather than from the list, which is how
 	// a topic nothing was published to yet is reached at all.
 	BoardOpenTopic: "o",

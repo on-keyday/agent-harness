@@ -6456,7 +6456,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
         recordCache.set(t.id, await window.harness.recordList(t.id));
         refreshSnapshot();
       } catch (e) {
-        appendCmdOutput(`record ls: ${e.message}`, true);
+        appendCmdOutput(e.message, true);
       }
     });
     if (recordCache.has(t.id)) {
@@ -6478,11 +6478,19 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
           const b = document.createElement("button");
           b.type = "button";
           b.className = "task-action";
-          b.textContent = act === "delete" ? "🗑 削除" : (act === "raw" ? "⤓ raw" : "⤓ .cast");
+          b.textContent = { delete: "🗑 削除", keep: "⏲ 期限", raw: "⤓ raw" }[act] || "⤓ .cast";
           b.addEventListener("click", async (e) => {
             e.stopPropagation();
             try {
-              if (act === "delete") {
+              if (act === "keep") {
+                // A prompt, as the background switch above: the sheet is
+                // rebuilt on every snapshot tick, which wipes an inline field.
+                const v = window.prompt(`${ref} の保存期限 (run の終了から): forever / 168h / 30m`, "forever");
+                if (v === null) return;
+                appendCmdOutput(await window.harness.recordKeep(ref, v), true);
+                recordCache.set(t.id, await window.harness.recordList(t.id));
+                refreshSnapshot();
+              } else if (act === "delete") {
                 if (!window.confirm(`${ref} の PTY 記録を削除しますか?`)) return;
                 await window.harness.recordDelete(ref, false);
                 recordCache.set(t.id, await window.harness.recordList(t.id));
@@ -6493,7 +6501,8 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
                 triggerDownload(bytes, recordDownloadName(t.id, row.run, act));
               }
             } catch (err) {
-              appendCmdOutput(`record ${act === "delete" ? "rm" : "get"}: ${err.message}`, true);
+              // The bridge already names the verb ("record keep: …").
+              appendCmdOutput(err.message, true);
             }
           });
           line.appendChild(b);
@@ -6509,7 +6518,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
           if (recordCache.has(t.id)) recordCache.set(t.id, await window.harness.recordList(t.id));
           refreshSnapshot();
         } catch (e) {
-          appendCmdOutput(`record ${recModel.switchTo}: ${e.message}`, true);
+          appendCmdOutput(e.message, true);
         }
       });
     }

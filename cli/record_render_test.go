@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/exec/frame"
@@ -149,5 +150,23 @@ func TestSessionNewRecordFlagsSetExt(t *testing.T) {
 	}
 	if none := buildOpenInteractiveRequest("/r", SessionOpts{}); none.ExtPresent() {
 		t.Fatal("an open that says nothing put the ext byte on the wire")
+	}
+}
+
+// The retention a form or a prompt types (TUI d popup, WebUI task sheet):
+// "forever" or a positive duration, as `record keep --forever` / `--for D`.
+func TestParseRecordRetention(t *testing.T) {
+	for _, s := range []string{"forever", " Forever "} {
+		if forever, ttl, err := ParseRecordRetention(s); err != nil || !forever || ttl != 0 {
+			t.Fatalf("%q: forever=%v ttl=%v err=%v", s, forever, ttl, err)
+		}
+	}
+	if forever, ttl, err := ParseRecordRetention("168h"); err != nil || forever || ttl != 168*time.Hour {
+		t.Fatalf("168h: forever=%v ttl=%v err=%v", forever, ttl, err)
+	}
+	for _, bad := range []string{"", "0s", "-1h", "7d", "never"} {
+		if _, _, err := ParseRecordRetention(bad); err == nil {
+			t.Fatalf("%q accepted", bad)
+		}
 	}
 }

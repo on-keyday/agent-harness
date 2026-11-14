@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"syscall/js"
 	"time"
 
@@ -19,14 +20,14 @@ import (
 // session's recording.
 
 // recordPromise runs fn off the JS thread and settles a Promise with its
-// result.
+// result. A rejection's message names the verb, so the page prints it as is.
 func recordPromise(what string, fn func(c *cli.Client) (any, error)) any {
 	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
 		resolve, reject := promiseArgs[0], promiseArgs[1]
 		go func() {
 			c, err := currentClient()
 			if err != nil {
-				rejectErr(reject, err)
+				rejectErr(reject, fmt.Errorf("%s: %w", what, err))
 				return
 			}
 			v, err := fn(c)
@@ -115,15 +116,21 @@ func harnessRecordDelete(this js.Value, args []js.Value) any {
 	})
 }
 
-// harnessRecordKeep(ref, forever, ttlMs) → Promise<void>.
+// harnessRecordKeep(ref, retention) → Promise<string>: retention is what the
+// sheet's prompt was given, "forever" or a duration, read by the same parser
+// as the TUI's keep form; it resolves to `record keep`'s own result line.
 func harnessRecordKeep(this js.Value, args []js.Value) any {
-	ref, forever := argString(args, 0), argBool(args, 1)
-	var ttl time.Duration
-	if len(args) > 2 && args[2].Type() == js.TypeNumber {
-		ttl = time.Duration(args[2].Int()) * time.Millisecond
-	}
+	ref, retention := argString(args, 0), argString(args, 1)
 	return recordPromise("record keep", func(c *cli.Client) (any, error) {
-		return js.Undefined(), c.RecordKeep(rootCtx, ref, forever, ttl)
+		forever, ttl, err := cli.ParseRecordRetention(retention)
+		if err != nil {
+			return nil, err
+		}
+		var out strings.Builder
+		if err := cli.RecordKeepWith(rootCtx, c, ref, forever, ttl, &out); err != nil {
+			return nil, err
+		}
+		return strings.TrimSpace(out.String()), nil
 	})
 }
 

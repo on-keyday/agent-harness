@@ -3156,10 +3156,13 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"record", "keep"}, CmdlineSurfaces: CLI | TUI,
-		ModalSurfaces: []ModalSurface{{Surface: WebUI, At: "webui/static/main.js:buildTaskSheet"}},
-		Notes:         []string{"change how long a record is kept after its run ends: longer needs record_persist, shorter record_delete"},
-		Action:        "RecordKeepAction",
-		Args:          []Arg{{Name: "record", Type: ArgString, Field: "Ref"}},
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/recordkeep.go:RecordKeepForm"},
+			{Surface: WebUI, At: "webui/static/main.js:buildTaskSheet"},
+		},
+		Notes:  []string{"change how long a record is kept after its run ends: longer needs record_persist, shorter record_delete"},
+		Action: "RecordKeepAction",
+		Args:   []Arg{{Name: "record", Type: ArgString, Field: "Ref"}},
 		Flags: []Flag{
 			{Name: "forever", Type: FlagBool, Default: false, Field: "Forever", Help: "keep it until deleted (or pushed out by --record-total-max)"},
 			{Name: "for", Type: FlagDuration, Default: time.Duration(0), Field: "For", Help: "keep it this long after its run ends"},

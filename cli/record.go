@@ -359,6 +359,22 @@ func RecordKeepWith(ctx context.Context, c *Client, ref string, forever bool, tt
 	return nil
 }
 
+// ParseRecordRetention reads a retention typed into a form rather than given
+// as flags: "forever" (`record keep --forever`) or a positive Go duration
+// (`--for D`). The TUI's keep form and the WebUI's task sheet both read it
+// here, so the two cannot accept different things.
+func ParseRecordRetention(s string) (forever bool, ttl time.Duration, err error) {
+	s = strings.TrimSpace(s)
+	if strings.EqualFold(s, "forever") {
+		return true, 0, nil
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d <= 0 {
+		return false, 0, fmt.Errorf("retention %q: want forever or a positive duration (168h, 30m)", s)
+	}
+	return false, d, nil
+}
+
 // RecordSwitchWith switches recording and says so.
 func RecordSwitchWith(ctx context.Context, c *Client, taskIDHex string, on bool, out io.Writer) error {
 	if err := c.RecordSwitch(ctx, taskIDHex, on); err != nil {

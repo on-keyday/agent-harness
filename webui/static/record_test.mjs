@@ -38,7 +38,7 @@ test("the sheet lists each record with its size and expiry, and what can be done
     "#2  size=3.0MiB  expires=forever  (recording)",
     "#1  size=1.0KiB  expires=2026-12-01 00:00:00",
   ]);
-  assert.deepEqual([...m.rows[0].actions], ["raw", "asciicast", "delete"]); // copied out of the vm realm
+  assert.deepEqual([...m.rows[0].actions], ["raw", "asciicast", "keep", "delete"]); // copied out of the vm realm
   assert.equal(m.switchTo, "off", "a live recorded session offers switching off");
   const idle = page.recordSheetModel({ status: "Running", liveTerminal: true, recording: false }, []);
   assert.equal(idle.switchTo, "on");
