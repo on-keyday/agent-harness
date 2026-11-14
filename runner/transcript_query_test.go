@@ -329,8 +329,9 @@ func TestTranscriptGetOfAGrowingFileMatchesItsSize(t *testing.T) {
 	}
 }
 
-// A store that cannot be read (agy before its store exists; opencode whose
-// binary is missing) does not turn "not here" into store_error: the session
+// A store that cannot be read (here agy, whose environment names no home;
+// opencode whose binary is missing) does not turn "not here" into
+// store_error: the session
 // is not in any store that answered, and the message names the one that could
 // not (review of Tasks 2–4, I1).
 func TestUnavailableStoreDoesNotMaskNoSuchSession(t *testing.T) {
