@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	_ "time/tzdata" // zone names load on hosts without a zone database (S-D3)
 )
 
 // maxCronExpr bounds the cron field (control messages are one datagram).
@@ -214,22 +215,14 @@ func (c cronExpr) nextWall(after time.Time) time.Time {
 func nextFiring(c cronExpr, loc *time.Location, after time.Time) time.Time {
 	w := after.In(loc)
 	cur := time.Date(w.Year(), w.Month(), w.Day(), w.Hour(), w.Minute(), w.Second(), w.Nanosecond(), time.UTC)
-	for range 4 {
+	// A repeated hour of a 2h shift holds up to 120 matches of "* h * * *",
+	// all of which may map at or before `after`; the cap covers that with room.
+	for range 300 {
 		m := c.nextWall(cur)
 		if m.IsZero() {
 			return time.Time{}
 		}
-		t := time.Date(m.Year(), m.Month(), m.Day(), m.Hour(), m.Minute(), 0, 0, loc)
-		if l := t.In(loc); l.Year() != m.Year() || l.Month() != m.Month() || l.Day() != m.Day() ||
-			l.Hour() != m.Hour() || l.Minute() != m.Minute() {
-			// m is inside a gap; time.Date normalized it backwards.
-			_, end := t.ZoneBounds()
-			if end.IsZero() {
-				return time.Time{}
-			}
-			t = end
-		}
-		if t.After(after) {
+		if t := wallToInstant(m, loc); t.After(after) {
 			return t.UTC()
 		}
 		cur = m
@@ -237,23 +230,56 @@ func nextFiring(c cronExpr, loc *time.Location, after time.Time) time.Time {
 	return time.Time{}
 }
 
+// wallToInstant maps wall-clock fields (carried in UTC) to an instant in loc:
+// the earlier instant if the wall time occurs twice, and the transition
+// instant if it does not occur (S-D3a). time.Date cannot be used: its choice in
+// both cases depends on the sign of the zone's offset.
+func wallToInstant(m time.Time, loc *time.Location) time.Time {
+	_, offBefore := m.Add(-24 * time.Hour).In(loc).Zone()
+	_, offAfter := m.Add(24 * time.Hour).In(loc).Zone()
+	var best time.Time
+	for _, off := range []int{offBefore, offAfter} {
+		cand := m.Add(-time.Duration(off) * time.Second)
+		l := cand.In(loc)
+		if l.Year() != m.Year() || l.Month() != m.Month() || l.Day() != m.Day() ||
+			l.Hour() != m.Hour() || l.Minute() != m.Minute() {
+			continue
+		}
+		if best.IsZero() || cand.Before(best) {
+			best = cand
+		}
+	}
+	if !best.IsZero() {
+		return best
+	}
+	// In a gap: the wall time read with the smaller (pre-transition) offset
+	// lies just after the transition; its zone period starts at it.
+	off := min(offBefore, offAfter)
+	start, _ := m.Add(-time.Duration(off) * time.Second).In(loc).ZoneBounds()
+	return start
+}
+
 // maxZoneName bounds the zone field (control messages are one datagram).
 const maxZoneName = 64
 
-// loadZone resolves "" to the server's local zone, by IANA name where it can
-// be determined ($TZ, then the /etc/localtime symlink target), else "Local";
-// every returned name loads again with time.LoadLocation on this host.
+// loadZone resolves "" to the server's local zone by IANA name ($TZ, then the
+// /etc/localtime symlink target) and refuses when no name can be determined:
+// "Local" would follow the host's zone later, so it is never stored. Every
+// returned name loads again with time.LoadLocation on this host.
 func loadZone(name string) (*time.Location, string, error) {
 	if len(name) > maxZoneName {
 		return nil, "", fmt.Errorf("time zone name longer than %d bytes", maxZoneName)
 	}
 	if name == "" {
 		for _, cand := range localZoneCandidates() {
-			if loc, err := time.LoadLocation(cand); err == nil && cand != "Local" {
+			if cand == "Local" || cand == "" {
+				continue
+			}
+			if loc, err := time.LoadLocation(cand); err == nil {
 				return loc, cand, nil
 			}
 		}
-		return time.Local, "Local", nil
+		return nil, "", errors.New("the server's local time zone has no IANA name it can determine; give the zone explicitly (--tz)")
 	}
 	loc, err := time.LoadLocation(name)
 	if err != nil {
@@ -262,7 +288,8 @@ func loadZone(name string) (*time.Location, string, error) {
 	return loc, name, nil
 }
 
-func localZoneCandidates() []string {
+// localZoneCandidates is a variable so tests can make the local zone unresolvable.
+var localZoneCandidates = func() []string {
 	var out []string
 	if tz := strings.TrimPrefix(os.Getenv("TZ"), ":"); tz != "" {
 		out = append(out, tz)

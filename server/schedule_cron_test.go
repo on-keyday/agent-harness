@@ -183,44 +183,84 @@ func TestNextWallMatchesBruteForce(t *testing.T) {
 	}
 }
 
-func TestNextAcrossDST(t *testing.T) {
-	ny, err := time.LoadLocation("America/New_York")
+func loadTestZone(t *testing.T, name string) *time.Location {
+	t.Helper()
+	loc, err := time.LoadLocation(name)
 	if err != nil {
 		t.Skip("no tzdata:", err)
 	}
+	return loc
+}
+
+func utc(y int, m time.Month, d, h, mi int) time.Time {
+	return time.Date(y, m, d, h, mi, 0, 0, time.UTC)
+}
+
+// walkOnePerDay fires `expr` from start for 5 calendar days and checks each fires exactly once.
+func walkOnePerDay(t *testing.T, c cronExpr, loc *time.Location, start time.Time) {
+	t.Helper()
+	perDay := map[string]int{}
+	at := start
+	end := start.AddDate(0, 0, 4).Add(24 * time.Hour)
+	for {
+		n := nextFiring(c, loc, at)
+		if n.IsZero() || !n.Before(end) {
+			break
+		}
+		perDay[n.In(loc).Format("2006-01-02")]++
+		at = n
+	}
+	for d := 0; d <= 4; d++ {
+		day := start.AddDate(0, 0, d).Format("2006-01-02")
+		if perDay[day] != 1 {
+			t.Errorf("%s from %s: %s fired %d times, want 1 (%v)", loc, start.Format("2006-01-02"), day, perDay[day], perDay)
+		}
+	}
+}
+
+func TestNextAcrossDST(t *testing.T) {
+	ny := loadTestZone(t, "America/New_York")
+	berlin := loadTestZone(t, "Europe/Berlin")
+	sydney := loadTestZone(t, "Australia/Sydney")
 	c := mustCron(t, "30 2 * * *")
-	for _, start := range []time.Time{
-		time.Date(2027, 3, 12, 0, 0, 0, 0, ny),
-		time.Date(2027, 11, 5, 0, 0, 0, 0, ny),
+	for _, tc := range []struct {
+		loc   *time.Location
+		start time.Time
+	}{
+		{ny, time.Date(2027, 3, 12, 0, 0, 0, 0, ny)},
+		{ny, time.Date(2027, 11, 5, 0, 0, 0, 0, ny)},
+		{berlin, time.Date(2027, 3, 26, 0, 0, 0, 0, berlin)},
+		{berlin, time.Date(2027, 10, 29, 0, 0, 0, 0, berlin)},
+		{sydney, time.Date(2027, 10, 1, 0, 0, 0, 0, sydney)},
+		{sydney, time.Date(2027, 3, 31, 0, 0, 0, 0, sydney)},
 	} {
-		perDay := map[string]int{}
-		at := start
-		end := start.AddDate(0, 0, 4).Add(24 * time.Hour)
-		for {
-			n := nextFiring(c, ny, at)
-			if n.IsZero() || !n.Before(end) {
-				break
-			}
-			perDay[n.In(ny).Format("2006-01-02")]++
-			at = n
-		}
-		for d := 0; d <= 4; d++ {
-			day := start.AddDate(0, 0, d).Format("2006-01-02")
-			if perDay[day] != 1 {
-				t.Errorf("from %s: %s fired %d times, want 1 (%v)", start.Format("2006-01-02"), day, perDay[day], perDay)
-			}
+		walkOnePerDay(t, c, tc.loc, tc.start)
+	}
+	for _, tc := range []struct {
+		name string
+		loc  *time.Location
+		from time.Time
+		want time.Time
+		expr string
+	}{
+		{"NY gap", ny, time.Date(2027, 3, 14, 0, 0, 0, 0, ny), utc(2027, 3, 14, 7, 0), "30 2 * * *"},
+		{"Berlin gap", berlin, time.Date(2027, 3, 28, 0, 0, 0, 0, berlin), utc(2027, 3, 28, 1, 0), "30 2 * * *"},
+		{"Sydney gap", sydney, time.Date(2027, 10, 3, 0, 0, 0, 0, sydney), utc(2027, 10, 2, 16, 0), "30 2 * * *"},
+		{"NY repeat", ny, time.Date(2027, 11, 7, 0, 0, 0, 0, ny), utc(2027, 11, 7, 5, 30), "30 1 * * *"},
+		{"Berlin repeat", berlin, time.Date(2027, 10, 31, 0, 0, 0, 0, berlin), utc(2027, 10, 31, 0, 30), "30 2 * * *"},
+		{"Sydney repeat", sydney, time.Date(2027, 4, 4, 0, 0, 0, 0, sydney), utc(2027, 4, 3, 15, 30), "30 2 * * *"},
+		// a wall match whose earlier instant is <= after already fired: next firing is the next day
+		{"NY second pass hourly", ny, utc(2027, 11, 7, 6, 10), utc(2027, 11, 8, 6, 0), "* 1 * * *"},
+		{"NY second pass step", ny, utc(2027, 11, 7, 6, 2), utc(2027, 11, 8, 6, 0), "*/5 1 * * *"},
+	} {
+		got := nextFiring(mustCron(t, tc.expr), tc.loc, tc.from)
+		if !got.Equal(tc.want) {
+			t.Errorf("%s: got %v, want %v", tc.name, got, tc.want)
 		}
 	}
-	// the gap day fires at the end of the gap, the repeated hour once at the earlier instant
-	if got, want := nextFiring(c, ny, time.Date(2027, 3, 14, 0, 0, 0, 0, ny)), time.Date(2027, 3, 14, 7, 0, 0, 0, time.UTC); !got.Equal(want) {
-		t.Errorf("gap day: %v, want %v", got, want)
-	}
+	// the repeated hour fires once: after the earlier firing, the next is the next day
 	c2 := mustCron(t, "30 1 * * *")
-	got := nextFiring(c2, ny, time.Date(2027, 11, 7, 0, 0, 0, 0, ny))
-	if want := time.Date(2027, 11, 7, 5, 30, 0, 0, time.UTC); !got.Equal(want) {
-		t.Errorf("repeated hour: %v, want %v", got, want)
-	}
-	if again := nextFiring(c2, ny, got); !again.Equal(time.Date(2027, 11, 8, 6, 30, 0, 0, time.UTC)) {
+	if again := nextFiring(c2, ny, utc(2027, 11, 7, 5, 30)); !again.Equal(utc(2027, 11, 8, 6, 30)) {
 		t.Errorf("after repeated hour: %v", again)
 	}
 }
@@ -262,4 +302,28 @@ func FuzzParseCron(f *testing.F) {
 			t.Fatalf("%q: nextWall %v does not match", expr, n)
 		}
 	})
+}
+
+func TestLoadZoneUnresolvableLocal(t *testing.T) {
+	old := localZoneCandidates
+	defer func() { localZoneCandidates = old }()
+	localZoneCandidates = func() []string { return nil }
+	if loc, name, err := loadZone(""); err == nil {
+		t.Errorf("loadZone(\"\") = %v, %q, want an error", loc, name)
+	}
+	localZoneCandidates = func() []string { return []string{"Local", "Not/AZone"} }
+	if _, name, err := loadZone(""); err == nil {
+		t.Errorf("loadZone(\"\") accepted %q", name)
+	}
+	localZoneCandidates = func() []string { return []string{"Not/AZone", "Asia/Tokyo"} }
+	if _, name, err := loadZone(""); err != nil || name != "Asia/Tokyo" {
+		t.Errorf("loadZone(\"\") = %q, %v", name, err)
+	}
+}
+
+func TestLoadZoneWithEmptyZoneinfo(t *testing.T) {
+	t.Setenv("ZONEINFO", t.TempDir())
+	if _, name, err := loadZone("Asia/Tokyo"); err != nil || name != "Asia/Tokyo" {
+		t.Errorf("loadZone(Asia/Tokyo) with empty ZONEINFO = %q, %v", name, err)
+	}
 }
