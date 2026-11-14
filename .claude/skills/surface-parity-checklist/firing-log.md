@@ -3973,3 +3973,87 @@ omitted: 7 (the WebUI command input does not take the record verbs; the task
          popup and `ls` carry it), 36 (supervising-workers' capability list
          says it may lag and points at `harness-cli caps`; not updated)
 missed:  —
+
+### 2026-11-15 (pre-landing) — agent transcripts (pillar B): `transcript ls / get`, `transcript_read`, `transcriptStore`
+
+Two verbs (the CLI and TUI command lines, the TUI `d` popup, the WebUI task
+sheet through the wasm bridge), a capability bit, a RunnerHello bit
+(`transcripts`, kept on `RunnerEntry` only) and a runner profile key
+(`transcriptStore` / `--agent-transcript-store`) that every preset sets. Spec
+`2026-11-14-pillar-b-transcripts-design.md` B-D7. Walked after the CLI, TUI,
+WebUI and agy-store commits; the README and supervising-workers edits were in
+the working tree, uncommitted, at walk time. S1–S6 walked: the profile key is a
+per-agent preset field, as `logFormat` and `streamAdapter` are.
+
+done:    1 (two `VerbSpec` rows, `CmdlineSurfaces: CLI | TUI`; ModalSurfaces
+         name the popup and the sheet), 2 (`cli.CheckTranscriptNames` inside
+         the client methods every surface calls, the server re-checks the
+         bounds; `-o` required on the TUI in its handler, the `record get`
+         precedent), 5 (`formatTranscriptsBlock` in the `d` popup, under the
+         records; the caps picker enumerates `CapsCatalog`), 6 (sheet
+         「✎ 会話記録を表示」, per session 📂 and ⤓ .tar, per file ⤓; caps chips
+         from the catalog), 8 (`transcriptSessions` / `transcriptFiles` /
+         `transcriptGet`), 10, 13 / 19 / 22 (no edit: whoami's `CapsLabel`, the
+         picker and the chips enumerate `GrantableCaps`), 15 (`CapDescription`
+         names `transcript ls / get` and the exec_run conjunct; strong in
+         `capAuditTable`. exec_run's own line does not mention it), 17, 21, 24
+         (the session positional selects sessions or files; no file means a
+         tar; a shared directory with and without exec_run — rows dropped with
+         a note on ls, `no_such_session` on get; a queued task answers
+         `runner_offline`; all in the row Notes), 25 (`size_known`,
+         `include_shared`), 27 + 28a (`TranscriptListRequest{` ×2 and
+         `TranscriptGetRequest{` ×1, all in `cli/transcript.go`;
+         `RunnerTranscriptRequest{` once, in `runnerTranscriptRequest`), 28
+         (`all` widened; `TestWALReplay_OldAllMaskLacksTranscriptRead`; nothing
+         else persisted, spec §Persistence), 29, 30, 32
+         (`cli.TranscriptSessionRow` / `TranscriptFileRow` for the CLI, the
+         popup and the bridge's `row`), 34a (action buttons, like the records
+         rows beside them), 35 (README 5e, the capability list, the `exec_view`
+         row — uncommitted), 36 (supervising-workers, three copies byte-equal —
+         uncommitted), 39 (B-D7 row by row: every row built; WebUI screenshots
+         exist; no TUI PTY, sandboxed or Windows live run is recorded), S1
+         (`transcriptStore` on every preset, the sandbox twins derive it,
+         `--agent-transcript-store` in `_CONFLICTING_FLAGS`, pinned in
+         `test_agent_presets.py`)
+omitted: 4 (no new key: `d` fetches the list, and fetching a file is
+         `transcript get -o` on the command line, B-D7), 7 (the WebUI command
+         input takes no `transcript` verb; the sheet does, as for `record`).
+         11 / 12 / 18 / 18a / 23 for the runner's `transcripts` bit — decided
+         nowhere. The sibling `skills_injected` is mirrored onto `RunnerInfo`
+         and reaches every runner surface; this bit stops at `RunnerEntry`, so
+         a runner that cannot answer is found only by a failed fetch
+         (`runner_unsupported`).
+n/a:     3, 9, 14, 16, 20, 26, 34, 38. S2 (no agent added or renamed), S3 (the
+         wrapper table is unchanged; B-F4's host-store placement is relied on,
+         not changed), S4 (the runner reads the stores on the host; no
+         egress), S5 (no `HARNESS_*` variable; the runner resolves each store
+         through its own environment)
+open:    found by this walk, not fixed at walk time:
+         **31 + 33** — `-o` on a zero-byte file. `cli.LazyFile` creates the
+         file on the first Write, and `io.CopyN(w, r, 0)` never writes, so a
+         successful get of an empty file (an agy `.db-wal`, any empty file of
+         a session) leaves no file: the CLI exits 0 and the TUI prints
+         `written to <path>`. The WebUI downloads an empty Blob, correctly.
+         `LazyFile.Opened()` exists and no caller reads it.
+         **35** — the README's TUI cmdline verb list (the "The cmdline accepts"
+         paragraph) names neither `transcript {ls,get}` nor A1's `record`
+         verbs.
+         **37** — the spec has no Amendment, and what shipped differs from
+         it: a `runner_unsupported` status and the RunnerHello bit, which the
+         Wire section does not name; no "not permitted" status (out of scope
+         answers `no_such_task`, a shared session `no_such_session` or an ok
+         with a note); "an agent without transcripts" is `store_error`, not a
+         status of its own; the SQLite reader (the `sqlite3` CLI), which "Left
+         to the builder" asks to be stated, is stated only in the README;
+         B-D5's pi `--session-dir` is not read; B-D2's "the server drops shared
+         rows" is done by the runner.
+         **S6** — `.claude/commands/runner-up.md` names `--agent-log-format`
+         and `--agent-stream-adapter` in its argument hint and both command
+         templates, and not `--agent-transcript-store`. The upgrade step is
+         only in the spec's Wire section: a slot replayed by
+         `build_and_restart_all.py` keeps an argv without the key, sets
+         `transcripts=1`, and answers every `transcript ls` with `store_error:
+         no agent on this runner keeps transcripts` until it is restarted
+         through its unit. The sandbox README and `probe.sh` gain nothing (no
+         new claim about the container).
+missed:  —
