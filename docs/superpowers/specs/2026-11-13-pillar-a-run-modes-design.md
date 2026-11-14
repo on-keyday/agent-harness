@@ -473,9 +473,13 @@ Settled with the operator on 2026-11-14, before A3's plan:
   such a session and `session snapshot` show the JSON as it was emitted.
 - **`logs` reads what the run left and renders it on read.** For an agent
   with a transcript, it reads B's transcript. For a program with none (bash,
-  cmd), it reads the run's PTY record. A profile's JSON is decoded the way
-  the task log decodes it today (`runner/agentlog`, chosen by the profile's
-  `logFormat`), so `logs` prints what it prints today. Whether `logFormat`
+  cmd), it reads the run's PTY record. A PTY record of a print-mode run holds
+  the profile's stdout JSON, which the existing decoders read (`runner/agentlog`,
+  chosen by the profile's `logFormat`). A transcript is the agent's stored
+  format, which those decoders do not read (codex's rollout file starts with
+  `session_meta`). So `logs` over a transcript needs its own reading per agent,
+  or prints the transcript raw. Which one is decided in A3's plan (found by
+  pillar B's builder check, 2026-11-14). Whether `logFormat`
   reaches the reader is to be checked in the plan. It is configured on the
   runner today, and if nothing carries it further, the runner advertises it
   per profile. The raw JSON stays readable through `record get`.
