@@ -376,7 +376,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
                         spawnDepth = null, maxDescendants = null,
                         prompt = "", runMode = "", deadlineMs = 0, quietMs = 0,
                         blockedMs = 0, queueTimeoutMs = 0, turnEnd = "",
-                        rows = 0, cols = 0, record = "" }) {
+                        rows = 0, cols = 0, record = "", oneshot = false }) {
     // An exact resume takes the task's recorded agent, args, caps and scope,
     // and the server refuses a request that carries any of them, so none of
     // the Compose state rides along.
@@ -425,6 +425,10 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       rows, cols,
       // The PTY record (A-D22): "" leaves it to the server's --record.
       record,
+      // session new --oneshot (A3, A-D29). Named here like every other
+      // field: this function rebuilds the request, so a key it does not
+      // name is dropped.
+      oneshot: !!oneshot,
     };
     if (runner) req.runner = runner;
     if (ip) req.ip = ip;
