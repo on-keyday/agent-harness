@@ -3192,6 +3192,46 @@ var Verbs = []VerbSpec{
 		Args:          []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
 		Examples:      []string{"record off aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 	},
+	// Agent transcripts (pillar B spec, docs/superpowers/specs/2026-11-14-pillar-b-transcripts-design.md):
+	// fetched from the task's runner on demand; nothing is kept on the server.
+	{
+		Path: []string{"transcript", "ls"}, CmdlineSurfaces: CLI,
+		NoModalSurface: "none yet: the TUI d-popup and the WebUI task sheet come with pillar B Tasks 7 and 8, which replace this with ModalSurfaces rows",
+		Notes: []string{
+			"list the agent sessions recorded for a task's working directory (transcript_read): agent, id, times, size",
+			"with a session id, list the files that session is made of",
+			"a shared session (a --no-worktree task's repo) is listed only with exec_run on the task as well",
+		},
+		Action: "TranscriptLsAction",
+		Args: []Arg{
+			{Name: "task-id", Type: ArgTaskID, Field: "TaskID"},
+			{Name: "session", Type: ArgString, Variadic: true, MaxCount: 1, Field: "Session"},
+		},
+		Examples: []string{
+			"transcript ls aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"transcript ls aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0f3c2a1e-5b6d-4e7f-8a9b-0c1d2e3f4a5b",
+		},
+	},
+	{
+		Path: []string{"transcript", "get"}, CmdlineSurfaces: CLI,
+		NoModalSurface: "none yet: the TUI d-popup and the WebUI task sheet come with pillar B Tasks 7 and 8, which replace this with ModalSurfaces rows",
+		Notes: []string{
+			"write one file of an agent session as the agent stored it, or with no file the whole session as a tar (transcript_read)",
+		},
+		Action: "TranscriptGetAction",
+		Args: []Arg{
+			{Name: "task-id", Type: ArgTaskID, Field: "TaskID"},
+			{Name: "session", Type: ArgString, Field: "Session"},
+			{Name: "file", Type: ArgString, Variadic: true, MaxCount: 1, Field: "File"},
+		},
+		Flags: []Flag{
+			{Name: "o", Type: FlagString, Default: "", Field: "Output", Help: "write to this file instead of stdout; created only once the first byte arrives"},
+		},
+		Examples: []string{
+			"transcript get aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0f3c2a1e-5b6d-4e7f-8a9b-0c1d2e3f4a5b",
+			"transcript get -o session.tar aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0f3c2a1e-5b6d-4e7f-8a9b-0c1d2e3f4a5b",
+		},
+	},
 	{
 		// CLI only. It renders a session's screen to STDOUT for something that
 		// reads text -- an agent driving a loop, a script. The TUI has its own

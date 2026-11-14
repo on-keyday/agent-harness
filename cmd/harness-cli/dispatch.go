@@ -1287,3 +1287,23 @@ func (h cliVerbs) RecordOn(a verb.RecordSwitchAction) error {
 func (h cliVerbs) RecordOff(a verb.RecordSwitchAction) error {
 	return cli.RecordSwitchOut(h.ctx, h.cid(), a.TaskID, false, os.Stdout)
 }
+
+// --- Agent transcripts (pillar B) ---------------------------------------------
+
+func (h cliVerbs) TranscriptLs(a verb.TranscriptLsAction) error {
+	return cli.TranscriptLs(h.ctx, h.cid(), a.TaskID, a.Session, os.Stdout)
+}
+
+// TranscriptGet writes to stdout, or to -o created on the first byte so a
+// refusal or a failed fetch leaves no empty file.
+func (h cliVerbs) TranscriptGet(a verb.TranscriptGetAction) error {
+	if a.Output == "" {
+		return cli.TranscriptGetOut(h.ctx, h.cid(), a.TaskID, a.Session, a.File, os.Stdout)
+	}
+	f := cli.NewLazyFile(a.Output)
+	err := cli.TranscriptGetOut(h.ctx, h.cid(), a.TaskID, a.Session, a.File, f)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	return err
+}

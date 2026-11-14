@@ -930,6 +930,23 @@ type SpawnAction struct {
 	NoRecord bool
 }
 
+// TranscriptGetAction is built by: transcript get.
+type TranscriptGetAction struct {
+	ActionMarker
+	// write to this file instead of stdout; created only once the first byte arrives
+	Output  string
+	TaskID  string
+	Session string
+	File    string
+}
+
+// TranscriptLsAction is built by: transcript ls.
+type TranscriptLsAction struct {
+	ActionMarker
+	TaskID  string
+	Session string
+}
+
 // WorkspaceAction is built by: workspace apply, workspace detach, workspace forward add, workspace forward rm, workspace ls, workspace rm, workspace save, workspace show.
 type WorkspaceAction struct {
 	ActionMarker
@@ -4096,6 +4113,30 @@ func init() {
 			}
 			return a, nil
 		},
+		"transcript ls\x00cli": func(b Bound) (Action, error) {
+			a := TranscriptLsAction{}
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.Session = b.Args[1]
+			}
+			return a, nil
+		},
+		"transcript get\x00cli": func(b Bound) (Action, error) {
+			a := TranscriptGetAction{}
+			a.Output = b.Str("o")
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.Session = b.Args[1]
+			}
+			if len(b.Args) > 2 {
+				a.File = b.Args[2]
+			}
+			return a, nil
+		},
 		"session snapshot\x00cli": func(b Bound) (Action, error) {
 			a := SessionAction{}
 			a.Sub = "snapshot"
@@ -4541,6 +4582,8 @@ const (
 	CmdRecordKeep             = "record keep"
 	CmdRecordOn               = "record on"
 	CmdRecordOff              = "record off"
+	CmdTranscriptLs           = "transcript ls"
+	CmdTranscriptGet          = "transcript get"
 	CmdSessionSnapshot        = "session snapshot"
 	CmdSessionStreamAttach    = "session stream attach"
 	CmdSessionStreamInterrupt = "session stream interrupt"
@@ -7180,6 +7223,48 @@ func ParseCmdRecordOff(sf Surface, args []string, ctx map[string]string) (Record
 	return a, nil
 }
 
+func ParseCmdTranscriptLs(sf Surface, args []string, ctx map[string]string) (TranscriptLsAction, error) {
+	var zero TranscriptLsAction
+	sp, ok := Lookup("transcript", "ls")
+	if !ok {
+		return zero, fmt.Errorf("transcript ls: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(TranscriptLsAction)
+	return a, nil
+}
+
+func ParseCmdTranscriptGet(sf Surface, args []string, ctx map[string]string) (TranscriptGetAction, error) {
+	var zero TranscriptGetAction
+	sp, ok := Lookup("transcript", "get")
+	if !ok {
+		return zero, fmt.Errorf("transcript get: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(TranscriptGetAction)
+	return a, nil
+}
+
 func ParseCmdSessionSnapshot(sf Surface, args []string, ctx map[string]string) (SessionAction, error) {
 	var zero SessionAction
 	sp, ok := Lookup("session", "snapshot")
@@ -7829,6 +7914,10 @@ type CLIDispatch[R any] interface {
 	RecordOn(RecordSwitchAction) R
 	// record off
 	RecordOff(RecordSwitchAction) R
+	// transcript ls
+	TranscriptLs(TranscriptLsAction) R
+	// transcript get
+	TranscriptGet(TranscriptGetAction) R
 	// session snapshot
 	SessionSnapshot(SessionAction) R
 	// session stream attach
@@ -8484,6 +8573,18 @@ func DispatchCLI[R any](h CLIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.RecordOff(a), true, nil
+	case CmdTranscriptLs:
+		a, perr := ParseCmdTranscriptLs(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.TranscriptLs(a), true, nil
+	case CmdTranscriptGet:
+		a, perr := ParseCmdTranscriptGet(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.TranscriptGet(a), true, nil
 	case CmdSessionSnapshot:
 		a, perr := ParseCmdSessionSnapshot(CLI, args, ctx)
 		if perr != nil {
@@ -8870,6 +8971,10 @@ func DispatchCLIAction[R any](h CLIDispatch[R], act Action) (r R, handled bool) 
 		case "off":
 			return h.RecordOff(a), true
 		}
+	case TranscriptLsAction:
+		return h.TranscriptLs(a), true
+	case TranscriptGetAction:
+		return h.TranscriptGet(a), true
 	case AgentAction:
 		switch a.Sub {
 		case "inbox":
@@ -9523,6 +9628,18 @@ func ParseCLICommand(tokens []string, ctx map[string]string) (act Action, handle
 			return a, true, nil
 		case CmdRecordOff:
 			a, perr := ParseCmdRecordOff(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdTranscriptLs:
+			a, perr := ParseCmdTranscriptLs(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdTranscriptGet:
+			a, perr := ParseCmdTranscriptGet(CLI, tokens[n:], ctx)
 			if perr != nil {
 				return nil, true, perr
 			}
