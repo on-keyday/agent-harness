@@ -61,6 +61,10 @@ type RunnerEntry struct {
 	// profiles — HasProfile/DefaultProfile fall back to AgentBin in that case.
 	AgentProfiles  []string
 	SkillsInjected bool // from RunnerHello.skills_injected
+	// Transcripts: the runner answers transcript requests (RunnerHello's
+	// transcripts bit, pillar B). One without it is never sent one: an unknown
+	// request type makes it drop the connection.
+	Transcripts bool
 	// Key is the enrolled Ed25519 key this connection authenticated with
 	// (AuthRole.runner). The gate admits no runner without one; nil only in
 	// test wiring that leaves RunnerHandler.AuthOf unset.

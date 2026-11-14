@@ -135,31 +135,7 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 		if maxTasks < 1 {
 			maxTasks = 1
 		}
-		roots := make([]string, len(hello.AllowedRoots))
-		for i, ar := range hello.AllowedRoots {
-			// Wire is POSIX '/'-paths; use path.Clean (not filepath.Clean) so a
-			// Windows-running server doesn't convert '/' to '\' and break
-			// protocol.RootMatches.
-			roots[i] = path.Clean(string(ar.Path))
-		}
-		profiles := make([]string, len(hello.AgentProfiles))
-		for i, p := range hello.AgentProfiles {
-			profiles[i] = string(p.Name)
-		}
-		entry := &RunnerEntry{
-			ID:               runnerID,
-			Identity:         hello.RunnerId,
-			Hostname:         string(hello.Hostname),
-			GOOS:             string(hello.Goos),
-			AllowedRoots:     roots,
-			MaxTasks:         maxTasks,
-			AgentBin:         string(hello.AgentBin),
-			AgentProfiles:    profiles,
-			SkillsInjected:   hello.SkillsInjected(),
-			ActiveTasks:      make(map[string]struct{}),
-			ConnectedAt:      now,
-			LastTaskActivity: now,
-		}
+		entry := runnerEntryFromHello(runnerID, *hello, maxTasks, now)
 		entry.Conn = conn
 		// What the server knew when it made this connection, if it did. nil:
 		// the runner dialed in.
@@ -465,4 +441,37 @@ func (h *RunnerHandler) acceptTaskReport(runner objproto.ConnectionID, taskID st
 	}
 	slog.Warn("runner_handler: task report from non-owner", "runner", runner, "task_id", taskID)
 	return false
+}
+
+// runnerEntryFromHello is the registry entry a runner's hello describes. Its
+// own function so a test can see every hello field reach the entry: a field
+// dropped here is a runner the server misjudges for as long as it stays up
+// (the transcripts bit, for one, decides whether it may be asked at all).
+func runnerEntryFromHello(runnerID objproto.ConnectionID, hello protocol.RunnerHello, maxTasks int, now time.Time) *RunnerEntry {
+	roots := make([]string, len(hello.AllowedRoots))
+	for i, ar := range hello.AllowedRoots {
+		// Wire is POSIX '/'-paths; use path.Clean (not filepath.Clean) so a
+		// Windows-running server doesn't convert '/' to '\' and break
+		// protocol.RootMatches.
+		roots[i] = path.Clean(string(ar.Path))
+	}
+	profiles := make([]string, len(hello.AgentProfiles))
+	for i, p := range hello.AgentProfiles {
+		profiles[i] = string(p.Name)
+	}
+	return &RunnerEntry{
+		ID:               runnerID,
+		Identity:         hello.RunnerId,
+		Hostname:         string(hello.Hostname),
+		GOOS:             string(hello.Goos),
+		AllowedRoots:     roots,
+		MaxTasks:         maxTasks,
+		AgentBin:         string(hello.AgentBin),
+		AgentProfiles:    profiles,
+		SkillsInjected:   hello.SkillsInjected(),
+		Transcripts:      hello.Transcripts(),
+		ActiveTasks:      make(map[string]struct{}),
+		ConnectedAt:      now,
+		LastTaskActivity: now,
+	}
 }
