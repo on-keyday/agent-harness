@@ -165,12 +165,14 @@ var kindCapClass = map[protocol.TaskControlKind]capClass{
 	protocol.TaskControlKind_RecordDelete:     capInMap,
 	// The bit depends on the direction: later/forever or on → record_persist,
 	// earlier or off → record_delete (A-D22, A-D26).
-	protocol.TaskControlKind_RecordKeep:   capInHandler,
-	protocol.TaskControlKind_RecordSwitch: capInHandler,
+	protocol.TaskControlKind_RecordKeep:     capInHandler,
+	protocol.TaskControlKind_RecordSwitch:   capInHandler,
+	protocol.TaskControlKind_TranscriptList: capInMap,
+	protocol.TaskControlKind_TranscriptGet:  capInMap,
 }
 
 func TestEveryTaskControlKindHasACapVerdict(t *testing.T) {
-	for i := 0; i <= int(protocol.TaskControlKind_RecordSwitch); i++ {
+	for i := 0; i <= int(protocol.TaskControlKind_TranscriptGet); i++ {
 		k := protocol.TaskControlKind(i)
 		if k.String() == fmt.Sprintf("TaskControlKind(%d)", i) {
 			continue // gap in the enum, not a real kind
@@ -203,7 +205,7 @@ func TestCapClassAgreesWithRequiredCap(t *testing.T) {
 		}
 	}
 	for k := range requiredCap {
-		if kindCapClass[k] != capInMap {
+		if c, ok := kindCapClass[k]; !ok || c != capInMap {
 			t.Errorf("%v is in requiredCap but not classified capInMap", k)
 		}
 	}

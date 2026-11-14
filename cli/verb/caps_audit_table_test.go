@@ -28,8 +28,8 @@ func TestEveryGrantableCapHasATier(t *testing.T) {
 
 func TestAuditOrderIsStrongFirstAndComplete(t *testing.T) {
 	order := AuditOrder()
-	if len(order) != len(granularCaps()) || len(order) != 28 {
-		t.Fatalf("AuditOrder has %d bits, want 28 (every granular bit)", len(order))
+	if len(order) != len(granularCaps()) || len(order) != 29 {
+		t.Fatalf("AuditOrder has %d bits, want 29 (every granular bit)", len(order))
 	}
 	if order[0] != protocol.Capability_Spawn {
 		t.Errorf("AuditOrder()[0] = %s, want spawn", order[0])

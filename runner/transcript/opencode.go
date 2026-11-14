@@ -8,6 +8,8 @@ import (
 	"io"
 	"os"
 	"os/exec"
+
+	"github.com/on-keyday/agent-harness/runner/hostcmd"
 	"path/filepath"
 	"strings"
 	"time"
@@ -58,7 +60,7 @@ type opencodeRow struct {
 func (s *opencodeStore) list(dir string) ([]opencodeRow, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), opencodeListTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, opencodeBin, "session", "list", "--format", "json")
+	cmd := hostcmd.CommandContext(ctx, opencodeBin, "session", "list", "--format", "json")
 	cmd.Dir = nearestExisting(dir)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -126,7 +128,7 @@ func (s *opencodeStore) Open(dir, id, name string) (io.ReadCloser, error) {
 	if name != opencodeExportName {
 		return nil, ErrNoFile
 	}
-	cmd := exec.Command(opencodeBin, "export", id)
+	cmd := hostcmd.Command(opencodeBin, "export", id)
 	cmd.Dir = nearestExisting(dir)
 	stderr := &bytes.Buffer{}
 	cmd.Stderr = stderr

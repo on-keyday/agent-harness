@@ -400,3 +400,21 @@ func TestWALReplay_OldAllMaskLacksRecordBits(t *testing.T) {
 		t.Fatalf("caps %#x lost board_member, which the old all mask held", uint32(e.Capabilities))
 	}
 }
+
+// A task granted `all` before pillar B holds the number 0xfffffff: replay must
+// not hand it transcript_read, which that mask never named.
+func TestWALReplay_OldAllMaskLacksTranscriptRead(t *testing.T) {
+	s := NewTaskStore()
+	id := "3123456789abcdef0123456789abcdef"
+	s.ReplayEvents([]WALEvent{{Type: "task_created", TaskID: id, Capabilities: 0xfffffff, Ts: 1}})
+	e, ok := s.Get(id)
+	if !ok {
+		t.Fatal("replayed task missing")
+	}
+	if e.Capabilities&protocol.Capability_TranscriptRead != 0 {
+		t.Fatalf("caps %#x gained transcript_read on replay", uint32(e.Capabilities))
+	}
+	if e.Capabilities&protocol.Capability_RecordPersist == 0 {
+		t.Fatalf("caps %#x lost record_persist, which the old all mask held", uint32(e.Capabilities))
+	}
+}

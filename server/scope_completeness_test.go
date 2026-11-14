@@ -173,10 +173,14 @@ var kindTargetClass = map[protocol.TaskControlKind]targetClass{
 	protocol.TaskControlKind_RecordDelete: targetGated,
 	protocol.TaskControlKind_RecordKeep:   targetGated,
 	protocol.TaskControlKind_RecordSwitch: targetGated,
+	// Agent transcripts (pillar B): the handler checks the named task
+	// against transcript_read's scope (and exec_run's for a shared session).
+	protocol.TaskControlKind_TranscriptList: targetGated,
+	protocol.TaskControlKind_TranscriptGet:  targetGated,
 }
 
 func TestEveryTaskControlKindIsClassified(t *testing.T) {
-	for i := 0; i <= int(protocol.TaskControlKind_RecordSwitch); i++ {
+	for i := 0; i <= int(protocol.TaskControlKind_TranscriptGet); i++ {
 		k := protocol.TaskControlKind(i)
 		if k.String() == fmt.Sprintf("TaskControlKind(%d)", i) {
 			continue // gap in the enum, not a real kind
@@ -201,11 +205,12 @@ func TestEveryTaskControlKindIsClassified(t *testing.T) {
 // progress_clear; runner_enroll / runner_unenroll / runner_keys;
 // lifecycle_set; board_retain; board_membership; agent_read_page; the
 // seven flush / archive kinds; runner_dial_add / _list / _remove /
-// runner_kick; session_mode; and the five record_* kinds.
-func TestRecordSwitchIsStillTheLastKind(t *testing.T) {
-	next := protocol.TaskControlKind(int(protocol.TaskControlKind_RecordSwitch) + 1)
+// runner_kick; session_mode; the five record_* kinds; and transcript_list /
+// transcript_get.
+func TestTranscriptGetIsStillTheLastKind(t *testing.T) {
+	next := protocol.TaskControlKind(int(protocol.TaskControlKind_TranscriptGet) + 1)
 	if next.String() != fmt.Sprintf("TaskControlKind(%d)", int(next)) {
-		t.Fatalf("a kind was appended after record_switch (%v) — raise the loop bound in "+
+		t.Fatalf("a kind was appended after transcript_get (%v) — raise the loop bound in "+
 			"TestEveryTaskControlKindIsClassified and in TestEveryTaskControlKindHasACapVerdict, "+
 			"which otherwise stop before it", next)
 	}

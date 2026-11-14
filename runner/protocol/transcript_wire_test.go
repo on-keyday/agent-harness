@@ -47,6 +47,7 @@ func TestTranscriptResultRoundTrip(t *testing.T) {
 	// A get's header is followed by the raw bytes: a reader decodes the header
 	// and the rest of the stream is the file.
 	get := TranscriptResult{Status: TranscriptStatus_Ok, Op: TranscriptOp_Get}
+	get.SetGet(TranscriptGetBody{Size: 9})
 	stream := append(get.MustAppend(nil), []byte("RAW BYTES")...)
 	var gotG TranscriptResult
 	r := bytes.NewReader(stream)
@@ -87,5 +88,71 @@ func TestRunnerHelloTranscriptsBit(t *testing.T) {
 	}
 	if !out.Transcripts() || out.SkillsInjected() {
 		t.Fatalf("hello bits: transcripts=%v skills=%v", out.Transcripts(), out.SkillsInjected())
+	}
+}
+
+// Bounds of the pillar B plan: a session id ≤ 128 bytes and a file name ≤ 512
+// keep both control messages that carry them in one datagram (the review of
+// Task 1 measured 1306 and 1374 bytes at the plan's first bounds of 256/1024).
+const (
+	transcriptSessionBound = 128
+	transcriptFileBound    = 512
+	transcriptRepoAssumed  = 400 // a repo path longer than any the fleet serves
+)
+
+func worstTranscriptMessages(session, file int) (*TaskControlRequest, *RunnerRequest) {
+	var get TranscriptGetRequest
+	get.SetSession(bytes.Repeat([]byte("s"), session))
+	get.SetFile(bytes.Repeat([]byte("f"), file))
+	req := &TaskControlRequest{Header: TaskControlRequestHeader{Kind: TaskControlKind_TranscriptGet}}
+	req.SetTranscriptGet(get)
+	var r RunnerTranscriptRequest
+	r.SetRepoPath(bytes.Repeat([]byte("r"), transcriptRepoAssumed))
+	r.SetSession(bytes.Repeat([]byte("s"), session))
+	r.SetFile(bytes.Repeat([]byte("f"), file))
+	r.SetIncludeShared(true)
+	rr := &RunnerRequest{Kind: RunnerRequestType_Transcript}
+	rr.SetTranscript(r)
+	return req, rr
+}
+
+func TestTranscriptControlMessagesFitOneDatagram(t *testing.T) {
+	get, runner := worstTranscriptMessages(transcriptSessionBound, transcriptFileBound)
+	if n := encodedLen(t, get); n > controlDatagramBudget {
+		t.Errorf("worst transcript_get is %d bytes, budget %d", n, controlDatagramBudget)
+	}
+	if n := encodedLen(t, runner); n > controlDatagramBudget {
+		t.Errorf("worst runner transcript request is %d bytes, budget %d", n, controlDatagramBudget)
+	}
+}
+
+// Negative control: at the first bounds (256/1024) the runner request does
+// not fit, so the test above can fail.
+func TestTranscriptFirstBoundsWouldNotFit(t *testing.T) {
+	_, runner := worstTranscriptMessages(256, 1024)
+	if n := encodedLen(t, runner); n <= controlDatagramBudget {
+		t.Errorf("256/1024 encode to %d bytes; expected over %d", n, controlDatagramBudget)
+	}
+}
+
+// A get says how many bytes follow, so a reader can tell a cut stream from a
+// complete one (review of Task 1, I2); a session says whether its size is
+// known (opencode's is not, until exported).
+func TestTranscriptGetHeaderCarriesSize(t *testing.T) {
+	get := TranscriptResult{Status: TranscriptStatus_Ok, Op: TranscriptOp_Get}
+	get.SetGet(TranscriptGetBody{Size: 9})
+	var out TranscriptResult
+	if err := out.Read(bytes.NewReader(append(get.MustAppend(nil), "RAW BYTES"...))); err != nil {
+		t.Fatal(err)
+	}
+	if out.Get() == nil || out.Get().Size != 9 {
+		t.Fatalf("get body %+v", out.Get())
+	}
+	var s TranscriptSession
+	s.SetSizeKnown(true)
+	s.SetShared(true)
+	var back TranscriptSession
+	if err := back.DecodeExact(s.MustAppend(nil)); err != nil || !back.SizeKnown() || !back.Shared() {
+		t.Fatalf("session bits after round trip: %+v %v", back, err)
 	}
 }

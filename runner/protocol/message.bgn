@@ -5596,7 +5596,9 @@ format RunnerTranscriptRequest:
 
 # One session: the agent whose store holds it, the agent's id for it, when it
 # was created and last written (unix ns), the bytes of all its files, and
-# whether it was recorded in a shared directory (B-D2).
+# whether it was recorded in a shared directory (B-D2). size_known is 0 when
+# the size exists only once read (opencode's export): size is then 0 and
+# means "not known", never "empty".
 format TranscriptSession:
     agent_len :u8
     agent :[agent_len]u8
@@ -5606,7 +5608,8 @@ format TranscriptSession:
     updated_ns :u64
     size :u64
     shared :u1
-    reserved :u7
+    size_known :u1
+    reserved :u6
 
 format TranscriptSessionsBody:
     count :u32
@@ -5625,8 +5628,15 @@ format TranscriptFilesBody:
     count :u32
     files :[count]TranscriptFile
 
-# The runner's answer on the stream. For op get with status ok, the raw bytes
-# (the file, or a tar of the session) follow this header until EOF.
+# What follows a get's header: exactly size bytes, the file as it was when
+# opened, or a tar of the session. A reader that sees the stream end sooner
+# was cut and must not report the file as complete.
+format TranscriptGetBody:
+    size :u64
+
+# The runner's answer on the stream. When status != ok the body arm is still
+# present and empty (as GitQueryResult's is), so every answer decodes. For op
+# get with status ok, get.size raw bytes follow this header.
 format TranscriptResult:
     status :TranscriptStatus
     message_len :u16
@@ -5635,6 +5645,7 @@ format TranscriptResult:
     match op:
         TranscriptOp.sessions => sessions :TranscriptSessionsBody
         TranscriptOp.files    => files    :TranscriptFilesBody
+        TranscriptOp.get      => get      :TranscriptGetBody
 
 # ---------------------------------------------------------------------------
 # Out-of-band exec: run one argv in a task's worktree as its own process.
