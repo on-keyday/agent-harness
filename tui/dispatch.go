@@ -1183,8 +1183,8 @@ func (h tuiVerbs) TranscriptLs(v verb.TranscriptLsAction) tea.Cmd {
 }
 
 // TranscriptGet needs -o here: a transcript's bytes (or a tar) written into
-// the results pane would draw into the TUI itself. The file is created on the
-// first byte, so a refusal leaves none behind.
+// the results pane would draw into the TUI itself. -o is written through
+// cli.TranscriptToFile, as on the CLI.
 func (h tuiVerbs) TranscriptGet(v verb.TranscriptGetAction) tea.Cmd {
 	if v.Output == "" {
 		h.a.cmdresult.Append(ErrorStyle.Render("transcript get: give -o <file> — a transcript's bytes would draw over the TUI"))
@@ -1204,11 +1204,9 @@ func (h tuiVerbs) TranscriptGet(v verb.TranscriptGetAction) tea.Cmd {
 	return func() tea.Msg {
 		// No overall bound: a whole session's tar may take long to come, and
 		// the answer itself is bounded inside the client.
-		f := cli.NewLazyFile(v.Output)
-		err := cli.TranscriptGetWith(context.Background(), c, full, v.Session, v.File, f)
-		if cerr := f.Close(); err == nil {
-			err = cerr
-		}
+		err := cli.TranscriptToFile(v.Output, func(w io.Writer) error {
+			return cli.TranscriptGetWith(context.Background(), c, full, v.Session, v.File, w)
+		})
 		what := v.Session
 		if v.File != "" {
 			what += "/" + v.File

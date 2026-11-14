@@ -125,7 +125,7 @@ func (s *Session) transcriptAnswer(req *protocol.RunnerTranscriptRequest) (proto
 		stores = append(stores, st)
 	}
 	if len(stores) == 0 && len(failures) == 0 {
-		return transcriptFail(op, protocol.TranscriptStatus_StoreError, "no agent on this runner keeps transcripts"), nil
+		return transcriptFail(op, protocol.TranscriptStatus_StoreError, "no profile on this runner names a transcript store (--agent-transcript-store; preset key transcriptStore) — a slot restarted with an argv from before transcripts needs a restart through its unit"), nil
 	}
 
 	if op == protocol.TranscriptOp_Sessions {

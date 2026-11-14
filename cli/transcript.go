@@ -288,6 +288,26 @@ func (l *LazyFile) Close() error {
 // Opened reports whether anything was written (and so the file exists).
 func (l *LazyFile) Opened() bool { return l.f != nil }
 
+// TranscriptToFile runs fetch into path, the way `transcript get -o` writes on
+// every surface. The file is created on the first byte, so a refusal leaves
+// none; a fetch that succeeds with no bytes (an empty file) leaves an empty
+// file; and a fetch that fails after writing removes what it wrote, so a cut
+// transfer never sits on disk looking complete.
+func TranscriptToFile(path string, fetch func(io.Writer) error) error {
+	f := NewLazyFile(path)
+	err := fetch(f)
+	if err == nil && !f.Opened() {
+		_, err = f.Write(nil)
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil && f.Opened() {
+		_ = os.Remove(path)
+	}
+	return err
+}
+
 func transcriptDial(ctx context.Context, peerCID objproto.ConnectionID, fn func(*Client) error) error {
 	return recordDial(ctx, peerCID, fn)
 }

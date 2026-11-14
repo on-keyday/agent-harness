@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -132,5 +133,29 @@ func TestTranscriptNoAnswerNamesAnOlderServer(t *testing.T) {
 	cancel()
 	if _, err := awaitTranscriptAnswer(ctx, "ls", time.Minute, never); !errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "older") {
 		t.Fatalf("cancelled: err %v, want context.Canceled alone", err)
+	}
+}
+
+// A fetched file of zero bytes (an empty -wal, say) still lands as an empty
+// file: success with no file would read as "nothing was written" (parity walk
+// items 31 and 33). A refusal still leaves none.
+func TestTranscriptToFileWritesAnEmptyFile(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "empty.db-wal")
+	err := TranscriptToFile(p, func(w io.Writer) error {
+		_, err := readTranscriptAnswer("get", bytes.NewReader(getAnswer(t, 0, "")), w)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Stat(p); err != nil || fi.Size() != 0 {
+		t.Fatalf("stat %v %v, want an empty file", fi, err)
+	}
+	q := filepath.Join(t.TempDir(), "refused")
+	if err := TranscriptToFile(q, func(io.Writer) error { return errors.New("no_such_file") }); err == nil {
+		t.Fatal("a refusal was reported as success")
+	}
+	if _, err := os.Stat(q); !os.IsNotExist(err) {
+		t.Fatalf("a refusal left a file: %v", err)
 	}
 }

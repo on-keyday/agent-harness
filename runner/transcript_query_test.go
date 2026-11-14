@@ -415,3 +415,19 @@ func TestWholeSessionTarSizeMatchesWithLongNames(t *testing.T) {
 		t.Fatalf("status %v header %+v, %d bytes followed", res.Status, res.Get(), len(rest))
 	}
 }
+
+// A runner none of whose profiles names a store — a slot replayed with an
+// argv from before --agent-transcript-store — says how to fix it, not merely
+// that no agent keeps transcripts.
+func TestNoStoreNamesTheRestart(t *testing.T) {
+	f := newTranscriptFixture(t)
+	ps, err := NewProfileSet(AgentProfile{Name: "claude", Bin: "claude"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.s.Profiles = ps
+	res, _ := f.answer(t, f.req(protocol.TranscriptOp_Sessions, "", "", false))
+	if res.Status != protocol.TranscriptStatus_StoreError || !strings.Contains(string(res.Message), "--agent-transcript-store") {
+		t.Fatalf("status %v %q, want store_error naming --agent-transcript-store", res.Status, res.Message)
+	}
+}
