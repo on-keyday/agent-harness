@@ -1,6 +1,6 @@
 ---
 name: surface-parity-checklist
-description: Use BEFORE adding, changing, or displaying any operator-visible task/runner field (caps, scope, status, agent, repo, …), adding an option to any verb family, or wiring a new operator action's result reporting — AND before adding/renaming an agent or changing its bin, argv templates, log format, credential mode, egress domains, or launch env. NUMBERED checklists that must be walked item by item with a verdict per number — never summarized: 1–39 for every input surface, display surface, per-path semantics axis, result/display convention across CLI/TUI/WebUI/wasm, and the feature spec's own surface matrix, plus S1–S6 for preset↔podman-sandbox agent-launch parity.
+description: Use BEFORE adding, changing, or displaying any operator-visible task/runner field (caps, scope, status, agent, repo, …), adding an option to any verb family, or wiring a new operator action's result reporting — AND before adding/renaming an agent or changing its bin, argv templates, credential mode, egress domains, or launch env. NUMBERED checklists that must be walked item by item with a verdict per number — never summarized: 1–39 for every input surface, display surface, per-path semantics axis, result/display convention across CLI/TUI/WebUI/wasm, and the feature spec's own surface matrix, plus S1–S6 for preset↔podman-sandbox agent-launch parity.
 ---
 
 # Surface-parity checklist
@@ -173,9 +173,9 @@ whole snapshot.
     Compose state) feed FRESH spawns only. A resume must never inherit
     whatever the default picker happens to hold — gate it behind an
     explicit control.
-27. Shared funnel — new request fields land in the shared builders
-    (`cli.buildSubmitRequest` / `buildOpenInteractiveRequest` via
-    `cli.SessionOpts`), never in one caller — native, wasm, and x11 all
+27. Shared funnel — new request fields land in the shared builder
+    (`buildOpenInteractiveRequest` via `cli.SessionOpts`; its submit
+    sibling went with `submit` in A3), never in one caller — native, wasm, and x11 all
     funnel through them, so a per-path field silently misses the other two.
     **Reaching the funnel is not reaching the wire.** `cli.SessionOpts` is a
     struct its callers fill by hand, so "the field is in SessionOpts and both
@@ -193,8 +193,8 @@ whole snapshot.
     struct that surface reaches and confirm the field is set in each. One
     checklist cell routinely hides several: "TUI cmdline" reaches SIX request
     builds (`session new`, `session new -d`, `--x11`, `r`/`R` resume — pinned
-    AND its Any-selector retry — and `interactive`), plus `submit` on another
-    file. `--scope-for` parsed correctly, rode `SessionNewAction` and
+    AND its Any-selector retry — and `interactive`), plus `submit` (since
+    retired) on another file. `--scope-for` parsed correctly, rode `SessionNewAction` and
     `spawnAuthority`, and died at those six; every 1–10 cell read `done` and
     the operator got a task with the bare scope. `--caps` arrived, which made
     the loss look like a scope bug rather than a dropped field.
@@ -374,8 +374,8 @@ or `webui/` mentions it, so a 1–39 walk cannot reach it.
 
 **Trigger (walk S1–S6 instead of, or in addition to, 1–39):** adding,
 renaming or removing an agent; changing an agent's bin path, argv
-templates, log format, config directory, credential mode, or endpoint
-domains; changing what env the runner hands an agent; changing the
+templates (the oneshot pair is what `session new --oneshot` runs), config
+directory, credential mode, or endpoint domains; changing what env the runner hands an agent; changing the
 `HARNESS_SERVER_CID` format or the server's addressing.
 
 S1. Preset derivation — `scripts/agent_presets.py`: `KNOWN_AGENT_PRESETS`
@@ -433,7 +433,7 @@ S6. Sandbox docs + the verifier — `scripts/sandbox/README.md` (agent table
 - Reviewing a diff that claims "CLI, TUI and WebUI covered"
 - (39) FINISHING a feature — walk its spec's own Surfaces table against the code
 - (S1–S6) Adding or renaming an agent, or changing its bin / argv templates
-  / log format / config dir / credential mode / egress domains
+  / config dir / credential mode / egress domains
 - (S1–S6) Changing the env or the server addressing an agent is launched
   with — the sandbox wrapper re-derives both
 

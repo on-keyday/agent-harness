@@ -17,7 +17,7 @@ Some properties only exist live and cannot be unit-tested honestly:
 - an agent's terminal UI actually submitting an injected keystroke as a turn
   (a cooperating fake proves the plumbing, never the agent);
 - what a client does when its server restarts;
-- whether an operator can actually see a thing in the log pane.
+- whether an operator can actually see a thing on the TUI or WebUI.
 
 The alternative — checking against the live fleet — is worse than useless for
 verifying a change: its server runs a different build on a different host, so a
@@ -69,17 +69,17 @@ scrubs them; the symptom if you don't is a banner reading
 
 **3. `agent-runner`'s `--max-tasks` defaults to 1.** An interactive session
 holds its slot for its entire life, so the moment you open one, every follow-up
-task sits `Queued` forever. The symptom is silence — no error anywhere, the task
-simply never runs, and `logs` returns nothing. `ls` shows `tasks=1/1` and
-`Busy`; check that before debugging anything else. The script passes
+foreground open is refused `runner_busy` and every `--background` one sits
+`Queued` forever. The second symptom is silence — no error anywhere, the task
+simply never runs. `ls` shows `tasks=1/1` and `Busy`; check that before
+debugging anything else. The script passes
 `--max-tasks 4`.
 
 **4. A restart's effect on in-flight tasks depends on HOW you stopped the
 server.** A *deliberate* stop — SIGTERM, or the `--shutdown-file` sentinel, as
 `scripts/restart.py` and the dummy's own `down` use — holds them: the runner
 keeps the children alive, the tasks read `held` between the two servers, and the
-next server re-adopts them (interactive comes back `detached`, oneshot
-`running`). A *crash* — `kill -9` — recovers nothing and leaves the old
+next server re-adopts them (a session comes back `detached`). A *crash* — `kill -9` — recovers nothing and leaves the old
 behaviour: `Failed` with `err="runner_disconnected"`, or
 `err="server_restart"` from the replay's own sweep.
 
@@ -92,8 +92,8 @@ that is what a test needs.
 
 Two traps specific to testing the hold itself: the window is 90s by default, so
 a debugging pause between the stop and the restart will expire it and look like
-a bug; and a held task's log resumes only after re-adoption, so a log that
-stops at the restart is expected until the runner reconnects.
+a bug; and a held session's output resumes only after re-adoption, so a screen
+that stops at the restart is expected until the runner reconnects.
 
 ## Testing a client across a server restart
 
@@ -148,30 +148,35 @@ Harness-specific facts:
   TUI's size, so `stty size` inside the attached shell is a free check that the
   handover really propagated the winsize.
 
-- Focus order is `runners, tasks, logs, notify, cmdresult, cmdline` (6 panes).
+- Focus order is `runners, tasks, notify, cmdresult, cmdline` (5 panes; the
+  log pane was retired with the task log).
   Tab is `+1`, Shift-Tab (`\x1b[Z`) is `-1`.
 - **Initial focus is `tasks`.** A reflexive Tab on startup moves focus *off* the
-  panel you want, and Enter then lands on the command line instead of following
-  a task.
-- Enter on the `tasks` panel follows the selected row; the log pane switches
-  from `(no task selected)` to live output. That transition is the assertion —
-  poll for it rather than sleeping.
-- `/` in the log pane filters by substring. To count occurrences of something in
-  a log too long to read (checking for duplicated history, say), have the task
-  print a unique sentinel and filter for it: the pane then shows one line per
-  occurrence.
+  panel you want.
+- Enter on the `tasks` panel does nothing (it used to follow the task log);
+  `d` opens the selected task's detail popup. A task's output is read with
+  `session snapshot` / the grid view while it lives, `transcript get` or
+  `record get` afterwards.
 
 ## The bash profile is your agent-side hands
 
-Every instance gets a `bash` profile alongside the agent one. A oneshot task
-submitted to it runs its prompt as a shell command **with that task's
-`HARNESS_*` set**, which is the only way to exercise agent-side commands
-(`harness-cli agent send`, `agent inbox`, …) without minting a ticket by hand:
+Every instance gets a `bash` profile alongside the agent one. A one-shot
+session opened on it runs its prompt as a shell command (`bash -c <prompt>`)
+**with that task's `HARNESS_*` set**, which is the only way to exercise
+agent-side commands (`harness-cli agent send`, `agent inbox`, …) without
+minting a ticket by hand:
 
 ```bash
-harness-cli --server-cid "$CID" submit --repo "$REPO" --agent bash \
-  --task "harness-cli agent send --topic chat.<first8-of-target-task> --data hello"
+harness-cli --server-cid "$CID" session new -d --oneshot --repo "$REPO" --agent bash \
+  --prompt "harness-cli agent send --topic chat.<first8-of-target-task> --data hello"
 ```
+
+The session ends when the command does, with its exit code. Its output is gone
+once it ends unless you opened it with `--record` (`record get <id>`); read
+`session snapshot <id>` while it runs, or make the command's result visible
+some other way (an `agent send`, a file in the worktree). A long
+`--prompt "sleep 3600"` keeps a task running with a worktree, for testing
+forwards or file transfer against it.
 
 That is also how you deliver an agentboard message to a session you are
 watching, since the wake fires on delivery.
@@ -183,5 +188,5 @@ bare `bash` there is `C:/Windows/System32/bash.exe`, the WSL launcher, and a
 task dispatched through it dies with `execvpe(/bin/bash) failed` inside a Linux
 namespace holding none of the checkout. Git for Windows' bash is used instead.
 On a machine where none is found, `up` says so on stderr and ships **no** bash
-profile — so `--agent bash` is then rejected by name at submit rather than
+profile — so `--agent bash` is then rejected by name at open rather than
 failing per task.

@@ -87,8 +87,9 @@ the server — the sender cannot set it, and it is frozen per message, so a task
 resumed under a different runtime does not relabel what it already sent. Check
 it before assuming your reply is read promptly — but do not read it as a
 verdict: the injected hook fires for any runtime that reads
-`.claude/settings.json`, and a one-shot task of ANY runtime, Claude included,
-is push-less because it has no stdin writer to wake. What `from.agent` tells
+`.claude/settings.json`, and a one-shot (`session new --oneshot`) of ANY
+runtime, Claude included, is push-less because its print-mode agent takes no
+second turn to wake into. What `from.agent` tells
 you is which runtime answered, not whether it was pushed. An
 empty `from.agent` means the server could not attribute a runtime.
 

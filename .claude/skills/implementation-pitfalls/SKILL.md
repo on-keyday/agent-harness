@@ -60,7 +60,7 @@ Fixed in `c55ed45` (TUI/WebUI use the `*With` variant on `a.client` / `currentCl
 
 **Mitigation — insert into IMPLEMENTER prompts when adding code to TUI/WebUI/server handlers:**
 
-> Step 0: grep how sibling code in this layer calls into the same helper category. Specifically for TUI: every existing Do* function (DoSubmit, DoCancel, DoInteractive, DoSessionList, ...) threads `a.client` through. Your new DoX MUST follow the same pattern, NOT the harness-cli binary's Dial+Close pattern.
+> Step 0: grep how sibling code in this layer calls into the same helper category. Specifically for TUI: every existing Do* function (DoCancel, DoStartDetachedSession, DoAttachSession, DoPruneTasks, ...) threads `a.client` through. Your new DoX MUST follow the same pattern, NOT the harness-cli binary's Dial+Close pattern.
 
 **Mitigation — insert into REVIEWER prompts:**
 
@@ -207,7 +207,7 @@ Build an explicit surface matrix and fill every cell before claiming coverage:
 | CLI binary | `cmd/harness-cli/main.go`, `cmd/harness-cli/session.go`, help text, CLI tests |
 | TUI keybindings | `tui/app.go`, action helpers, keybinding tests |
 | TUI command line | `tui/cmdline.go`, `tui/cmdline_test.go`, `runAction` wiring |
-| TUI popups/forms | `tui/popup.go` and submit/session popup state |
+| TUI popups/forms | `tui/popup.go` (the `s` one-shot popup) and session/background form state |
 | WebUI forms/buttons | `webui/static/main.js` direct event handlers |
 | WebUI command input | `webui/static/main.js` `runCmd`, help text, tokenizer/flag parser |
 | WASM bridge | `cmd/harness-webui-wasm/main.go` option parsing and request construction |

@@ -14,8 +14,9 @@ agent-runner flags):
 - Agent command lines are template-driven. Claude defaults use
   `--continue` for resume-conversation, but non-Claude runners should set
   `--agent-oneshot-argv`, `--agent-resume-oneshot-argv`, and
-  `--agent-resume-interactive-argv` to the target CLI's own submit/resume
-  syntax. For Codex, oneshot resume needs the non-interactive subcommand
+  `--agent-resume-interactive-argv` to the target CLI's own print-mode/resume
+  syntax (the oneshot pair is what `session new --oneshot` runs). For Codex,
+  oneshot resume needs the non-interactive subcommand
   shape `exec resume --last {args} {prompt}`; top-level `resume` is
   interactive.
 - `--no-worktree` (without `--force-inject-harness-settings`) skips injecting
@@ -40,9 +41,10 @@ marker cannot tell you. So:
   no injection: no skill and no hook file (e.g. a `--no-worktree` runner
   without force-inject). This peer polls or hears nothing.
 
-Neither line is about being woken. **A one-shot task of any runtime cannot be
-woken at all** — it has no stdin writer — so `submit`-created peers read their
-inbox once at turn start and then only if they ask.
+Neither line is about being woken. **A one-shot of any runtime cannot be
+woken at all** — its print-mode agent takes one turn — so a peer opened with
+`session new --oneshot` reads its inbox once at turn start and then only if it
+asks.
 
 The marker rides on the **task**, not on the RUNNERS section — which matters
 because `ls` withholds RUNNERS entirely from a caller whose visibility rank is

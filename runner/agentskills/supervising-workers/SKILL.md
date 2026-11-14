@@ -1,6 +1,6 @@
 ---
 name: supervising-workers
-description: Use when acting on ANOTHER agent's task from inside a runner-spawned task — spawning / driving / killing worker sessions, one-shot `submit` + `logs` / `watch`, attenuating a child's capabilities with `--caps`, moving files in or out of a worker's worktree, running a command in one with `exec`, or reading a worker's diff or its agent transcripts. Peer-to-peer messaging, replying and subscriptions live in the `harness-cli` skill instead.
+description: Use when acting on ANOTHER agent's task from inside a runner-spawned task — spawning / driving / killing worker sessions, one-shot sessions (`session new --oneshot`) and getting their answer back, `watch`, attenuating a child's capabilities with `--caps`, moving files in or out of a worker's worktree, running a command in one with `exec`, or reading a worker's diff or its agent transcripts. Peer-to-peer messaging, replying and subscriptions live in the `harness-cli` skill instead.
 ---
 
 # supervising-workers (another agent's task, end to end)
@@ -19,7 +19,8 @@ everything below.
 ## Spawning a worker agent
 
 When you need to delegate work to another agent that you intend to keep
-talking to, prefer **`harness-cli session new -d`** over `submit`.
+talking to, prefer **`harness-cli session new -d`** (an interactive session)
+over a one-shot (`session new -d --oneshot`).
 
 ```bash
 # Spawn a detached interactive PTY agent on a specific repo. Prints the
@@ -40,20 +41,22 @@ JSON
 )"
 ```
 
-Why detached sessions over `submit`:
+Why interactive sessions over `--oneshot`:
 
-- `submit` enqueues a **one-shot** task — claude runs to completion with
-  the prompt you supplied and then exits. Once it is running, neither you
-  nor the user can step in to adjust direction, answer a clarifying
-  question, or feed it new context. That makes it a bad fit for any
-  collaborative workflow.
+- `--oneshot` runs the agent's **print mode** (claude `-p`, codex `exec`) on
+  the prompt you supplied: it answers once and exits, and the session ends
+  with it. Once it is running, neither you nor the user can step in to
+  adjust direction, answer a clarifying question, or feed it new context —
+  an agentboard message cannot start a second turn. That makes it a bad fit
+  for any collaborative workflow.
 - `session new -d` keeps the worker alive between turns, so you can drive
   it iteratively via agent messages and the user can also intervene at
   any time (attach with `session attach <task-id>`, send corrections via
   the agentboard, etc.).
-- `submit` still has a place for genuinely one-shot, narrow tasks ("give
-  me a one-line summary of X") where mid-task intervention is not needed
-  — but treat it as the exception.
+- `--oneshot` still has a place for genuinely narrow tasks ("give me a
+  one-line summary of X") where mid-task intervention is not needed — but
+  treat it as the exception. "One-shot sessions" below covers how to get
+  its answer back.
 
 ### Use auto mode for complex delegated work
 
@@ -357,8 +360,7 @@ channel already has one: the reply.
 **Waiting for a worker's next stage — `await-progress`.** Idle says the PTY
 went quiet, not that the worker moved on. A worker that writes `harness-cli
 progress` (the `harness-cli` skill) gives you a stage edge instead, on any task
-kind — a one-shot `submit` task has no session to go idle, but it can write
-progress. Take the baseline from `ls --json`, then arm:
+kind. Take the baseline from `ls --json`, then arm:
 
 ```bash
 AT=$(harness-cli ls --json | jq -r --arg id "$TASK_ID" '.tasks[] | select(.id==$id) | .progress_at')
@@ -408,11 +410,12 @@ To coordinate a *claude worker* (hand it tasks / corrections), still prefer
 **agentboard messages** — the worker's claude reads its inbox; you don't need to
 puppeteer its keyboard. (The human may also attach in parallel; that's expected.)
 
-`session ls` lists only detachable interactive sessions; the top-level `ls`
-shows every task (including one-shots).
+`session ls` lists only detachable interactive sessions (a `--oneshot` session
+is one); the top-level `ls` shows every task, including event-stream sessions
+and oneshot-kind tasks left from before `submit` was retired.
 
-**A spawn can answer `ambiguous_runner`.** `session new` and `submit` both
-do, with exit status 3, whenever more than one (runner, agent)
+**A spawn can answer `ambiguous_runner`.** `session new` does, with exit
+status 3, whenever more than one (runner, agent)
 choice matches: several runners serve the repo, or one runner offers several
 agents and you passed no `--agent`. stderr then lists one line per runner, with
 the flags that pin it:
@@ -461,7 +464,7 @@ harness-cli ls | sed -n '/^TASKS/,$p' | grep "$REPO" \
 
 ## Capabilities and scope (`--caps` / `--scope`)
 
-`submit` and `session new` accept both. **`--caps` names the
+`session new` accepts both. **`--caps` names the
 verbs; `--scope` names which tasks those verbs may be pointed at.** A cap
 without a scope is not "may cancel" — it is "may cancel anything on the
 server", which is why both exist. `harness-cli caps` lists the capability names
@@ -494,7 +497,7 @@ and the scope forms (`--json` for the machine-readable form).
   undone with `restore`, but it is not the expected path. Never retry the
   same spawn as is. A child's `--spawn-depth` is at most yours minus one.
 - **Omitted ⇒ none.** No `--caps` flag means the child gets NOTHING: it is a
-  data-plane-only worker (agentboard within its base set + its own logs/ls) and every
+  data-plane-only worker (agentboard within its base set + its own ls) and every
   control-plane verb answers `permission denied`. Name what it needs —
   `--caps spawn,file_read`, or `--caps all` for everything you may delegate
   (intersected with your own set and your `delegate`). A worker you expect to spawn, resume or
@@ -585,8 +588,9 @@ and the scope forms (`--json` for the machine-readable form).
   running / idle. That row is deliberately sparse — `repo`, `prompt`,
   `worktree`, `agent` and the assigned runner come back empty. They were
   stripped, not absent; do not report "my parent has no prompt". Its `caps` and
-  `created_by` ARE real. One hop only: your grandparent is not listed, and
-  `logs` against your parent still returns not-found.
+  `created_by` ARE real. One hop only: your grandparent is not listed, and a
+  verb aimed at your parent (`session snapshot`, `transcript ls`, …) still
+  answers not-found unless your scope names it.
 - **The operator can change your caps or scope while you run.** `harness-cli
   caps set <id>` is operator-only and takes effect on your very next request,
   with nothing restarted. If a call that worked a minute ago starts answering
@@ -667,48 +671,84 @@ is for taking a terminal away from someone, which is rarely what you want. When 
 intend to keep driving, grant the narrowest set that lets it finish, and widen
 only if it hits a capability-denied error.
 
-## One-shot tasks & monitoring (`submit`, `logs`, `watch`)
+## One-shot sessions & monitoring (`session new --oneshot`, `watch`)
 
-`submit` is the fire-and-forget counterpart to `session new -d`: it enqueues a
-one-shot task that runs to completion and exits, with no way to step in mid-run
-(see "Why detached sessions over `submit`" above). **Prefer `session new -d`**
-for anything collaborative; reach for `submit` only for genuinely narrow,
-no-intervention jobs.
+`session new --oneshot` is the fire-and-forget counterpart to `session new -d`:
+the session runs the agent's one-shot (print-mode) argv on your prompt — claude
+`-p … --output-format stream-json`, codex `exec --json`, the `bash` profile
+`bash -c <prompt>` — and ends when the process exits; the task's exit code is
+the process's. There is no way to step in mid-run (see "Why interactive
+sessions over `--oneshot`" above). **Prefer `session new -d`** for anything
+collaborative; reach for `--oneshot` only for genuinely narrow, no-intervention
+jobs.
 
 ```bash
-harness-cli submit --repo /path/to/repo --agent claude --task "one-line job ..."
+TASK_ID=$(harness-cli session new -d --oneshot --repo /path/to/repo --agent claude \
+  --prompt "one-line job ... When done, send your answer with: harness-cli agent send --topic chat.<your-short-id> --data '<answer>'")
 ```
 
-Without `--agent`, a runner offering several agents answers `ambiguous_runner`
-(exit 3) instead of picking one for you — see "A spawn can answer
-`ambiguous_runner`" above.
+- `--prompt` is required; `--stream` is refused with `--oneshot`. Without
+  `--agent`, a runner offering several agents answers `ambiguous_runner` (exit
+  3) instead of picking one for you — see "A spawn can answer
+  `ambiguous_runner`" above.
+- **A foreground `--oneshot` does not queue.** When every runner that could
+  take it is full, the open is refused `runner_busy`. To wait in the queue for
+  a free runner, open it in background — the rules of "Unattended work —
+  `--background`" apply (`--deadline` and `--agent` required):
 
-Because a submitted task gives you no live channel, you observe it from outside:
+  ```bash
+  TASK_ID=$(harness-cli session new --background --oneshot --repo /path/to/repo --agent claude \
+    --deadline 30m --turn-end off --prompt "...")
+  ```
+
+  `--turn-end off` leaves the end to the process exit or the deadline. A
+  print-mode agent prints nothing while a long tool call runs, so the default
+  `any` can end the run on its quiet leg before the answer arrives.
+- **A resume reuses nothing**: pass `--oneshot` again with `--resume`, or the
+  resumed session runs the interactive template.
+
+### Getting a one-shot's answer back
+
+The session shows the agent's raw output — for claude and codex the JSON event
+stream, not converted — and ends with the process. There is no task log: the
+server keeps nothing of a one-shot's output unless it was recorded. So decide
+where the answer goes **before** you open it:
+
+1. **Have the worker reply on the agentboard** — the `agent send` line in the
+   prompt above. Its creator's `chat.<id>` is in a worker's default board
+   reach, so this needs no capability, and the reply wakes you through the
+   inbox hook like any peer's. This is the convention; use it first. The
+   worker gets exactly one turn — it can send, but no message can wake it into
+   a second one — so ask everything in the prompt.
+2. **While it runs**: `harness-cli session snapshot <id>` (needs `exec_view`)
+   prints the screen, i.e. the JSON lines as emitted.
+3. **After it ended**: the agent's transcript holds the whole run, answer
+   included — `transcript ls <id>` / `transcript get <id> <SESSION> <FILE>`
+   (needs `transcript_read`, and the runner online; see "Reading a worker's
+   conversation" below). A `bash` one-shot has no transcript: open it with
+   `--record` (needs `record_persist`) and read it afterwards with
+   `harness-cli record get <id>` (needs `exec_view`).
+
+`ls` shows the status and, once it ended, the exit code (`exit_code` in `ls
+--json`). For a worker that cannot reply (`--agent bash`),
+`session await-idle --topic chat.<your-short-id> <id>` fires once when the
+session ends (`"status":"session_stopped"`) or goes quiet, whichever comes
+first; read `ls` after the fire.
+
+### Monitoring and ending tasks
 
 ```bash
-harness-cli logs [-f|--follow] <TASK_ID>   # dump log history; -f streams live until the task is terminal
-harness-cli watch                          # stream status events for what your `ls` shows (runners only if it lists them)
+harness-cli watch                          # stream status events (queued, assigned, started, ended, …) for the tasks your `ls` shows; runners only if it lists them
 harness-cli cancel <TASK_ID>               # cancel a queued/running task
 harness-cli prune [--before DUR] [TASK_ID ...]   # ask the server to forget terminal tasks
 ```
 
-**`logs` and `watch` only cover one-shot (`submit`) tasks.** A submitted task's
-stdout is captured to a server-side log (`logs` reads it) and its queue →
-assigned → ended transitions are published as status events (`watch` reports
-them). An **interactive session (`session new`) has neither**:
-its output streams over the PTY and is replayed from a ring buffer on attach —
-it is never written to the task log — and it is opened directly rather than
-through the queue/dispatch lifecycle, so it emits no `watch` events (a
-`--background` session is the exception: it is queued and placed, so `watch`
-reports its queued → assigned → started transitions). Observe an
-interactive worker over the **agentboard** — it reports back to you there.
-(`session attach` is a human/PTY tool, not for you — see "Listing and killing
-your sessions" above; `logs` / `watch` don't apply to interactive tasks.)
-What the worker's agent actually did, in either kind of task, is in its
-transcript — see "Reading a worker's conversation" below.
+`logs` is retired with the task log (it prints a one-line pointer to the verbs
+above). `session attach` is a human/PTY tool, not for you — see "Listing and
+killing your sessions" above.
 
-`cancel <id>` and `session kill <id>` (its alias), by contrast, **do** work on
-interactive sessions: they route a `CancelTask` to the assigned runner, which
+`cancel <id>` and `session kill <id>` (its alias) route a `CancelTask` to the
+assigned runner, which
 hangs up the agent (SIGHUP, then SIGTERM, then SIGKILL within about 2 s) so it
 can stop the tool processes it started; what an agent deliberately detached into
 a session of its own (`setsid`) is left running. Cancel is
@@ -741,7 +781,7 @@ harness-cli file pull   [-r] [-f] <TASK_ID> <WORKTREE_REL_SRC> <LOCAL_DST>
 harness-cli file delete [-r] [-f] <TASK_ID> <WORKTREE_REL_PATH>
 ```
 
-`<TASK_ID>` is the 32-hex id from `session new` / `submit` (the same id behind
+`<TASK_ID>` is the 32-hex id from `session new` (the same id behind
 the `chat.<short-id>` topic). Typical seed → run → collect flow with a worker:
 
 ```bash

@@ -4,7 +4,7 @@ Parallel Claude Code CLI harness — task dispatcher with multi-agent
 messaging.
 
 A system for running multiple Claude Code instances in parallel against
-one or more git repos. Submit tasks from a CLI / TUI / WebUI, attach
+one or more git repos. Start agent sessions from a CLI / TUI / WebUI, attach
 interactively to running agents, and let agents talk to each other over
 a per-task broker.
 
@@ -15,8 +15,9 @@ a per-task broker.
 > companion module
 > [objtrsf](https://github.com/on-keyday/objtrsf)) is deliberately
 > toy-scope: it exists to learn and to dogfood, not to be a vetted
-> security boundary. The server is a **trusted hub** that handles task
-> logs, file contents, PTY streams and port-forward bytes in plaintext;
+> security boundary. The server is a **trusted hub** that handles file
+> contents, PTY streams and records, agent transcripts and port-forward
+> bytes in plaintext;
 > features such as port forwarding dial arbitrary `host:port` from the
 > runner with no sandboxing. Run it only on networks and hosts you
 > control. No stability, security, or support guarantees.
@@ -35,22 +36,22 @@ messaging, WASM transport, PSK auth, etc. are alongside it under
 │ harness-tui   (TUI)  │─┤       ┌──────────────────────┐         ┌────────────────────┐
 │ harness-webui (WASM) │─┴──WS──▶│ harness-server       │◀── WS ──│ agent-runner       │ × N
 └──────────────────────┘         │  Registry            │         │  worktree mgr      │
-                                 │  TaskStore (WAL)     │         │  claude exec (× M) │
-                                 │  Scheduler           │         │  per-task PTY for  │
-                                 │  pubsub  (task log/  │         │   `session new`    │
-                                 │           status)    │         └────────────────────┘
-                                 │  agentboard (agent ↔ │
-                                 │              agent)  │
-                                 │  LogStore            │
+                                 │  TaskStore (WAL)     │         │  agent per task    │
+                                 │  Scheduler           │         │   (× M), in a PTY  │
+                                 │  pubsub  (status)    │         │   or behind the    │
+                                 │  agentboard (agent ↔ │         │   stream adapter   │
+                                 │              agent)  │         └────────────────────┘
+                                 │  RecordStore (PTY)   │
                                  └──────────────────────┘
 ```
 
 - **Server** (`cmd/harness-server`): hub. Listens on WebSocket (and
   optionally UDP via `--udp-listen`); accepts connections from clients
-  (CLI / TUI / WebUI WASM) and runners. Queues tasks, dispatches them
-  to idle runners by repo affinity, persists task state via JSONL WAL,
-  appends per-task logs to `<data-dir>/logs/<task-id>.log`. Hosts two
-  distinct brokers: `pubsub` for task-log and runner/task-status
+  (CLI / TUI / WebUI WASM) and runners. Places sessions on runners by
+  repo affinity (a `--background` one waits in a queue for a free
+  runner), persists task state via JSONL WAL, and keeps PTY records
+  under `<data-dir>/records/` when recording is on. Hosts two
+  distinct brokers: `pubsub` for runner/task-status
   fanout, and `agentboard` for agent-to-agent messaging keyed by
   `(runner_id, task_id)`. Buffers per-session scrollback for detached
   interactive tasks so `session attach` can replay context on
@@ -58,15 +59,16 @@ messaging, WASM transport, PSK auth, etc. are alongside it under
 - **Runner** (`cmd/agent-runner`): worker. Started with a list of repo
   roots (`--roots`) it is allowed to serve and a per-process concurrency
   cap (`--max-tasks`). For each assigned task, creates a `git worktree`
-  under `<repo>/.harness-worktrees/<task-id>/`, runs `claude` (or a PTY
-  for `session new`) in it, streams stdout/stderr
+  under `<repo>/.harness-worktrees/<task-id>/`, runs the agent in it — in
+  a PTY, or behind the stream adapter for `--stream` — streams its output
   through the server, reports the exit code. Injects `HARNESS_*` env
   vars into the agent subprocess so the agent can reach back via
   `harness-cli agent ...`.
 - **Clients**:
   - `cmd/harness-cli` — request/control surface:
-    - Task lifecycle: `submit`, `ls`, `logs`, `cancel`, `prune`,
-      `prune-local`, `watch`.
+    - Task lifecycle: `ls`, `cancel`, `prune`, `prune-local`, `watch`.
+      A task is created with `session new` — a one-shot run is
+      `session new --oneshot` (Quick start 3).
     - Progress: `progress` (a task sets its own one-line status;
       `--clear --task <id>` empties another's, gated on `cancel`) and
       `await-progress` (fire on its next write); see Quick start 4b.
@@ -127,7 +129,7 @@ messaging, WASM transport, PSK auth, etc. are alongside it under
       `--workspace` add a
       third resolution tier below flag and env for `server-cid` /
       `ws-path` / `repo`. See **Workspace config** below.
-    - Capabilities: `submit` / `session new` take
+    - Capabilities: `session new` takes
       `--caps NAMES` to grant a spawned task a restricted capability set
       (`caps_child = caps_parent ∩ delegate_parent ∩ requested`,
       server-enforced), `--scope SPEC` to bound WHICH tasks those
@@ -227,7 +229,7 @@ bin/harness-server --listen :8539 --data-dir ./harness-data
 bin/agent-runner --print-pubkey                  # on the runner host
 bin/harness-cli --server-cid 'ws:HOSTNAME:8539-*' runner enroll <that key> --label HOSTNAME
 # --roots is a comma-separated list of repo paths this runner is allowed to
-# serve (matched verbatim against submit --repo). --max-tasks N lets one
+# serve (matched verbatim against session new --repo). --max-tasks N lets one
 # runner process handle N concurrent tasks.
 bin/agent-runner --server-cid 'ws:HOSTNAME:8539-*' \
                  --roots /abs/path/to/repo,/abs/path/to/other-repo \
@@ -242,28 +244,40 @@ bin/agent-runner --server-cid 'ws:HOSTNAME:8539-*' \
 #   --agent-oneshot-argv 'exec --json {args} {prompt}'
 #   --agent-resume-oneshot-argv 'exec --json resume --last {args} {prompt}'
 #   --agent-resume-interactive-argv 'resume --last {args}'
-#   --agent-log-format codex-jsonl
-# (--json + --agent-log-format make the runner render codex's event stream as
-#  progress lines in the task log; omit both to get its raw output verbatim.)
+# (The oneshot pair is what `session new --oneshot` runs, in a PTY; its output
+#  is shown as emitted — codex's --json event stream included, unconverted.
+#  --agent-log-format is accepted and ignored.)
 
-# 3. Submit a task. --repo is required (or set HARNESS_REPO_PATH); it must
+# 3. Run a one-shot task. --repo is required (or set HARNESS_REPO_PATH); it must
 # match a runner's --roots entry verbatim (no client-side normalisation).
 # Operator surfaces prove the operator secret: export it where the CLI runs.
 # A runner never needs it: agent-runner drops it before spawning an agent, and
 # scripts/runner.sh never hands it to the runner in the first place.
 export HARNESS_OPERATOR_PSK_FILE=./harness-data/operator-psk
 bin/harness-cli --server-cid 'ws:HOSTNAME:8539-*' \
-                submit --repo /abs/path/to/repo --task "test task"
-# → prints task ID
+                session new -d --oneshot --repo /abs/path/to/repo --prompt "test task"
+# → prints task ID. A one-shot is an ordinary PTY session running the profile's
+# print-mode argv (claude `-p … --output-format stream-json`, codex
+# `exec --json`, bash `-c`); it ends when the agent answers, and the agent's exit
+# code is the task's. --prompt is required, --stream is refused with it, and a
+# runner offering several agents needs --agent NAME. It does not queue: with
+# every runner busy it is refused runner_busy — open it --background with a
+# --deadline (5c) to wait for a free runner instead.
 
 # 4. Inspect / control
 bin/harness-cli ls
 bin/harness-cli ls --tree               # order tasks under whoever spawned them
-bin/harness-cli logs <task-id>          # stream the task's log
+bin/harness-cli session snapshot <task-id>  # its screen while it runs (a one-shot's raw output)
+bin/harness-cli transcript ls <task-id>     # afterwards: the agent's own transcript (5e)
 bin/harness-cli watch                   # stream task / runner status events
 bin/harness-cli cancel <task-id>
 bin/harness-cli prune --before 168h     # forget terminal tasks older than 7d
 bin/harness-cli prune-local --before 168h   # remove old local worktrees
+# There is no task log: `submit` and `logs` are retired, and each prints a
+# one-line pointer to its replacement. A run is read with `session snapshot` /
+# `session attach --view` while it lives, `transcript get` (5e) afterwards, or
+# `record get` (5d) if it was opened with --record. Files under
+# <data-dir>/logs/ from before are left on disk, unread.
 
 # 4b. Progress: a task states which task it is on and at which stage, in one
 # line (≤256 bytes, no control characters). Only from inside a task — the server
@@ -287,8 +301,8 @@ bin/harness-cli progress --clear
 # the selected task; WebUI: 「🧹 進捗を消す」 on the task sheet (shown while the
 # task has a line).
 bin/harness-cli progress --clear --task <task-id>
-# Hear the task's next write (set or clear). Works on any task, oneshot
-# included; same long-poll / --topic / --notify shape as `session await-idle`
+# Hear the task's next write (set or clear). Works on any task kind; same
+# long-poll / --topic / --notify shape as `session await-idle`
 # (5 below) and the same watcher registry, so either verb's ls / kill sees both.
 # --since takes a progress_at from `ls --json` and fires at once if the task has
 # written since. Exit: 0 fired or armed, 3 task_ended, 4 cancelled. TUI: `w`
@@ -334,8 +348,8 @@ bin/harness-cli session await-idle kill <watcher-id>
 
 # 5b. Event-stream sessions (TaskKind stream): same lifecycle as a PTY session,
 # but the data plane is structured agent events (NDJSON from the profile's
-# stream adapter, --agent-stream-adapter) instead of terminal bytes. It writes
-# no task log: the harness holds the stream (the server's ring), and the whole
+# stream adapter, --agent-stream-adapter) instead of terminal bytes. The
+# harness holds the stream (the server's ring), and the whole
 # conversation is in claude's own session transcript on the runner host. The
 # agent's stderr is interleaved into both chats. The attach response carries the
 # task's kind, so a PTY verb pointed at a stream task refuses and names the
@@ -635,7 +649,7 @@ refused. On a `--no-worktree` runner every task runs in the repo itself, and so
 does its exec.
 
 It is **synchronous and dies with its caller**: Ctrl-C stops the child. The
-detached form is a task — `submit --agent bash --task '…'`. There is no
+detached form is a task — `session new -d --oneshot --agent bash --prompt '…'`. There is no
 `--detach` on `exec`, and that is deliberate: one existed briefly and was
 removed, because on Linux a normally-completing exec already leaves its
 background children running, so the flag bought nothing there and only put them
@@ -1109,7 +1123,7 @@ stronger one never needs the weaker one alongside it:
 
 | cap | what it allows |
 | --- | --- |
-| `exec_view` | observe an agent's output, live or recorded — `session snapshot`, TUI grid panes, `session attach --view`, `session stream attach`, `logs`. Not the agent's transcript (`transcript ls` / `get`): that holds what never reached a screen — files it read, subagents, past runs — and is `transcript_read`, a strong-tier bit of its own |
+| `exec_view` | observe an agent's output, live or recorded — `session snapshot`, TUI grid panes, `session attach --view`, `session stream attach`, `record get`. Not the agent's transcript (`transcript ls` / `get`): that holds what never reached a screen — files it read, subagents, past runs — and is `transcript_read`, a strong-tier bit of its own |
 | `exec_cowrite` | additionally type into a session someone else is driving, without evicting them — `session send`, `session exec`, the WebUI preview |
 | `exec_control` | additionally take the session over as sole writer, evicting whoever holds it, and own its size — `session attach`, TUI `r` |
 
@@ -1135,7 +1149,7 @@ Creating a task and bringing one back are separate grants:
 
 | cap | what it allows |
 | --- | --- |
-| `spawn` | create a task — `submit`, `session new` without `--resume` |
+| `spawn` | create a task — `session new` without `--resume`, `--oneshot` included |
 | `resume_exact` | re-queue a finished task under its own id exactly as recorded — `--resume <id> --exact`, which refuses every setting flag and takes the task's agent, args, kind, caps and scope from the record |
 | `resume` | the same, free to change the prompt, agent, args, kind, caps and scope; implies `resume_exact` |
 
@@ -1160,14 +1174,12 @@ every control-plane verb (spawn, cancel,
 attach, file read/write, forwards, notify, prune, board_purge, runner-admin,
 runner enrollment, global info) answers `permission denied` until something
 grants it.
-Reading a task's log is `exec_view`, whether by `logs`, by following it, or
-by joining its pubsub topic directly. The `runners.status` and
+The `runners.status` and
 `notifications` streams go only to whom `ls` shows runners to — an
 operator, or a global visibility rank: a confined `watch` gets no runner
 events and a confined `notify-watch` is refused. Nothing a client writes on
-a pubsub stream is published; the one writer is the runner, to the log of a
-task it is running.
-`--caps NAMES` and `--scope SPEC` (on `submit` / `session new`, also
+a pubsub stream is published: every topic's publisher is the server.
+`--caps NAMES` and `--scope SPEC` (on `session new`, also
 in the TUI and WebUI spawn surfaces) widen or
 redirect that within what the spawner itself holds AND may delegate: the
 server grants `caps_child = caps_parent ∩ delegate_parent ∩ requested` and
@@ -1252,8 +1264,8 @@ operator, and nothing the task itself does. A task recorded before the bound
 existed replays with the default.
 
 ```bash
-bin/harness-cli submit --repo /abs/repo --caps spawn,exec_cowrite \
-    --delegate-caps exec_cowrite --delegate-scope descendants --task "supervise"
+bin/harness-cli session new -d --repo /abs/repo --caps spawn,exec_cowrite \
+    --delegate-caps exec_cowrite --delegate-scope descendants --prompt "supervise"
 bin/harness-cli caps set <task-id> --delegate-caps file_read        # widen it live
 bin/harness-cli caps set <task-id> --delegate-scope none --cascade  # and clamp the subtree
 ```
@@ -1323,7 +1335,7 @@ checked by the server whenever a task is created, do:
 
 Both default to unbounded, and a task recorded before the limits existed
 replays unbounded. A refusal is `spawn_limit` with the reason, e.g.
-`submit spawn_limit: your parent's descendant limit is reached (3/3); resume
+`your parent's descendant limit is reached (3/3); resume
 an existing task, or ask the operator to prune or raise the limit`. A resume
 creates no record and is never refused by either limit, which is how an
 agent reuses a place; a resume by a task that re-grants `--max-descendants`
@@ -1334,8 +1346,8 @@ set-parent` can still move tasks into a full subtree, leaving it over its
 limit until places are freed.
 
 ```bash
-bin/harness-cli submit --repo /abs/repo --caps spawn,resume,cancel --delegate-caps spawn \
-    --spawn-depth 2 --max-descendants 3 --task "supervise"
+bin/harness-cli session new -d --repo /abs/repo --caps spawn,resume,cancel --delegate-caps spawn \
+    --spawn-depth 2 --max-descendants 3 --prompt "supervise"
 bin/harness-cli caps set <task-id> --max-descendants 5   # raise it live, on this task only
 ```
 
@@ -1524,7 +1536,7 @@ send a new message to.
 
 ```bash
 bin/harness-cli caps                       # capability names + scope forms
-bin/harness-cli submit --repo /abs/repo --task "..." --caps none
+bin/harness-cli session new -d --repo /abs/repo --prompt "..." --caps none
 bin/harness-cli session new --repo /abs/repo --caps cancel --scope ids:<sibling>
 bin/harness-cli caps set <task-id> --caps all,-spawn --scope subtree \
     [--cascade] [--keep-conns]             # operator-only LIVE re-grant
@@ -1781,7 +1793,7 @@ status are in [`scripts/sandbox/README.md`](scripts/sandbox/README.md).
 ## TUI
 
 `cmd/harness-tui` is an interactive Bubble Tea frontend that bundles
-`submit / ls / logs / cancel / prune / watch / session`
+`ls / cancel / prune / watch / session` (one-shots included)
 into one screen.
 
 ```bash
@@ -1794,22 +1806,22 @@ Layout:
 ┌── Runners ────────┐ ┌── Tasks ──────────────────────┐
 │ Idle  /home/foo   │ │ Queued  9d50  prompt...        │
 │ Busy  /home/foo   │ │ Running abcd  prompt...        │
+│                   │ │ Detached 3f2a prompt...        │
+│                   │ │ ...                            │
 └────────────────────┘ └────────────────────────────────┘
-┌── Log: <selected task> ──────────────────────────────┐
-│ [out] hello                                           │
-│ [err] ...                                             │
-└───────────────────────────────────────────────────────┘
 ┌── Last command output ───────────────────────────────┐
-│ submitted: 9d508...                                   │
+│ started detached: 9d508...                            │
 │ [log] 11:06AM INFO ws session started ...             │
 └───────────────────────────────────────────────────────┘
 > [cmdline]
-tab focus · s submit · enter follow · c cancel · T tree · ? help · q quit
+tab focus · s one-shot · S session · d detail · c cancel · T tree · ? help · q quit
 ```
 
-Keys for orientation — `Tab` cycles focus, `s` submit popup, `S` opens
-a detachable session, `r`/`R` reattach/resume the selected task, `Enter`
-follows its log, `d` detail, `c` cancel, `a` re-grant caps/scope, `i`
+Keys for orientation — `Tab` cycles focus, `s` the one-shot popup (a
+detached `session new --oneshot`), `S` opens
+a detachable session, `r`/`R` reattach/resume the selected task, `d`
+detail (`Enter` on the task table does nothing: it followed the task log,
+which is retired), `c` cancel, `a` re-grant caps/scope, `i`
 who holds which capability (`caps audit`), `w`/`W` arm a watcher on the
 selected task, picking what to wake on — output quiet, the hooks' lifecycle,
 the program's status, any of them, or the next progress line (`W` fires as an
@@ -1822,7 +1834,7 @@ everything — both render from the same table the dispatcher uses
 (`tui/keys.go`, test-enforced), so unlike a README table they cannot go
 stale.
 
-The cmdline accepts `submit / session {new,attach,ls,kill}
+The cmdline accepts `session {new,attach,ls,kill}
 / session await-idle [ls,kill] / await-progress [ls,kill] / session stream attach / file {ls,push,pull,delete} / git / exec
 / record {ls,get,rm,keep,on,off} / transcript {ls,get}
 / forward {ls,kill,tap} / conns
@@ -2057,7 +2069,7 @@ embedded into the server binary via `webui.FS` (an `embed.FS`). When
 
 So pointing a browser at `http://server-host:port/` (`https://` when the
 server has `--tls-cert`) gives you the
-same submit / list / cancel / interactive surface as the CLI and TUI,
+same spawn / list / cancel / interactive surface as the CLI and TUI,
 plus a **Host pin** dropdown for routing to a specific runner by
 hostname. The xterm-based interactive view splices the runner's PTY
 into the browser tab the same way the TUI does into its terminal.
@@ -2065,8 +2077,11 @@ into the browser tab the same way the TUI does into its terminal.
 The page is organised into tabs (端末 / タスク / ファイル / 通知):
 
 - **Tasks** — runners + task list, the creator tree (🌳) with the
-  capability audit folded under it (権限の棚卸し), the submit / compose form
-  (with a `--caps` selector and effective-set readout), and a command line.
+  capability audit folded under it (権限の棚卸し), the compose form
+  (with a `--caps` selector and effective-set readout, and a
+  「one-shot で開く」 checkbox for `--oneshot`), and a command line. The
+  command line has no spawn verb (`submit` was its only one): Compose and
+  the task sheet spawn.
 - **Files** — a per-task worktree browser: navigate directories, push
   (upload a local file), pull (download), delete, and **Preview** a
   selected file in a modal. `.html` files render in a **sandboxed
@@ -2093,7 +2108,8 @@ Run WS+UDP dualstack if you want both.
   uncommitted. You inspect them yourself; `harness-cli prune-local`
   removes old worktrees with `git worktree remove --force`, and
   `harness-cli prune` asks the server to forget terminal task records
-  and per-task log files. The server can auto-prune via
+  and their PTY records (files under `<data-dir>/logs/` from before the
+  task log was retired are left alone). The server can auto-prune via
   `harness-server --task-retain=DUR` (e.g. `--task-retain=720h`).
 - **A DELIBERATE server restart keeps its tasks; a crash does not.** Before
   going down on a signal or its `--shutdown-file` sentinel, the server asks
@@ -2131,7 +2147,8 @@ Run WS+UDP dualstack if you want both.
   `{args} --continue`). Non-Claude agents can use `--agent-bin`,
   `--agent-oneshot-argv`, `--agent-resume-oneshot-argv`,
   `--agent-interactive-argv` and `--agent-resume-interactive-argv` to map
-  harness submit/resume intent onto their own CLI surface — one template
+  the harness's one-shot (`session new --oneshot`), interactive and resume
+  launches onto their own CLI surface — one template
   per launch mode, so every mode a profile can be launched in is one the
   profile can describe. `--agent-interactive-argv` defaults to the bare
   binary (`{args}`), which is what claude / codex / agy / a shell all
@@ -2168,14 +2185,14 @@ appwire/              bgn-generated app-layer wire types (AppKind payload ids,
                       PSK auth status) carried over the objtrsf transport
 peer/                 Conn + Dial + bidi stream lookup on top of objproto
 exec/                 PTY plumbing for interactive sessions (frame mux, stream splice)
-pubsub/               topic broker for task-log / status fanout
+pubsub/               topic broker for status fanout
 agentboard/           topic broker for agent-to-agent messaging
 runner/protocol/      bgn-generated wire schema for control / status messages
 topics/               topic name constants
 authority/            what a scope covers: scope types, target sets, attenuation and
                       the cascade clamp — the one implementation the server enforces
                       with and the CLI / TUI / WebUI read with
-server/               harness server: registry / taskstore / scheduler / WAL / logstore /
+server/               harness server: registry / taskstore / scheduler / WAL / recordstore /
                       pubsub + agentboard wiring
 runner/               harness runner: worktree manager / claude exec / connect loop /
                       agent env injection / settings.json + skills materialisation

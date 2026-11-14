@@ -4057,3 +4057,134 @@ open:    found by this walk, not fixed at walk time:
          through its unit. The sandbox README and `probe.sh` gain nothing (no
          new claim about the container).
 missed:  —
+
+### 2026-11-15 (pre-landing) — A3 retire oneshot: `session new --oneshot`; `submit`, `logs`, the task log and the TUI log pane retired
+
+One new spawn option (`--oneshot`: CLI flag, TUI `s` popup, WebUI Compose
+checkbox, wasm `oneshot` option), one open status (`oneshot_stream`), a
+RunnerHello bit (`oneshot_sessions`, kept on `RunnerEntry` only), a persisted
+per-run `TaskEntry.Oneshot`, and removals on every surface: `submit`, `logs`,
+the TUI log pane (its rows go to the task table; Enter on the task table is
+unbound), `--agent-log-format` / `logFormat` (accepted, ignored). Spec
+`2026-11-13-pillar-a-run-modes-design.md` §A3 (A-D29..A-D32), plan
+`2026-11-15-a3-retire-oneshot.md`. Walked after the wire, runner, server,
+client and retirement commits, before plan Task 7 (docs, live checks); the
+skill edits were in the working tree, uncommitted, at walk time. S1–S6 walked:
+the oneshot argv templates now run in a PTY and `logFormat` left the presets.
+
+done:    1 (one `Flag` in `spawnFlags`, so `session new` on the CLI and TUI
+         command lines; `SpawnAction.Oneshot` generated for both), 2 (Rule
+         oneshot×stream; `spawnValidate` refuses `--oneshot` without
+         `--prompt`; the server re-checks both), 3, 4 (`s` row relabelled;
+         the `enter follow` row, `/` LogFilter and `scopeLogs` removed —
+         keys_test pairs held), 5 (popup placeholder/footer; it opens a
+         detached `--oneshot` via `startDetachedSession`), 6 (Compose
+         `#compose-oneshot`, beside the background checkbox), 8
+         (`runModeFromOpts` reads `oneshot`), 9 / 26 (the popup reads
+         `a.authority()` for a fresh open; a popup resume passes no presence
+         bit, as the submit popup did), 15 (`spawn`, `none`, `exec_view`
+         descriptions lose submit / task logs), 16 (the table takes the
+         pane's rows: `tableHeight = height-18`; column set unchanged), 24
+         (see below), 25 (0 = the interactive template, which is the pre-A3
+         open; a resume reuses nothing, A-D29, so no presence bit), 27
+         (`buildOpenInteractiveRequest` sets the ext bit), 28 (`oneshot` on
+         task_created / task_resumed; absent replays as interactive; a pre-A3
+         oneshot-kind task left Queued or Held replays Failed
+         `oneshot_retired`), 28a (`cli.SessionOpts{` ×3 — CLI `spawnOpts`,
+         TUI `Authority.opts`, wasm interactive — each followed by
+         `RunModeFlags.Apply`; session-opening `RunModeFlags{` sites: CLI
+         `runSessionNewWith` and TUI `spawnRunMode` copy the flag, the `s`
+         popup sets it, `S` and `u`/`U` pass none by design; `sessionRequest{`
+         ×5 in `tui/interactive.go`, three carry the typed run mode, `r`/`R`
+         and the workspace resume carry none (A-D29); JS `sessionReq` ×3 —
+         Compose sets it, the two task-sheet resumes do not), 29 (`started
+         detached: <id>`; the foreground refusal names the repo and says to
+         restart the runner), 30, 33 (stream and missing prompt refused at
+         parse and at the server; CLI `submit` / `logs` print their
+         replacement and exit 2), 34a (a checkbox like its neighbour)
+omitted: 18 / 18a / 11–12 / 23 for `oneshot_sessions` — decided nowhere, the
+         pillar B `transcripts` bit's shape. A background `--oneshot` that
+         only old runners could take waits with `wait=no_candidate` while
+         those runners read Idle on every runner surface.
+         7 — `submit` was the WebUI command input's only spawn verb and
+         `session new` is `CmdlineSurfaces: CLI | TUI`, so that input now
+         creates nothing; Compose is the WebUI's only way. Not recorded in
+         the spec.
+n/a:     13, 14 (listed as an interactive session, which it is), 19, 22 (no
+         raw value to prefill from — but see 6 below), 32 (a boolean; no
+         grammar), 34 (no column change), 38 (an ordinary PTY session: both
+         live panes render it unchanged), S2, S4
+open:    found by this walk, not fixed at walk time:
+         **24 + 2 + 33 — `--exact` with `--oneshot` (or any `--prompt`)
+         is accepted.** `exactConflicts` (`cli/verb/spawn.go:153`) lists
+         neither, and the open path's `exactFields`
+         (`server/task_handler.go:1575-1581`) passes no prompt and no
+         oneshot to `exactMismatch`, which has a prompt case the submit path
+         used. `session new --resume <id> --exact --oneshot --prompt P`
+         parses (checked against a built CLI: it reached the dial, where
+         `--exact --agent x` is refused at parse) and runs P through the
+         oneshot argv on a resume whose Help says "no new prompt", with only
+         `resume_exact`. The other half: an exact resume of a task whose last
+         run was `--oneshot` opens the interactive template, so "exactly as
+         recorded" does not restore `TaskEntry.Oneshot`. The prompt half
+         predates A3 (A2 put `--prompt` on `session new`); A3 is what turns
+         it into a new argv.
+         **31 — a `--oneshot` task looks like any interactive session on
+         every display surface.** `TaskInfo` (`runner/protocol/message.bgn`
+         `format TaskInfo`) has no oneshot field, so `ls`, `ls --json`, the
+         TUI table and `d` popup, the WebUI row and sheet and the wasm
+         snapshot all say `interactive`. Whether the session will end on its
+         own, and why `r`/`R` reopens it as an interactive agent, is on no
+         surface. The TUI table's About cell is worse than before:
+         `renderPromptCell` (`tui/tasks.go:647-650`) prints `<interactive>`
+         by kind, so the prompt a submit row showed truncated is now hidden
+         unless the agent sets a title or progress (`ls`, `d` and the WebUI
+         row do print it).
+         **5 — the `s` popup lost the runner/agent picker.** Submit's
+         `SubmitResultMsg` carried a `Retry` that opened the picker on
+         `ambiguous_runner`; `startDetachedSession` returns
+         `SessionStartedMsg`, which has none (`tui/overlays.go:683`,
+         `tui/app.go:1538-1559`), so on a multi-profile runner a popup left
+         on the default agent ends in a flat `session start failed`.
+         **5 / 34a sibling — the TUI background form has no one-shot
+         control** (`tui/bgform.go:238` `Values` never sets `Oneshot`), while
+         WebUI Compose offers background + one-shot together. A background
+         one-shot is reachable from the TUI command line only; `r`/`R` on a
+         background one-shot opens that form and resumes it interactive.
+         **10 / 33 — the retired-verb hint is CLI-only.** `retiredVerbs`
+         (`cmd/harness-cli/main.go:139-147`); `submit` / `logs` typed in the
+         TUI command line or the WebUI input get `unknown command`
+         (`tui/cmdline.go:58`, `webui/static/cmdline.js:705`), on two
+         surfaces that had `submit`.
+         **6 / 34a corollary** — Compose can build what the server refuses:
+         one-shot + stream, one-shot with an empty prompt. And
+         `prefillComposeFromTask` (`webui/static/main.js:4097-4116`) sets the
+         stream box from the task but leaves the one-shot box as last used.
+         **35** — `README.md` is untouched by the branch: `submit` / `logs`
+         in the harness-cli summary, the Quick start, the caps table
+         (`spawn`, `exec_view`), the TUI footer (`s submit · enter follow`),
+         the TUI cmdline verb list and the WebUI paragraph (plan Task 7).
+         **36** — the embedded `harness-cli` / `supervising-workers` edits
+         are uncommitted at walk time (mirrors byte-equal).
+         **37** — no as-built note under §A3; the author's two calls are
+         still unconfirmed, and the exact-resume, picker, WebUI-input and
+         display points above are decided nowhere.
+         **39** — A-D29..A-D32 and plan Task 4 walked against the code: every
+         row is built (bits, hello filter in foreground and in `Tick`,
+         `oneshot_retired`, retired flags accepted, `s`, Compose, wasm). Not
+         done: Task 4's JS test (no `*_test.mjs` asserts the Compose box
+         reaches `oneshot`) and every Task 7 live check (TUI `s` in a PTY,
+         Compose in a browser, real agents in the PTY).
+         **S1** (done: `logFormat` and `--agent-log-format` gone from the
+         presets, `agent_profiles_json` and `_CONFLICTING_FLAGS`; twins still
+         derived) — open half: the oneshot templates now run with a TTY, and
+         only claude's has a stated plan to be driven; pi's own preset
+         comment says its TTY behaviour is unmeasured.
+         **S3** — the wrapper gives a one-shot `-t` now (stdin is the PTY);
+         its "one-shot (`-p`) verified end-to-end" was measured on the pipe
+         path.
+         S5 (no `HARNESS_*` name added; a one-shot now gets the session
+         path's env and a TTY) and S6 (done: runner-up.md, sandbox README,
+         `probe.sh` usage; the upgrade step is A-D32's accept-and-ignore,
+         `TestRunnerAcceptsRetiredFlags`) need no further edit.
+missed:  —

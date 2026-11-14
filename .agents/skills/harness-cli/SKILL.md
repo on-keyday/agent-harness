@@ -9,8 +9,9 @@ description: Use when talking to other agents or the harness from inside a runne
 the whole harness. This skill covers the half you need to talk to other agents:
 the agentboard (the only sanctioned way to do so), plus operator notifications
 (`notify`). The half about driving OTHER agents — spawning worker sessions,
-`--caps`, one-shot `submit` + `logs` / `watch`, `file push` / `file pull`, and
-reading a worker's diff — is the `supervising-workers` skill. All required
+`--caps`, one-shot sessions (`session new --oneshot`) and getting a worker's
+answer back, `watch`, `file push` / `file pull`, and reading a worker's diff —
+is the `supervising-workers` skill. All required
 credentials are passed via `HARNESS_*` environment variables (already set by
 the runner) — never pass them as flags.
 
@@ -77,7 +78,8 @@ high bits of every new `seq`. Details: `references/lifetimes.md`.
 
 ## Inbox is automatic — do not poll
 
-**The split is session vs one-shot, not claude vs everything else.** The runner
+**The split is a session that takes turns vs a one-shot, not claude vs
+everything else.** The runner
 injects `.claude/settings.json` and `.codex/hooks.json` into every injected
 worktree, whatever agent it spawns there; their `UserPromptSubmit` hook runs
 `harness-cli agent inbox --json --user-prompt-submit-hook`, which hands you the
@@ -90,9 +92,10 @@ How a turn starts differs:
   idle, the runner types a `<harness:agentboard-wake>` prompt into the PTY,
   which starts a turn and fires the hook.
 - An **event-stream session** gets the same text as a user turn.
-- A **one-shot task** (`submit`) has no stdin and can never be woken: the hook
-  fires once, at the start. Call `harness-cli agent inbox` yourself if messages
-  may have arrived since.
+- A **one-shot session** (`session new --oneshot`) runs the agent's print mode:
+  it gets one turn and can never be woken into another, so the hook fires
+  once, at the start. Call `harness-cli agent inbox` yourself if messages may
+  have arrived since.
 
 If no hook fetches messages for you, follow the wake prompt and run
 `harness-cli agent inbox --json`. **Calling it by hand is always safe**: it
@@ -118,9 +121,9 @@ hook described above. The correct pattern for any request/response flow,
    when the user types a prompt, or, for a session (interactive or
    event-stream), when the runner injects a synthetic
    `<harness:agentboard-wake>` turn because a new message landed while you
-   were idle. A one-shot task has no
-   such push: its next turn (if any — e.g. a `--resume-conversation`
-   follow-up) picks up the reply via the same `UserPromptSubmit` hook, or you
+   were idle. A one-shot (`--oneshot`) has no
+   such push: its next turn (if any — a later `--resume --resume-conversation`
+   of the task) picks up the reply via the same `UserPromptSubmit` hook, or you
    read it directly with `harness-cli agent inbox` before the turn ends.
 
 Why this rule exists:
@@ -362,8 +365,9 @@ written to you, answering it does not.
 
 ## Delegating to worker agents — see the `supervising-workers` skill
 
-Spawning a worker session, `--caps` attenuation, one-shot `submit` + `logs` /
-`watch`, `file push` / `file pull` into a worker's worktree, and reading a
+Spawning a worker session, `--caps` attenuation, one-shot sessions
+(`session new --oneshot`) and how their answer comes back, `watch`,
+`file push` / `file pull` into a worker's worktree, and reading a
 worker's diff with `harness-cli git` all live in a separate skill so a task
 that only talks to peers does not have to read them:
 
@@ -394,7 +398,7 @@ really sent it. A connection that is not a task (the operator's) is marked
 **Keep it to one short line.** It is a fire-and-forget, one-way ping — NOT a
 question and NOT a request/response. Send it and end the turn; do not wait for
 anything back. Over-long text is truncated to fit the transport, and detail
-belongs in the task log, not the notification. Use it to surface "I'm done",
+belongs in a board message or your own conversation, not the notification. Use it to surface "I'm done",
 "I'm blocked and need a decision", or "this failed" to an away-from-keyboard
 operator.
 

@@ -540,6 +540,89 @@ Read on the pillar B branch's tip (2026-11-15), traced to the code.
 | A-D31 | **`submit` goes on every surface.** Its callers move to `session new --oneshot` (F32: `--agent bash --oneshot --prompt "sleep 3600"` keeps a task running with a worktree). The TUI's `s` key and popup open a `--oneshot` session instead of submitting. The retired wire ordinals stay reserved (F34) | GD (G7), this spec (the `s` key, the bash replacement) |
 | A-D32 | **Upgrade.** The server stops creating and placing oneshots. At replay a oneshot left Queued or Held fails with `oneshot_retired`: nothing would place it or read its output. Old records still replay and display. The server is restarted first, so a new runner never meets an old server's `assign_task`. `--agent-log-format` and the preset key `logFormat` are accepted and ignored for one release, because `restart.py` replays a runner's argv and a removed flag would stop the runner from starting | GD (G22), this spec |
 
+### As built (2026-11-15)
+
+Where the code differs from §A3 above, or settles what it left open. Plan:
+`docs/superpowers/plans/2026-11-15-a3-retire-oneshot.md`; the rulings are in
+its ledger.
+
+- **The `--oneshot` flag is persisted per run**, against the plan's "nothing
+  persisted beyond today's fields". A background `--oneshot` is queued and
+  placed later by `Tick`, which has to send the bit then — after a restart
+  too. It travels as `RunSpec.Oneshot` (`server/runmode.go`) into
+  `TaskEntry.Oneshot` (`server/taskstore.go`) and the WAL key `oneshot` on
+  `task_created` / `task_resumed` (`server/wal.go`); `Tick` skips a runner
+  without the hello bit for it (`server/scheduler.go`). Zero is an ordinary
+  session, and a resume still takes the flag from its own request only (A-D7,
+  A-D29).
+- **A new status, `OpenInteractiveStatus.oneshot_stream`**
+  (`runner/protocol/message.bgn`): an open carrying both `--oneshot` and
+  `--stream` is refused, foreground and background alike
+  (`server/task_handler.go`). Client-decoded only. The verb table refuses the
+  pair before it is sent (`cli/verb/spawn.go`).
+- **The retired wire types are kept**, where the plan removed them. The
+  `submit`, `assign_task` and `get_task_log` ordinals keep their names, and
+  `SubmitRequest` / `SubmitResponse`, `AssignTask` and the `GetTaskLog`
+  request and response stay in `runner/protocol/message.bgn`: removing them
+  would orphan the field docs `OpenInteractiveRequest` cites and leave an
+  older client with no answer at all. What answers them
+  (`server/task_handler.go` unless named):
+  - `submit` → `internal_error` with "submit is retired: use session new
+    --oneshot (with --background --deadline D --agent A to queue it while
+    every runner is busy)".
+  - `GetTaskLog` → an empty response ("no log") for every id, with no
+    capability check, since the answer reveals nothing.
+  - A client JOIN of a `task.<id>.log` topic is refused (`authorizeJoin`,
+    `server/pubsub_authz.go`), so an older `logs -f` ends with an error
+    instead of waiting on a topic nobody writes.
+  - The runner logs an `assign_task` from an older server as an error and
+    drops it (`runner/connect.go`); the task stays Running on that server.
+    Restarting the server first (A-D32) is what prevents it.
+- **The hello bit is `RunnerHello.oneshot_sessions`**
+  (`runner/protocol/message.bgn`, set in `runner/connect.go`, read into
+  `RunnerEntry.OneshotSessions` in `server/registry.go`).
+- **`handleOpenExec` has a panic guard** (`runner/session.go`): a panic fails
+  that task alone with `runner_panic: …`. The retired `handleAssign` had one
+  and the session path never did; `--oneshot` now runs there. Deferred: a
+  panic after the task's real `TaskFinished` can send a second one.
+- **The preset key `logFormat` is removed** from `scripts/agent_presets.py`,
+  where A-D32 had it accepted and ignored. A-D32's reason holds on the Go
+  side, which still accepts a profile's `logFormat`
+  (`runner/agent_profile.go`) and `--agent-log-format`
+  (`cmd/agent-runner/main.go`) and ignores both, so a replayed argv starts;
+  the presets, which are the source of truth, carry no field nothing reads.
+- **I2: a foreground `--oneshot` does not queue.** With every candidate
+  runner full it is refused `runner_busy`, as any foreground open is (A-D4
+  holds); `submit` used to queue. Queueing one is `--background --deadline D
+  --agent A`, and the retired `submit` answer, the CLI's retired-verb hint
+  (`cmd/harness-cli/main.go`) and the agent skills say so. The recommended
+  option was taken; the operator has not yet confirmed it.
+
+Open:
+
+- **An exact resume and a prompt.** On the open path `exactMismatch`
+  (`server/task_handler.go`) is not handed the prompt, which travels on its
+  own stream (A-D17), so `--exact --prompt …` is neither refused nor
+  replaced by the recorded prompt; `cli/verb/spawn.go` does not refuse the
+  pair either, though `--exact`'s help says "no new prompt". Refusing it
+  would make an exact background resume impossible, since A-D7 requires a
+  prompt there. Needs a decision.
+- **The WebUI command line has no spawn verb.** `submit` was its only one
+  (`webui/static/main.js` `runCmd`); `session new` declares no
+  `WebUIDispatch` (`cli/verb/table.go`). Compose and the task sheet still
+  spawn. Whether `session new` gets a dispatch is for the parity walk.
+- **A cancel that reaches the runner before an open registers leaves the task
+  un-ended.** The runner answers it as a cancel for an unknown task
+  (`handleCancelTask`, `runner/session.go`); the server drops that answer
+  and the open's later report as from a non-owner (`acceptTaskReport`,
+  `server/runner_handler.go`). Older than A3, and likelier now that
+  `--oneshot` runs are short; seen in `TestIntegrationCancelKillsClaude`,
+  which now cancels after the agent is running. Not fixed.
+- **F35: a foreground `--oneshot` has no time bound.** The 30-minute default
+  was `Process.Run`'s, on the retired path. A foreground one-shot session runs
+  until its process exits or someone cancels it; a background one is bounded
+  by its deadline.
+
 ## Testing (A2)
 
 - Unit, server: a background open with no candidate is Queued, not refused;

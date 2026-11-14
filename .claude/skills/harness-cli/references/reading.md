@@ -4,7 +4,8 @@ Read with "Inbox is automatic" in the harness-cli SKILL.md.
 
 ## How messages reach you, in full
 
-**The split is session vs one-shot, NOT claude vs everything else.** This
+**The split is a session that takes turns vs a one-shot, NOT claude vs
+everything else.** This
 paragraph used to say the opposite — that only a Claude agent receives
 anything automatically — and it was wrong in the way most likely to mislead
 the readers it addressed. Two things it got backwards:
@@ -12,9 +13,11 @@ the readers it addressed. Two things it got backwards:
 - **The hook file is injected for every runtime.** The runner writes
   `.claude/settings.json` and `.codex/hooks.json` into an injected worktree
   without consulting which agent it is about to spawn there.
-- **Waking is gated on having a live stdin, not on a runtime.** A session —
-  interactive or event-stream — has one; **a one-shot never does and can never
-  be woken**, whatever it runs. That is the real dividing line.
+- **Waking is gated on the agent taking another turn, not on a runtime.** A
+  session — interactive or event-stream — takes turns; **a one-shot
+  (`session new --oneshot`) runs the agent's print mode, which answers once and
+  exits, so it can never be woken**, whatever it runs. That is the real
+  dividing line.
 
 What remains runtime-dependent is narrow: whether anything on your side turns
 a new turn into an inbox fetch. Claude Code reads `.claude/settings.json`;
@@ -25,7 +28,7 @@ that review. Other runtimes may not consume either file. If no hook fetches
 messages, follow the wake prompt and run `harness-cli agent inbox --json`.
 
 Do not conclude from your runtime's name that you are in either camp — check
-whether messages actually arrive, and remember that a one-shot task is
+whether messages actually arrive, and remember that a one-shot is
 push-less regardless.
 
 `harness-cli agent inbox` is wired into both the Claude Code and Codex hooks:
@@ -35,7 +38,7 @@ push-less regardless.
   (delivers any pending messages at the start of a turn).
 
 That covers every task kind, but how a new turn actually *starts* differs.
-An **interactive session** (`session new`) gets a live wake:
+An **interactive session** (`session new` without `--oneshot`) gets a live wake:
 when the runner detects new agentboard messages while such a session is idle,
 it writes a synthetic `<harness:agentboard-wake>` prompt directly into the
 PTY as real keystrokes, which the agent's terminal UI submits as a new turn —
@@ -44,13 +47,14 @@ other turn. This works across agent runtimes, not just Claude Code. An
 **event-stream session** (`session new --stream`) is woken too: there is no
 PTY, so the runner hands the same `<harness:agentboard-wake>` text to the
 session as a user turn, and it reaches you the way a turn the operator typed
-does. A **one-shot task** (`submit`) has no stdin to write to and gets no wake:
-it runs a single turn, so `UserPromptSubmit` fires exactly once, at the
-start. If you're a one-shot task and suspect messages have landed since then,
-call `harness-cli agent inbox` yourself — nothing will push it to you.
+does. A **one-shot** (`session new --oneshot`) has no next turn for a wake to
+start: its print-mode agent runs a single turn, so `UserPromptSubmit` fires
+exactly once, at the start. If you're a one-shot and suspect messages have
+landed since then, call `harness-cli agent inbox` yourself — nothing will push
+it to you.
 
 You do NOT need to call `inbox` manually in the common case (interactive
-sessions, or a one-shot task that only needs what already arrived at turn
+sessions, or a one-shot that only needs what already arrived at turn
 start). The hook already feeds the messages into your context.
 
 **Calling `harness-cli agent inbox` by hand is always safe.** It is a plain,

@@ -40,9 +40,10 @@ Arguments: $ARGUMENTS
    command execution while keeping worktree-based isolation — so it does **not**
    set `--no-worktree`, and the user must still supply `roots=` (no sensible
    default). Prerequisites before spawning: `podman` installed and the image
-   built once via `scripts/sandbox/build.sh`. one-shot is verified; interactive
-   is bridged via a conditional `podman -t` (worth confirming on real use; see
-   `scripts/sandbox/README.md`). Each `sandbox-*` preset carries its agent's own
+   built once via `scripts/sandbox/build.sh`. One-shot was verified on the
+   retired oneshot path; `session new --oneshot` now runs in the PTY like an
+   interactive session, and both are bridged via a conditional `podman -t`
+   (worth confirming on real use; see `scripts/sandbox/README.md`). Each `sandbox-*` preset carries its agent's own
    act-without-asking flag as the profile's `agentArgs` (`_SANDBOX_AGENT_ARGS`
    in `scripts/agent_presets.py`) — safe here because the container is the
    boundary and keep-id runs claude non-root (so claude's flag is accepted). It
@@ -103,7 +104,7 @@ Arguments: $ARGUMENTS
    order. Prefer `runner.sh up --agents codex`. Why codex's one-shot argv
    differs in *subcommand shape* from claude's:
 
-   - one-shot invokes the `exec` subcommand.
+   - one-shot (`session new --oneshot`) invokes the `exec` subcommand.
    - `resume_conversation` one-shot invokes `exec resume --last` — the
      non-interactive subcommand shape matters: top-level `codex resume` is
      interactive-only.
@@ -116,7 +117,7 @@ Arguments: $ARGUMENTS
      identity. `codex exec` never uses the daemon and rejects the flag.
    - `{args}` = the profile's baseline (runner `--agent-args` for the default
      profile, the preset's `agentArgs` for an extra one) + per-task `--agent-arg`;
-     `{prompt}` = the one-shot prompt as a single argv element. Templates are
+     `{prompt}` = the task's `--prompt` as a single argv element. Templates are
      shlex-split and executed via argv, not a shell.
 
    **Pairing is enforced at startup**: customizing `--agent-oneshot-argv`
@@ -175,9 +176,11 @@ Arguments: $ARGUMENTS
    positional `message`, so `{prompt}` carries no flag. `resume_conversation`
    one-shot is `run --continue`; interactive resume is bare `opencode
    --continue` (opencode accepts `--continue` on both). No structured output is
-   requested: `run --format json` emits opencode's own event schema and
-   `runner/agentlog` has no decoder for it, so the agent prints plain text —
-   the same call agy's preset makes.
+   requested, so a `--oneshot` session shows plain text — the same call agy's
+   preset makes. The original reason (`runner/agentlog` had no decoder for
+   `run --format json`'s event schema, so the task log could not render it)
+   went with the task log in A3: nothing converts a one-shot's output now, and
+   claude's and codex's presets keep their JSON, shown as emitted.
 
    Two things to check before spawning a slot:
 
@@ -216,8 +219,8 @@ Arguments: $ARGUMENTS
    flag. It is the only preset here whose templates put `--` before `{prompt}`;
    pi documents that as "end option parsing", which is what stops a task prompt
    beginning with a dash from being read as a flag. No structured output is
-   requested — pi's `--mode json` is its own event schema and `runner/agentlog`
-   has no decoder for it, the same call agy's and opencode's presets make.
+   requested (pi's `--mode json` is its own event schema), the same call agy's
+   and opencode's presets make, for the reason given there.
 
    Unlike opencode, **resume needs no version gate**: pi stores sessions
    "organized by working directory" under `~/.pi/agent/sessions/<escaped-cwd>/`,
@@ -270,7 +273,7 @@ Arguments: $ARGUMENTS
 
    **Bash preset details.** The bash slot is a shell runner, not an agent with
    conversation state. Its argv (defined in `scripts/agent_presets.py`) runs
-   one-shot submits as a shell command (`bash -c <prompt>`); a "resumed"
+   a `session new --oneshot` prompt as a shell command (`bash -c <prompt>`); a "resumed"
    one-shot just runs the prompt again (bash has nothing to continue), and
    `resume_conversation` interactive is a plain re-open (no `--continue`).
    `--agents bash` emits only that bin+argv; a real bash slot still needs
@@ -291,7 +294,7 @@ Arguments: $ARGUMENTS
 
    The Windows roots default `C:/workspace` matches the user's observed convention; override with `roots=` if the actual workspace is elsewhere.
 
-4. **Pre-flight: detect dispatch-ambiguity collision**. Before spawning, run `harness-cli ls` and scan the RUNNERS section. The server picks a runner whose `AllowedRoots` contains an entry equal to the repo, plus the selector; when two runners on the *same reported hostname* serve the *same exact roots string*, dispatch (`submit` / `session new` / `interactive`) with the default `Any` selector returns `AmbiguousRunner`, and a `--host <name>` pin cannot disambiguate them either.
+4. **Pre-flight: detect dispatch-ambiguity collision**. Before spawning, run `harness-cli ls` and scan the RUNNERS section. The server picks a runner whose `AllowedRoots` contains an entry equal to the repo, plus the selector; when two runners on the *same reported hostname* serve the *same exact roots string*, dispatch (`session new`) with the default `Any` selector returns `AmbiguousRunner`, and a `--host <name>` pin cannot disambiguate them either.
 
    - Compute `intended_roots_csv` (the resolved `--roots` value, or `.` if omitted).
    - Compare against each existing row's `host=<H>` and `roots=<csv>` (exact string match on both).
