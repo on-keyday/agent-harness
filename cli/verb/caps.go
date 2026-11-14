@@ -73,6 +73,9 @@ func GrantableCaps() []protocol.Capability {
 		// board. record_persist keeps, record_delete destroys (pillar A, A1).
 		protocol.Capability_RecordPersist,
 		protocol.Capability_RecordDelete,
+		// transcript_read after the record bits: it reads an agent's own
+		// transcripts of the task's directory, not the server's records (pillar B).
+		protocol.Capability_TranscriptRead,
 		protocol.Capability_All,
 	}
 }
@@ -172,6 +175,10 @@ func CapDescription(c protocol.Capability) string {
 	case protocol.Capability_RecordDelete:
 		return "delete PTY records (record rm), switch recording off (record off), or shorten a record's retention, " +
 			"for tasks in the bit's scope; an override with exclude_self keeps a task from doing it to its own record. NOT prune"
+	case protocol.Capability_TranscriptRead:
+		return "list and read the agents' transcripts of a task's working directory (transcript ls / get), " +
+			"for tasks in the bit's scope; a session recorded in a shared directory (the repo itself) also needs exec_run. " +
+			"NOT exec_view: a transcript holds what never reached a screen — files the agent read, subagents, past runs"
 	case protocol.Capability_All:
 		return "full capability set (operator-equivalent)"
 	default:
@@ -465,11 +472,13 @@ var capAuditTable = map[protocol.Capability]capAuditEntry{
 	protocol.Capability_BoardMember:   {tier: TierMid},
 	protocol.Capability_RecordPersist: {tier: TierMid},
 	protocol.Capability_RecordDelete:  {tier: TierStrong},
-	protocol.Capability_ResumeExact:   {tier: TierMid, impliedBy: []protocol.Capability{protocol.Capability_Resume}},
-	protocol.Capability_ExecView:      {tier: TierWeak, impliedBy: []protocol.Capability{protocol.Capability_ExecCowrite, protocol.Capability_ExecControl}},
-	protocol.Capability_ExecResize:    {tier: TierWeak},
-	protocol.Capability_FileRead:      {tier: TierWeak},
-	protocol.Capability_Notify:        {tier: TierWeak, scope: ScopeNone},
+	// Strong: a transcript carries the full text of every file the agent read.
+	protocol.Capability_TranscriptRead: {tier: TierStrong},
+	protocol.Capability_ResumeExact:    {tier: TierMid, impliedBy: []protocol.Capability{protocol.Capability_Resume}},
+	protocol.Capability_ExecView:       {tier: TierWeak, impliedBy: []protocol.Capability{protocol.Capability_ExecCowrite, protocol.Capability_ExecControl}},
+	protocol.Capability_ExecResize:     {tier: TierWeak},
+	protocol.Capability_FileRead:       {tier: TierWeak},
+	protocol.Capability_Notify:         {tier: TierWeak, scope: ScopeNone},
 }
 
 // CapTierOf is c's audit tier. A bit missing from the table reads as strong,

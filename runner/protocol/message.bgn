@@ -60,6 +60,9 @@ enum RunnerRequestType:
     leave                 # end your tasks and exit; you were kicked (runner kick).
                           # A runner too old to know this logs a decode error
                           # and the server closes the connection after 10 s.
+    transcript            # list a task's transcripts or read one (pillar B).
+                          # Sent only to a runner whose RunnerHello sets
+                          # transcripts: an older one would be dropped as above.
 
 # AllowedRoot is a single repository root path the runner is willing to accept tasks for.
 format AllowedRoot:
@@ -124,7 +127,10 @@ format RunnerHello:
     # (= the inbox hook AND this skill are present). False = peer follows none
     # of the skill conventions even if it is an agent CLI.
     skills_injected :u1
-    reserved :u7
+    # this runner answers RunnerRequestType.transcript (pillar B). A runner
+    # from before it sends 0 and is never asked.
+    transcripts :u1
+    reserved :u6
     # named agent profiles this runner can launch a session under (empty =
     # runner has no profile concept beyond its single --agent-bin).
     agent_profiles_len :u8
@@ -500,6 +506,7 @@ format RunnerRequest:
         RunnerRequestType.hold_tasks => hold_tasks :HoldTasksRequest
         RunnerRequestType.rebind_session => rebind_session :RebindSessionRequest
         RunnerRequestType.leave => leave :LeaveRequest
+        RunnerRequestType.transcript => transcript :RunnerTranscriptRequest
 
 # Server -> runner, RunnerRequestType.leave: `runner kick` asked this runner to
 # go. It ends its tasks and the process exits 0. by names who kicked it, as the
@@ -759,6 +766,10 @@ enum TaskControlKind:
     record_delete           # appended: delete one run's record, or every run's
     record_keep             # appended: change one run's record's retention
     record_switch           # appended: switch a live session's recording
+    # Agent transcripts (pillar B). Both need transcript_read on the task; a
+    # session recorded in a shared directory needs exec_run as well.
+    transcript_list         # appended: a task's sessions, or one session's files
+    transcript_get          # appended: one file of a session, or all as a tar
 
 # ClientKind tags the kind of caller that opened a TaskControl session.
 # `agent` is an in-task harness-cli that proves its identity via agent_info;
@@ -3176,6 +3187,8 @@ format TaskControlRequest:
         TaskControlKind.record_delete            => record_delete            :RecordDeleteRequest
         TaskControlKind.record_keep              => record_keep              :RecordKeepRequest
         TaskControlKind.record_switch            => record_switch            :RecordSwitchRequest
+        TaskControlKind.transcript_list          => transcript_list          :TranscriptListRequest
+        TaskControlKind.transcript_get           => transcript_get           :TranscriptGetRequest
         .. => error("Unexpected task")
 
 # CancelResult replaces a bare u8 that every reply wrote as 0. ok stays 0, so
@@ -3279,6 +3292,8 @@ format TaskControlResponse:
         TaskControlKind.record_delete            => record_delete            :RecordDeleteResponse
         TaskControlKind.record_keep              => record_keep              :RecordKeepResponse
         TaskControlKind.record_switch            => record_switch            :RecordSwitchResponse
+        TaskControlKind.transcript_list          => transcript_list          :TranscriptResponse
+        TaskControlKind.transcript_get           => transcript_get           :TranscriptResponse
 
 # --- runner enrollment (2026-10-27-runner-enrollment-design.md) --------------
 # The server lets a runner register under AuthRole.runner only when it signs
@@ -4808,19 +4823,24 @@ enum Capability:
     # disk, and under the server-wide cap a new one pushes the oldest out
     # (A-D22, A-D25, A-D26), as board_persist is apart from reading a topic.
     record_persist = 0x8000000, "record_persist"
+    # transcript_read reads agents' transcripts of the task's directory (pillar
+    # B, B-D10). Not exec_view: a transcript carries what never reached a
+    # screen (files the agent read, subagents, past runs). Default-off, appended.
+    transcript_read = 0x10000000, "transcript_read"
     # `all` is a LITERAL, not "every defined bit", so it widens by hand — the
     # same edit exec_view / exec_cowrite / exec_resize each needed. The WAL
     # persists the NUMBER, so a task already granted `all` holds 0xffff and
     # does NOT gain forward_tap until it is re-granted (nor, at 0x3fffff,
     # forward_link; nor, at 0x7fffff, runner_enroll; nor, at 0xffffff,
     # board_persist; nor, at 0x1ffffff, board_member; nor, at 0xfffffff,
-    # record_delete and record_persist). That is the safe
+    # record_delete and record_persist; nor, at 0x1fffffff, transcript_read).
+    # That is the safe
     # direction and needs no migration.
     #
     # Widening it is REQUIRED, not stylistic: callerCaps hands operator
     # connections Capability_All, so a literal left at 0xffff would deny the
     # operator its own feature.
-    all            = 0xfffffff, "all"
+    all            = 0x1fffffff, "all"
 
 # ScopeBase is the base target set a TaskScope starts from, before its explicit
 # id list is unioned in. Self joins that union unless exclude_self removes it,
@@ -5513,6 +5533,108 @@ format GitQueryResult:
         GitQueryKind.show     => show        :GitTextBody
         GitQueryKind.subrepos => subrepos    :GitSubrepoBody
         GitQueryKind.file     => file        :GitTextBody
+
+# ---------------------------------------------------------------------------
+# Agent transcripts (pillar B, docs/superpowers/specs/2026-11-14-pillar-b-transcripts-design.md).
+# The runner resolves the task's working directory and each agent's store; no
+# path from a client is opened. Lists and bytes travel on a stream (GD G13).
+
+# TranscriptListRequest: an empty session asks for the task's sessions; a
+# session asks for the files it is made of.
+format TranscriptListRequest:
+    task_id :TaskID
+    session_len :u16
+    session :[session_len]u8
+
+# TranscriptGetRequest: one file of a session by a name its listing produced,
+# or, with an empty file, the whole session as a tar.
+format TranscriptGetRequest:
+    task_id :TaskID
+    session_len :u16
+    session :[session_len]u8
+    file_len :u16
+    file :[file_len]u8
+
+enum TranscriptStatus:
+    :u8
+    ok
+    no_such_task          # unknown, or out of the caller's scope
+    runner_offline        # the task's assigned runner is not connected
+    internal_error
+    no_such_session       # not a session recorded in the task's directory, or
+                          # a shared one the caller may not read
+    no_such_file          # not a name the session's listing produced
+    store_error           # the agent's store could not be read; message says why
+    runner_unsupported    # the runner predates transcripts (RunnerHello)
+
+format TranscriptResponse:
+    status :TranscriptStatus
+    stream_id :u64        # TranscriptResult, then (get) the bytes; 0 unless ok
+
+enum TranscriptOp:
+    :u8
+    sessions
+    files
+    get
+
+# Server -> runner. include_shared: the caller also holds exec_run on the
+# task, so sessions recorded in a shared directory (the repo itself) may be
+# listed and read (B-D2). repo_path is the server's record of the task's repo;
+# the runner re-validates it against its roots.
+format RunnerTranscriptRequest:
+    task_id :TaskID
+    stream_id :u64
+    op :TranscriptOp
+    include_shared :u1
+    reserved :u7
+    repo_path_len :u16
+    repo_path :[repo_path_len]u8
+    session_len :u16
+    session :[session_len]u8
+    file_len :u16
+    file :[file_len]u8
+
+# One session: the agent whose store holds it, the agent's id for it, when it
+# was created and last written (unix ns), the bytes of all its files, and
+# whether it was recorded in a shared directory (B-D2).
+format TranscriptSession:
+    agent_len :u8
+    agent :[agent_len]u8
+    id_len :u16
+    id :[id_len]u8
+    created_ns :u64
+    updated_ns :u64
+    size :u64
+    shared :u1
+    reserved :u7
+
+format TranscriptSessionsBody:
+    count :u32
+    sessions :[count]TranscriptSession
+
+# One file of a session, by its name relative to the session. size_known is 0
+# for a file produced on read (opencode's export).
+format TranscriptFile:
+    name_len :u16
+    name :[name_len]u8
+    size :u64
+    size_known :u1
+    reserved :u7
+
+format TranscriptFilesBody:
+    count :u32
+    files :[count]TranscriptFile
+
+# The runner's answer on the stream. For op get with status ok, the raw bytes
+# (the file, or a tar of the session) follow this header until EOF.
+format TranscriptResult:
+    status :TranscriptStatus
+    message_len :u16
+    message :[message_len]u8   # why, when status is not ok
+    op :TranscriptOp
+    match op:
+        TranscriptOp.sessions => sessions :TranscriptSessionsBody
+        TranscriptOp.files    => files    :TranscriptFilesBody
 
 # ---------------------------------------------------------------------------
 # Out-of-band exec: run one argv in a task's worktree as its own process.

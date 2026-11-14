@@ -49,8 +49,12 @@ var requiredCap = map[protocol.TaskControlKind]protocol.Capability{
 	protocol.TaskControlKind_RecordList:   protocol.Capability_ExecView,
 	protocol.TaskControlKind_RecordGet:    protocol.Capability_ExecView,
 	protocol.TaskControlKind_RecordDelete: protocol.Capability_RecordDelete,
-	protocol.TaskControlKind_PruneTasks:   protocol.Capability_Prune,
-	protocol.TaskControlKind_Notify:       protocol.Capability_Notify,
+	// Agent transcripts (pillar B, B-D10): transcript_read, scoped in the
+	// handler; a shared session also needs exec_run, checked there.
+	protocol.TaskControlKind_TranscriptList: protocol.Capability_TranscriptRead,
+	protocol.TaskControlKind_TranscriptGet:  protocol.Capability_TranscriptRead,
+	protocol.TaskControlKind_PruneTasks:     protocol.Capability_Prune,
+	protocol.TaskControlKind_Notify:         protocol.Capability_Notify,
 	// Emptying another task's progress line: whoever may end the task may
 	// empty its status line, which is the weaker act. Target-gated on
 	// cancel's scope in handleProgressClear.

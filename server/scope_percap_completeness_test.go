@@ -130,6 +130,9 @@ var capTargetClasses = map[protocol.Capability]capTargetClass{
 	// recordBit is chosen by the request's direction (keep, switch).
 	protocol.Capability_RecordPersist: {kind: capResolvedVia, via: "recordBit"},
 	protocol.Capability_RecordDelete:  {kind: capResolvedVia, via: "recordBit"},
+	// transcript_read names the task whose transcripts are read; the handler
+	// checks that task against the bit's own scope (pillar B).
+	protocol.Capability_TranscriptRead: {kind: capResolvedLiteral},
 }
 
 // serverSources concatenates the package's non-test sources, which is what the

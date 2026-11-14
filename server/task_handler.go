@@ -1239,6 +1239,9 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		protocol.TaskControlKind_RecordSwitch:
 		h.handleRecord(cid, conn, &req)
 
+	case protocol.TaskControlKind_TranscriptList, protocol.TaskControlKind_TranscriptGet:
+		h.handleTranscript(cid, conn, &req)
+
 	case protocol.TaskControlKind_DialRunner:
 		dr := req.DialRunner()
 		if dr == nil {
