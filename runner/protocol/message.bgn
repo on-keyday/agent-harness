@@ -130,7 +130,11 @@ format RunnerHello:
     # this runner answers RunnerRequestType.transcript (pillar B). A runner
     # from before it sends 0 and is never asked.
     transcripts :u1
-    reserved :u6
+    # this runner honours OpenExecRunnerRequest.oneshot (A3, A-D29). A runner
+    # from before it sends 0, and is never given a --oneshot open: it would
+    # ignore the bit and start the interactive argv.
+    oneshot_sessions :u1
+    reserved :u5
     # named agent profiles this runner can launch a session under (empty =
     # runner has no profile concept beyond its single --agent-bin).
     agent_profiles_len :u8
@@ -407,7 +411,12 @@ format OpenExecRunnerRequest:
     # 1 = the server wrote a PromptBody on the send stream prompt_stream_id
     # before this request; the runner reads it before starting the agent.
     prompt_present :u1
-    reserved :u4
+    # 1 = run the profile's oneshot argv (resume_oneshot with
+    # resume_conversation) in the PTY instead of its interactive one; relayed
+    # from OpenInteractiveExt.oneshot (A3, A-D29). Sent only to a runner whose
+    # hello set oneshot_sessions.
+    oneshot :u1
+    reserved :u3
     # agent_profile: relayed from OpenInteractiveRequest.agent_profile /
     # AssignTaskBody.agent_profile.
     agent_profile_len :u8
@@ -2531,7 +2540,10 @@ format OpenInteractiveExt:
     # saying off needs nothing (A-D22).
     record_set :u1
     record :u1
-    reserved :u6
+    # 1 = session new --oneshot: the profile's oneshot argv runs in the PTY and
+    # the session ends with it; a prompt is required (A3, A-D29).
+    oneshot :u1
+    reserved :u5
 
 enum OpenInteractiveStatus:
     :u8
