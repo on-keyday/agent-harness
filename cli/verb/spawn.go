@@ -94,12 +94,14 @@ func spawnFlags(k spawnKind) []Flag {
 	// sized.
 	return append(out,
 		Flag{Name: "x11", Type: FlagBool, Default: false, Field: "X11",
-			Help: "forward X11: inject DISPLAY/XAUTHORITY so GUI apps render on your local X server"},
+			Help:            "forward X11: inject DISPLAY/XAUTHORITY so GUI apps render on your local X server",
+			CmdlineSurfaces: CLI | TUI, SurfaceReason: x11SurfaceReason},
 		// 10, not 0: the runner binds 127.0.0.1:6000+N, and ssh picks 10 by
 		// convention precisely so a forward does not land on the runner's own
 		// :0 X port.
 		Flag{Name: "x11-display", Type: FlagUint, Default: uint(10), Field: "X11Display",
-			Help: "with --x11: the local display number (0..99)"},
+			Help:            "with --x11: the local display number (0..99)",
+			CmdlineSurfaces: CLI | TUI, SurfaceReason: x11SurfaceReason},
 		Flag{Name: "detach", Aliases: []string{"d"}, Type: FlagBool, Default: false, Field: "Detach",
 			Help: "start the session and exit immediately (don't attach the terminal)"},
 		Flag{Name: "stream", Type: FlagBool, Default: false, Field: "Stream",
@@ -137,6 +139,11 @@ func spawnFlags(k spawnKind) []Flag {
 			Help: "run the agent's one-shot (print-mode) argv in the session, which ends when it answers (needs --prompt; not with --stream)"},
 	)
 }
+
+// x11SurfaceReason is why --x11 and --x11-display stop at the WebUI: the
+// forward ends at an X server on the machine the client runs on, and a page has
+// no way to reach one.
+const x11SurfaceReason = "a browser has no local X server for the tunnel to end at"
 
 // spawnRules are the cross-flag constraints of one spawn verb. They were
 // enforced in cmd/harness-cli/session.go alone before the migration, so the

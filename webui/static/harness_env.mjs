@@ -204,6 +204,15 @@ export function recordingCtx(page, overrides = {}) {
       calls.push(["routeAmbiguous", e && e.code, req, typeof reissue]);
       return !!(e && e.code === "ambiguous_runner");
     },
+    // The page's openSession routes a request to the terminal, the chat or a
+    // detached open, and every one of those is a startInteractive. Recorded,
+    // then handed to the recorder's startInteractive, so a test reaches the
+    // rejection paths with the same `startInteractive: <Error>` override the
+    // bridge would reject with.
+    openSession: async (req) => {
+      calls.push(["openSession", req]);
+      return harness.startInteractive(req);
+    },
   };
   return ctx;
 }

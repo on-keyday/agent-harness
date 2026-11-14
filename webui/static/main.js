@@ -376,7 +376,8 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
                         spawnDepth = null, maxDescendants = null,
                         prompt = "", runMode = "", deadlineMs = 0, quietMs = 0,
                         blockedMs = 0, queueTimeoutMs = 0, turnEnd = "",
-                        rows = 0, cols = 0, record = "", oneshot = false }) {
+                        rows = 0, cols = 0, record = "", oneshot = false,
+                        detached = false }) {
     // An exact resume takes the task's recorded agent, args, prompt,
     // --oneshot, caps and scope, and the server refuses a request that
     // carries any of them, so none of the Compose state rides along.
@@ -431,6 +432,10 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       // field: this function rebuilds the request, so a key it does not
       // name is dropped.
       oneshot: !!oneshot,
+      // session new -d from the command input: open without attaching. No
+      // Compose control sets it; a background open is detached by its run
+      // mode, and a stream open by its kind.
+      detached: !!detached,
     };
     if (runner) req.runner = runner;
     if (ip) req.ip = ip;
@@ -3267,6 +3272,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     resumeTaskID: () => currentResumeTaskID(),
     agentArgs: () => currentAgentArgs(),
     sessionReq: (o) => sessionReq(o),
+    openSession: (req) => openSession(req, "session"),
     setParentMessage: (id, swap, r) => setParentMessage(id, swap, r),
     filteredTaskRows: () =>
       Array.from(taskList.querySelectorAll(".task-row")).map((r) => r.textContent).join("\n") || "(none)",
@@ -5250,9 +5256,48 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     return false;
   }
 
-  // openInteractive opens a new interactive session — every interactive PTY
-  // is a detachable, takeover-able session (the one-shot/non-detachable
-  // variant was removed; a session you cannot re-enter had no upside).
+  // openSession opens a session request the way its run mode and kind say,
+  // and resolves with the task id: queued in background, opened detached,
+  // streamed into the chat, or attached to the terminal. Compose's button and
+  // the command input's `session new` both open through here, so one request
+  // cannot open two ways depending on where it was made. It rejects as the
+  // bridge does, ambiguous_runner included; each caller routes that to the
+  // picker with its own re-issue.
+  const openSession = async (req, label) => {
+    if (req.runMode === "background" || (req.detached && !req.eventStream)) {
+      // Nothing mounts: the row shows it wait and run.
+      const id = await window.harness.startInteractive(req);
+      refreshSnapshot();
+      return id;
+    }
+    attachEpoch++;            // invalidate any in-flight close handler
+    hideQuickReattach();
+    term.reset();
+    if (req.eventStream) {
+      // This kind has no PTY: the wasm side opens and detaches rather than
+      // mounting the xterm, and the chat attaches to the stream instead.
+      const taskID = await window.harness.startInteractive(req);
+      await openChatFor(taskID);
+      return taskID;
+    }
+    try {
+      const taskID = await window.harness.startInteractive(req);
+      showTerminalView();
+      onInteractiveOpened(taskID, label);
+      return taskID;
+    } catch (e) {
+      attachedTask.textContent = "";
+      currentSessionTaskId = "";
+      throw e;
+    } finally {
+      try { fit.fit(); } catch (_) { /* element not yet laid out */ }
+      window.harness.resizeInteractive({ cols: term.cols, rows: term.rows });
+    }
+  };
+
+  // openInteractive is the Compose button: every interactive PTY is a
+  // detachable, takeover-able session (the one-shot/non-detachable variant
+  // was removed; a session you cannot re-enter had no upside).
   const openInteractive = async (label) => {
     let req;
     try {
@@ -5265,48 +5310,18 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       alert("select a repo or fill in Resume task id");
       return;
     }
-    if (req.runMode === "background") {
-      // Queued, not attached: nothing mounts, the row shows it wait and run.
-      const reissueBackground = async (retryReq) => {
-        const id = await window.harness.startInteractive(retryReq);
-        appendCmdOutput(`background: ${id} queued`, true);
-        refreshSnapshot();
-      };
-      try {
-        await reissueBackground(req);
-      } catch (e) {
-        if (routeAmbiguous(e, req, reissueBackground)) return;
-        alert(`background: ${e.message}`);
-      }
-      return;
-    }
-    attachEpoch++;            // invalidate any in-flight close handler
-    hideQuickReattach();
-    term.reset();
-    if (req.eventStream) {
-      // This kind has no PTY: the wasm side opens and detaches rather than
-      // mounting the xterm, and the chat attaches to the stream instead.
-      try {
-        const taskID = await window.harness.startInteractive(req);
-        await openChatFor(taskID);
-      } catch (e) {
-        if (routeAmbiguous(e, req)) return;
-        alert(`startInteractive --stream: ${e.message}`);
-      }
-      return;
-    }
+    const open = async (r) => {
+      const id = await openSession(r, label);
+      if (r.runMode === "background") appendCmdOutput(`background: ${id} queued`, true);
+    };
     try {
-      const taskID = await window.harness.startInteractive(req);
-      showTerminalView();
-      onInteractiveOpened(taskID, label);
+      await open(req);
     } catch (e) {
-      attachedTask.textContent = "";
-      currentSessionTaskId = "";
-      if (routeAmbiguous(e, req)) return;
-      alert(`startInteractive: ${e.message}`);
+      if (routeAmbiguous(e, req, open)) return;
+      const what = req.runMode === "background" ? "background"
+        : req.eventStream ? "startInteractive --stream" : "startInteractive";
+      alert(`${what}: ${e.message}`);
     }
-    try { fit.fit(); } catch (_) { /* element not yet laid out */ }
-    window.harness.resizeInteractive({ cols: term.cols, rows: term.rows });
   };
 
   document.getElementById("open-detachable").addEventListener("click", () => openInteractive("session"));

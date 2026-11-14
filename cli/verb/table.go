@@ -1707,8 +1707,17 @@ var Verbs = []VerbSpec{
 	// same set. `submit` was the second spawn verb until A3 retired the
 	// oneshot kind; `session new --oneshot` replaces it.
 	{
-		Path:         []string{"session", "new"},
-		SurfaceNotes: map[Surface][]string{TUI: {"open/resume detachable interactive; --detach backgrounds it and prints the id"}},
+		Path: []string{"session", "new"},
+		// The WebUI's command line had no spawn verb from A3, which retired
+		// `submit`, until this row reached it (operator, 2026-11-15).
+		// openSession is the page's own: it routes the request the way
+		// Compose's button does -- queued, detached, into the chat, or into
+		// the in-page terminal -- and every one of those is a startInteractive.
+		WebUIDispatch: WebUIDispatch{Fn: "openSession", Local: true},
+		SurfaceNotes: map[Surface][]string{
+			TUI:   {"open/resume detachable interactive; --detach backgrounds it and prints the id"},
+			WebUI: {"open/resume a session (repo/host/agent default to the Compose dropdowns, caps/scope/bound/limits to its panel; a typed flag wins); without -d it attaches the terminal above"},
+		},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/actions.go:onSession"},
 			// s: a detached --oneshot (A3), where it used to submit.
@@ -1724,7 +1733,7 @@ var Verbs = []VerbSpec{
 			"open a detachable interactive PTY session (--repo: HARNESS_REPO_PATH)",
 			"-d / --detach: start the session and exit immediately (don't attach the terminal)",
 		},
-		CmdlineSurfaces: CLI | TUI,
+		CmdlineSurfaces: CLI | TUI | WebUI,
 		Action:          "SpawnAction",
 		Const:           map[string]string{"Kind": "session-new"},
 		Flags:           spawnFlags(spawnSessionNew),

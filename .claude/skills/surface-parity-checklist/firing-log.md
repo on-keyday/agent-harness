@@ -4188,3 +4188,29 @@ open:    found by this walk, not fixed at walk time:
          `probe.sh` usage; the upgrade step is A-D32's accept-and-ignore,
          `TestRunnerAcceptsRetiredFlags`) need no further edit.
 missed:  —
+
+### 2026-11-15 (uncommitted) — `session new` on the WebUI command line
+done:    1 (`cli/verb/table.go` row: `CLI | TUI | WebUI`; `--x11` /
+         `--x11-display` narrowed to `CLI | TUI` in `cli/verb/spawn.go`),
+         7 (`WebUIDispatch{Fn: "openSession", Local: true}`; `case "session"`
+         routes `new` to `runSessionNew`, `webui/static/cmdline.js`),
+         9 + 26 (untyped caps / scope / bound / limits pass `null`, so
+         `sessionReq` applies the panel; a resume re-grants only typed values,
+         caps / scope behind the apply-on-resume checkbox as for Compose),
+         24 (per open path: `--background` queues, `-d --stream` opens the
+         chat, `-d` opens detached, none attaches the terminal; the dropdown
+         host is the fallback only when NO selector is typed, since the
+         bridge's `ValidateSelector` refuses two),
+         27 + 28a (one `sessionReq` call; the picker re-issues that request;
+         `openSession` in `main.js` is now the one open function for Compose's
+         button and the command line; `detached` added to `sessionReq` and
+         the bridge's `startInteractive`),
+         29 + 30 (the result line names the id and how it opened, into the
+         command output), 33 (`--x11` is refused here, not ignored),
+         35 (README WebUI paragraph), 37 (spec §A3 As built; the Open bullet
+         moved there), 39 (A-D15's WebUI row is Compose; unchanged).
+omitted: 6 — Compose's prompt, background, record, one-shot and stream fields
+         are not inherited by a typed line: they are that button's request,
+         not session defaults, and a line inheriting a checked one-shot box
+         would run something not typed.
+missed:  —

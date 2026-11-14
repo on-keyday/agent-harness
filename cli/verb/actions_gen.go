@@ -2543,6 +2543,90 @@ func init() {
 			a.Oneshot = b.Bool("oneshot")
 			return a, nil
 		},
+		"session new\x00webui": func(b Bound) (Action, error) {
+			a := SpawnAction{}
+			a.Kind = "session-new"
+			a.Repo = b.Str("repo")
+			a.ResumeTaskID = b.Str("resume")
+			a.ResumeConversation = b.Bool("resume-conversation")
+			a.Exact = b.Bool("exact")
+			a.CapsPresent = b.Set["caps"]
+			if b.Set["caps"] {
+				v, err := parseCapsFlag(b.Str("caps"))
+				if err != nil {
+					return nil, fmt.Errorf("session new: --caps: %w", err)
+				}
+				a.Caps = v
+			}
+			a.ScopePresent = b.Set["scope"] || b.Set["scope-for"]
+			if b.Set["scope"] {
+				v, err := parseScopeFlag(b.Str("scope"))
+				if err != nil {
+					return nil, fmt.Errorf("session new: --scope: %w", err)
+				}
+				a.Scope = v
+			}
+			a.Agent = b.Str("agent")
+			if b.Set["scope-for"] {
+				v, err := parseScopeForList(stringsOf(b.Custom["scope-for"]))
+				if err != nil {
+					return nil, fmt.Errorf("session new: --scope-for: %w", err)
+				}
+				a.Overrides = v
+			}
+			a.DelegateCapsPresent = b.Set["delegate-caps"]
+			if b.Set["delegate-caps"] {
+				v, err := parseCapsFlag(b.Str("delegate-caps"))
+				if err != nil {
+					return nil, fmt.Errorf("session new: --delegate-caps: %w", err)
+				}
+				a.DelegateCaps = v
+			}
+			a.DelegateScopePresent = b.Set["delegate-scope"]
+			if b.Set["delegate-scope"] {
+				v, err := parseScopeFlag(b.Str("delegate-scope"))
+				if err != nil {
+					return nil, fmt.Errorf("session new: --delegate-scope: %w", err)
+				}
+				a.DelegateScope = v
+			}
+			a.SpawnDepthPresent = b.Set["spawn-depth"]
+			if b.Set["spawn-depth"] {
+				v, err := parseSpawnLimitFlag(b.Str("spawn-depth"))
+				if err != nil {
+					return nil, fmt.Errorf("session new: --spawn-depth: %w", err)
+				}
+				a.SpawnDepth = v
+			}
+			a.MaxDescendantsPresent = b.Set["max-descendants"]
+			if b.Set["max-descendants"] {
+				v, err := parseSpawnLimitFlag(b.Str("max-descendants"))
+				if err != nil {
+					return nil, fmt.Errorf("session new: --max-descendants: %w", err)
+				}
+				a.MaxDescendants = v
+			}
+			a.ExtraArgs = stringsOf(b.Custom["agent-arg"])
+			a.Runner = b.Str("runner")
+			a.Host = b.Str("host")
+			a.IP = b.Str("ip")
+			a.Detach = b.Bool("detach")
+			a.Stream = b.Bool("stream")
+			a.Rows = uintOf(b.Flags["rows"])
+			a.Cols = uintOf(b.Flags["cols"])
+			a.Background = b.Bool("background")
+			a.Foreground = b.Bool("foreground")
+			a.Prompt = b.Str("prompt")
+			a.Deadline = durationOf(b.Flags["deadline"])
+			a.TurnEnd = b.Str("turn-end")
+			a.QuietFor = durationOf(b.Flags["quiet"])
+			a.BlockedFor = durationOf(b.Flags["blocked"])
+			a.QueueTimeout = durationOf(b.Flags["queue-timeout"])
+			a.Record = b.Bool("record")
+			a.NoRecord = b.Bool("no-record")
+			a.Oneshot = b.Bool("oneshot")
+			return a, nil
+		},
 		"session send\x00cli": func(b Bound) (Action, error) {
 			a := SendAction{}
 			a.Enter = b.Bool("enter")

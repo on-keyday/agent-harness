@@ -2080,8 +2080,15 @@ The page is organised into tabs (端末 / タスク / ファイル / 通知):
   capability audit folded under it (権限の棚卸し), the compose form
   (with a `--caps` selector and effective-set readout, and a
   「one-shot で開く」 checkbox for `--oneshot`), and a command line. The
-  command line has no spawn verb (`submit` was its only one): Compose and
-  the task sheet spawn.
+  command line spawns with `session new`, the CLI's flags except `--x11` /
+  `--x11-display` (a browser has no local X server). A flag not typed takes
+  Compose's value: the repo, host and agent dropdowns, the agent args, the
+  Resume task id, and the caps / scope / delegation / limit panel. Compose's
+  prompt, background, record, one-shot and stream fields are not taken. The
+  open goes the way Compose's button opens: without `-d` it attaches the
+  terminal (`--stream` opens the chat), `-d` starts it detached at 40x120
+  unless `--rows` / `--cols` say otherwise, `--background` queues it, and an
+  ambiguous runner opens the runner picker.
 - **Files** — a per-task worktree browser: navigate directories, push
   (upload a local file), pull (download), delete, and **Preview** a
   selected file in a modal. `.html` files render in a **sandboxed

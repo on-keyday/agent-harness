@@ -166,6 +166,106 @@ function parseOrHelp(ctx, tokens, opts) {
   return b;
 }
 
+// runSessionNew is `session new`: the command line's spawn verb since A3
+// retired `submit`, built the way submit was. Parsed by the shared
+// declaration, so --oneshot without --prompt, --stream without -d and the rest
+// of the cross-flag rules are refused here as on the CLI.
+//
+// What is not typed comes from the page, in two kinds. The Compose dropdowns
+// are surface context: the repo through the surface tier of --repo's declared
+// ladder, the host, agent, agent args and resume id as submit read them. The
+// compose panel's caps / scope / bound / limits are the session defaults, and
+// sessionReq applies them to whatever is passed as null. Compose's form
+// fields -- prompt, run mode, record, the one-shot and stream boxes -- are the
+// button's request, not defaults, and a line does not inherit them.
+//
+// The request is opened by ctx.openSession, the function Compose's button
+// opens with, so one request cannot open two ways depending on where it was
+// typed.
+async function runSessionNew(tokens, ctx) {
+  const dropdownRepo = ctx.composeRepo();
+  const dropdownHost = ctx.composeHost();
+  const b = parseOrHelp(ctx, tokens, {
+    repo: dropdownRepo, host: dropdownHost, agent: ctx.composeAgent(),
+  });
+  const set = b.set || {};
+  // b.flags.repo is already the ladder's answer: typed flag first, the
+  // dropdown second.
+  const repo = b.flags.repo || dropdownRepo;
+  const resumeTaskId = b.flags.resume || ctx.resumeTaskID();
+  if (!repo && !resumeTaskId) {
+    throw new Error("session new: no runner selected (pick a repo from the dropdown, type --repo, or fill in Resume task id)");
+  }
+  // The three selectors are mutually exclusive, and the bridge refuses two.
+  // The dropdown's host is the fallback for NONE typed, not for --host alone:
+  // beside a typed --runner it would be the second.
+  const typedSelector = b.flags.runner || b.flags.host || b.flags.ip;
+  // A duration that was not typed crosses as "0s", which is "the server's
+  // default" here as on the CLI; the bridge's parser refuses a zero, so it is
+  // not asked.
+  const ms = (name) => {
+    if (!set[name] || b.flags[name] === "0s") return 0;
+    const p = ctx.harness.parseDurationMs(b.flags[name]);
+    if (p.error) throw new Error(`session new: --${name}: ${p.error}`);
+    return p.ms;
+  };
+  const scopeFor = (b.custom && b.custom["scope-for"]) || null;
+  const req = ctx.sessionReq({
+    repo,
+    host: typedSelector ? (b.flags.host || "") : dropdownHost,
+    runner: b.flags.runner || "",
+    ip: b.flags.ip || "",
+    agent: b.flags.agent || ctx.composeAgent(),
+    agentArgs: (b.custom && b.custom["agent-arg"]) || ctx.agentArgs(),
+    resumeTaskId,
+    resumeConversation: !!b.flags["resume-conversation"],
+    resumeExact: !!b.flags.exact,
+    // b.set, not truthiness: --caps none is a real grant of nothing. null
+    // leaves the panel's value to sessionReq, and a resume re-grants only
+    // what was typed.
+    caps: set.caps ? b.flags.caps : null,
+    scope: set.scope ? b.flags.scope : null,
+    scopeFor: scopeFor && scopeFor.length ? scopeFor : null,
+    delegateCaps: set["delegate-caps"] ? b.flags["delegate-caps"] : null,
+    delegateScope: set["delegate-scope"] ? b.flags["delegate-scope"] : null,
+    spawnDepth: set["spawn-depth"] ? b.flags["spawn-depth"] : null,
+    maxDescendants: set["max-descendants"] ? b.flags["max-descendants"] : null,
+    eventStream: !!b.flags.stream,
+    detached: !!b.flags.detach,
+    prompt: b.flags.prompt || "",
+    runMode: b.flags.background ? "background" : b.flags.foreground ? "foreground" : "",
+    deadlineMs: ms("deadline"),
+    quietMs: ms("quiet"),
+    blockedMs: ms("blocked"),
+    queueTimeoutMs: ms("queue-timeout"),
+    turnEnd: b.flags["turn-end"] || "",
+    // The declared 40x120 unless typed. Sent only by an open that does not
+    // attach; an attached one is sized by the terminal it mounts in.
+    rows: b.flags.rows,
+    cols: b.flags.cols,
+    record: b.flags.record ? "on" : b.flags["no-record"] ? "off" : "",
+    oneshot: !!b.flags.oneshot,
+  });
+  const say = (r, id) => {
+    if (r.runMode === "background") return `background: ${id} queued`;
+    if (r.eventStream) return `session new: ${id} (stream) — chat opened`;
+    if (r.detached) return `session new: ${id} started detached`;
+    return `session new: ${id} attached`;
+  };
+  try {
+    return say(req, await ctx.openSession(req));
+  } catch (e) {
+    // More than one (runner, agent) choice matched: the picker the Compose
+    // button uses, re-issuing THIS request pinned.
+    if (ctx.routeAmbiguous(e, req, async (r) => {
+      ctx.echo(say(r, await ctx.openSession(r)));
+    })) {
+      return "session new: more than one runner/agent matches — pick a runner";
+    }
+    throw e;
+  }
+}
+
 // runVerbCommand answers a -h from anywhere inside the dispatch below, and
 // hands everything else through untouched.
 async function runVerbCommand(tokens, ctx) {
@@ -574,11 +674,13 @@ async function runVerbCommandDispatch(tokens, ctx) {
       }
       break;
     }
-    // The `session` family reaches this surface for the first time here,
-    // and only its `stream` namespace: the lifecycle verbs (new/ls/kill)
-    // have buttons, while these four had no route at all. Recorded as a
-    // partial family rather than pretending the rest exists.
+    // A partial family on this surface: `new`, `await-idle` and the `stream`
+    // namespace. ls and kill are the task list and its buttons.
     case "session": {
+      if (tokens[1] === "new") {
+        out = await runSessionNew(tokens, ctx);
+        break;
+      }
       // `session await-idle` is the canonical path on every surface; the
       // WebUI's old top-level `await-idle` spelling is gone (D16).
       if (tokens[1] === "await-idle") {
@@ -613,7 +715,7 @@ async function runVerbCommandDispatch(tokens, ctx) {
         break;
       }
       if (tokens[1] !== "stream") {
-        ctx.echo("session: only the `stream` namespace is available here — new/ls/kill are the buttons above, `mode` is the task sheet's ⇄ button");
+        ctx.echo("session: `new`, `await-idle` and the `stream` namespace are available here — ls/kill are the task list's buttons, `mode` is the task sheet's ⇄ button");
         break;
       }
       // Parsed by the shared declaration like every other verb here. It

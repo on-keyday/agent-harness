@@ -620,13 +620,25 @@ its ledger.
   wake types a marker and Enter into the terminal, which a print-mode agent
   or a shell command would read as input. The retired path had no stdin
   writer, so a wake was a no-op there.
+- **The WebUI command line takes `session new`** (operator, 2026-11-15),
+  which replaces `submit` there as it does on the other two. It was the
+  command line's only spawn verb. The row in `cli/verb/table.go` declares the
+  WebUI with `WebUIDispatch{Fn: "openSession", Local: true}`. `--x11` and
+  `--x11-display` stay CLI and TUI only (`cli/verb/spawn.go`), because a
+  browser has no local X server for the tunnel to end at. The page
+  (`runSessionNew`, `webui/static/cmdline.js`) builds the request through
+  `sessionReq`. When nothing is typed, the repo, host, agent, agent args and
+  resume id come from the Compose dropdowns, and caps, scope, bound and limits
+  from its panel. Compose's prompt, run-mode, record, one-shot and stream
+  fields are not inherited. The request opens through `openSession`
+  (`webui/static/main.js`), the function Compose's button now opens with too,
+  so a typed open and a button open cannot open one request differently.
+  `-d` is new to this surface: `sessionReq` and the bridge's
+  `startInteractive` carry a `detached` key, which opens without mounting the
+  terminal and sends the 40x120 size.
 
 Open:
 
-- **The WebUI command line has no spawn verb.** `submit` was its only one
-  (`webui/static/main.js` `runCmd`); `session new` declares no
-  `WebUIDispatch` (`cli/verb/table.go`). Compose and the task sheet still
-  spawn. Whether `session new` gets a dispatch is for the parity walk.
 - **A cancel that reaches the runner before an open registers leaves the task
   un-ended.** The runner answers it as a cancel for an unknown task
   (`handleCancelTask`, `runner/session.go`); the server drops that answer

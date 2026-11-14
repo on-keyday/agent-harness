@@ -85,6 +85,146 @@ test("tokenize keeps a quoted argument whole", () => {
   eq(page.tokenize("file mkdir x 'my dir'"), ["file", "mkdir", "x", "my dir"]);
 });
 
+// --- session new --------------------------------------------------------
+//
+// The command line's spawn verb since A3 retired `submit`. These are the
+// properties submit's tests held, moved onto the verb that replaced it.
+
+test("session new -d --oneshot reaches the request detached, with its prompt", async () => {
+  const { calls, err, out } = await run(
+    `session new -d --oneshot --agent bash --prompt x`, { startInteractive: ID });
+  assert.equal(err, undefined);
+  const [, req] = named(calls, "sessionReq")[0];
+  assert.equal(req.oneshot, true);
+  assert.equal(req.detached, true);
+  assert.equal(req.agent, "bash");
+  assert.equal(req.prompt, "x");
+  assert.equal(req.repo, "/dropdown/repo", "no typed --repo: the Compose repo is the ladder's surface tier");
+  // The size a detached open carries, as the CLI's: the declared 40x120.
+  assert.equal(req.rows, 40);
+  assert.equal(req.cols, 120);
+  assert.equal(named(calls, "openSession").length, 1);
+  assert.match(String(out), new RegExp(ID));
+});
+
+test("session new --oneshot without --prompt is refused by the declaration", async () => {
+  const { err, calls } = await run("session new --oneshot");
+  assert.match(String(err), /--oneshot needs --prompt/);
+  assert.equal(named(calls, "openSession").length, 0);
+});
+
+test("session new carries every declared flag, not the dropdowns", async () => {
+  const { calls } = await run(
+    `session new --repo /typed/repo --host typedhost --caps spawn,file_read ` +
+    `--scope global --scope-for cancel=none --agent-arg -x --resume ${ID} ` +
+    `--resume-conversation --prompt "do the thing"`,
+    { repo: "/dropdown/repo", host: "dropdownhost" });
+  const [, req] = named(calls, "sessionReq")[0];
+  assert.equal(req.repo, "/typed/repo", "a typed --repo must beat the dropdown");
+  assert.equal(req.host, "typedhost", "a typed --host must beat the dropdown");
+  assert.equal(req.caps, "spawn,file_read");
+  assert.equal(req.scope, "global");
+  eq(req.scopeFor, ["cancel=none"]);
+  eq(req.agentArgs, ["-x"]);
+  assert.equal(req.resumeTaskId, ID);
+  assert.equal(req.resumeConversation, true);
+  assert.equal(req.prompt, "do the thing");
+  assert.equal(req.detached, false, "no -d: an attached open, the in-page terminal");
+});
+
+test("session new --exact reaches the request", async () => {
+  const { calls, err } = await run(`session new --resume ${ID} --exact`);
+  assert.equal(err, undefined, "session new --resume <id> --exact is refused");
+  const [, req] = named(calls, "sessionReq")[0];
+  assert.equal(req.resumeExact, true);
+  assert.equal(req.resumeTaskId, ID);
+});
+
+test("session new --runner and --ip reach the request, without the dropdown's host", async () => {
+  const r = await run(`session new --runner ws:h:1-2`, { host: "dropdownhost" });
+  const rr = named(r.calls, "sessionReq")[0][1];
+  assert.equal(rr.runner, "ws:h:1-2");
+  assert.equal(rr.host, "", "a typed selector names the runner; the dropdown's host beside it is a second selector, which the bridge refuses");
+  const i = await run(`session new --ip 10.0.0.4`);
+  assert.equal(named(i.calls, "sessionReq")[0][1].ip, "10.0.0.4");
+  const h = await run(`session new`, { host: "dropdownhost" });
+  assert.equal(named(h.calls, "sessionReq")[0][1].host, "dropdownhost", "nothing typed: the dropdown's host");
+});
+
+test("an ambiguous session new opens the picker with a re-issue", async () => {
+  const amb = Object.assign(new Error("ambiguous_runner"), {
+    code: "ambiguous_runner",
+    candidates: [{ pin: "ws:h:1-1", hostname: "h", profiles: ["claude", "codex"] }],
+  });
+  const { out, err, calls } = await run("session new -d", { startInteractive: amb });
+  assert.equal(err, undefined);
+  const r = calls.find((c) => c[0] === "routeAmbiguous");
+  assert.ok(r, "routeAmbiguous not called");
+  assert.equal(r[1], "ambiguous_runner");
+  assert.equal(r[2].detached, true, "the picker re-issues THIS request");
+  assert.equal(r[3], "function");
+  assert.match(String(out), /pick a runner/);
+});
+
+test("a non-ambiguous session new failure still throws", async () => {
+  const { err, calls } = await run("session new", { startInteractive: new Error("no_runner") });
+  assert.match(String(err), /no_runner/);
+  assert.equal(calls.filter((c) => c[0] === "routeAmbiguous").length, 1);
+});
+
+test("session new without --caps leaves the chips to decide", async () => {
+  const { calls } = await run("session new");
+  const [, req] = named(calls, "sessionReq")[0];
+  assert.equal(req.caps, null);
+  assert.equal(req.scope, null);
+  assert.equal(req.scopeFor, null);
+});
+
+test("session new with neither a repo nor a resume id is refused before any request", async () => {
+  const { err, calls } = await run("session new", { repo: "" });
+  assert.match(String(err), /no runner selected/);
+  assert.equal(named(calls, "openSession").length, 0);
+});
+
+test("session new --background carries the run mode and its conditions", async () => {
+  const { calls, err, out } = await run(
+    "session new --background --agent claude --prompt p --deadline 1h --quiet 2m " +
+    "--blocked 3m --queue-timeout 4m --turn-end lifecycle --rows 30 --cols 100",
+    { startInteractive: ID });
+  assert.equal(err, undefined);
+  const [, req] = named(calls, "sessionReq")[0];
+  assert.equal(req.runMode, "background");
+  assert.equal(req.deadlineMs, 3600000);
+  assert.equal(req.quietMs, 120000);
+  assert.equal(req.blockedMs, 180000);
+  assert.equal(req.queueTimeoutMs, 240000);
+  assert.equal(req.turnEnd, "lifecycle");
+  assert.equal(req.rows, 30);
+  assert.equal(req.cols, 100);
+  assert.match(String(out), /queued/);
+});
+
+test("session new --foreground, --stream, --record and --no-record reach the request", async () => {
+  const f = await run(`session new --resume ${ID} --foreground`);
+  assert.equal(named(f.calls, "sessionReq")[0][1].runMode, "foreground");
+  const s = await run("session new -d --stream");
+  assert.equal(named(s.calls, "sessionReq")[0][1].eventStream, true);
+  const on = await run("session new --record");
+  assert.equal(named(on.calls, "sessionReq")[0][1].record, "on");
+  const off = await run("session new --no-record");
+  assert.equal(named(off.calls, "sessionReq")[0][1].record, "off");
+  const dflt = await run("session new");
+  assert.equal(named(dflt.calls, "sessionReq")[0][1].record, "", "neither: the server's --record default");
+});
+
+// A browser has no local X server to forward to, so the declaration withholds
+// --x11 here rather than this surface accepting it and opening without X.
+test("session new --x11 is not a flag on this surface", async () => {
+  const { err, calls } = await run("session new --x11");
+  assert.ok(err, "--x11 was accepted");
+  assert.equal(named(calls, "openSession").length, 0);
+});
+
 test("ls --json and --tree reach the renderers", async () => {
   for (const [line, want] of [["ls", ""], ["ls --json", "json"], ["ls --tree", "tree"]]) {
     const { calls } = await run(line);
@@ -480,7 +620,7 @@ test("conns refuses --runner / --watch without --trsf", async () => {
 // the help text red. Now the bridge answers under `help`, parseOrHelp unwinds
 // it past whichever case was parsing, and it prints as that command's output.
 test("-h prints the flag block instead of failing", async () => {
-  for (const line of ["file push -h", "prune --help"]) {
+  for (const line of ["file push -h", "prune --help", "session new -h"]) {
     const { out, err } = await run(line);
     assert.equal(err, undefined, `${line} must not throw, got: ${err}`);
     assert.match(String(out), /\nflags:\n/, `${line} must list its flags`);

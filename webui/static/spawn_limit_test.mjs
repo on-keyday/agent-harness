@@ -20,6 +20,23 @@ const run = async (line, overrides) => {
   return { out, err, calls: ctx.calls };
 };
 
+const ID = "a".repeat(32);
+
+test("typed limits reach the request, beating the panel", async () => {
+  const { calls, err } = await run(`session new --spawn-depth 2 --max-descendants unbounded`);
+  assert.equal(err, undefined);
+  const [, req] = named(calls, "sessionReq")[0];
+  assert.equal(req.spawnDepth, "2");
+  assert.equal(req.maxDescendants, "unbounded");
+});
+
+test("untyped limits leave the panel's to sessionReq, and a resume re-grants nothing", async () => {
+  const { calls } = await run(`session new --resume ${ID}`);
+  const [, req] = named(calls, "sessionReq")[0];
+  assert.equal(req.spawnDepth, null);
+  assert.equal(req.maxDescendants, null);
+});
+
 test("caps set-defaults writes the limits into the panel through the bridge", async () => {
   const { calls, out, err } = await run(`caps set-defaults --max-descendants 3 --spawn-depth 1`);
   assert.equal(err, undefined);

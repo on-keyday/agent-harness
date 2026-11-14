@@ -3462,6 +3462,10 @@ func harnessStartInteractive(this js.Value, args []js.Value) any {
 			if ev := opts.Get("eventStream"); ev.Type() == js.TypeBoolean {
 				eventStream = ev.Bool()
 			}
+			// detached: `session new -d` from the command input. The open
+			// returns the id and mounts nothing; the size above travels in the
+			// request, as it does for a background open.
+			detached := opts.Get("detached").Type() == js.TypeBoolean && opts.Get("detached").Bool()
 			bound, boundErr := boundFromOpts(opts)
 			if boundErr != nil {
 				rejectErr(reject, fmt.Errorf("interactive: %w", boundErr))
@@ -3479,7 +3483,7 @@ func harnessStartInteractive(this js.Value, args []js.Value) any {
 				ResumeConversation: resumeConversation, AgentProfile: agentProfile,
 				ResumeExact: resumeExact,
 				InitialRows: initRows, InitialCols: initCols,
-				EventStream:  eventStream,
+				EventStream: eventStream, Detached: detached,
 				DelegateCaps: bound.DelegateCaps, DelegateScope: bound.DelegateScope,
 				DelegateCapsPresent: bound.DelegateCapsPresent, DelegateScopePresent: bound.DelegateScopePresent,
 				SpawnDepth: bound.SpawnDepth, MaxDescendants: bound.MaxDescendants,
