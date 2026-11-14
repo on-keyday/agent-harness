@@ -328,3 +328,89 @@ func TestTranscriptGetOfAGrowingFileMatchesItsSize(t *testing.T) {
 		t.Fatalf("status %v header %+v, %d bytes followed", res.Status, res.Get(), len(rest))
 	}
 }
+
+// A store that cannot be read (agy before its store exists; opencode whose
+// binary is missing) does not turn "not here" into store_error: the session
+// is not in any store that answered, and the message names the one that could
+// not (review of Tasks 2–4, I1).
+func TestUnavailableStoreDoesNotMaskNoSuchSession(t *testing.T) {
+	f := newTranscriptFixture(t)
+	ps, err := NewProfileSet(AgentProfile{Name: "claude", Bin: "claude", TranscriptStore: "claude"},
+		[]AgentProfile{{Name: "agy", Bin: "agy", TranscriptStore: "agy"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.s.Profiles = ps
+	f.claudeSession(t, f.worktree(), "s1", "")
+	res, _ := f.answer(t, f.req(protocol.TranscriptOp_Files, "nope", "", false))
+	if res.Status != protocol.TranscriptStatus_NoSuchSession || !strings.Contains(string(res.Message), "agy") {
+		t.Fatalf("status %v %q, want no_such_session naming agy as unavailable", res.Status, res.Message)
+	}
+	res, _ = f.answer(t, f.req(protocol.TranscriptOp_Files, "s1", "", false))
+	if res.Status != protocol.TranscriptStatus_Ok {
+		t.Fatalf("a session claude holds: %v %q", res.Status, res.Message)
+	}
+}
+
+// stagingWriter fails the test if anything sits in dir when the first byte is
+// written: the answer was staged in a temp file rather than streamed.
+type stagingWriter struct {
+	t       *testing.T
+	dir     string
+	checked bool
+	n       int64
+}
+
+func (w *stagingWriter) Write(p []byte) (int, error) {
+	if !w.checked {
+		w.checked = true
+		if es, _ := os.ReadDir(w.dir); len(es) != 0 {
+			w.t.Errorf("%d file(s) staged in the temp dir before streaming", len(es))
+		}
+	}
+	w.n += int64(len(p))
+	return len(p), nil
+}
+
+// A whole-session tar is streamed, not built in a temp file: on a host whose
+// temp dir is tmpfs that would hold the session in RAM (review of Tasks 2–4,
+// I3). Its length is still known up front and the header says it.
+func TestWholeSessionTarIsStreamedNotStaged(t *testing.T) {
+	tmp := t.TempDir()
+	f := newTranscriptFixture(t)
+	f.claudeSession(t, f.worktree(), "big", "")
+	proj := filepath.Join(f.claude, "projects", transcript.ClaudeProjectDirName(f.worktree()))
+	p := filepath.Join(proj, "big", "tool-results", "huge.txt")
+	writeFile(t, p, "")
+	if err := os.Truncate(p, 64<<20); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", tmp)
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	w := &stagingWriter{t: t, dir: tmp}
+	if err := f.s.writeTranscriptAnswer(f.req(protocol.TranscriptOp_Get, "big", "", false), w); err != nil {
+		t.Fatal(err)
+	}
+	runtime.ReadMemStats(&after)
+	if w.n < 64<<20 {
+		t.Fatalf("wrote %d bytes", w.n)
+	}
+	if grew := after.TotalAlloc - before.TotalAlloc; grew > 8<<20 {
+		t.Fatalf("allocated %d bytes for a 64 MiB tar: held, not streamed", grew)
+	}
+}
+
+// The length announced for a tar is exactly what follows, also for long names
+// that need extended headers.
+func TestWholeSessionTarSizeMatchesWithLongNames(t *testing.T) {
+	f := newTranscriptFixture(t)
+	f.claudeSession(t, f.worktree(), "s1", "x\n")
+	proj := filepath.Join(f.claude, "projects", transcript.ClaudeProjectDirName(f.worktree()))
+	writeFile(t, filepath.Join(proj, "s1", "subagents", strings.Repeat("n", 150)+".jsonl"), "sub")
+	res, rest := f.answer(t, f.req(protocol.TranscriptOp_Get, "s1", "", false))
+	if res.Status != protocol.TranscriptStatus_Ok || res.Get() == nil || res.Get().Size != uint64(len(rest)) {
+		t.Fatalf("status %v header %+v, %d bytes followed", res.Status, res.Get(), len(rest))
+	}
+}

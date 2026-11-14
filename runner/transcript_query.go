@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -157,10 +158,14 @@ func (s *Session) transcriptAnswer(req *protocol.RunnerTranscriptRequest) (proto
 		break
 	}
 	if owner == nil {
+		// Not in any store that answered. A store that could not be read (one
+		// not built, a missing binary) does not turn that into store_error: it
+		// is named, and the answer stays "no such session".
+		msg := "no session " + session + " in this task's directory"
 		if len(failures) > 0 {
-			return transcriptFail(op, protocol.TranscriptStatus_StoreError, strings.Join(failures, "; ")), nil
+			msg += " (unavailable: " + strings.Join(failures, "; ") + ")"
 		}
-		return transcriptFail(op, protocol.TranscriptStatus_NoSuchSession, "no session "+session+" in this task's directory"), nil
+		return transcriptFail(op, protocol.TranscriptStatus_NoSuchSession, msg), nil
 	}
 	switch op {
 	case protocol.TranscriptOp_Files:
@@ -265,14 +270,26 @@ type limitedFile struct {
 
 func (l limitedFile) Close() error { return l.f.Close() }
 
-// spool copies r to a temp file and returns it rewound, with its size; the
-// file is removed when closed.
+// spool copies r to a file and returns it rewound, with its size; the file
+// is gone once closed. It lives under the user cache dir, not the temp dir,
+// which can be tmpfs (RAM); off Windows it is unlinked at once, so a runner
+// that dies mid-transfer leaves nothing behind.
 func spool(r io.Reader) (io.ReadCloser, int64, error) {
-	tmp, err := os.CreateTemp("", "transcript-*")
+	dir := os.TempDir()
+	if c, err := os.UserCacheDir(); err == nil {
+		d := filepath.Join(c, "harness-transcripts")
+		if os.MkdirAll(d, 0o700) == nil {
+			dir = d
+		}
+	}
+	tmp, err := os.CreateTemp(dir, "spool-*")
 	if err != nil {
 		return nil, 0, err
 	}
 	t := tempFile{tmp}
+	if runtime.GOOS != "windows" {
+		_ = os.Remove(tmp.Name())
+	}
 	n, err := io.Copy(tmp, r)
 	if err == nil {
 		_, err = tmp.Seek(0, io.SeekStart)
@@ -292,44 +309,83 @@ func (t tempFile) Close() error {
 	return err
 }
 
-// tarSession writes the session's files as a tar into a temp file and returns
-// it with its size: the header must say how many bytes follow, and building it
-// first also turns a file vanishing midway into an error before any ok. Each
-// entry is the file as it was when opened (openSized).
+// tarEntry is one file of a whole-session tar, opened and sized up front.
+type tarEntry struct {
+	name string
+	body io.ReadCloser
+	size int64
+}
+
+func (e tarEntry) header() *tar.Header {
+	return &tar.Header{Name: e.name, Mode: 0o644, Size: e.size}
+}
+
+// tarSession streams the session's files as a tar whose length is known
+// before the first byte: every file is opened and sized first (openSized),
+// the length is a dry run of the same tar writer over a counter, and the tar
+// itself is then written straight from the files — nothing is staged, so a
+// large session never sits in a temp dir that may be RAM (review of Tasks
+// 2–4, I3). A file that cannot be opened fails the get before any ok.
 func tarSession(st transcript.Store, dir, id string, files []transcript.File) (io.ReadCloser, int64, error) {
-	tmp, err := os.CreateTemp("", "transcript-*.tar")
-	if err != nil {
-		return nil, 0, err
+	var entries []tarEntry
+	closeAll := func() {
+		for _, e := range entries {
+			e.body.Close()
+		}
 	}
-	t := tempFile{tmp}
-	fail := func(err error) (io.ReadCloser, int64, error) {
-		t.Close()
-		return nil, 0, err
-	}
-	tw := tar.NewWriter(tmp)
 	for _, f := range files {
 		body, size, err := openSized(st, dir, id, f.Name)
 		if err != nil {
-			return fail(err)
+			closeAll()
+			return nil, 0, err
 		}
-		err = tw.WriteHeader(&tar.Header{Name: f.Name, Mode: 0o644, Size: size})
-		if err == nil {
-			_, err = io.Copy(tw, body)
+		entries = append(entries, tarEntry{f.Name, body, size})
+	}
+	var count countingWriter
+	tw := tar.NewWriter(&count)
+	for _, e := range entries {
+		if err := tw.WriteHeader(e.header()); err != nil {
+			closeAll()
+			return nil, 0, err
 		}
-		body.Close()
-		if err != nil {
-			return fail(err)
+		if _, err := io.CopyN(tw, zeroReader{}, e.size); err != nil {
+			closeAll()
+			return nil, 0, err
 		}
 	}
 	if err := tw.Close(); err != nil {
-		return fail(err)
+		closeAll()
+		return nil, 0, err
 	}
-	n, err := tmp.Seek(0, io.SeekCurrent)
-	if err == nil {
-		_, err = tmp.Seek(0, io.SeekStart)
-	}
-	if err != nil {
-		return fail(err)
-	}
-	return t, n, nil
+	pr, pw := io.Pipe()
+	go func() {
+		defer closeAll()
+		tw := tar.NewWriter(pw)
+		for _, e := range entries {
+			if err := tw.WriteHeader(e.header()); err != nil {
+				pw.CloseWithError(err)
+				return
+			}
+			if _, err := io.CopyN(tw, e.body, e.size); err != nil {
+				pw.CloseWithError(err)
+				return
+			}
+		}
+		pw.CloseWithError(tw.Close())
+	}()
+	return pr, int64(count), nil
+}
+
+type countingWriter int64
+
+func (c *countingWriter) Write(p []byte) (int, error) {
+	*c += countingWriter(len(p))
+	return len(p), nil
+}
+
+type zeroReader struct{}
+
+func (zeroReader) Read(p []byte) (int, error) {
+	clear(p)
+	return len(p), nil
 }

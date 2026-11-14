@@ -71,7 +71,7 @@ func (s *lineStore) files(m match) (string, []File) {
 	base, rel := s.companions(m.path, m.h.id)
 	var out []File
 	for _, r := range rel {
-		fi, err := os.Stat(filepath.Join(base, filepath.FromSlash(r)))
+		fi, err := os.Lstat(filepath.Join(base, filepath.FromSlash(r)))
 		if err != nil || !fi.Mode().IsRegular() {
 			continue
 		}
@@ -92,7 +92,7 @@ func (s *lineStore) Sessions(dir string) ([]Session, error) {
 		row := Session{Agent: s.agent, ID: m.h.id, Created: m.h.created, SizeKnown: true}
 		for _, f := range fs {
 			row.Size += f.Size
-			if fi, err := os.Stat(filepath.Join(base, filepath.FromSlash(f.Name))); err == nil && fi.ModTime().After(row.Updated) {
+			if fi, err := os.Lstat(filepath.Join(base, filepath.FromSlash(f.Name))); err == nil && fi.ModTime().After(row.Updated) {
 				row.Updated = fi.ModTime()
 			}
 		}
@@ -122,7 +122,11 @@ func (s *lineStore) Open(dir, id, name string) (io.ReadCloser, error) {
 	base, fs := s.files(m)
 	for _, f := range fs {
 		if f.Name == name {
-			return os.Open(filepath.Join(base, filepath.FromSlash(name)))
+			fh, _, err := openRegular(base, name)
+			if err != nil {
+				return nil, ErrNoFile
+			}
+			return fh, nil
 		}
 	}
 	return nil, ErrNoFile
@@ -130,14 +134,16 @@ func (s *lineStore) Open(dir, id, name string) (io.ReadCloser, error) {
 
 // headerLines reads at most max lines of path as JSON objects and hands each
 // to visit until it returns true. A line longer than 1 MiB is skipped
-// unread: a header is short, and a tool output can be very long.
+// unread: a header is short, and a tool output can be very long. Reading
+// stops after headerReadMax bytes whatever the lines, and path is opened only
+// if it is a regular file (openRegular).
 func headerLines(path string, max int, visit func(map[string]json.RawMessage) bool) {
-	f, err := os.Open(path)
+	f, _, err := openRegular(filepath.Dir(path), filepath.Base(path))
 	if err != nil {
 		return
 	}
 	defer f.Close()
-	r := bufio.NewReaderSize(f, 64<<10)
+	r := bufio.NewReaderSize(io.LimitReader(f, headerReadMax), 64<<10)
 	const lineMax = 1 << 20
 	for n := 0; n < max; n++ {
 		var line []byte
@@ -166,6 +172,9 @@ func headerLines(path string, max int, visit func(map[string]json.RawMessage) bo
 		}
 	}
 }
+
+// headerReadMax bounds how much of a file is read looking for its header.
+const headerReadMax = 8 << 20
 
 func jsonString(raw json.RawMessage) string {
 	var s string
@@ -240,7 +249,11 @@ func newClaude(getenv func(string) string) (Store, error) {
 			var out []string
 			for _, d := range dirs {
 				ms, _ := filepath.Glob(filepath.Join(d, "*.jsonl"))
-				out = append(out, ms...)
+				for _, m := range ms {
+					if isRegular(m) {
+						out = append(out, m)
+					}
+				}
 			}
 			return out, nil
 		},
@@ -346,7 +359,13 @@ func newPi(getenv func(string) string) (Store, error) {
 		agent: "pi",
 		candidates: func(string) ([]string, error) {
 			ms, err := filepath.Glob(filepath.Join(dir, "*", "*.jsonl"))
-			return ms, err
+			var out []string
+			for _, m := range ms {
+				if isRegular(m) {
+					out = append(out, m)
+				}
+			}
+			return out, err
 		},
 		header: func(path string) (header, bool) {
 			var h header
