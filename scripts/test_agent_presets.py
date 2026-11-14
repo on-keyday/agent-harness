@@ -118,9 +118,6 @@ class ExpandAgentsPresetTest(unittest.TestCase):
             agy["resumeInteractiveArgv"],
             ["{args}", "--continue", "--prompt-interactive={prompt}"],
         )
-        # agentlog has no decoder for agy's stream-json schema, so the preset
-        # must NOT request structured output nor claim a decoder.
-        self.assertEqual(agy["logFormat"], "")
 
     def test_opencode_preset_argv(self) -> None:
         out = expand_agents_preset("claude,opencode", [])
@@ -141,9 +138,6 @@ class ExpandAgentsPresetTest(unittest.TestCase):
         self.assertEqual(
             oc["resumeInteractiveArgv"], ["{args}", "--continue", "--prompt={prompt}"]
         )
-        # agentlog has no decoder for opencode's `--format json` event schema,
-        # so the preset must neither request it nor claim a decoder.
-        self.assertEqual(oc["logFormat"], "")
 
     def test_single_agent_emits_no_profiles_flag(self) -> None:
         out = expand_agents_preset("claude", [])
@@ -207,10 +201,6 @@ class ExpandAgentsPresetTest(unittest.TestCase):
 
     def test_claude_default_profile_requests_stream_json(self) -> None:
         out = expand_agents_preset("claude", [])
-        self.assertIn("--agent-log-format", out)
-        self.assertEqual(
-            out[out.index("--agent-log-format") + 1], "claude-stream-json"
-        )
         oneshot = out[out.index("--agent-oneshot-argv") + 1]
         # Flags precede {args} so a per-task --agent-arg can still override them.
         self.assertTrue(
@@ -223,19 +213,22 @@ class ExpandAgentsPresetTest(unittest.TestCase):
         )
         self.assertIn("--continue", resume)
 
-    def test_codex_extra_profile_carries_log_format(self) -> None:
+    def test_codex_extra_profile_requests_json(self) -> None:
         out = expand_agents_preset("claude,codex", [])
         profiles = json.loads(out[out.index("--agent-profiles") + 1])
         codex = next(p for p in profiles if p["name"] == "codex")
-        self.assertEqual(codex["logFormat"], "codex-jsonl")
         self.assertEqual(codex["oneshotArgv"][:2], ["exec", "--json"])
         self.assertEqual(codex["resumeOneshotArgv"][:2], ["exec", "--json"])
 
-    def test_bash_preset_has_no_log_format(self) -> None:
-        # bash is a shell sandbox, not a conversational agent: nothing to decode.
-        out = expand_agents_preset("bash", [])
-        self.assertEqual(out[out.index("--agent-log-format") + 1], "")
-        self.assertNotIn("--agent-profiles", out)
+    def test_log_format_is_not_emitted(self) -> None:
+        # agent-runner ignores --agent-log-format and a profile's logFormat
+        # since A3 (accepted only so a replayed argv still starts), so the
+        # presets emit neither, and a caller's own is no longer a conflict.
+        out = expand_agents_preset(",".join(agent_presets.KNOWN_AGENT_PRESETS), [])
+        self.assertNotIn("--agent-log-format", out)
+        for p in json.loads(out[out.index("--agent-profiles") + 1]):
+            self.assertNotIn("logFormat", p, p["name"])
+        expand_agents_preset("claude", ["--agent-log-format", "claude-stream-json"])
 
     def test_claude_preset_supplies_the_event_stream_adapter(self) -> None:
         out = expand_agents_preset("claude", [])
@@ -327,10 +320,6 @@ class ExpandAgentsPresetTest(unittest.TestCase):
                         plain[plain.index(flag) + 1],
                         f"{flag} drifted from the {base} preset",
                     )
-                self.assertEqual(
-                    sb[sb.index("--agent-log-format") + 1],
-                    plain[plain.index("--agent-log-format") + 1],
-                )
                 # The adapter is a HOST process that execs the wrapper as its
                 # agent argv, so the path must be the base's unchanged — a
                 # container path here would name a binary the host cannot run.

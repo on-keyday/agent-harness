@@ -1,7 +1,6 @@
 package server
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -41,11 +40,7 @@ func walStore(t *testing.T) (*TaskStore, func() []WALEvent, string) {
 // before this, a pruned id could not be resumed, and the sweep that removed it
 // was reachable by typing the bare verb.
 func TestRestoreBringsBackAPrunedTask(t *testing.T) {
-	s, events, dir := walStore(t)
-	logs := filepath.Join(dir, "logs")
-	if err := os.MkdirAll(logs, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	s, events, _ := walStore(t)
 	id := s.Create("/repo", "the prompt", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,
 		protocol.TaskID{}, "", protocol.RunnerSelector{}, []string{"--flag"}, authority.Grant{Caps: protocol.Capability_Spawn, Scope: authority.DefaultScope()},
 
@@ -53,7 +48,7 @@ func TestRestoreBringsBackAPrunedTask(t *testing.T) {
 
 	s.MarkFailed(id, "done") // terminal, so the age sweep takes it
 
-	if n := s.PruneTerminal(nil, time.Now().Add(time.Hour), logs); n != 1 {
+	if n := s.PruneTerminal(nil, time.Now().Add(time.Hour)); n != 1 {
 		t.Fatalf("PruneTerminal removed %d, want 1", n)
 	}
 	if _, ok := s.Get(id); ok {
@@ -140,14 +135,13 @@ func TestRestoreRefusesAnIDTheWALNeverSaw(t *testing.T) {
 // task_pruned that removed the entry is still in the WAL, and a server
 // restart replays the whole file in order.
 func TestRestoreSurvivesAReplayOfTheWholeWAL(t *testing.T) {
-	s, events, dir := walStore(t)
-	logs := filepath.Join(dir, "logs")
+	s, events, _ := walStore(t)
 	id := s.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,
 		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()},
 		"")
 
 	s.MarkFailed(id, "done")
-	s.PruneTerminal(nil, time.Now().Add(time.Hour), logs)
+	s.PruneTerminal(nil, time.Now().Add(time.Hour))
 	if restored, _, _ := s.RestoreFromWAL(events(), []string{id}); len(restored) != 1 {
 		t.Fatal("restore did not put it back")
 	}
@@ -166,8 +160,7 @@ func TestRestoreSurvivesAReplayOfTheWholeWAL(t *testing.T) {
 // write the id down before pruning -- which is everyone who pruned by
 // accident -- could not learn it.
 func TestRestorableListsWhatAPruneForgot(t *testing.T) {
-	s, events, dir := walStore(t)
-	logs := filepath.Join(dir, "logs")
+	s, events, _ := walStore(t)
 	a := s.Create("/repo", "first", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,
 		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()},
 		"")
@@ -182,7 +175,7 @@ func TestRestorableListsWhatAPruneForgot(t *testing.T) {
 
 	s.MarkFailed(a, "x")
 	s.MarkFailed(b, "x")
-	s.PruneByIDs(nil, []string{a, b}, logs)
+	s.PruneByIDs(nil, []string{a, b})
 
 	rows := RestorableFromWAL(events(), s.Live)
 	if len(rows) != 2 {
@@ -254,7 +247,7 @@ func TestRestoreScopeSeesThroughTheHoleAPruneLeft(t *testing.T) {
 	// Prune the grandchild, so it is gone from the live store and its edge
 	// exists only in the WAL.
 	h.Tasks.MarkFailed(g, "done")
-	if n, _, _ := h.Tasks.PruneByIDs(nil, []string{g}, ""); n != 1 {
+	if n, _, _ := h.Tasks.PruneByIDs(nil, []string{g}); n != 1 {
 		t.Fatalf("PruneByIDs removed %d, want 1", n)
 	}
 

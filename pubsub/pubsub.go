@@ -129,12 +129,6 @@ type PubSub struct {
 	// ps.Subscribe, or ps.Unsubscribe — ps.m is already held and is not
 	// reentrant; doing so self-deadlocks.
 	OnSubscribe func(topic string, send func(msg []byte) error)
-
-	// DeliverFilter, when non-nil, returns the filter that what a subscriber
-	// writes on topic is published through (nil = to everyone). The server-side
-	// publishers filter at their own call sites; this covers the one path the
-	// broker publishes by itself.
-	DeliverFilter func(topic string) func(objproto.ConnectionID) bool
 }
 
 func NewPubSub(logger *slog.Logger) *PubSub {
@@ -175,9 +169,6 @@ func (ps *PubSub) Subscribe(requestID uint32, topic string, nickName string, sub
 		grant = sub.authorize(topic)
 	}
 	if !grant.Allow {
-		// Said out loud: peer.Conn.Publish caches a refused JOIN for the life
-		// of its connection, so a runner refused here loses the task's log
-		// without a word of its own.
 		ps.logger.Warn("pubsub: JOIN refused", "topic", topic, "nickName", nickName, "subscriberID", sub.id)
 		return &protocol.PubSubResponse{
 			Status:    protocol.Status_Forbidden,
@@ -201,10 +192,6 @@ func (ps *PubSub) Subscribe(requestID uint32, topic string, nickName string, sub
 	// Stream(id). No "<topic>\n" preamble: the legacy header was a leftover
 	// from before request_id / stream_id correlation existed.
 	stream := sub.transport.CreateBidirectionalStream()
-	var deliver func(objproto.ConnectionID) bool
-	if grant.Publish && ps.DeliverFilter != nil {
-		deliver = ps.DeliverFilter(topic)
-	}
 	go func() {
 		warned := false
 		for {
@@ -221,7 +208,7 @@ func (ps *PubSub) Subscribe(requestID uint32, topic string, nickName string, sub
 					warned = true
 				}
 			} else if len(data) != 0 {
-				ps.PublishFiltered(nickName, topic, data, deliver)
+				ps.Publish(nickName, topic, data)
 			}
 			if eof {
 				return
@@ -281,9 +268,9 @@ func (ps *PubSub) Unsubscribe(requestID uint32, topic string, sub *Subscriber) *
 // peer's flow window is exhausted, so a subscriber that has stopped reading
 // its stream parks the publishing goroutine after ~17MB of undelivered bytes.
 // Holding ps.m across that parked the whole broker: every topic's Publish, and
-// every Subscribe/Unsubscribe, queued behind one stalled subscriber. A TUI
-// suspended in tea.Exec with a busy task log followed is exactly such a
-// subscriber. Releasing the lock first confines the stall to that subscriber's
+// every Subscribe/Unsubscribe, queued behind one stalled subscriber (measured
+// with a TUI suspended in tea.Exec while following the since-retired task
+// log). Releasing the lock first confines the stall to that subscriber's
 // publisher.
 //
 // The replay-on-subscribe ordering guarantee documented on OnSubscribe still
@@ -311,9 +298,9 @@ func (ps *PubSub) Publish(nickName string, topic string, msg []byte) {
 // Two trade-offs follow. A subscriber leaving concurrently may still receive
 // one in-flight message — acceptable for an at-most-once status feed. And two
 // concurrent publishes to the same topic are no longer serialized, so their
-// relative order can differ per subscriber; the one topic where byte order is
-// load-bearing, TaskLog, has a single publisher goroutine (the per-stream
-// reader in Subscribe), so it is ordered by construction.
+// relative order can differ per subscriber. A topic whose byte order is
+// load-bearing needs a single publisher goroutine, as the per-stream reader in
+// Subscribe is for what one subscriber writes.
 func (ps *PubSub) PublishFiltered(nickName string, topic string, msg []byte, allow func(objproto.ConnectionID) bool) {
 	if allow == nil {
 		ps.PublishSelect(nickName, topic, msg, nil)

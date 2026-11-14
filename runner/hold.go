@@ -35,12 +35,11 @@ type TaskRegistry struct {
 	tasks map[string]*taskEntry
 
 	// sender is the CURRENT connection's sender, installed by each Session as
-	// it is built. A held task's log output has to reach whatever connection
-	// exists when it is written, not the one that existed when the task
-	// started: a oneshot's sink captured s.Sender directly, so after a
-	// re-adoption it published into a dead connection forever and the task's
-	// log simply stopped — the child running on, its output discarded, and
-	// `logs` showing a truncation rather than a gap.
+	// it is built. A held task's messages have to reach whatever connection
+	// exists when they are sent, not the one that existed when the task
+	// started: before this, a re-adopted task wrote into a dead connection
+	// forever (first seen as a oneshot's task log that stopped at the restart
+	// while the child ran on).
 	//
 	// nil means one of two DIFFERENT things, which senderGone separates.
 	sender TaskSender
@@ -89,12 +88,10 @@ type armedHold struct {
 	timer *time.Timer
 }
 
-// TaskSender is the part of a Session's sender a held task needs: its log
-// output AND its lifecycle messages. Declared here rather than reusing the
-// Session field's type so the registry does not depend on the connection
-// plumbing.
+// TaskSender is the part of a Session's sender a held task needs: its
+// lifecycle messages. Declared here rather than reusing the Session field's
+// type so the registry does not depend on the connection plumbing.
 type TaskSender interface {
-	Publish(topic string, data []byte) error
 	Send(data []byte) error
 }
 
@@ -108,10 +105,10 @@ type TaskSender interface {
 // TaskFinished went missing with nothing in any log to say so.
 var ErrNoConnection = errors.New("runner: no live connection for a task message")
 
-// sendWhenConnected is Send's counterpart to publishWhenConnected, and it
-// exists for the same reason found the same way: a re-adopted oneshot's
-// TaskFinished went to the connection the task STARTED on, so the server never
-// learned the task had ended and the row stayed Running forever.
+// sendWhenConnected sends a task's message on whatever connection is current.
+// It exists because a re-adopted oneshot's TaskFinished went to the connection
+// the task STARTED on, so the server never learned the task had ended and the
+// row stayed Running forever.
 //
 // A hold is waited out. A RETIRED connection is not: waiting would be waiting
 // for a delivery that cannot land anyway, because the disconnect that retired
@@ -173,47 +170,6 @@ func (r *TaskRegistry) clearSender(s TaskSender) {
 		r.sender, r.senderGone = nil, true
 	}
 	r.mu.Unlock()
-}
-
-// publishWhenConnected writes a task's output to whatever connection is
-// current, WAITING while a hold is armed rather than dropping it.
-//
-// Blocking is the point, and it is D12's mechanism on this path: the caller is
-// os/exec's copier, so a blocked write fills the child's pipe and the child
-// stalls in write() — nothing is lost and nothing has to be sized. Dropping
-// instead would leave a hole in the middle of a log with no marker, which is
-// the one outcome worse than a stalled child.
-func (r *TaskRegistry) publishWhenConnected(topic string, data []byte, fallback TaskSender) error {
-	if r == nil {
-		if fallback != nil {
-			return fallback.Publish(topic, data)
-		}
-		return nil
-	}
-	for {
-		r.mu.Lock()
-		sender, held := r.sender, r.hold != nil
-		r.mu.Unlock()
-		if held {
-			// Wait out the gap, and do it WITHOUT asking Publish first.
-			// pubsub is fire-and-forget: publishing into a dead connection
-			// returns nil, so an error-driven retry never retries and the
-			// output is silently dropped — a log that truncates at the
-			// restart while the child runs on. The hold's own timer bounds
-			// this wait: when it fires the child is killed.
-			time.Sleep(50 * time.Millisecond)
-			continue
-		}
-		if sender == nil {
-			// Nobody installed one: a single-shot Run, or a test driving a
-			// bare Session. Use what the caller has and behave as before.
-			sender = fallback
-		}
-		if sender == nil {
-			return nil
-		}
-		return sender.Publish(topic, data)
-	}
 }
 
 func NewTaskRegistry() *TaskRegistry {

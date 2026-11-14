@@ -82,8 +82,7 @@ func TestSubscribe_RefusedJoinMakesNoSubscription(t *testing.T) {
 	}
 }
 
-// Without Publish a subscriber's writes reach nobody, taps included — the log
-// tap is how an injected line would have become a persisted one.
+// Without Publish a subscriber's writes reach nobody, taps included.
 func TestSubscribe_WritesWithoutPublishAreDropped(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -123,42 +122,5 @@ func TestSubscribe_WritesWithoutPublishAreDropped(t *testing.T) {
 				t.Errorf("another subscriber got %d writes, publish=%v", got, tc.publish)
 			}
 		})
-	}
-}
-
-// What a subscriber publishes goes through the broker's DeliverFilter for the
-// topic; the writer's own connection id plays no part in it.
-func TestSubscribe_PublishedWritesUseDeliverFilter(t *testing.T) {
-	ps := NewPubSub(slog.Default())
-	allowed := objproto.MustParseConnectionID("ws:127.0.0.1:9811-1")
-	denied := objproto.MustParseConnectionID("ws:127.0.0.1:9812-1")
-	join := func(id objproto.ConnectionID) *recordingStream {
-		rs := &recordingStream{got: make(chan []byte, 4)}
-		s := NewSubscriber(id, nil)
-		s.topics["t"] = &topicJoinInfo{name: "nick", conn: rs}
-		ps.m.Lock()
-		if _, ok := ps.topics["t"]; !ok {
-			ps.topics["t"] = &SubscriberList{}
-		}
-		ps.topics["t"].AddSubscriber(s)
-		ps.m.Unlock()
-		return rs
-	}
-	gotAllowed, gotDenied := join(allowed), join(denied)
-	ps.DeliverFilter = func(topic string) func(objproto.ConnectionID) bool {
-		return func(id objproto.ConnectionID) bool { return id == allowed }
-	}
-
-	tp := newWriter("line")
-	sub := NewSubscriber(objproto.MustParseConnectionID("ws:127.0.0.1:9813-1"), tp)
-	if resp := ps.Subscribe(1, "t", "runner", sub); resp.Status != protocol.Status_Ok {
-		t.Fatalf("Subscribe: %v", resp.Status)
-	}
-	waitDrained(t, tp)
-	if len(gotAllowed.got) != 1 {
-		t.Errorf("allowed subscriber got %d writes, want 1", len(gotAllowed.got))
-	}
-	if len(gotDenied.got) != 0 {
-		t.Errorf("filtered-out subscriber got %d writes, want 0", len(gotDenied.got))
 	}
 }

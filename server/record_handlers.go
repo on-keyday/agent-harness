@@ -13,7 +13,7 @@ import (
 // verb names a task and is gated on the bit it needs within that bit's own
 // scope — so an override's exclude_self keeps a task off its own record
 // (A-D22, A-D26). A missing bit answers PermissionDenied; a task out of
-// scope answers not_found, as GetTaskLog does.
+// scope answers not_found, so the refusal is not an existence oracle.
 func (h *TaskHandler) handleRecord(cid string, conn ConnHandle, req *protocol.TaskControlRequest) {
 	resp := protocol.TaskControlResponse{Kind: req.Header.Kind, RequestId: req.Header.RequestId}
 	send := func() {

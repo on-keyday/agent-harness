@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/on-keyday/objtrsf/trsf"
 )
@@ -51,4 +52,31 @@ func ReadResponseBody(ctx context.Context, tr trsf.Transport, streamID uint64, b
 		return fmt.Errorf("decode body (%d bytes): %w", len(raw), err)
 	}
 	return nil
+}
+
+// waitForReceiveStream polls Transport.GetReceiveStream until the stream
+// becomes visible or ctx / 2s deadline elapses. A server-initiated
+// send-stream may not be visible to the client yet when the response naming
+// it arrives — the response goes through objproto.SendMessage while the
+// stream-creation trsf frame travels via AutoSend.
+func waitForReceiveStream(ctx context.Context, p trsf.Transport, id trsf.StreamID) trsf.ReceiveStream {
+	if st := p.GetReceiveStream(id); st != nil {
+		return st
+	}
+	deadline := time.NewTimer(2 * time.Second)
+	defer deadline.Stop()
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-deadline.C:
+			return nil
+		case <-tick.C:
+			if st := p.GetReceiveStream(id); st != nil {
+				return st
+			}
+		}
+	}
 }

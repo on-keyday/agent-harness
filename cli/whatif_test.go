@@ -68,7 +68,7 @@ func TestWhatIfReportSpawn(t *testing.T) {
 		"  3f3f3f3f",
 		bitLine("cancel", "+1: new"),
 		"  new  caps=cancel  scope=subtree  delegate=none  delegate-scope=subtree",
-		"  command (run by 8f8f8f8f): harness-cli submit --caps cancel --scope subtree",
+		"  command (run by 8f8f8f8f): harness-cli session new --caps cancel --scope subtree",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("missing %q in:\n%s", want, joined)
@@ -135,6 +135,18 @@ func TestWhatIfCommandRoundTrips(t *testing.T) {
 	if err != nil || strings.Join(tok[:3], " ") != "harness-cli caps set-parent" || sp.TaskID != p || !sp.None {
 		t.Errorf("reparent command %v → %+v, %v", tok, sp, err)
 	}
+
+	// A3 review I1: the spawn form names the verb that spawns now.
+	sp2 := authority.Spawn{Caps: protocol.Capability_Cancel, Scope: authority.Scope{Base: protocol.ScopeBase_Subtree},
+		DelegateCaps: protocol.Capability_FileRead}
+	tok = strings.Fields(WhatIfCommand(sp2))
+	if strings.Join(tok[:3], " ") != "harness-cli session new" {
+		t.Fatalf("spawn command = %v", tok)
+	}
+	sn, err := verb.ParseCmdSessionNew(verb.CLI, tok[3:], nil)
+	if err != nil || sn.Caps == nil || *sn.Caps != protocol.Capability_Cancel || sn.DelegateCaps == nil || *sn.DelegateCaps != protocol.Capability_FileRead {
+		t.Errorf("spawn command %v → %+v, %v", tok, sn, err)
+	}
 }
 
 func TestWhatIfVerbRules(t *testing.T) {
@@ -185,7 +197,7 @@ func TestWhatIfChangeFromAction(t *testing.T) {
 	}
 }
 
-// The what-if's spawn denial reads as the real submit's does.
+// The what-if's spawn denial reads as the real open's does.
 func TestWhatIfSpawnDenialIsTheClients(t *testing.T) {
 	_, err := BuildWhatIf(whatIfListing(), authority.Spawn{Creator: reachHex(0x9f), Caps: protocol.Capability_Cancel})
 	want := "caps what-if: " + (&CapabilityDeniedError{RequestedKind: protocol.TaskControlKind_Submit, RequiredCap: protocol.Capability_Spawn}).Error()

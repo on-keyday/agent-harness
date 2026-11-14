@@ -89,7 +89,7 @@ func CapDescription(c protocol.Capability) string {
 	switch c {
 	case protocol.Capability_None:
 		return "no capabilities; data-plane only (agentboard messaging within the task's base set — " +
-			"self, creator, direct children, chat.operator, whoever messaged it directly — and own task logs/ls)"
+			"self, creator, direct children, chat.operator, whoever messaged it directly — and own task ls)"
 	case protocol.Capability_Spawn:
 		return "create tasks (submit, open sessions); does NOT resume — see resume. " +
 			"Opening a session without -d also needs exec_control"
@@ -103,7 +103,7 @@ func CapDescription(c protocol.Capability) string {
 		return "cancel / kill tasks"
 	case protocol.Capability_ExecView:
 		return "observe an agent's output, live or recorded: a PTY session " +
-			"(snapshot, grid panes, attach --view), an event-stream session, task logs, " +
+			"(snapshot, grid panes, attach --view), an event-stream session, " +
 			"and PTY records (record ls / record get)"
 	case protocol.Capability_ExecCowrite:
 		return "type into a session someone else is driving, without evicting them (session send / exec); implies exec_view"
@@ -270,7 +270,7 @@ func WriteCaps(w io.Writer, asJSON bool) error {
 		"reach further than what `ls` shows.\n"+
 		"An omitted --caps grants NONE of these: a spawn hands its child no\n"+
 		"control plane unless the flag names one (the data plane - agentboard\n"+
-		"within its base set, its own subtree's logs/ls - needs no capability).\n"+
+		"within its base set, its own subtree's ls - needs no capability).\n"+
 		"board_peer is scoped like every other bit: it opens the chat.<id> of the\n"+
 		"tasks its scope covers, and free-form topics only with a global scope.\n"+
 		"Both attenuate on spawn, and `caps set` re-grants either on a live task.\n"+

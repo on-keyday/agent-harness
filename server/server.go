@@ -281,7 +281,7 @@ func New(cfg Config) *Server {
 	}
 	s.chainedRelay = NewChainedRelayHandler(cfg.Logger, s.registry, s.sendEstablishRelayRequest)
 	s.runnerHandler.ChainedRelay = s.chainedRelay
-	logsDir, restoreWALPath := "", ""
+	restoreWALPath := ""
 	var records *RecordStore
 	if s.cfg.DataDir != "" {
 		var err error
@@ -293,7 +293,6 @@ func New(cfg Config) *Server {
 			slog.Error("record store unavailable; sessions will not be recorded", "err", err)
 			records = nil
 		}
-		logsDir = filepath.Join(s.cfg.DataDir, "logs")
 		// Same file serve() replays from at startup. Named here because
 		// RestoreFn re-reads it per call, and both must be the one WAL.
 		restoreWALPath = filepath.Join(s.cfg.DataDir, "events.log")
@@ -322,7 +321,6 @@ func New(cfg Config) *Server {
 		Registry:       s.registry,
 		Sessions:       s.sessions,
 		OnChange:       s.scheduler.Tick,
-		LogsDir:        logsDir,
 		RingBufferSize: int(cfg.DetachRingBufferSize),
 		Records:        records,
 		RecordDefault:  cfg.Record.Default,
@@ -352,13 +350,13 @@ func New(cfg Config) *Server {
 		PruneFn: func(allowed map[string]bool, req *protocol.PruneTasksRequest) (removed, skippedActive, skippedMissing int) {
 			if req.TaskIdsLen == 0 {
 				cutoff := time.Unix(0, int64(req.BeforeTs))
-				return s.tasks.PruneTerminal(allowed, cutoff, logsDir), 0, 0
+				return s.tasks.PruneTerminal(allowed, cutoff), 0, 0
 			}
 			ids := make([]string, 0, req.TaskIdsLen)
 			for i := range req.TaskIds {
 				ids = append(ids, hex.EncodeToString(req.TaskIds[i].Id[:]))
 			}
-			return s.tasks.PruneByIDs(allowed, ids, logsDir)
+			return s.tasks.PruneByIDs(allowed, ids)
 		},
 		// The undo half of PruneFn. It re-reads the WAL from disk each time
 		// rather than holding the events in memory: a restore is rare, the
@@ -434,7 +432,6 @@ func New(cfg Config) *Server {
 	s.pubsub.OnSubscribe = func(topic string, send func([]byte) error) {
 		replayNotifications(s.notifyRing, topic, send)
 	}
-	s.pubsub.DeliverFilter = s.taskLogDelivery
 	// Route runner-reported remote-forward connections into the TaskHandler
 	// (wired here, after taskHandler construction, since runnerHandler is built
 	// just above it).
@@ -718,7 +715,7 @@ func New(cfg Config) *Server {
 	}
 
 	// Wire task lifecycle hooks.
-	// OnCreate publishes task_queued; Run may wrap this further for log store taps.
+	// OnCreate publishes task_queued.
 	s.tasks.OnCreate = func(id string) {
 		publishTaskEvent(id, protocol.StatusEventKind_TaskQueued, protocol.TaskStatus_Queued, 0)
 	}
@@ -946,62 +943,17 @@ func (s *Server) serve(ctx context.Context, ep objproto.Endpoint, mux *http.Serv
 		defer wal.Close()
 		s.tasks.SetWAL(wal)
 
-		logStore, err := NewLogStore(filepath.Join(s.cfg.DataDir, "logs"))
-		if err != nil {
-			return fmt.Errorf("open log store: %w", err)
-		}
-		defer logStore.Close()
-
-		// Chain log store tap into the existing OnCreate hook (which publishes
-		// task_queued). OnCreate re-fires on every Resume, so registration
-		// lives behind taskLogTaps, which holds at most one tap per task —
-		// stacking one tap per resume made every later log chunk append
-		// N-fold to the file.
-		logTaps := newTaskLogTaps(s.pubsub, logStore, s.cfg.Logger)
-		existingOnCreate := s.tasks.OnCreate
-		s.tasks.OnCreate = func(taskID string) {
-			if existingOnCreate != nil {
-				existingOnCreate(taskID)
-			}
-			logTaps.Register(taskID)
-		}
-		// Prune deletes the log file; drop the tap + open handle with it so a
-		// straggler publish cannot resurrect the file.
-		existingOnPrune := s.tasks.OnPrune
-		s.tasks.OnPrune = func(taskID string) {
-			if existingOnPrune != nil {
-				existingOnPrune(taskID)
-			}
-			logTaps.Drop(taskID)
-		}
-
-		// Register taps for tasks that survived replay and may still emit logs.
-		//
-		// Held belongs here more than anything else on the list: its child is
-		// alive on a runner right now and will resume publishing the moment
-		// re-adoption reconnects it. Without a tap that output is dropped
-		// server-side, so a held oneshot's log truncates at the restart and
-		// silently resumes nowhere — measured, and it looked like a runner-side
-		// send failure for two rounds of debugging.
-		for _, t := range s.tasks.List(0) {
-			if t.Status == protocol.TaskStatus_Queued || t.Status == protocol.TaskStatus_Running ||
-				t.Status == protocol.TaskStatus_Held {
-				logTaps.Register(t.ID)
-			}
-		}
-
 		// Auto-prune terminal tasks older than TaskRetention. Skipped when retention is 0.
 		if s.cfg.TaskRetention > 0 {
 			interval := s.cfg.PruneInterval
 			if interval <= 0 {
 				interval = time.Hour
 			}
-			logsDir := filepath.Join(s.cfg.DataDir, "logs")
 			runPrune := func() {
 				cutoff := time.Now().Add(-s.cfg.TaskRetention)
 				// nil = unrestricted: the retention sweep is the server's own,
 				// not any caller's.
-				if n := s.tasks.PruneTerminal(nil, cutoff, logsDir); n > 0 {
+				if n := s.tasks.PruneTerminal(nil, cutoff); n > 0 {
 					s.cfg.Logger.Info("auto-prune", "removed", n, "cutoff", cutoff)
 				}
 			}
@@ -1326,7 +1278,7 @@ func (s *Server) dropConnsForPrincipal(taskIDHex string) int {
 
 // streamingConn wraps an objproto.Connection together with the trsf transport
 // so handlers can both reply with single messages and create server-initiated
-// streams for bulk responses (GetTaskLog, future BulkList, etc.).
+// streams for bulk responses.
 type streamingConn struct {
 	objproto.Connection
 	trans          trsf.Transport

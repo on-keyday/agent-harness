@@ -91,7 +91,6 @@ var kindTargetClass = map[protocol.TaskControlKind]targetClass{
 
 	protocol.TaskControlKind_List:             infoScoped,
 	protocol.TaskControlKind_ListConns:        infoScoped,
-	protocol.TaskControlKind_GetTaskLog:       infoScoped,
 	protocol.TaskControlKind_ListPortForwards: infoScoped,
 	// exec_run_list is bounded by task VISIBILITY and needs no capability, for
 	// the reason await_idle needs none: gating a fact `ls` already hands out
@@ -104,6 +103,8 @@ var kindTargetClass = map[protocol.TaskControlKind]targetClass{
 	protocol.TaskControlKind_Notify:      noTarget,
 	protocol.TaskControlKind_DialRunner:  noTarget, // names a runner, not a task
 	protocol.TaskControlKind_Whoami:      noTarget, // the caller's own identity
+	// Retired in A3: its task id is read by nothing; every id answers "no log".
+	protocol.TaskControlKind_GetTaskLog: noTarget,
 	// Agentboard kinds address topics, not tasks. Topics have no owner, so
 	// scope does not apply; board_observe / purge remain their gates.
 	protocol.TaskControlKind_BoardTopics:      noTarget,

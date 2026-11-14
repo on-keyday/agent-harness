@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"flag"
 	"fmt"
+	"io"
 	"sync"
 	// Aliased: this file already uses `fs` as the local name for a
 	// *flag.FlagSet (bindFlags' parameter, main's flag.CommandLine), so a plain
@@ -26,7 +27,6 @@ import (
 	"github.com/google/shlex"
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/runner"
-	"github.com/on-keyday/agent-harness/runner/agentlog"
 	"github.com/on-keyday/agent-harness/runner/agentskills"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/runner/transcript"
@@ -46,7 +46,6 @@ type mainConfig struct {
 	AgentInteractiveArgv       string
 	AgentResumeInteractiveArgv string
 	AgentProfilesJSON          string
-	AgentLogFormat             string
 	AgentTranscriptStore       string
 	StreamAdapter              string
 	WSPath                     string
@@ -121,8 +120,10 @@ func (c *mainConfig) bindFlags(fs *flag.FlagSet) {
 	fs.StringVar(&c.AgentResumeOneshotArgv, "agent-resume-oneshot-argv", c.AgentResumeOneshotArgv, "argv template for --resume-conversation oneshot tasks; tokens {args} and {prompt}; default \"{args} --continue -p {prompt}\"")
 	fs.StringVar(&c.AgentInteractiveArgv, "agent-interactive-argv", c.AgentInteractiveArgv, "argv template for FRESH interactive opens; tokens {args} and {prompt} (the session's initial prompt; a token holding {prompt}, whole or as in --prompt={prompt}, is dropped when there is none, and a prompt sent to a template without it fails the task prompt_unsupported); default \"{args}\" (the bare binary) — e.g. \"chat {args} {prompt}\"")
 	fs.StringVar(&c.AgentResumeInteractiveArgv, "agent-resume-interactive-argv", c.AgentResumeInteractiveArgv, "argv template for --resume-conversation interactive opens; tokens {args} and {prompt}, as --agent-interactive-argv; default \"{args} --continue\"")
-	fs.StringVar(&c.AgentProfilesJSON, "agent-profiles", c.AgentProfilesJSON, "JSON array of extra agent profiles: [{name,bin,oneshotArgv,resumeOneshotArgv,interactiveArgv,resumeInteractiveArgv,agentArgs,logFormat,streamAdapter,transcriptStore}]")
-	fs.StringVar(&c.AgentLogFormat, "agent-log-format", c.AgentLogFormat, "stdout log decoder for the default agent profile: \"\" (raw), claude-stream-json, or codex-jsonl")
+	fs.StringVar(&c.AgentProfilesJSON, "agent-profiles", c.AgentProfilesJSON, "JSON array of extra agent profiles: [{name,bin,oneshotArgv,resumeOneshotArgv,interactiveArgv,resumeInteractiveArgv,agentArgs,streamAdapter,transcriptStore}]; a logFormat key is ignored since A3, kept so a replayed argv still starts")
+	// Bound and discarded: restart.py replays a runner's argv, and an unknown
+	// flag would stop the replayed runner from starting (spec A-D32).
+	fs.String("agent-log-format", "", "ignored since A3; kept so a replayed argv still starts")
 	fs.StringVar(&c.AgentTranscriptStore, "agent-transcript-store", c.AgentTranscriptStore, "where the default agent profile keeps its transcripts, for `transcript ls/get`: \"\" (none), claude, codex, pi, agy or opencode")
 	fs.StringVar(&c.StreamAdapter, "agent-stream-adapter", c.StreamAdapter,
 		"path to the event-stream adapter for the default agent profile (e.g. harness-stream-adapter). "+
@@ -251,6 +252,75 @@ func parseAgentArgsFlag(name, value string) ([]string, error) {
 	return args, nil
 }
 
+// buildProfiles turns the default-profile flags and --agent-profiles into the
+// runner's ProfileSet, writing the startup warnings about values consumed later
+// in the task path to warn. Bins are not resolved here: ResolveBinPaths stays
+// in main, after this.
+func (c *mainConfig) buildProfiles(warn io.Writer) (runner.ProfileSet, error) {
+	oneshotArgv, err := parseAgentArgsFlag("--agent-oneshot-argv", c.AgentOneshotArgv)
+	if err != nil {
+		return runner.ProfileSet{}, err
+	}
+	if err := runner.ValidateOneshotArgvTemplate(oneshotArgv); err != nil {
+		return runner.ProfileSet{}, fmt.Errorf("--agent-oneshot-argv: %w", err)
+	}
+	resumeOneshotArgv, err := parseAgentArgsFlag("--agent-resume-oneshot-argv", c.AgentResumeOneshotArgv)
+	if err != nil {
+		return runner.ProfileSet{}, err
+	}
+	if err := runner.ValidateOneshotArgvTemplate(resumeOneshotArgv); err != nil {
+		return runner.ProfileSet{}, fmt.Errorf("--agent-resume-oneshot-argv: %w", err)
+	}
+	interactiveArgv, err := parseAgentArgsFlag("--agent-interactive-argv", c.AgentInteractiveArgv)
+	if err != nil {
+		return runner.ProfileSet{}, err
+	}
+	if err := runner.ValidateInteractiveArgvTemplate(interactiveArgv); err != nil {
+		return runner.ProfileSet{}, fmt.Errorf("--agent-interactive-argv: %w", err)
+	}
+	resumeInteractiveArgv, err := parseAgentArgsFlag("--agent-resume-interactive-argv", c.AgentResumeInteractiveArgv)
+	if err != nil {
+		return runner.ProfileSet{}, err
+	}
+	if err := runner.ValidateResumeInteractiveArgvTemplate(resumeInteractiveArgv); err != nil {
+		return runner.ProfileSet{}, fmt.Errorf("--agent-resume-interactive-argv: %w", err)
+	}
+
+	// The single-agent flags above (--agent-bin/--agent-args/--agent-*-argv)
+	// define the default (first) agent profile. --agent-profiles adds extra
+	// profiles appended after it. Default profile name = basename of
+	// --agent-bin, minus any Windows executable extension so
+	// `--agent-bin C:/.../claude.exe` and `--agent-bin claude` advertise the
+	// same profile name across the mixed-OS fleet.
+	defaultProfile := runner.AgentProfile{
+		Name:                  protocol.NormalizeAgentProfileName(filepath.Base(c.AgentBin)),
+		Bin:                   c.AgentBin,
+		AgentArgs:             strings.Fields(c.AgentArgs),
+		OneshotArgv:           oneshotArgv,
+		ResumeOneshotArgv:     resumeOneshotArgv,
+		InteractiveArgv:       interactiveArgv,
+		ResumeInteractiveArgv: resumeInteractiveArgv,
+		StreamAdapter:         c.StreamAdapter,
+		TranscriptStore:       c.AgentTranscriptStore,
+	}
+	extraProfiles, err := runner.ParseAgentProfilesJSON(c.AgentProfilesJSON)
+	if err != nil {
+		return runner.ProfileSet{}, fmt.Errorf("--agent-profiles: %w", err)
+	}
+	profiles, err := runner.NewProfileSet(defaultProfile, extraProfiles)
+	if err != nil {
+		return runner.ProfileSet{}, fmt.Errorf("--agent-profiles: %w", err)
+	}
+	if bad := profiles.UnrecognisedTranscriptStores(); len(bad) > 0 {
+		fmt.Fprintf(warn, "agent-runner: unrecognised --agent-transcript-store/transcriptStore (no transcripts listed for these) for %v; recognised: %s\n",
+			bad, strings.Join(transcript.Kinds, ", "))
+	}
+	if bad := profiles.UnresolvableStreamAdapters(); len(bad) > 0 {
+		fmt.Fprintf(warn, "agent-runner: event-stream adapter not resolvable now (event-stream tasks on these profiles will fail until it appears; `make build` writes it) for %v\n", bad)
+	}
+	return profiles, nil
+}
+
 // scrubOperatorSecret drops the operator-only secret from this process's
 // environment before anything is spawned. Every spawn path hands an agent this
 // process's environment — os/exec and objtrsf/exec both build the child env as
@@ -325,81 +395,10 @@ func main() {
 		fmt.Fprintf(os.Stderr, "agent-runner: --roots must contain at least one non-empty path\n")
 		os.Exit(1)
 	}
-	oneshotArgv, err := parseAgentArgsFlag("--agent-oneshot-argv", cfg.AgentOneshotArgv)
+	profiles, err := cfg.buildProfiles(os.Stderr)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "agent-runner: %v\n", err)
 		os.Exit(1)
-	}
-	if err := runner.ValidateOneshotArgvTemplate(oneshotArgv); err != nil {
-		fmt.Fprintf(os.Stderr, "agent-runner: --agent-oneshot-argv: %v\n", err)
-		os.Exit(1)
-	}
-	resumeOneshotArgv, err := parseAgentArgsFlag("--agent-resume-oneshot-argv", cfg.AgentResumeOneshotArgv)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "agent-runner: %v\n", err)
-		os.Exit(1)
-	}
-	if err := runner.ValidateOneshotArgvTemplate(resumeOneshotArgv); err != nil {
-		fmt.Fprintf(os.Stderr, "agent-runner: --agent-resume-oneshot-argv: %v\n", err)
-		os.Exit(1)
-	}
-	interactiveArgv, err := parseAgentArgsFlag("--agent-interactive-argv", cfg.AgentInteractiveArgv)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "agent-runner: %v\n", err)
-		os.Exit(1)
-	}
-	if err := runner.ValidateInteractiveArgvTemplate(interactiveArgv); err != nil {
-		fmt.Fprintf(os.Stderr, "agent-runner: --agent-interactive-argv: %v\n", err)
-		os.Exit(1)
-	}
-	resumeInteractiveArgv, err := parseAgentArgsFlag("--agent-resume-interactive-argv", cfg.AgentResumeInteractiveArgv)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "agent-runner: %v\n", err)
-		os.Exit(1)
-	}
-	if err := runner.ValidateResumeInteractiveArgvTemplate(resumeInteractiveArgv); err != nil {
-		fmt.Fprintf(os.Stderr, "agent-runner: --agent-resume-interactive-argv: %v\n", err)
-		os.Exit(1)
-	}
-
-	// The single-agent flags above (--agent-bin/--agent-args/--agent-*-argv)
-	// define the default (first) agent profile. --agent-profiles adds extra
-	// profiles appended after it. Default profile name = basename of
-	// --agent-bin, minus any Windows executable extension so
-	// `--agent-bin C:/.../claude.exe` and `--agent-bin claude` advertise the
-	// same profile name across the mixed-OS fleet.
-	defaultProfile := runner.AgentProfile{
-		Name:                  protocol.NormalizeAgentProfileName(filepath.Base(cfg.AgentBin)),
-		Bin:                   cfg.AgentBin,
-		AgentArgs:             strings.Fields(cfg.AgentArgs),
-		OneshotArgv:           oneshotArgv,
-		ResumeOneshotArgv:     resumeOneshotArgv,
-		InteractiveArgv:       interactiveArgv,
-		ResumeInteractiveArgv: resumeInteractiveArgv,
-		LogFormat:             cfg.AgentLogFormat,
-		StreamAdapter:         cfg.StreamAdapter,
-		TranscriptStore:       cfg.AgentTranscriptStore,
-	}
-	extraProfiles, err := runner.ParseAgentProfilesJSON(cfg.AgentProfilesJSON)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "agent-runner: --agent-profiles: %v\n", err)
-		os.Exit(1)
-	}
-	profiles, err := runner.NewProfileSet(defaultProfile, extraProfiles)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "agent-runner: --agent-profiles: %v\n", err)
-		os.Exit(1)
-	}
-	if bad := profiles.UnrecognisedLogFormats(); len(bad) > 0 {
-		fmt.Fprintf(os.Stderr, "agent-runner: unrecognised --agent-log-format/logFormat (falling back to raw output) for %v; recognised: %s\n",
-			bad, strings.Join(agentlog.KnownFormats(), ", "))
-	}
-	if bad := profiles.UnrecognisedTranscriptStores(); len(bad) > 0 {
-		fmt.Fprintf(os.Stderr, "agent-runner: unrecognised --agent-transcript-store/transcriptStore (no transcripts listed for these) for %v; recognised: %s\n",
-			bad, strings.Join(transcript.Kinds, ", "))
-	}
-	if bad := profiles.UnresolvableStreamAdapters(); len(bad) > 0 {
-		fmt.Fprintf(os.Stderr, "agent-runner: event-stream adapter not resolvable now (event-stream tasks on these profiles will fail until it appears; `make build` writes it) for %v\n", bad)
 	}
 	if bad := profiles.ResolveBinPaths(); len(bad) > 0 {
 		fmt.Fprintf(os.Stderr, "agent-runner: agent bin not resolvable now (kept verbatim; spawn will fail unless it appears on PATH) for %v\n", bad)

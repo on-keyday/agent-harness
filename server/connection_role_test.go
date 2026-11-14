@@ -47,7 +47,7 @@ func TestAuthenticatedConnectionRoles(t *testing.T) {
 			}{
 				{"task control", []byte{byte(appwire.AppKind_TaskControl), byte(protocol.TaskControlKind_Cancel)}, client},
 				{"runner report", []byte{byte(appwire.AppKind_RunnerControl), byte(protocol.RunnerMessageType_TaskFinished)}, !client},
-				{"task log pubsub", []byte{byte(appwire.AppKind_Pubsub)}, true},
+				{"pubsub", []byte{byte(appwire.AppKind_Pubsub)}, true},
 				{"telemetry response", []byte{byte(appwire.AppKind_Telemetry)}, true},
 				{"replace client identity", []byte{byte(appwire.AppKind_TaskControl), byte(protocol.TaskControlKind_ClientHello)}, false},
 				{"replace runner identity", []byte{byte(appwire.AppKind_RunnerControl), byte(protocol.RunnerMessageType_Hello)}, false},

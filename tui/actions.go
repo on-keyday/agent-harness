@@ -17,12 +17,8 @@ import (
 // A row's Scope IS the guard: the key fires only in a pane its bits name.
 // Pressed elsewhere it is not consumed — except that a row with an OutsideHint
 // says why it did nothing, unless the focus is the command line, which types
-// the letter. Nothing fires while the logs filter is being typed; that pane's
-// one lettered binding is handled inside LogsModel.
-func (a *App) dispatchMainKey(msg tea.KeyMsg, logsEditing bool) (tea.Cmd, bool) {
-	if logsEditing {
-		return nil, false
-	}
+// the letter.
+func (a *App) dispatchMainKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 	key := msg.String()
 	scope := scopeForFocus(a.focus)
 	for i := range mainKeyBindings {

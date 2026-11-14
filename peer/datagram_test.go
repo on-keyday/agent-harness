@@ -57,11 +57,10 @@ func newDatagramConn(t *testing.T) (*Conn, *dgTransport, context.Context) {
 	t.Cleanup(cancel)
 	tr := &dgTransport{in: make(chan []byte, 4), sent: make(chan []byte, 4), maxSize: 1169}
 	c := &Conn{
-		trans:     tr,
-		log:       slog.New(slog.NewTextHandler(io.Discard, nil)),
-		done:      make(chan struct{}),
-		dgDone:    make(chan struct{}),
-		pubTopics: map[string]*pubTopic{},
+		trans:  tr,
+		log:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+		done:   make(chan struct{}),
+		dgDone: make(chan struct{}),
 	}
 	go c.pumpDatagrams(ctx)
 	return c, tr, ctx
@@ -135,7 +134,7 @@ func TestDatagramPumpStopsWithItsContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	tr := &dgTransport{in: make(chan []byte), sent: make(chan []byte, 1), maxSize: 1169}
 	c := &Conn{trans: tr, log: slog.New(slog.NewTextHandler(io.Discard, nil)),
-		done: make(chan struct{}), dgDone: make(chan struct{}), pubTopics: map[string]*pubTopic{}}
+		done: make(chan struct{}), dgDone: make(chan struct{})}
 	stopped := make(chan struct{})
 	go func() { c.pumpDatagrams(ctx); close(stopped) }()
 
@@ -176,7 +175,7 @@ func TestStartDatagramPumpEndsWithTheConnection(t *testing.T) {
 	ec := &endingConn{gone: make(chan struct{})}
 	tr := &dgTransport{in: make(chan []byte), sent: make(chan []byte, 1), maxSize: 1169}
 	c := &Conn{conn: ec, trans: tr, log: slog.New(slog.NewTextHandler(io.Discard, nil)),
-		done: make(chan struct{}), dgDone: make(chan struct{}), pubTopics: map[string]*pubTopic{}}
+		done: make(chan struct{}), dgDone: make(chan struct{})}
 	c.Start(ctx)
 
 	close(ec.gone)

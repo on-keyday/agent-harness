@@ -166,9 +166,9 @@ func TestSchedulerSkipsBusy(t *testing.T) {
 	}
 }
 
-// The runner may answer the moment AssignTask leaves — TaskAccepted, and the
-// JOIN its first log line makes — and both are authorized by ownsTask. So the
-// reservation has to exist before the send, as ownsTask's comment says.
+// The runner may answer the moment the start leaves, and its answer is
+// authorized by ownsTask. So the reservation has to exist before the send, as
+// ownsTask's comment says.
 func TestSchedulerBindsBeforeSending(t *testing.T) {
 	reg := NewRegistry()
 	r := idleRunner("r1", "h1", nil)

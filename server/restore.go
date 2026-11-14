@@ -36,8 +36,9 @@ import (
 //   - Overwrite a live task. An id already in the store is left alone and
 //     reported as already_present, so a restore can never clobber the running
 //     state with an older snapshot of it.
-//   - Bring back the task LOG. PruneTerminal removes <logDir>/<id>.log and the
-//     WAL never held its contents. The record returns; the transcript does not.
+//   - Bring back a task LOG. The server keeps none since A3, and the WAL never
+//     held one; a log an older server wrote stays under <data-dir>/logs/,
+//     unread.
 //   - Bring back the worktree. That is prune-local's half and lives on the
 //     runner, untouched by a server-side prune.
 //

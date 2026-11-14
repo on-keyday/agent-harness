@@ -301,8 +301,8 @@ func (m *RawConnectModal) syncRows() {
 }
 
 // syncViewport refreshes the viewer's content, sticking to the bottom only
-// while the reader is already there — the same rule the log pane and the WebUI
-// output use, so following live output does not fight scrolling back.
+// while the reader is already there — the same rule the WebUI output uses, so
+// following live output does not fight scrolling back.
 func (m *RawConnectModal) syncViewport() {
 	p := m.ActivePane()
 	if p == nil {

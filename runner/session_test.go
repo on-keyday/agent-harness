@@ -37,13 +37,7 @@ func singleProfile(t *testing.T, bin string) ProfileSet {
 type mockSender struct {
 	mu        sync.Mutex
 	sent      [][]byte
-	publishes []publishedMsg
 	datagrams [][]byte
-}
-
-type publishedMsg struct {
-	topic string
-	data  []byte
 }
 
 func (m *mockSender) Send(data []byte) error {
@@ -53,12 +47,6 @@ func (m *mockSender) Send(data []byte) error {
 	return nil
 }
 func (m *mockSender) ID() objproto.ConnectionID { return objproto.ConnectionID{} }
-func (m *mockSender) Publish(topic string, data []byte) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.publishes = append(m.publishes, publishedMsg{topic, append([]byte{}, data...)})
-	return nil
-}
 
 // TestSessionResolvesProfile verifies that resolveExec picks the named
 // profile's bin + argv (the codex case), and falls back to the default

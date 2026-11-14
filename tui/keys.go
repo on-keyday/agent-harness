@@ -40,7 +40,6 @@ type mainKeyMap struct {
 	CapsAudit       string
 	FilePicker      string
 	Git             string
-	LogFilter       string
 
 	Cancel                 string
 	ReGrant                string
@@ -81,7 +80,6 @@ var mainKeys = mainKeyMap{
 	CapsAudit:       "i",
 	FilePicker:      "F",
 	Git:             "G",
-	LogFilter:       "/",
 
 	Cancel:                 "c",
 	ReGrant:                "a",
@@ -254,9 +252,9 @@ var modalKeys = modalKeyMap{
 	// beside it.
 	ConnsTrsf: "t",
 	// enter reads the selected RUNNER's own transport, `s` goes back to the
-	// server's. enter because the row is the subject — the same "act on the
-	// highlighted row" the tasks pane's enter means — and `s` because the
-	// alternative subject has no row to point at.
+	// server's. enter because the row is the subject — "act on the
+	// highlighted row" — and `s` because the alternative subject has no row
+	// to point at.
 	ConnsReadRunner: "enter",
 	ConnsReadServer: "s",
 }
@@ -269,14 +267,13 @@ type keyScope uint8
 const (
 	scopeRunners keyScope = 1 << iota
 	scopeTasks
-	scopeLogs
 	scopeNotify
 	scopeCmdresult
 	scopeCmdline
 )
 
 const (
-	scopeAllPanes = scopeRunners | scopeTasks | scopeLogs | scopeNotify | scopeCmdresult | scopeCmdline
+	scopeAllPanes = scopeRunners | scopeTasks | scopeNotify | scopeCmdresult | scopeCmdline
 	// scopeGlobal is every pane but the command line, where a letter must
 	// stay typeable text.
 	scopeGlobal = scopeAllPanes &^ scopeCmdline
@@ -291,8 +288,7 @@ type keyBinding struct {
 	Scope keyScope
 	// Do runs the key and reports whether it consumed it; false lets the key
 	// fall through to the focused pane. nil marks a row that documents a key
-	// dispatched elsewhere: inside a pane model (`/`), or structurally in
-	// updateKey (tab, enter, q, ?).
+	// dispatched elsewhere: structurally in updateKey (tab, enter, q, ?).
 	Do func(*App, tea.KeyMsg) (tea.Cmd, bool)
 	// OutsideHint, when set, is what the operator is told for pressing the
 	// key in a pane its Scope excludes — the command line excepted, which
@@ -312,7 +308,6 @@ func (b keyBinding) isGlobal() bool { return b.Scope == scopeGlobal }
 // by footerHints and so carry no Short text here.
 var mainKeyBindings = []keyBinding{
 	// --- tasks pane ---
-	{Keys: []string{"enter"}, Scope: scopeTasks, Short: "enter follow", Long: "follow the selected task's log"},
 	{Keys: []string{mainKeys.ResumeAssignedContinue, mainKeys.ResumeAssignedFresh}, Scope: scopeTasks, Do: (*App).onResume,
 		Short: "r/R assigned resume", Long: "reattach / resume on the assigned runner (r keeps the agent's conversation, R starts fresh). On a live EVENT-STREAM task it opens the chat view instead — that kind has no terminal to take over, but it is driven from there"},
 	{Keys: []string{mainKeys.ResumeAnyContinue, mainKeys.ResumeAnyFresh}, Scope: scopeTasks, Do: (*App).onResume,
@@ -338,10 +333,6 @@ var mainKeyBindings = []keyBinding{
 		Long: "grid of the selected task's subtree — z includes the task itself, Z is its descendants only (for when you are watching that one elsewhere); g is the whole fleet"},
 	{Keys: []string{mainKeys.BackgroundOpen}, Scope: scopeTasks, Do: (*App).onBackgroundOpen, Short: "N background", Long: "open a background session: a prompt and a deadline, queued until a runner is free, ended by its conditions"},
 	{Keys: []string{mainKeys.RunMode}, Scope: scopeTasks, Do: (*App).onRunMode, Short: "E run mode", Long: "switch the selected running session between foreground and background (background asks for a deadline)"},
-
-	// --- logs pane ---
-	{Keys: []string{"left", "right"}, Scope: scopeLogs, Short: "←/→ scroll", Long: "scroll the log horizontally"},
-	{Keys: []string{mainKeys.LogFilter}, Scope: scopeLogs, Short: "/ filter", Long: "filter the log by substring (enter applies, esc cancels/clears)"},
 
 	// --- cmdline ---
 	{Keys: []string{"up", "down"}, Scope: scopeCmdline, Short: "↑/↓ history", Long: "walk the command history"},
@@ -373,8 +364,6 @@ func scopeForFocus(f focus) keyScope {
 		return scopeRunners
 	case focusTasks:
 		return scopeTasks
-	case focusLogs:
-		return scopeLogs
 	case focusNotify:
 		return scopeNotify
 	case focusCmdresult:
@@ -458,7 +447,6 @@ func keyHelpBody() string {
 		{title: "global ", scope: scopeGlobal},
 		{title: "runners", scope: scopeRunners, only: true},
 		{title: "tasks  ", scope: scopeTasks, only: true},
-		{title: "logs   ", scope: scopeLogs, only: true},
 		{title: "cmdline", scope: scopeCmdline, only: true},
 	}
 	var sb strings.Builder

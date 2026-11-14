@@ -286,9 +286,8 @@ type SessionStartedMsg struct {
 type TermSize struct{ Rows, Cols uint16 }
 
 // eventStream opens the session as TaskKind_Stream (`session new --stream -d`):
-// the runner spawns the profile's stream adapter and the task's events render
-// into its log, so the TUI follows it through the logs pane rather than a
-// terminal splice. The initial size is still sent — the runner ignores it for
+// the runner spawns the profile's stream adapter, and the TUI drives it from
+// the chat view (r/R on the task) rather than a terminal splice. The initial size is still sent — the runner ignores it for
 // this kind (no PTY exists to size).
 // startDetachedSession is DoStartDetachedSession, a variable so a test can
 // see what the `s` popup opens without a server.

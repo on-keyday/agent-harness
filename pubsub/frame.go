@@ -8,8 +8,7 @@ import (
 )
 
 // MaxFrameLen is the length at which a frame is refused rather than awaited.
-// It is a cap on a single message, far above any event or log chunk the broker
-// sends; its job is to recognise a stream that is not framed at all — a server
+// It is a cap on a single message, far above any event the broker sends; its job is to recognise a stream that is not framed at all — a server
 // older than this client sends raw events, whose first four bytes read as a
 // length of at least this much whenever the first byte is non-zero.
 const MaxFrameLen = 16 << 20

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-runewidth"
 )
@@ -58,7 +59,7 @@ func TestMainKeysAreUnique(t *testing.T) {
 func TestFooterHintsFitsWidth(t *testing.T) {
 	narrow := &runewidth.Condition{EastAsianWidth: false}
 	wide := &runewidth.Condition{EastAsianWidth: true}
-	for _, f := range []focus{focusRunners, focusTasks, focusLogs, focusNotify, focusCmdresult, focusCmdline} {
+	for _, f := range []focus{focusRunners, focusTasks, focusNotify, focusCmdresult, focusCmdline} {
 		for _, w := range []int{80, 100, 120, 137, 200, 400} {
 			got := footerHints(f, w)
 			if strings.Contains(got, "\n") {
@@ -77,7 +78,7 @@ func TestFooterHintsFitsWidth(t *testing.T) {
 // TestFooterHintsKeepsEscapeHatch — whatever gets dropped, the way to see the
 // rest (`?`) and the way out (`q`) must stay on screen.
 func TestFooterHintsKeepsEscapeHatch(t *testing.T) {
-	for _, f := range []focus{focusRunners, focusTasks, focusLogs, focusCmdline} {
+	for _, f := range []focus{focusRunners, focusTasks, focusNotify, focusCmdline} {
 		got := footerHints(f, 80)
 		for _, want := range []string{mainKeys.Help + " keys", mainKeys.Quit + " quit"} {
 			if !strings.Contains(got, want) {
@@ -91,16 +92,13 @@ func TestFooterHintsKeepsEscapeHatch(t *testing.T) {
 // actually do something in the focused pane.
 func TestFooterHintsIsContextual(t *testing.T) {
 	tasks := footerHints(focusTasks, 120)
-	logs := footerHints(focusLogs, 120)
+	notify := footerHints(focusNotify, 120)
 
 	if !strings.Contains(tasks, mainKeys.Cancel+" cancel") {
 		t.Errorf("tasks focus should advertise cancel, got %q", tasks)
 	}
-	if strings.Contains(logs, mainKeys.Cancel+" cancel") {
-		t.Errorf("logs focus must not advertise the tasks-only cancel key, got %q", logs)
-	}
-	if !strings.Contains(logs, mainKeys.LogFilter+" filter") {
-		t.Errorf("logs focus should advertise the filter key, got %q", logs)
+	if strings.Contains(notify, mainKeys.Cancel+" cancel") {
+		t.Errorf("notify focus must not advertise the tasks-only cancel key, got %q", notify)
 	}
 	// The command line takes literal text, so no global single-letter key
 	// applies there — the dispatcher guards them all with focus != cmdline.
@@ -144,5 +142,23 @@ func TestViewFooterFitsTerminal(t *testing.T) {
 				t.Errorf("footer is %d cells wide (terminal is %d): %q", n, w, footer)
 			}
 		})
+	}
+}
+
+// TestFocusCycleHasNoLogPane: Tab walks every pane in order and wraps; the
+// task log pane is not one of them any more (A3, A-D30).
+func TestFocusCycleHasNoLogPane(t *testing.T) {
+	a := New(Config{Server: "ws://test:8080"})
+	a.width, a.height = 120, 40
+	a.layout()
+	a.setFocus(focusRunners)
+	want := []focus{focusTasks, focusNotify, focusCmdresult, focusCmdline, focusRunners}
+	var got []focus
+	for range want {
+		a.Update(tea.KeyMsg{Type: tea.KeyTab})
+		got = append(got, a.focus)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("tab cycle = %v, want %v", got, want)
 	}
 }

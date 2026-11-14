@@ -84,8 +84,6 @@ var kindCapClass = map[protocol.TaskControlKind]capClass{
 	protocol.TaskControlKind_AttachSession: capInHandler,
 	// exec_run_kill names an EXEC that resolves to a task; authorize(ExecRun).
 	protocol.TaskControlKind_ExecRunKill: capInHandler,
-	// hasCap(ExecView) then inScope, inside handleGetTaskLog.
-	protocol.TaskControlKind_GetTaskLog: capInHandler,
 	// Operator-only by principal identity, which is stronger than any cap.
 	protocol.TaskControlKind_SetCaps:   capInHandler,
 	protocol.TaskControlKind_SetParent: capInHandler,
@@ -114,6 +112,8 @@ var kindCapClass = map[protocol.TaskControlKind]capClass{
 	protocol.TaskControlKind_Whoami:      capNone,
 	// A RESPONSE kind; it never arrives as a request.
 	protocol.TaskControlKind_PermissionDenied: capNone,
+	// Retired in A3: answers "no log" for every id, so it reveals nothing.
+	protocol.TaskControlKind_GetTaskLog: capNone,
 	// trsf_state reads no capability bit. What it hands back is bounded by
 	// VISIBILITY -- connInfoFor's decision, reused rather than restated -- and
 	// its runner branch additionally requires the global view. That is a

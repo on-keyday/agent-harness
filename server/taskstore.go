@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -787,10 +785,10 @@ func (s *TaskStore) Resume(id, prompt string, extraArgs []string, selector proto
 	onCreate := s.OnCreate
 	s.mu.Unlock()
 
-	// Reuse OnCreate so downstream wiring (pubsub task_queued, log store
-	// taps) treats the resumed task like a fresh queue arrival. The task is
-	// already in s.tasks under the original id, so any per-id state these
-	// hooks set up is idempotent (re-tap the same log topic, etc.).
+	// Reuse OnCreate so downstream wiring (pubsub task_queued) treats the
+	// resumed task like a fresh queue arrival. The task is already in s.tasks
+	// under the original id, so any per-id state these hooks set up must be
+	// idempotent.
 	if onCreate != nil {
 		onCreate(id)
 	}
@@ -1625,9 +1623,9 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 // skippedActive. Forgetting a live task's record would leave its agent
 // running on a runner with nothing the server could cancel, list or bound it
 // by, so there is no override: cancel it first. Ids not present in the store
-// are counted in skippedMissing. Log files are deleted via the same path as
-// PruneTerminal.
-func (s *TaskStore) PruneByIDs(allowed map[string]bool, ids []string, logDir string) (removed, skippedActive, skippedMissing int) {
+// are counted in skippedMissing. A task log a pre-A3 server wrote under
+// <data-dir>/logs/ is left on disk (A-D30).
+func (s *TaskStore) PruneByIDs(allowed map[string]bool, ids []string) (removed, skippedActive, skippedMissing int) {
 	s.mu.Lock()
 	pruned := make([]string, 0, len(ids))
 	toRemove := make(map[string]struct{}, len(ids))
@@ -1678,14 +1676,6 @@ func (s *TaskStore) PruneByIDs(allowed map[string]bool, ids []string, logDir str
 	onPrune := s.OnPrune
 	s.mu.Unlock()
 
-	if logDir != "" {
-		for _, id := range pruned {
-			path := filepath.Join(logDir, id+".log")
-			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-				slog.Warn("prune log file", "task_id", id, "err", err)
-			}
-		}
-	}
 	if onPrune != nil {
 		for _, id := range pruned {
 			onPrune(id)
@@ -1695,10 +1685,10 @@ func (s *TaskStore) PruneByIDs(allowed map[string]bool, ids []string, logDir str
 }
 
 // PruneTerminal removes terminal-status tasks whose EndedAt is before cutoff.
-// For each pruned task, its log file at <logDir>/<id>.log is also deleted (errors are logged but non-fatal).
 // A "task_pruned" WAL event is emitted so a subsequent replay applies the same removal.
-// Returns the number of tasks removed. logDir may be "" to skip log-file deletion.
-func (s *TaskStore) PruneTerminal(allowed map[string]bool, cutoff time.Time, logDir string) int {
+// Returns the number of tasks removed. A task log a pre-A3 server wrote under
+// <data-dir>/logs/ is left on disk (A-D30).
+func (s *TaskStore) PruneTerminal(allowed map[string]bool, cutoff time.Time) int {
 	s.mu.Lock()
 	var pruned []string
 	keepOrder := s.order[:0]
@@ -1738,14 +1728,6 @@ func (s *TaskStore) PruneTerminal(allowed map[string]bool, cutoff time.Time, log
 	onPrune := s.OnPrune
 	s.mu.Unlock()
 
-	if logDir != "" {
-		for _, id := range pruned {
-			path := filepath.Join(logDir, id+".log")
-			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-				slog.Warn("prune log file", "task_id", id, "err", err)
-			}
-		}
-	}
 	if onPrune != nil {
 		for _, id := range pruned {
 			onPrune(id)

@@ -13,16 +13,15 @@ import (
 // was a paragraph in the supervising-workers skill asking it not to.
 func TestPruneIsScopedToTheCaller(t *testing.T) {
 	h, _, c, g, u := scopeFixture(t)
-	dir := t.TempDir()
 	h.PruneFn = func(allowed map[string]bool, req *protocol.PruneTasksRequest) (int, int, int) {
 		if req.TaskIdsLen == 0 {
-			return h.Tasks.PruneTerminal(allowed, time.Unix(0, int64(req.BeforeTs)), dir), 0, 0
+			return h.Tasks.PruneTerminal(allowed, time.Unix(0, int64(req.BeforeTs))), 0, 0
 		}
 		ids := make([]string, 0, req.TaskIdsLen)
 		for i := range req.TaskIds {
 			ids = append(ids, hexOf(req.TaskIds[i]))
 		}
-		return h.Tasks.PruneByIDs(allowed, ids, dir)
+		return h.Tasks.PruneByIDs(allowed, ids)
 	}
 	// Make the descendant and the stranger terminal so both are prunable.
 	for _, id := range []string{g, u} {

@@ -56,21 +56,6 @@ type PruneResultMsg struct {
 	Err            error
 }
 
-// LogHistoryMsg carries the historical content of a task log fetched from the
-// server's on-disk store. app.go appends it into the LogsModel when the task
-// id matches the currently-followed one (a switch can happen between fetch
-// and arrival).
-type LogHistoryMsg struct {
-	TaskID  string
-	Content []byte
-	Found   bool
-	Err     error
-	// Gen is the followTask generation this fetch was issued for. The app
-	// drops a response whose Gen is not the current one, so a superseded
-	// in-flight fetch cannot fold a second copy of the log into the pane.
-	Gen int
-}
-
 // Authority is what a spawn grants the new task: the capability mask AND the
 // scope bounding which tasks those capabilities may target. The two always
 // travel together, so they are one value rather than two adjacent positional
@@ -343,20 +328,6 @@ func DoCancel(c *cli.Client, idPrefix, resolved string) tea.Cmd {
 		defer cancel()
 		err := c.Cancel(ctx, resolved)
 		return CancelResultMsg{IDPrefix: idPrefix, Resolved: resolved, Err: err}
-	}
-}
-
-// DoGetTaskLogGen fetches the historical log via the persistent client. The
-// stream-pointer response is read off the same trsf transport the client
-// already runs. gen is the followTask generation this fetch was issued for
-// and is stamped onto the reply so a superseded fetch can be discarded (see
-// LogHistoryMsg).
-func DoGetTaskLogGen(c *cli.Client, taskID string, gen int) tea.Cmd {
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		content, found, err := c.GetTaskLog(ctx, taskID)
-		return LogHistoryMsg{TaskID: taskID, Content: content, Found: found, Err: err, Gen: gen}
 	}
 }
 

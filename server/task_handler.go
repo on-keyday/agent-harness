@@ -3,11 +3,8 @@ package server
 import (
 	"context"
 	"encoding/hex"
-	"io"
 	"log/slog"
-	"os"
 	"path"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -135,11 +132,6 @@ type TaskHandler struct {
 	// creator edge survives only in its task_created record, and without it
 	// every forgotten task falls outside every subtree.
 	RestoreEventsFn func() []WALEvent
-
-	// LogsDir is the directory containing per-task log files
-	// (<LogsDir>/<task-id>.log). Empty disables GetTaskLog responses
-	// (always returns Found=0). Server.New wires it from cfg.DataDir.
-	LogsDir string
 
 	// Board is the agentboard instance for ticket lifecycle management.
 	// When nil, ticket registration is skipped (safe for tests that do not wire a Board).
@@ -469,13 +461,13 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		conn.SendMessage(out) //nolint:errcheck
 
 	case protocol.TaskControlKind_GetTaskLog:
-		gl := req.GetLog()
-		if gl == nil {
-			slog.Error("TaskHandler: GetLog variant is nil")
-			return
-		}
-		taskID := hex.EncodeToString(gl.TaskId.Id[:])
-		h.handleGetTaskLog(conn, req.Header.RequestId, taskID, cid)
+		// Retired in A3 (A-D30): the server keeps no task log. An older
+		// `harness-cli logs` is answered as for a task with no log rather than
+		// left waiting; the answer is the same for every id, so it needs no
+		// capability and reveals nothing.
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_GetTaskLog, RequestId: req.Header.RequestId}
+		resp.SetGetLog(protocol.GetTaskLogResponse{})
+		conn.SendMessage(resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})) //nolint:errcheck
 
 	case protocol.TaskControlKind_OpenInteractive:
 		oi := req.OpenInteractive()
@@ -2041,9 +2033,9 @@ func relayBytes(src, dst trsf.BidirectionalStream) {
 // id; the actual ListResultBody is encoded onto the stream so the response
 // fits in any path MTU on UDP.
 //
-// Body is written synchronously (full payload already in memory, no I/O
-// like GetTaskLog has). On stream-creation failure (test stub or
-// non-streaming connection) the response carries StreamId=0; client treats
+// Body is written synchronously (full payload already in memory). On
+// stream-creation failure (test stub or non-streaming connection) the
+// response carries StreamId=0; client treats
 // that as an error.
 // sessionMux returns the live SessionMux for a task, or nil (unknown task,
 // session already ended, or Sessions not wired — some tests run without it).
@@ -2268,97 +2260,10 @@ func (h *TaskHandler) handleListConns(conn ConnHandle, requestID uint32, connID 
 // writeStreamAll writes p to s as a single non-EOF AppendData call.
 // The caller is responsible for signalling EOF (e.g. via s.Close() or
 // AppendData(true)). This is the canonical write helper reused by any
-// handler that streams pre-assembled byte slices (handleGetTaskLog chunk
-// writes, handleBoardRead payload writes).
+// handler that streams pre-assembled byte slices (handleRecord's entry
+// writes).
 func writeStreamAll(s trsf.SendStream, p []byte) error {
 	return s.AppendData(false, p)
-}
-
-// handleGetTaskLog responds to a GetTaskLog request by opening the per-task
-// log file at <LogsDir>/<taskID>.log, allocating a server-initiated
-// unidirectional stream, sending a TaskControlResponse referencing that
-// stream's id, and then streaming the file content + EOF asynchronously.
-//
-// If LogsDir is empty (server started without --data-dir) or the file does
-// not exist, the response carries Found=0 and StreamId=0.
-func (h *TaskHandler) handleGetTaskLog(conn ConnHandle, requestID uint32, taskID string, connID string) {
-	respond := func(found uint8, streamID uint64) {
-		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_GetTaskLog, RequestId: requestID}
-		resp.SetGetLog(protocol.GetTaskLogResponse{Found: found, StreamId: streamID})
-		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
-		conn.SendMessage(out) //nolint:errcheck
-	}
-
-	// A task log is the AGENT'S OUTPUT, recorded — the same thing exec_view
-	// gates live. It used to be gated by visibility alone, which put a
-	// transcript (tool inputs, command output, a Write's whole content) in the
-	// same tier as an `ls` row, and left it readable by a caller holding no
-	// capability at all.
-	//
-	// Visibility is NOT also required. An action scope may be wider than the
-	// visibility scope on purpose — `scope=none +exec_view:global` is the
-	// agentboard-driven observer that acts on ids it is handed and must not
-	// enumerate — and refusing it the record of a stream it may watch live
-	// would be incoherent.
-	//
-	// The two failures answer differently, as authorize documents: a missing
-	// cap says nothing about any task, while an out-of-scope target must look
-	// like absence or it is an existence oracle.
-	if !hasCap(h.callerCaps(connID), protocol.Capability_ExecView) {
-		h.denyTaskControl(conn, protocol.TaskControlKind_GetTaskLog, requestID, protocol.Capability_ExecView)
-		return
-	}
-	if !h.inScope(connID, protocol.Capability_ExecView, taskID) {
-		respond(0, 0)
-		return
-	}
-
-	if h.LogsDir == "" {
-		respond(0, 0)
-		return
-	}
-	logPath := filepath.Join(h.LogsDir, taskID+".log")
-	f, err := os.Open(logPath)
-	if err != nil {
-		// Includes os.ErrNotExist (no log yet) and any I/O error.
-		respond(0, 0)
-		return
-	}
-	stream := conn.CreateSendStream()
-	if stream == nil {
-		// Test or non-streaming connection: degrade to "no log".
-		f.Close()
-		respond(0, 0)
-		return
-	}
-
-	respond(1, uint64(stream.ID()))
-
-	// Stream the file content asynchronously so the response goes out first.
-	go func() {
-		defer f.Close()
-		buf := make([]byte, 32*1024)
-		for {
-			n, rerr := f.Read(buf)
-			if n > 0 {
-				if werr := writeStreamAll(stream, buf[:n]); werr != nil {
-					slog.Warn("GetTaskLog: stream write failed", "task_id", taskID, "err", werr)
-					break
-				}
-			}
-			if rerr == io.EOF {
-				break
-			}
-			if rerr != nil {
-				slog.Warn("GetTaskLog: file read failed", "task_id", taskID, "err", rerr)
-				break
-			}
-		}
-		// Signal EOF on the stream so the client knows we're done.
-		if err := stream.AppendData(true); err != nil {
-			slog.Warn("GetTaskLog: stream EOF failed", "task_id", taskID, "err", err)
-		}
-	}()
 }
 
 // toRunnerInfo converts a RunnerEntry value snapshot to the wire-format RunnerInfo.

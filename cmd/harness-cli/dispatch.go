@@ -232,10 +232,6 @@ func (h cliVerbs) Notify(a verb.NotifyAction) error {
 	return cli.Notify(h.ctx, h.cid(), a.Level, a.Title, a.Text)
 }
 
-func (h cliVerbs) Logs(a verb.LogsAction) error {
-	return cli.Logs(h.ctx, h.cid(), a.TaskID, os.Stdout, a.Follow)
-}
-
 func (h cliVerbs) Watch(a verb.CatalogAction) error {
 	return cli.Watch(h.ctx, h.cid(), os.Stdout)
 }

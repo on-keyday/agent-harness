@@ -88,7 +88,7 @@ func TestCreateWithinLimitsDescendants(t *testing.T) {
 	}
 
 	// Pruning the ended record frees its place.
-	if n, _, _ := s.PruneByIDs(nil, []string{c1}, ""); n != 1 {
+	if n, _, _ := s.PruneByIDs(nil, []string{c1}); n != 1 {
 		t.Fatal("prune did not remove the ended child")
 	}
 	mustChild(t, s, a, authority.Unbounded(), authority.Unbounded())
@@ -274,7 +274,7 @@ func TestPruneIntermediateFreesSubtree(t *testing.T) {
 		t.Fatal("A at 3/3 created a fourth")
 	}
 	s.Finish(b, 0, nil)
-	if n, _, _ := s.PruneByIDs(nil, []string{b}, ""); n != 1 {
+	if n, _, _ := s.PruneByIDs(nil, []string{b}); n != 1 {
 		t.Fatal("prune of ended B failed")
 	}
 	if got := s.DescendantCounts()[a]; got != 0 {

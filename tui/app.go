@@ -26,7 +26,6 @@ type focus int
 const (
 	focusRunners focus = iota
 	focusTasks
-	focusLogs
 	focusNotify
 	focusCmdresult
 	focusCmdline
@@ -45,7 +44,6 @@ type App struct {
 
 	runners    RunnersModel
 	tasks      TasksModel
-	logs       LogsModel
 	notify     NotifyModel
 	cmdresult  CmdResultModel
 	cmdline    textinput.Model
@@ -226,20 +224,15 @@ type App struct {
 	// Retry the ambiguous result carried (InteractiveReadyMsg).
 	runnerPicker RunnerPickerModel
 
-	// log-following state
-	logsCancel context.CancelFunc
-	client     *cli.Client
-	appCtx     context.Context
-	program    *tea.Program
+	client  *cli.Client
+	appCtx  context.Context
+	program *tea.Program
 	// termReleased is true while a child (an attached session, the external
 	// editor) owns the terminal via execWithoutSuspend. Written only on the
 	// Update goroutine: set before returning the Cmd, cleared by that Cmd's
 	// done message. Gates every further handover, since ReleaseTerminal /
 	// RestoreTerminal do not nest.
 	termReleased bool
-	// logsGen increments on every followTask. It stamps each GetTaskLog so a
-	// response from a superseded fetch can be discarded (see LogHistoryMsg).
-	logsGen int
 
 	// x11Cancel stops the background -R forward of the current X11 interactive
 	// session. Set when InteractiveReadyMsg carries one; called and cleared on
@@ -393,7 +386,6 @@ func New(cfg Config) *App {
 		runners:           NewRunners(),
 		tasks:             NewTasks(),
 		detail:            NewDetailPopup(),
-		logs:              NewLogs(),
 		notify:            NewNotify(),
 		cmdresult:         NewCmdResult(),
 		cmdline:           cmd,
@@ -445,8 +437,8 @@ func (a *App) BindClient(c *cli.Client) {
 	a.client = c
 }
 
-// BindProgram stores the tea.Program so per-task subscriber goroutines can
-// dispatch LogChunkMsg back to the model.
+// BindProgram stores the tea.Program so subscriber goroutines can dispatch
+// their messages back to the model.
 func (a *App) BindProgram(p *tea.Program) { a.program = p }
 
 // actAgeTickInterval drives the LOCAL re-render that ages idle badges
@@ -1062,46 +1054,12 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// those happened is the server's to say.
 		return a, DoBoardChains(a.client)
 
-	case LogChunkMsg:
-		if msg.TaskID == a.logs.TaskID() {
-			a.logs.Append(msg.Chunk)
-		}
-		return a, nil
-
 	case NotifyEventMsg:
 		a.notify.Append(msg.Event)
 		return a, nil
 
-	case LogHistoryMsg:
-		// The user may have switched tasks or re-followed between fetch and
-		// arrival; only apply the response for the current task AND the
-		// current generation.
-		if msg.TaskID != a.logs.TaskID() || msg.Gen != a.logsGen {
-			return a, nil
-		}
-		if msg.Err != nil {
-			a.cmdresult.Append(WarnStyle.Render("history fetch failed: " + msg.Err.Error()))
-			return a, nil
-		}
-		if !msg.Found {
-			// Server has no log file for this task (e.g. pruned, or DataDir
-			// unset). Leave the placeholder; the live subscription, if any,
-			// will append from there.
-			return a, nil
-		}
-		// Prepend history before any live chunks that may have already arrived.
-		a.logs.Prepend(msg.Content)
-		return a, nil
-
 	case BindClientMsg:
 		a.client = msg.Client
-		// Re-follow so the log subscription is re-established on the new
-		// client and remains owned by a.logsCancel. Without this the pane
-		// would go silent after a reconnect; with a second subscription
-		// spawned from main.go it would receive every chunk twice.
-		if id := a.logs.TaskID(); id != "" {
-			return a, a.followTask(id)
-		}
 		return a, nil
 
 	case SubscribedMsg:
@@ -1127,11 +1085,6 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.Resubscribed && a.client != nil {
 				return a, RefreshSnapshot(a.client)
 			}
-		case msg.Resubscribed && a.logs.TaskID() != "" && msg.Topic == topics.TaskLog(a.logs.TaskID()):
-			// The followed task-log stream died and rejoined; chunks in
-			// between are gone from the live feed. Re-follow: history
-			// fetch + fresh subscription repaints the panel completely.
-			return a, a.followTask(a.logs.TaskID())
 		}
 		return a, nil
 
@@ -1797,20 +1750,15 @@ func (a *App) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyCtrlC {
 		return a, a.quit()
 	}
-	// While the logs panel is in filter-edit mode, every printable rune
-	// (including 'q', 's', 'c') belongs to the filter draft, just like
-	// in cmdline focus.
-	logsEditing := a.focus == focusLogs && a.logs.IsEditingFilter()
-	// `q` quits when not in the cmdline / not composing a filter (those
-	// must accept literal 'q').
-	if a.focus != focusCmdline && !logsEditing && msg.String() == mainKeys.Quit {
+	// `q` quits when not in the cmdline (which must accept a literal 'q').
+	if a.focus != focusCmdline && msg.String() == mainKeys.Quit {
 		return a, a.quit()
 	}
 	// `?` shows every binding. The footer is one row and drops what does
 	// not fit (see footerHints), so this is where the full list lives.
 	// Reuses the read-only DetailPopup — same Esc-closes / swallow-all
 	// handling as the `d` detail view.
-	if a.focus != focusCmdline && !logsEditing && msg.String() == mainKeys.Help {
+	if a.focus != focusCmdline && msg.String() == mainKeys.Help {
 		a.detail.Open("keys", keyHelpBody())
 		return a, nil
 	}
@@ -1823,7 +1771,7 @@ func (a *App) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		a.cycleFocus(-1)
 		return a, nil
 	}
-	if cmd, ok := a.dispatchMainKey(msg, logsEditing); ok {
+	if cmd, ok := a.dispatchMainKey(msg); ok {
 		return a, cmd
 	}
 	// Cmdline submit.
@@ -1860,14 +1808,6 @@ func (a *App) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		a.cmdresult.Append("> " + input)
 		return a.runAction(act)
 	}
-	// Follow task on Enter when tasks panel is focused.
-	if a.focus == focusTasks && msg.Type == tea.KeyEnter {
-		id := a.tasks.SelectedID()
-		if id != "" {
-			return a, a.followTask(id)
-		}
-		return a, nil
-	}
 	return a.updatePane(msg)
 }
 
@@ -1879,8 +1819,6 @@ func (a *App) updatePane(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.runners, cmd = a.runners.Update(msg)
 	case focusTasks:
 		a.tasks, cmd = a.tasks.Update(msg)
-	case focusLogs:
-		a.logs, cmd = a.logs.Update(msg)
 	case focusNotify:
 		a.notify, cmd = a.notify.Update(msg)
 	case focusCmdresult:
@@ -1941,7 +1879,6 @@ func (a *App) cycleFocus(delta int) {
 func (a *App) setFocus(f focus) {
 	a.runners.Blur()
 	a.tasks.Blur()
-	a.logs.Blur()
 	a.notify.Blur()
 	a.cmdresult.Blur()
 	a.cmdline.Blur()
@@ -1953,8 +1890,6 @@ func (a *App) setFocus(f focus) {
 		a.runners.Focus()
 	case focusTasks:
 		a.tasks.Focus()
-	case focusLogs:
-		a.logs.Focus()
 	case focusNotify:
 		a.notify.Focus()
 	case focusCmdresult:
@@ -1973,27 +1908,23 @@ func (a *App) quit() tea.Cmd {
 	return tea.Quit
 }
 
-// layout computes per-panel sizes from a.width / a.height. Header 1, runners
-// + tasks border-inclusive 12, notify border-inclusive 6, cmdresult
-// border-inclusive 7, cmdline 1, footer 1 = 28 fixed non-log rows, plus the
-// log panel's own 2 border rows = 30 reserved. Log content gets the rest
-// (min 5); logHeight refers to the inner content height of the log panel.
+// layout computes per-panel sizes from a.width / a.height. Header 1, notify
+// border-inclusive 6, cmdresult border-inclusive 7, cmdline 1, footer 1 = 16
+// fixed rows; the runners + tasks row takes the rest, less its own 2 border
+// rows, so tableHeight = a.height - 18 (6 at the 24-row minimum). The task log
+// pane that used to sit under the tables held those rows (A3, A-D30).
 //
-// The two top tables keep a FIXED height while the log panel absorbs every
-// extra terminal row, and that is not a row limit to go fix: bubbles' tables
-// scroll with the cursor, so 9 visible rows of 32 tasks is a window, not a
-// truncation. Stated because the fixed height reads like a defect next to a
-// tall empty log panel, and `673fd332`'s message calls it one — wrongly, and
-// that message cannot be amended. Confirmed by the operator 2026-09-10:
-// 「あれは普通にスクロールが効くから困ってないですが」. What DID need fixing was a
-// row the table held and did not draw (see setTableRows).
+// bubbles' tables scroll with the cursor, so the height is a window onto the
+// rows, not a truncation of them. What DID need fixing once was a row the
+// table held and did not draw (see setTableRows).
 func (a *App) layout() {
 	if a.width < 80 || a.height < 24 {
 		return
 	}
 	half := a.width / 2
-	a.runners.SetSize(half-2, 10)
-	a.tasks.SetSize(a.width-half-2, 10)
+	tableHeight := a.height - 18
+	a.runners.SetSize(half-2, tableHeight)
+	a.tasks.SetSize(a.width-half-2, tableHeight)
 	a.notify.SetSize(a.width-2, 4)
 	a.cmdresult.SetSize(a.width-2, 5)
 	a.cmdline.Width = a.width - 4
@@ -2024,17 +1955,6 @@ func (a *App) View() string {
 	}
 	top := lipgloss.JoinHorizontal(lipgloss.Top, runnersView, tasksView)
 
-	logHeight := max(a.height-30, 5)
-	a.logs.SetSize(a.width-4, logHeight-2) // -2 for the panel border rows
-	logBorder := PanelStyle
-	if a.logs.IsFocused() {
-		logBorder = PanelStyleFocused
-	}
-	logView := logBorder.
-		Width(a.width - 2).
-		Height(logHeight).
-		Render(a.logs.View())
-
 	notifyBorder := PanelStyle
 	if a.notify.IsFocused() {
 		notifyBorder = PanelStyleFocused
@@ -2050,21 +1970,11 @@ func (a *App) View() string {
 	// The footer is budgeted as exactly one row (see layout), so every branch
 	// here is clipped to the terminal width — an over-long hint wraps and
 	// pushes the bottom of the view off-screen.
-	var hint string
-	switch {
-	case a.logs.IsEditingFilter():
-		hint = "/" + a.logs.FilterDraft() + "_   (enter apply · esc cancel)"
-	case a.logs.Filter() != "":
-		hint = "[filter: " + a.logs.Filter() + "]   tab focus · / edit · esc clear · " + mainKeys.Quit + " quit"
-	default:
-		hint = footerHints(a.focus, a.width)
-	}
-	footer := FooterStyle.Render(clipLine(hint, 0, a.width))
+	footer := FooterStyle.Render(clipLine(footerHints(a.focus, a.width), 0, a.width))
 
 	view := strings.Join([]string{
 		header,
 		top,
-		logView,
 		notifyView,
 		cmdresultView,
 		cmdlineView,
@@ -2159,33 +2069,6 @@ func (a *App) View() string {
 			lipgloss.Place(a.width, a.height, lipgloss.Left, lipgloss.Top, a.chat.View()))
 	}
 	return view
-}
-
-// followTask LEAVEs the previous log subscription (if any), kicks off both a
-// historical fetch (GetTaskLog) and a live subscribe (task.<taskID>.log).
-// History arrives via LogHistoryMsg and is Prepend'd; live chunks arrive via
-// LogChunkMsg and are Append'd. For Done tasks the live subscription yields
-// nothing — the user still sees the persisted log file.
-func (a *App) followTask(taskID string) tea.Cmd {
-	if a.logsCancel != nil {
-		a.logsCancel()
-		a.logsCancel = nil
-	}
-	a.logs.Reset(taskID)
-	a.logsGen++
-	if taskID == "" || a.client == nil || a.program == nil || a.appCtx == nil {
-		return nil
-	}
-	gen := a.logsGen
-	subCtx, cancel := context.WithCancel(a.appCtx)
-	a.logsCancel = cancel
-	return tea.Batch(
-		DoGetTaskLogGen(a.client, taskID, gen),
-		func() tea.Msg {
-			go SubscribeTaskLog(subCtx, a.client, a.program, taskID)
-			return nil
-		},
-	)
 }
 
 // applyEventAct copies the act fields (last_output_at / output_idle_ms) from

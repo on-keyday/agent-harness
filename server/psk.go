@@ -151,7 +151,8 @@ func (g *pskGate) RunnerKey() ed25519.PublicKey { return g.runnerKey }
 func (g *pskGate) Rejected() (protocol.PskAuthStatus, bool) { return g.rejected, g.hasRejected }
 
 // AllowsMessage binds application traffic to the role authenticated by Check.
-// Both roles use pubsub (runners publish task logs) and answer telemetry, but
+// Both roles may speak pubsub (authorizeJoin refuses every JOIN a runner
+// makes) and answer telemetry, but
 // only clients issue task control and only runners report task state. Hello
 // messages belong exclusively to the initial handshake: accepting another one
 // would let a peer replace its authenticated identity on the same connection.

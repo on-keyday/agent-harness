@@ -172,8 +172,6 @@ type Sender interface {
 	Send(data []byte) error
 	// ID is the runner's connection ID, used by the server-side dispatch.
 	ID() objproto.ConnectionID
-	// Publish writes a chunk of data to the given pubsub topic.
-	Publish(topic string, data []byte) error
 	// SendDatagram transmits one unreliable payload, already wire-prefixed like
 	// Send's. MaxDatagramSize says what currently fits in one and MOVES with
 	// PLPMTUD, so a caller reads it per send.
@@ -929,9 +927,10 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 			OnStdinWriter: func(write func([]byte) (int, error)) {
 				s.setWake(taskIDHex, streamWake(write))
 			},
-			// No task log for this kind. It rendered every event into one
-			// until 2026-09-30, on the premise that the ring evicts and so
-			// the stream alone loses what happened while nobody watched. That
+			// No task log (retired for every kind in A3; this one dropped
+			// its own first). It rendered every event into one until
+			// 2026-09-30, on the premise that the ring evicts and so the
+			// stream alone loses what happened while nobody watched. That
 			// premise missed claude's own session transcript on the runner
 			// host, which holds the whole conversation (and which a resume
 			// now replays). The log was a lossy copy that no workflow relied

@@ -37,11 +37,6 @@ type ConnStatusMsg struct {
 	Event protocol.ConnStatusEvent
 }
 
-type LogChunkMsg struct {
-	TaskID string // hex
-	Chunk  []byte
-}
-
 // ConnectionMsg notifies the App of a connection state change driven by
 // cli.PersistLoop. Connected and Reconnecting are mutually exclusive.
 //   - Connected=true             → freshly bound to a live client
@@ -187,16 +182,6 @@ func SubscribeExecStatus(ctx context.Context, c *cli.Client, program *tea.Progra
 	})
 }
 
-// SubscribeTaskLog joins task.<taskID>.log and forwards each chunk as
-// LogChunkMsg{TaskID: taskID}.
-func SubscribeTaskLog(ctx context.Context, c *cli.Client, program *tea.Program, taskID string) {
-	subscribeAndStream(ctx, c, topics.TaskLog(taskID), program, func(payload []byte) tea.Msg {
-		chunk := make([]byte, len(payload))
-		copy(chunk, payload)
-		return LogChunkMsg{TaskID: taskID, Chunk: chunk}
-	})
-}
-
 // NotifyEventMsg carries a decoded NotifyEvent dispatched from SubscribeNotifications.
 type NotifyEventMsg struct {
 	Event protocol.NotifyEvent
@@ -246,9 +231,9 @@ func resubscribeLoop(ctx context.Context, c *cli.Client, topic string, program *
 		}
 		st, err := c.Peer().JoinAndGetStream(ctx, "tui", topic)
 		if err != nil {
-			// context.Canceled is the normal path when the user switches
-			// tasks (followTask cancels the prior subscription's ctx) or the
-			// connection drops — don't log, don't retry.
+			// context.Canceled is the normal path when the subscription's
+			// owner cancels its ctx or the connection drops — don't log,
+			// don't retry.
 			if ctx.Err() != nil {
 				return
 			}

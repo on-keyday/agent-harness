@@ -273,8 +273,8 @@ type boardConv struct {
 }
 
 // BoardModal is a two-mode overlay that mirrors ConnsModal's structure for the
-// table-based list (topic mode) and uses a viewport.Model (mirroring LogsModel)
-// to show selected-message payload content (message mode).
+// table-based list (topic mode) and uses a viewport.Model to show
+// selected-message payload content (message mode).
 //
 // Key dispatch follows the ConnsModal convention: the App intercepts
 // Enter / r / x / X / Esc before calling Update, so Do* commands can

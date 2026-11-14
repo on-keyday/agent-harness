@@ -126,7 +126,7 @@ func joinDirect(ps *PubSub, topic string, conn trsf.BidirectionalStream) {
 }
 
 // AppendData blocks on a subscriber that stopped reading (a TUI suspended in
-// tea.Exec with a busy task log followed is one). While it is parked, the rest
+// tea.Exec was one). While it is parked, the rest
 // of the broker must keep working: holding ps.m across it stalled every topic
 // and every Subscribe/Unsubscribe behind that one subscriber.
 func TestPubSub_SlowSubscriberDoesNotStallOtherTopics(t *testing.T) {

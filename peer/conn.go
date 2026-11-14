@@ -11,7 +11,7 @@
 //	pc.SetOnControl(handler)                          // optional; before Start
 //	pc.Start(ctx)                                     // spawns AutoReceive goroutine
 //	defer pc.Close()
-//	... use pc.Connection() / pc.Transport() / pc.Pubsub() / pc.Publish(...) ...
+//	... use pc.Connection() / pc.Transport() / pc.Pubsub() / pc.JoinAndGetStream(...) ...
 //	return pc.Wait(ctx)                               // long-running endpoints only
 package peer
 
@@ -20,7 +20,6 @@ import (
 	"crypto/ecdh"
 	"fmt"
 	"log/slog"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -72,9 +71,6 @@ type Conn struct {
 	// pump on ctx alone), and folding them would make Wait report the receive
 	// loop's lifetime as the pump's.
 	dgDone chan struct{}
-
-	pubmu     sync.Mutex
-	pubTopics map[string]*pubTopic
 }
 
 // DialConfig configures a peer.Conn.
@@ -217,13 +213,12 @@ func WrapAcceptedConn(ctx context.Context, conn objproto.Connection, cfg DialCon
 	})
 
 	c := &Conn{
-		conn:      conn,
-		trans:     p,
-		pub:       pubsub.NewClient(),
-		log:       cfg.Logger,
-		done:      make(chan struct{}),
-		dgDone:    make(chan struct{}),
-		pubTopics: map[string]*pubTopic{},
+		conn:   conn,
+		trans:  p,
+		pub:    pubsub.NewClient(),
+		log:    cfg.Logger,
+		done:   make(chan struct{}),
+		dgDone: make(chan struct{}),
 	}
 	go trsf.AutoSend(streamCtx, p, conn, nil)
 	go trsf.AutoPing(streamCtx, conn, cfg.PingInterval)
@@ -363,7 +358,7 @@ func (c *Conn) Close() {
 }
 
 // Connection returns the underlying objproto.Connection. Callers use it for
-// raw SendMessage when they want bypass the pubsub.Client / Publish helpers
+// raw SendMessage when they want bypass the pubsub.Client / JOIN helpers
 // (e.g. issuing a TaskControl request, sending the runner Hello).
 func (c *Conn) Connection() objproto.Connection { return c.conn }
 

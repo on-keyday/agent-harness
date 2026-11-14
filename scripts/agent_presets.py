@@ -6,7 +6,7 @@ this module directly rather than going through ``runner.py``'s
 ``bootstrap.ensure_venv()`` / ``psutil`` import chain).
 
 ``KNOWN_AGENT_PRESETS`` below is the SINGLE SOURCE OF TRUTH for the
-built-in agent presets' bin + argv-template + logFormat + streamAdapter
+built-in agent presets' bin + argv-template + streamAdapter
 shapes.
 ``.claude/commands/runner-up.md`` ("Codex preset details" / shell-sandbox
 presets table) references this table by name and MUST NOT restate the
@@ -106,7 +106,7 @@ _STREAM_ADAPTER = str(
 # prompt_unsupported.
 #
 # name -> {bin, oneshotArgv, resumeOneshotArgv, interactiveArgv,
-# resumeInteractiveArgv, logFormat, streamAdapter, transcriptStore, agentArgs}.
+# resumeInteractiveArgv, streamAdapter, transcriptStore, agentArgs}.
 # transcriptStore names where the agent keeps its transcripts, as
 # runner/transcript knows them (pillar B); "" for a shell. agentArgs is
 # empty here and set only by the sandbox derivation below. The argv values are the
@@ -116,10 +116,9 @@ _STREAM_ADAPTER = str(
 # below splits these on whitespace into the argv-array form
 # runner.ParseAgentProfilesJSON expects (runner/agent_profile.go); none of
 # these templates need shell quoting, so a plain .split() matches what
-# shlex.Split would produce. logFormat must be one of the names
-# runner/agentlog.NewDecoder recognises ("", "claude-stream-json",
-# "codex-jsonl") — see the module docstring above for the source-of-truth
-# policy.
+# shlex.Split would produce. There is no logFormat key: agent-runner ignores
+# --agent-log-format and a profile's logFormat since A3 (the oneshot path that
+# decoded stdout is gone), so this table no longer emits either.
 #
 # streamAdapter is empty for every agent but claude, and that is a statement
 # about the ADAPTER, not about the agent: harness-stream-adapter speaks claude's
@@ -142,7 +141,6 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         "resumeOneshotArgv": "--output-format stream-json --verbose {args} --continue -p {prompt}",
         "interactiveArgv": "{args} -- {prompt}",
         "resumeInteractiveArgv": "{args} --continue -- {prompt}",
-        "logFormat": "claude-stream-json",
         "transcriptStore": "claude",
         # The one preset the adapter speaks for. Its own flags are NOT listed
         # in the argv templates above: the adapter appends them itself and
@@ -171,7 +169,6 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         # to the daemon and rejects the flag (exit 2 on 0.160.1).
         "interactiveArgv": "--no-daemon {args} -- {prompt}",
         "resumeInteractiveArgv": "resume --last --no-daemon {args} -- {prompt}",
-        "logFormat": "codex-jsonl",
         "transcriptStore": "codex",
         "streamAdapter": "",
         "agentArgs": "",
@@ -189,8 +186,7 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         # stream-json is its own schema ({"event":"init"|"step_update"|
         # "result"}), NOT claude's, and agentlog has no decoder for it.
         # Asking for structured output nothing can decode would only make the
-        # task log unreadable, so plain text passes through instead and
-        # logFormat stays "".
+        # task log unreadable, so plain text passes through instead.
         #
         # Verified against agy 1.1.12: `--print` one-shot exits 0 with the
         # response on stdout; `--continue --print` carries context across
@@ -201,7 +197,6 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         "resumeOneshotArgv": "{args} --continue --print {prompt}",
         "interactiveArgv": "{args} --prompt-interactive={prompt}",
         "resumeInteractiveArgv": "{args} --continue --prompt-interactive={prompt}",
-        "logFormat": "",
         "transcriptStore": "agy",
         "streamAdapter": "",
         "agentArgs": "",
@@ -215,8 +210,7 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         # No --format is requested, for agy's reason: opencode's
         # `run --format json` emits its OWN event schema, not claude's, and
         # agentlog has no decoder for it. Structured output nothing can decode
-        # only makes the task log unreadable, so plain text passes through and
-        # logFormat stays "".
+        # only makes the task log unreadable, so plain text passes through.
         #
         # RESUME SCOPE — the reason this preset could not exist before. The
         # harness gives each task its own linked git worktree, and opencode
@@ -240,7 +234,6 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         "resumeOneshotArgv": "run --continue {args} {prompt}",
         "interactiveArgv": "{args} --prompt={prompt}",
         "resumeInteractiveArgv": "{args} --continue --prompt={prompt}",
-        "logFormat": "",
         "transcriptStore": "opencode",
         "streamAdapter": "",
         "agentArgs": "",
@@ -260,7 +253,7 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         # No --mode json is requested, for agy's reason: pi's json mode emits
         # its OWN event schema, not claude's, and agentlog has no decoder for
         # it. Structured output nothing can decode only makes the task log
-        # unreadable, so plain text passes through and logFormat stays "".
+        # unreadable, so plain text passes through.
         #
         # RESUME SCOPE — the question opencode's entry above had to measure
         # twice. Here it is answered by construction: pi stores sessions
@@ -271,11 +264,13 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         # to reach a SIBLING task's conversation the way opencode 1.1.35 did.
         #
         # STDIN — --print reads stdin and blocks until EOF, so pi hangs forever
-        # when handed a pipe nobody closes. The oneshot path is safe because
-        # runner/process.go assigns cmd.Stdout/cmd.Stderr and never cmd.Stdin,
-        # and os/exec then gives the child os.DevNull. That is a fact about the
-        # descriptor pi is handed, not about its argv: anything else launching
-        # pi with an inherited stdin has to redirect it.
+        # when handed a pipe nobody closes. `session new --oneshot` runs these
+        # oneshot templates in the task's PTY, so there pi's stdin is a TTY:
+        # not a pipe, and not the /dev/null the retired oneshot path gave it.
+        # Whether --print reads a TTY stdin, and whether it then waits for
+        # input, has NOT been measured (docs/superpowers/plans/
+        # 2026-11-15-a3-retire-oneshot.md, Task 7, runs it live). Anything
+        # launching pi with an inherited pipe on stdin has to redirect it.
         #
         # NODE — pi's package engines require Node >= 22.19.0, and this bare
         # name is PATH-resolved by ResolveBinPaths at startup. A runner whose
@@ -299,7 +294,6 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         "resumeOneshotArgv": "{args} --continue --print -- {prompt}",
         "interactiveArgv": "{args} -- {prompt}",
         "resumeInteractiveArgv": "{args} --continue -- {prompt}",
-        "logFormat": "",
         "transcriptStore": "pi",
         "streamAdapter": "",
         "agentArgs": "",
@@ -321,7 +315,6 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         "resumeOneshotArgv": "{args} -c {prompt}",
         "interactiveArgv": "{args}",
         "resumeInteractiveArgv": "{args}",
-        "logFormat": "",
         "transcriptStore": "",
         "streamAdapter": "",
         "agentArgs": "",
@@ -338,7 +331,6 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         "resumeOneshotArgv": "{args} /c {prompt}",
         "interactiveArgv": "{args}",
         "resumeInteractiveArgv": "{args}",
-        "logFormat": "",
         "transcriptStore": "",
         "streamAdapter": "",
         "agentArgs": "",
@@ -347,8 +339,8 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
 
 # The podman sandbox runs the SAME agent binaries through a wrapper that is a
 # pure pass-through (scripts/sandbox/README.md), so each sandbox-* preset is
-# DERIVED from its base entry rather than copied: its argv templates, log
-# format and adapter stay the base's, and only `bin` (that agent's
+# DERIVED from its base entry rather than copied: its argv templates and
+# adapter stay the base's, and only `bin` (that agent's
 # <agent>-in-podman.sh symlink) and `agentArgs` (below) change. Spawned without
 # this derivation, the first sandbox slot fell back to the runner's raw
 # defaults and one-shot progress was invisible — a whole task arrived as one
@@ -425,7 +417,6 @@ _CONFLICTING_FLAGS = (
     "--agent-resume-oneshot-argv",
     "--agent-interactive-argv",
     "--agent-resume-interactive-argv",
-    "--agent-log-format",
     "--agent-stream-adapter",
     "--agent-transcript-store",
     "--agent-profiles",
@@ -494,7 +485,6 @@ def agent_profiles_json(names: list[str]) -> str:
                 "resumeOneshotArgv": p["resumeOneshotArgv"].split(),
                 "interactiveArgv": p["interactiveArgv"].split(),
                 "resumeInteractiveArgv": p["resumeInteractiveArgv"].split(),
-                "logFormat": p["logFormat"],
                 "streamAdapter": p["streamAdapter"],
                 "transcriptStore": p["transcriptStore"],
                 "agentArgs": p["agentArgs"].split(),
@@ -509,15 +499,15 @@ def expand_agents_preset(agents_csv: str, existing_args: list[str]) -> list[str]
     The FIRST name in *agents_csv* becomes the default profile: emitted as
     ``--agent-bin``, ``--agent-oneshot-argv``, ``--agent-resume-oneshot-argv``,
     ``--agent-interactive-argv``, ``--agent-resume-interactive-argv``,
-    ``--agent-log-format``, ``--agent-stream-adapter`` and
-    ``--agent-transcript-store``. All eight are
+    ``--agent-stream-adapter`` and
+    ``--agent-transcript-store``. All seven are
     always emitted together for the
     default profile — agent-runner's startup validation requires
     --agent-resume-oneshot-argv whenever --agent-oneshot-argv is customized
     (cmd/agent-runner/main.go validate()), and a Claude-shaped resume default
     would silently misfire on a non-Claude default bin. The last two are
     emitted even when the preset's value is empty, so ``--dry-run`` states
-    that the agent has no decoder / no event-stream adapter rather than
+    that the agent has no event-stream adapter / no transcript store rather than
     leaving the reader to infer it from an absent flag. ``--agent-args`` is
     emitted only when the default preset carries agentArgs (a sandbox-*
     preset), because emitting it empty would collide with a caller's own.
@@ -526,14 +516,14 @@ def expand_agents_preset(agents_csv: str, existing_args: list[str]) -> list[str]
     JSON array flag, matching the wire shape
     runner.ParseAgentProfilesJSON expects: objects with
     name/bin/oneshotArgv/resumeOneshotArgv/interactiveArgv/
-    resumeInteractiveArgv/logFormat/streamAdapter/transcriptStore/agentArgs, argv fields as
+    resumeInteractiveArgv/streamAdapter/transcriptStore/agentArgs, argv fields as
     JSON string arrays (runner/agent_profile.go).
 
     Conflict policy: if *existing_args* already contains any of
     --agent-bin/--agent-oneshot-argv/
     --agent-resume-oneshot-argv/--agent-interactive-argv/
     --agent-resume-interactive-argv/
-    --agent-log-format/--agent-stream-adapter/--agent-transcript-store/
+    --agent-stream-adapter/--agent-transcript-store/
     --agent-profiles, this raises
     AgentsPresetError instead of silently overriding or merging. --agents is
     an all-or-nothing shortcut for the known presets; use the explicit
@@ -590,7 +580,6 @@ def expand_agents_preset(agents_csv: str, existing_args: list[str]) -> list[str]
         "--agent-resume-oneshot-argv", default["resumeOneshotArgv"],
         "--agent-interactive-argv", default["interactiveArgv"],
         "--agent-resume-interactive-argv", default["resumeInteractiveArgv"],
-        "--agent-log-format", default["logFormat"],
         "--agent-stream-adapter", default["streamAdapter"],
         "--agent-transcript-store", default["transcriptStore"],
     ]

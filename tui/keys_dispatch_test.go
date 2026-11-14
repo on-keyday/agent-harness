@@ -10,10 +10,10 @@ import (
 
 // TestMainKeyRowsDispatch is the other direction of TestMainKeysAreAllDocumented:
 // a row that names a mainKeys letter must also run something, or the help
-// would advertise a key the dispatcher never sees. Quit, help and the logs
-// filter are dispatched outside the table and are the listed exceptions.
+// would advertise a key the dispatcher never sees. Quit and help are
+// dispatched outside the table and are the listed exceptions.
 func TestMainKeyRowsDispatch(t *testing.T) {
-	structural := map[string]bool{mainKeys.Quit: true, mainKeys.Help: true, mainKeys.LogFilter: true}
+	structural := map[string]bool{mainKeys.Quit: true, mainKeys.Help: true}
 	letters := map[string]bool{}
 	v := reflect.ValueOf(mainKeys)
 	for i := 0; i < v.NumField(); i++ {
@@ -38,26 +38,21 @@ func TestDispatchMainKeyHonoursScope(t *testing.T) {
 	a.layout()
 
 	a.focus = focusRunners
-	if _, ok := a.dispatchMainKey(runeKey('G'), false); !ok {
+	if _, ok := a.dispatchMainKey(runeKey('G')); !ok {
 		t.Fatal("G in the runners pane should be consumed, with a hint")
 	}
 	if got := strings.Join(a.cmdresult.lines, "\n"); !strings.Contains(got, "git: focus the tasks pane first") {
 		t.Fatalf("expected the OutsideHint, got %q", got)
 	}
-	if _, ok := a.dispatchMainKey(runeKey('c'), false); ok {
+	if _, ok := a.dispatchMainKey(runeKey('c')); ok {
 		t.Fatal("c (tasks-only, no hint) in the runners pane must fall through to the pane")
 	}
 
 	a.focus = focusCmdline
 	for _, r := range []rune{'G', 's', 'c'} {
-		if _, ok := a.dispatchMainKey(runeKey(r), false); ok {
+		if _, ok := a.dispatchMainKey(runeKey(r)); ok {
 			t.Errorf("%q must reach the command line as text", r)
 		}
-	}
-
-	a.focus = focusLogs
-	if _, ok := a.dispatchMainKey(runeKey('s'), true); ok {
-		t.Fatal("nothing fires while the logs filter is being typed")
 	}
 }
 

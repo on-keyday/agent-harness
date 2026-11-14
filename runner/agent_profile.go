@@ -7,7 +7,6 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	"github.com/on-keyday/agent-harness/runner/agentlog"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/runner/transcript"
 )
@@ -26,16 +25,10 @@ type AgentProfile struct {
 	InteractiveArgv       []string
 	ResumeInteractiveArgv []string
 
-	// LogFormat names the agentlog decoder for this agent's stdout:
-	// "" (passthrough), "claude-stream-json", or "codex-jsonl". An
-	// unrecognised value resolves to passthrough rather than failing, so a
-	// typo degrades to raw lines instead of stopping the runner.
-	LogFormat string
-
 	// TranscriptStore names where this agent keeps its transcripts, as
 	// runner/transcript.New knows them ("claude", "codex", "pi", "agy",
 	// "opencode"); "" for an agent with none (a shell). Pillar B lists and
-	// reads them by it, as LogFormat names a decoder.
+	// reads them by it.
 	TranscriptStore string
 
 	// StreamAdapter is the binary that runs this agent as an EVENT-STREAM
@@ -127,27 +120,6 @@ func (ps ProfileSet) Names() []string {
 	return names
 }
 
-// UnrecognisedLogFormats returns `<name>: "<value>"` for every profile whose
-// LogFormat is neither empty nor a name agentlog.NewDecoder recognises. It
-// checks against agentlog.KnownFormats() rather than its own copy of the
-// name list, so this check cannot drift from what NewDecoder actually
-// accepts. agent-runner logs these once at startup so a typo is visible
-// rather than silently degrading to raw output.
-func (ps ProfileSet) UnrecognisedLogFormats() []string {
-	known := make(map[string]bool, len(agentlog.KnownFormats()))
-	for _, f := range agentlog.KnownFormats() {
-		known[f] = true
-	}
-	var out []string
-	for _, p := range ps.profiles {
-		if p.LogFormat == "" || known[p.LogFormat] {
-			continue
-		}
-		out = append(out, fmt.Sprintf("%s: %q", p.Name, p.LogFormat))
-	}
-	return out
-}
-
 // UnresolvableStreamAdapters returns `<name>: "<path>": <err>` for every
 // profile whose StreamAdapter is non-empty and does not currently resolve.
 //
@@ -160,9 +132,9 @@ func (ps ProfileSet) UnrecognisedLogFormats() []string {
 // artifact: a checkout that has not run `make build` would otherwise look
 // healthy until the first event-stream task failed.
 //
-// Same shape and same reason as UnrecognisedLogFormats above: a config value
-// consumed later in the task path, reported once where the operator is still
-// watching.
+// Same shape and same reason as UnrecognisedTranscriptStores below: a config
+// value consumed later in the task path, reported once where the operator is
+// still watching.
 func (ps ProfileSet) UnresolvableStreamAdapters() []string {
 	var out []string
 	for _, p := range ps.profiles {
@@ -218,9 +190,14 @@ type agentProfileJSON struct {
 	ResumeOneshotArgv     []string `json:"resumeOneshotArgv"`
 	InteractiveArgv       []string `json:"interactiveArgv"`
 	ResumeInteractiveArgv []string `json:"resumeInteractiveArgv"`
-	LogFormat             string   `json:"logFormat"`
 	StreamAdapter         string   `json:"streamAdapter"`
 	TranscriptStore       string   `json:"transcriptStore"`
+
+	// LogFormat is accepted and ignored since A3: restart.py replays a
+	// runner's argv, and an --agent-profiles written before then carries it
+	// (spec A-D32). Declared rather than left to json.Unmarshal's tolerance of
+	// unknown keys, so a stricter decoder later cannot refuse that argv.
+	LogFormat string `json:"logFormat"`
 }
 
 // ParseAgentProfilesJSON parses the JSON array accepted by --agent-profiles
@@ -246,7 +223,6 @@ func ParseAgentProfilesJSON(s string) ([]AgentProfile, error) {
 			ResumeOneshotArgv:     r.ResumeOneshotArgv,
 			InteractiveArgv:       r.InteractiveArgv,
 			ResumeInteractiveArgv: r.ResumeInteractiveArgv,
-			LogFormat:             r.LogFormat,
 			StreamAdapter:         r.StreamAdapter,
 			TranscriptStore:       r.TranscriptStore,
 		})
@@ -255,8 +231,9 @@ func ParseAgentProfilesJSON(s string) ([]AgentProfile, error) {
 }
 
 // UnrecognisedTranscriptStores returns `<name>: "<value>"` for every profile
-// whose TranscriptStore is neither empty nor a kind runner/transcript knows,
-// for the same startup warning UnrecognisedLogFormats gives.
+// whose TranscriptStore is neither empty nor a kind runner/transcript knows.
+// agent-runner logs these once at startup so a typo is visible rather than
+// silently listing no transcripts.
 func (ps ProfileSet) UnrecognisedTranscriptStores() []string {
 	known := map[string]bool{}
 	for _, k := range transcript.Kinds {

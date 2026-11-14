@@ -2045,7 +2045,7 @@ var Verbs = []VerbSpec{
 				Help: "order tasks by their creator link and draw the hierarchy"},
 			{
 				Name: "filtered", Type: FlagBool, Default: false, CmdlineSurfaces: WebUI, Field: "Filtered",
-				SurfaceReason: "only the WebUI has a task-list filter pane; the CLI has no filter to honour and the TUI's only filter is on the logs panel",
+				SurfaceReason: "only the WebUI has a task-list filter pane; neither the CLI nor the TUI has a filter to honour",
 				Help:          "list only the rows the task-list filter currently admits",
 			},
 		},
@@ -2229,22 +2229,6 @@ var Verbs = []VerbSpec{
 		Const:    map[string]string{"Sub": "version"},
 		Flags:    []Flag{{Name: "json", Type: FlagBool, Default: false, Field: "JSON", Help: "output the build stamp as a JSON object"}},
 		Examples: []string{"version"},
-	},
-	{
-		Path: []string{"logs"}, CmdlineSurfaces: CLI,
-		ModalSurfaces: []ModalSurface{
-			{Surface: TUI, At: "tui/logs.go:LogsModel"},
-		},
-		Notes: []string{
-			"dump task log history; -f also streams live chunks until task terminal",
-		},
-		Action: "LogsAction",
-		Args:   []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
-		Flags: []Flag{
-			{Name: "follow", Aliases: []string{"f"}, Type: FlagBool, Default: false, Field: "Follow",
-				Help: "after dumping history, keep streaming live chunks (no-op when the task is terminal)"},
-		},
-		Examples: []string{"logs aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "logs -f aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 	},
 	{
 		Path: []string{"prune-local"}, CmdlineSurfaces: CLI,

@@ -198,7 +198,7 @@ func TestCapsAuditModalCursorOnAFoldedBit(t *testing.T) {
 // D16/D20: enter on a holder shows it in the tree instead of opening re-grant.
 func TestCapsAuditEnterJumpsToTree(t *testing.T) {
 	a, want := auditApp(t)
-	a.setFocus(focusLogs)
+	a.setFocus(focusNotify)
 	a = press(t, a, runes("i"), enter, down, enter)
 	if a.capsAuditModal.IsOpen() || a.authorityPicker.IsOpen() {
 		t.Fatalf("modal open=%v picker open=%v; want both closed", a.capsAuditModal.IsOpen(), a.authorityPicker.IsOpen())

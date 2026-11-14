@@ -7,22 +7,12 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// TestViewHeightFitsTerminal verifies that View() never produces more rows than
-// the terminal height. This is a regression test for the off-by-one in
-// logHeight := max(a.height-27, 5) — the correct reserved count is 30 (28
-// fixed non-log rows + 2 log-panel border rows), so logHeight must be
-// a.height-30, not a.height-27.
-//
-// Note: the layout has 28 fixed non-log rows plus a minimum 5-row log content
-// + 2 log-panel border rows = minimum 35 total rows. Terminals smaller than 35
-// rows will always overflow because the fixed panels cannot be collapsed; the
-// layout() guard (height<24) only prevents layout() from running, not View()
-// from rendering the panels at their natural sizes. The regression test
-// therefore only covers heights >= 35 where the layout can actually fit.
+// TestViewHeightFitsTerminal verifies that View() fills the terminal exactly,
+// from the 24-row minimum layout() accepts upward: more rows overflow it, fewer
+// leave rows the tables could have used. The panels other than the runners +
+// tasks row are fixed (16 rows, see layout), so the tables absorb the rest.
 func TestViewHeightFitsTerminal(t *testing.T) {
-	// Minimum usable height: 28 fixed non-log rows + 5 min log content + 2 log
-	// border = 35. Test at the minimum achievable and a comfortable height.
-	heights := []int{35, 40, 50}
+	heights := []int{24, 30, 35, 40, 50}
 	for _, h := range heights {
 		t.Run(fmt.Sprintf("height=%d", h), func(t *testing.T) {
 			a := New(Config{Server: "ws://test:8080", DefaultRepo: ""})
@@ -36,6 +26,20 @@ func TestViewHeightFitsTerminal(t *testing.T) {
 				t.Errorf("View() height = %d, want <= %d (overflows terminal by %d row(s))",
 					got, h, got-h)
 			}
+			if got < h {
+				t.Errorf("View() height = %d at a %d-row terminal: %d row(s) left unused", got, h, h-got)
+			}
 		})
+	}
+}
+
+// TestTaskTableTakesFreedRows: the task log pane is gone (A3, A-D30), and the
+// rows it held go to the task table, which used to be fixed at 10.
+func TestTaskTableTakesFreedRows(t *testing.T) {
+	a := New(Config{Server: "ws://test:8080", DefaultRepo: ""})
+	a.width, a.height = 120, 40
+	a.layout()
+	if got := a.tasks.table.Height(); got <= 10 {
+		t.Fatalf("task table shows %d rows at a 40-row terminal, want more than 10", got)
 	}
 }

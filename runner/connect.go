@@ -430,7 +430,7 @@ func driveAfterConn(ctx context.Context, cfg Config, pc *peer.Conn) (*RunHandle,
 	// identity.
 	serverCID := pc.Connection().ConnectionID()
 
-	sender := &peerSender{pc: pc, ctx: ctx}
+	sender := &peerSender{pc: pc}
 	session := &Session{
 		reg:            cfg.Tasks,
 		processCtx:     cfg.ProcessCtx,
@@ -939,12 +939,9 @@ func dispatchRunnerRequest(ctx context.Context, session *Session, log *slog.Logg
 
 // peerSender adapts *peer.Conn to the runner.Sender interface so existing
 // session code (and its tests via mockSender) doesn't have to know about
-// peer at all. Send writes raw control bytes through the objproto connection;
-// Publish goes through peer.Conn.Publish (per-topic singleflight + cached
-// stream — replaces the old connSender, which lived alongside this file).
+// peer at all. Send writes raw control bytes through the objproto connection.
 type peerSender struct {
-	pc  *peer.Conn
-	ctx context.Context
+	pc *peer.Conn
 }
 
 func (s *peerSender) Send(data []byte) error {
@@ -954,10 +951,6 @@ func (s *peerSender) Send(data []byte) error {
 
 func (s *peerSender) ID() objproto.ConnectionID {
 	return s.pc.Connection().ConnectionID()
-}
-
-func (s *peerSender) Publish(topic string, data []byte) error {
-	return s.pc.Publish(s.ctx, "runner", topic, data)
 }
 
 func (s *peerSender) SendDatagram(b []byte) error { return s.pc.SendDatagram(b) }

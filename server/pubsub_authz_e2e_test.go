@@ -200,57 +200,31 @@ func receives(ctx context.Context, st trsf.BidirectionalStream, want []byte, d t
 	}
 }
 
-// P1: a task log is read through `logs`' gate or not at all.
-func TestPubsubAuthz_TaskLogJoinNeedsExecView(t *testing.T) {
-	ctx, e := startPubsubAuthzServer(t)
-	logTopic := topics.TaskLog(e.victim)
-
-	none := e.dialAgent(ctx, t, "agent-none", authority.Grant{})
-	_, err := none.Peer().JoinAndGetStream(ctx, "test", logTopic)
-	wantForbidden(t, "a --caps none agent", logTopic, err)
-
-	viewer := e.dialAgent(ctx, t, "agent-viewer", authority.Grant{
-		Caps:  protocol.Capability_ExecView,
-		Scope: authority.Scope{Base: protocol.ScopeBase_Subtree, IDs: []string{e.victim}},
-	})
-	if _, err := viewer.Peer().JoinAndGetStream(ctx, "test", logTopic); err != nil {
-		t.Errorf("an agent holding exec_view over the task: JOIN %s: %v", logTopic, err)
-	}
-
-	op := e.dialOperator(ctx, t)
-	if _, err := op.Peer().JoinAndGetStream(ctx, "test", logTopic); err != nil {
-		t.Errorf("operator JOIN %s: %v", logTopic, err)
-	}
-}
-
 // P2, P3 and the runner hole: a connection that authenticated as a runner has
-// no principal, which every visibility helper reads as "operator". Its JOINs
-// are limited to the logs of tasks it owns.
-func TestPubsubAuthz_RunnerRoleJoinsOnlyOwnedLogs(t *testing.T) {
+// no principal, which every visibility helper reads as "operator". It may JOIN
+// nothing — not even the retired log topic of a task it owns (A3, A-D30).
+func TestPubsubAuthz_RunnerRoleJoinsNothing(t *testing.T) {
 	ctx, e := startPubsubAuthzServer(t)
 	pc, identity := e.dialRunner(ctx, t, "impostor")
-
-	for _, topic := range []string{topics.TaskLog(e.victim), topics.Notifications(), topics.RunnersStatus(), topics.TasksStatus()} {
-		_, err := pc.JoinAndGetStream(ctx, "runner", topic)
-		wantForbidden(t, "a runner that owns nothing", topic, err)
-	}
-
 	entry, _ := e.s.registry.GetByIdentity(identity)
 	if !e.s.registry.BindTask(entry.ID, e.victim) {
 		t.Fatal("BindTask")
 	}
+	for _, topic := range []string{"task." + e.victim + ".log", topics.Notifications(), topics.RunnersStatus(), topics.TasksStatus(), topics.TaskStatus(e.victim)} {
+		_, err := pc.JoinAndGetStream(ctx, "runner", topic)
+		wantForbidden(t, "a runner", topic, err)
+	}
+}
+
+// The retired task log topic (A3) is refused to everyone, the operator
+// included, so an older `harness-cli logs -f` ends instead of waiting on a
+// topic nothing publishes.
+func TestPubsubAuthz_RetiredTaskLogTopicIsRefused(t *testing.T) {
+	ctx, e := startPubsubAuthzServer(t)
 	op := e.dialOperator(ctx, t)
-	opLog, err := op.Peer().JoinAndGetStream(ctx, "test", topics.TaskLog(e.victim))
-	if err != nil {
-		t.Fatalf("operator JOIN log: %v", err)
-	}
-	line := []byte("owned-runner-line\n")
-	if err := pc.Publish(ctx, "runner", topics.TaskLog(e.victim), line); err != nil {
-		t.Fatalf("owning runner publish: %v", err)
-	}
-	if !receives(ctx, opLog, line, 2*time.Second) {
-		t.Error("the owning runner's log line did not reach the operator")
-	}
+	topic := "task." + e.victim + ".log"
+	_, err := op.Peer().JoinAndGetStream(ctx, "cli", topic)
+	wantForbidden(t, "the operator", topic, err)
 }
 
 // P2, P3: runner topology and notifications are for whom `ls` shows runners.
@@ -287,54 +261,21 @@ func TestPubsubAuthz_ClientWritesAreDropped(t *testing.T) {
 		Caps:  protocol.Capability_ExecView,
 		Scope: authority.Scope{Base: protocol.ScopeBase_Subtree, IDs: []string{e.victim}},
 	})
-	for _, topic := range []string{topics.TasksStatus(), topics.TaskLog(e.victim)} {
+	for _, topic := range []string{topics.TasksStatus(), topics.TaskStatus(e.victim)} {
 		opSt, err := op.Peer().JoinAndGetStream(ctx, "test", topic)
 		if err != nil {
 			t.Fatalf("operator JOIN %s: %v", topic, err)
 		}
 		forged := []byte("forged-by-agent:" + topic)
-		if err := agent.Peer().Publish(ctx, "agent", topic, forged); err != nil {
-			t.Fatalf("agent publish %s: %v", topic, err)
+		agentSt, err := agent.Peer().JoinAndGetStream(ctx, "agent", topic)
+		if err != nil {
+			t.Fatalf("agent JOIN %s: %v", topic, err)
+		}
+		if err := agentSt.AppendData(false, forged); err != nil {
+			t.Fatalf("agent write %s: %v", topic, err)
 		}
 		if receives(ctx, opSt, forged, 500*time.Millisecond) {
 			t.Errorf("an agent's write on %s reached the operator", topic)
 		}
-	}
-}
-
-// D6: read permission is asked again on every publish, so narrowing a reader's
-// grant stops the next chunk without waiting for it to leave the topic.
-func TestPubsubAuthz_NarrowingStopsTheNextLogChunk(t *testing.T) {
-	ctx, e := startPubsubAuthzServer(t)
-	pc, identity := e.dialRunner(ctx, t, "owner")
-	entry, _ := e.s.registry.GetByIdentity(identity)
-	if !e.s.registry.BindTask(entry.ID, e.victim) {
-		t.Fatal("BindTask")
-	}
-	viewer, viewerID := e.dialAgentTask(ctx, t, "agent-viewer", authority.Grant{
-		Caps:  protocol.Capability_ExecView,
-		Scope: authority.Scope{Base: protocol.ScopeBase_Subtree, IDs: []string{e.victim}},
-	})
-	logTopic := topics.TaskLog(e.victim)
-	st, err := viewer.Peer().JoinAndGetStream(ctx, "test", logTopic)
-	if err != nil {
-		t.Fatalf("viewer JOIN: %v", err)
-	}
-	before := []byte("before-narrowing\n")
-	if err := pc.Publish(ctx, "runner", logTopic, before); err != nil {
-		t.Fatal(err)
-	}
-	if !receives(ctx, st, before, 2*time.Second) {
-		t.Fatal("the viewer did not get the chunk it was entitled to")
-	}
-	// The store, not the set_caps verb: the verb also drops the narrowed task's
-	// connections, which would pass this test without the per-publish check.
-	e.s.tasks.SetCaps(viewerID, GrantUpdate{Caps: true, To: authority.Grant{Caps: protocol.Capability_None}}, AuthorityWrite{})
-	after := []byte("after-narrowing\n")
-	if err := pc.Publish(ctx, "runner", logTopic, after); err != nil {
-		t.Fatal(err)
-	}
-	if receives(ctx, st, after, 500*time.Millisecond) {
-		t.Error("a reader whose exec_view was withdrawn still got the next chunk")
 	}
 }

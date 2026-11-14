@@ -20,7 +20,7 @@ import (
 //
 // CreateSendStream returns a server-initiated unidirectional stream. Handlers
 // use it for responses too large to fit in a single objproto message
-// (e.g. GetTaskLog returning a full log file). May return nil in tests where
+// (e.g. ReadRecord returning a recorded run). May return nil in tests where
 // the fake doesn't wire trsf.
 //
 // CreateBidirectionalStream returns a server-initiated bidirectional stream

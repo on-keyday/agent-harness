@@ -154,7 +154,7 @@ func WhatIfBits(d authority.TaskDiff) []WhatIfBit {
 }
 
 // WhatIfCommand is the command line that makes c, in the grammar the CLI
-// parses back: caps set, submit (run by the creator) or caps set-parent.
+// parses back: caps set, session new (run by the creator) or caps set-parent.
 func WhatIfCommand(c authority.Change) string {
 	scopeFlags := func(s authority.Scope) []string {
 		out := []string{"--scope", ScopeLabel(s.ToWire())}
@@ -183,7 +183,7 @@ func WhatIfCommand(c authority.Change) string {
 			tok = append(tok, "--cascade")
 		}
 	case authority.Spawn:
-		tok = append([]string{"harness-cli", "submit", "--caps", CapsLabel(c.Caps)}, scopeFlags(c.Scope)...)
+		tok = append([]string{"harness-cli", "session", "new", "--caps", CapsLabel(c.Caps)}, scopeFlags(c.Scope)...)
 		// The bound halves default to none / subtree, so they are named only
 		// when they say something else.
 		if c.DelegateCaps != 0 {

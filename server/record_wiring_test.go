@@ -160,7 +160,7 @@ func TestPruneDeletesRecords(t *testing.T) {
 	_ = w.Append(recEntry(1, "x"))
 	_ = w.Close(time.Now())
 	s.tasks.Finish(id, 0, nil)
-	if removed, _, _ := s.tasks.PruneByIDs(nil, []string{id}, t.TempDir()); removed != 1 {
+	if removed, _, _ := s.tasks.PruneByIDs(nil, []string{id}); removed != 1 {
 		t.Fatalf("pruned %d", removed)
 	}
 	if n := len(s.taskHandler.Records.List(id)); n != 0 {

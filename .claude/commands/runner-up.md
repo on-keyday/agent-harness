@@ -1,6 +1,6 @@
 ---
 description: Spawn an agent-runner slot via scripts/runner.sh up (auto-resolves server-cid from env). `persist` keyword routes via runner-autostart.py register for boot/login persistence.
-argument-hint: "<tag> [persist] [roots=PATH,PATH] [no-worktree] [agent-bin=PATH] [max-tasks=N] [hostname=LABEL] [runner-key-file=PATH] [agent-args=\"...\"] [agent-oneshot-argv=\"...\"] [agent-resume-oneshot-argv=\"...\"] [agent-interactive-argv=\"...\"] [agent-resume-interactive-argv=\"...\"] [agent-log-format=NAME] [agent-stream-adapter=PATH] [agent-transcript-store=NAME] [server-cid=CID]"
+argument-hint: "<tag> [persist] [roots=PATH,PATH] [no-worktree] [agent-bin=PATH] [max-tasks=N] [hostname=LABEL] [runner-key-file=PATH] [agent-args=\"...\"] [agent-oneshot-argv=\"...\"] [agent-resume-oneshot-argv=\"...\"] [agent-interactive-argv=\"...\"] [agent-resume-interactive-argv=\"...\"] [agent-stream-adapter=PATH] [agent-transcript-store=NAME] [server-cid=CID]"
 allowed-tools: Bash
 ---
 
@@ -52,14 +52,12 @@ Arguments: $ARGUMENTS
    the unsandboxed agent. A slot's own `--agent-args` is still accepted and is
    appended to the default preset's (a token already there is not repeated). The
    wrapper itself stays a pure pass-through. Because it IS a
-   pass-through, each preset carries its BASE agent's argv templates, log
-   format and event-stream adapter (`sandbox` = `sandbox-claude` = claude's
-   `claude-stream-json`, `sandbox-codex` = `codex-jsonl`, and so on — the
-   adapter path stays the HOST one, since the adapter runs outside the
-   container and execs the wrapper as its agent), so a one-shot streams its steps
-   into `logs` exactly like the corresponding host slot — spawn it with bare
-   `--agent-bin` instead and you silently get the runner's raw defaults, i.e. no
-   progress until the task ends. `sandbox` remains an alias of `sandbox-claude`.
+   pass-through, each preset carries its BASE agent's argv templates and
+   event-stream adapter (the adapter path stays the HOST one, since the adapter
+   runs outside the container and execs the wrapper as its agent), so it
+   launches its agent exactly like the corresponding host slot — spawn it with
+   bare `--agent-bin` instead and you silently get the runner's raw defaults.
+   `sandbox` remains an alias of `sandbox-claude`.
    One wrapper serves all six: which agent runs is `--sandbox-agent <name>`,
    which the preset supplies. codex, agy and opencode are **mount-auth only**
    (their provider credentials go into the container; no revocable-token mode
@@ -178,8 +176,8 @@ Arguments: $ARGUMENTS
    one-shot is `run --continue`; interactive resume is bare `opencode
    --continue` (opencode accepts `--continue` on both). No structured output is
    requested: `run --format json` emits opencode's own event schema and
-   `runner/agentlog` has no decoder for it, so `logFormat` stays `""` and the
-   task log is plain text — the same call agy's preset makes.
+   `runner/agentlog` has no decoder for it, so the agent prints plain text —
+   the same call agy's preset makes.
 
    Two things to check before spawning a slot:
 
@@ -219,8 +217,7 @@ Arguments: $ARGUMENTS
    pi documents that as "end option parsing", which is what stops a task prompt
    beginning with a dash from being read as a flag. No structured output is
    requested — pi's `--mode json` is its own event schema and `runner/agentlog`
-   has no decoder for it, so `logFormat` stays `""`, the same call agy's and
-   opencode's presets make.
+   has no decoder for it, the same call agy's and opencode's presets make.
 
    Unlike opencode, **resume needs no version gate**: pi stores sessions
    "organized by working directory" under `~/.pi/agent/sessions/<escaped-cwd>/`,
@@ -327,7 +324,6 @@ Arguments: $ARGUMENTS
          [--agent-resume-oneshot-argv "<...>"] \
          [--agent-interactive-argv "<...>"] \
          [--agent-resume-interactive-argv "<...>"] \
-         [--agent-log-format "<claude-stream-json|codex-jsonl>"] \
          [--agent-stream-adapter <path to bin/harness-stream-adapter>] \
          [--agent-transcript-store "<claude|codex|pi|agy|opencode>"]
      ```
@@ -348,7 +344,6 @@ Arguments: $ARGUMENTS
          [--agent-resume-oneshot-argv "<...>"] \
          [--agent-interactive-argv "<...>"] \
          [--agent-resume-interactive-argv "<...>"] \
-         [--agent-log-format "<claude-stream-json|codex-jsonl>"] \
          [--agent-stream-adapter <path to bin/harness-stream-adapter>] \
          [--agent-transcript-store "<claude|codex|pi|agy|opencode>"]
      ```

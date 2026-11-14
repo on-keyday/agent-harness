@@ -63,7 +63,7 @@ type udpFlow struct {
 
 // datagramSender is the outbound half a udp forward needs. Narrower than Sender
 // on purpose: the flow reader goroutines hold one of these, and handing them
-// the whole Sender would let a reply path reach Publish and the control frame.
+// the whole Sender would let a reply path reach the control frame.
 type datagramSender interface {
 	SendDatagram(b []byte) error
 	MaxDatagramSize() int

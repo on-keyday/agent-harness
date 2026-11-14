@@ -1,6 +1,9 @@
 package tui
 
 import (
+	"strings"
+	"unicode/utf8"
+
 	"github.com/charmbracelet/bubbles/table"
 	"github.com/mattn/go-runewidth"
 )
@@ -174,4 +177,39 @@ func tableRenderWidth(cols []table.Column) int {
 		total += c.Width
 	}
 	return total
+}
+
+// clipLine returns the substring of line whose display rendering starts
+// at column `from` and is at most `width` cells wide. Honors UTF-8 and
+// east-asian width (e.g. Japanese chars are 2 cells). When `from` lands
+// in the middle of a wide rune, the rune is skipped entirely (we never
+// emit a partial wide rune). If line is shorter than `from`, returns "".
+func clipLine(line string, from, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	skipped := 0
+	rest := line
+	for skipped < from && len(rest) > 0 {
+		r, size := utf8.DecodeRuneInString(rest)
+		w := runewidth.RuneWidth(r)
+		skipped += w
+		rest = rest[size:]
+	}
+	if len(rest) == 0 {
+		return ""
+	}
+	consumed := 0
+	var b strings.Builder
+	for len(rest) > 0 {
+		r, size := utf8.DecodeRuneInString(rest)
+		w := runewidth.RuneWidth(r)
+		if consumed+w > width {
+			break
+		}
+		b.WriteString(rest[:size])
+		rest = rest[size:]
+		consumed += w
+	}
+	return b.String()
 }

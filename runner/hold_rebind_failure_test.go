@@ -45,9 +45,8 @@ func taskIDOf(t *testing.T, hexID string) protocol.TaskID {
 // CHILD, and the server-facing half already worked.
 type nopSender struct{}
 
-func (nopSender) Publish(string, []byte) error { return nil }
-func (nopSender) Send([]byte) error            { return nil }
-func (nopSender) ID() objproto.ConnectionID    { return objproto.ConnectionID{} }
+func (nopSender) Send([]byte) error         { return nil }
+func (nopSender) ID() objproto.ConnectionID { return objproto.ConnectionID{} }
 
 func TestRebindFailureKillsTheHeldChild(t *testing.T) {
 	const id = "70fbad4a6eb6f1e992be8a669f1bcefd"

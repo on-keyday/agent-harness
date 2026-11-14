@@ -13,9 +13,8 @@ import (
 // direction-dependent, RegisterPortForward is direction-dependent (its gate
 // moved off OpenPortForward, which is now unconditionally ForwardLocal); List /
 // ListPortForwards is INFO-scoped (visibleToCaller, not a single cap);
-// GetTaskLog was too until 2026-08-21 and is now an ordinary targeted op under
-// Capability_ExecView — a task log is the agent's output recorded, which is
-// what that bit gates live; KillPortForward is direction-dependent AND the direction is only known
+// GetTaskLog is retired (A3) and answers "no log" to everyone;
+// KillPortForward is direction-dependent AND the direction is only known
 // after the registry lookup, so its gate lives inline in the dispatch case,
 // after h.pforwards().get.
 //
@@ -383,7 +382,7 @@ func (h *TaskHandler) resumedCaps(idHex string, override bool, g *authority.Gran
 }
 
 // visibleToCaller is the INFO scope: the action set widened by
-// Capability_BoardObserve. ls, task logs, the port-forward list and the conns
+// Capability_BoardObserve. ls, the port-forward list and the conns
 // filter call it exactly as before and inherit the scope with no change of
 // their own.
 func (h *TaskHandler) visibleToCaller(connID string) (all bool, allowed map[string]bool) {
@@ -397,8 +396,8 @@ func (h *TaskHandler) visibleToCaller(connID string) (all bool, allowed map[stri
 // plus the caller's direct creator, returned separately as parentHex.
 //
 // The two scopes differ on purpose. visibleToCaller answers "is this task in
-// my scope" and never reaches upward on its own — every op gated by it (task
-// logs, conn snapshots, port-forward list/kill) would otherwise open onto a
+// my scope" and never reaches upward on its own — every op gated by it (conn
+// snapshots, port-forward list/kill) would otherwise open onto a
 // task that, by attenuation, holds a superset of the caller's caps.
 // listVisibleToCaller answers the narrower "does this task exist and is it
 // alive", which a child legitimately needs about the parent that is driving it

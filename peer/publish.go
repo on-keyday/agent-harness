@@ -9,26 +9,10 @@ import (
 	"github.com/on-keyday/objtrsf/trsf"
 )
 
-// pubTopic holds the per-topic singleflight state for Publish. The first
-// goroutine to call Publish on a topic becomes the leader: it does the
-// JOIN+lookup+header read once. Followers wait on init and then share the
-// cached stream + error.
-//
-// On leader failure, err is set and stays set — Publish does not retry.
-// The caller (typically a long-running publisher) is expected to surface
-// the error and either give up or recreate the Conn entirely.
-type pubTopic struct {
-	init   chan struct{} // closed when stream/err are populated
-	stream trsf.BidirectionalStream
-	err    error
-}
-
 // JoinAndGetStream issues a JOIN for topic, awaits the broker's response,
 // and returns the server-initiated bidi stream resolved by stream_id.
-// Single-shot — does not cache. Suitable both for subscribers (which read
-// payloads off the returned stream) and for callers that want one-off
-// publish access. For long-running per-topic publishing, prefer Publish,
-// which caches the stream and runs the JOIN exactly once per topic.
+// Single-shot — does not cache. Subscribers read payloads off the returned
+// stream.
 //
 // nick is the JOIN nickname the broker logs (e.g. "cli", "runner",
 // "watch"); semantically opaque.
@@ -57,37 +41,6 @@ func (c *Conn) JoinAndGetStream(ctx context.Context, nick, topic string) (trsf.B
 		return nil, fmt.Errorf("peer: stream %d not visible after JOIN %q", resp.StreamId, topic)
 	}
 	return st, nil
-}
-
-// Publish writes data to the bidirectional stream associated with topic.
-// First call for a topic does JoinAndGetStream; later calls reuse the
-// cached stream. Thread-safe; concurrent first-callers see exactly one
-// JOIN flight via the leader/follower pattern in pubTopic.
-func (c *Conn) Publish(ctx context.Context, nick, topic string, data []byte) error {
-	c.pubmu.Lock()
-	t, ok := c.pubTopics[topic]
-	leader := false
-	if !ok {
-		t = &pubTopic{init: make(chan struct{})}
-		c.pubTopics[topic] = t
-		leader = true
-	}
-	c.pubmu.Unlock()
-
-	if leader {
-		t.stream, t.err = c.JoinAndGetStream(ctx, nick, topic)
-		close(t.init)
-	} else {
-		select {
-		case <-t.init:
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
-	if t.err != nil {
-		return t.err
-	}
-	return t.stream.AppendData(false, data)
 }
 
 // BidirectionalStreamLookup is the narrow subset of trsf.Transport that

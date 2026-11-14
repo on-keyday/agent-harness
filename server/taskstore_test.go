@@ -1,7 +1,6 @@
 package server
 
 import (
-	"os"
 	"path/filepath"
 	"regexp"
 	"testing"
@@ -329,7 +328,7 @@ func TestTaskStore_PruneByIDsFiresOnPrune(t *testing.T) {
 	var pruned []string
 	s.OnPrune = func(pid string) { pruned = append(pruned, pid) }
 
-	removed, _, _ := s.PruneByIDs(nil, []string{id}, "")
+	removed, _, _ := s.PruneByIDs(nil, []string{id})
 	if removed != 1 {
 		t.Fatalf("removed=%d want 1", removed)
 	}
@@ -350,7 +349,7 @@ func TestTaskStore_PruneSkipsActiveNoOnPrune(t *testing.T) {
 	fired := false
 	s.OnPrune = func(string) { fired = true }
 
-	removed, skippedActive, _ := s.PruneByIDs(nil, []string{id}, "")
+	removed, skippedActive, _ := s.PruneByIDs(nil, []string{id})
 	if removed != 0 || skippedActive != 1 {
 		t.Fatalf("removed=%d skippedActive=%d want 0/1", removed, skippedActive)
 	}
@@ -501,14 +500,7 @@ func TestTaskStorePruneTerminal(t *testing.T) {
 	*s.tasks[idOldCancel].EndedAt = oldTime
 
 	cutoff := time.Now().Add(-24 * time.Hour)
-	logDir := t.TempDir()
-	// Drop a sentinel log file that should be removed.
-	logPath := filepath.Join(logDir, idOldSucc+".log")
-	if err := os.WriteFile(logPath, []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	removed := s.PruneTerminal(nil, cutoff, logDir)
+	removed := s.PruneTerminal(nil, cutoff)
 	if removed != 2 {
 		t.Fatalf("removed=%d, want 2", removed)
 	}
@@ -523,9 +515,6 @@ func TestTaskStorePruneTerminal(t *testing.T) {
 	}
 	if _, ok := s.Get(idRecentFail); !ok {
 		t.Errorf("recent failed task should be retained")
-	}
-	if _, err := os.Stat(logPath); !os.IsNotExist(err) {
-		t.Errorf("log file should be removed, got err=%v", err)
 	}
 	if got := len(s.List(0)); got != 2 {
 		t.Errorf("List(0) length=%d, want 2", got)
@@ -551,14 +540,8 @@ func TestTaskStorePruneByIDs(t *testing.T) {
 
 	missingID := "deadbeefdeadbeefdeadbeefdeadbeef"
 
-	logDir := t.TempDir()
-	// Sentinel log file for the terminal task — should be removed.
-	if err := os.WriteFile(filepath.Join(logDir, idTerminal+".log"), []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
 	// Pass 1: the active task is refused and the missing id reported.
-	removed, active, missing := s.PruneByIDs(nil, []string{idActive, idTerminal, missingID}, logDir)
+	removed, active, missing := s.PruneByIDs(nil, []string{idActive, idTerminal, missingID})
 	if removed != 1 || active != 1 || missing != 1 {
 		t.Fatalf("PruneByIDs: removed=%d active=%d missing=%d, want 1/1/1", removed, active, missing)
 	}
@@ -574,7 +557,7 @@ func TestTaskStorePruneByIDs(t *testing.T) {
 
 	// Pass 2: forgetting a live task leaves its agent running with no record
 	// the server could manage it by, so prune never does it; cancel first.
-	removed, active, missing = s.PruneByIDs(nil, []string{idActive}, logDir)
+	removed, active, missing = s.PruneByIDs(nil, []string{idActive})
 	if removed != 0 || active != 1 || missing != 0 {
 		t.Fatalf("PruneByIDs(active): removed=%d active=%d missing=%d, want 0/1/0", removed, active, missing)
 	}
@@ -584,7 +567,7 @@ func TestTaskStorePruneByIDs(t *testing.T) {
 
 	// Pass 3: cancelled, it is terminal and prunes like any other.
 	s.Cancel(idActive, protocol.EndReason_Cancelled, protocol.TaskID{})
-	removed, active, missing = s.PruneByIDs(nil, []string{idActive}, logDir)
+	removed, active, missing = s.PruneByIDs(nil, []string{idActive})
 	if removed != 1 || active != 0 || missing != 0 {
 		t.Fatalf("PruneByIDs(cancelled): removed=%d active=%d missing=%d, want 1/0/0", removed, active, missing)
 	}

@@ -471,14 +471,6 @@ type ListAction struct {
 	Filtered bool
 }
 
-// LogsAction is built by: logs.
-type LogsAction struct {
-	ActionMarker
-	// after dumping history, keep streaming live chunks (no-op when the task is terminal)
-	Follow bool
-	TaskID string
-}
-
 // NotifyAction is built by: notify.
 type NotifyAction struct {
 	ActionMarker
@@ -2828,14 +2820,6 @@ func init() {
 			a.JSON = b.Bool("json")
 			return a, nil
 		},
-		"logs\x00cli": func(b Bound) (Action, error) {
-			a := LogsAction{}
-			a.Follow = b.Bool("follow")
-			if len(b.Args) > 0 {
-				a.TaskID = b.Args[0]
-			}
-			return a, nil
-		},
 		"prune-local\x00cli": func(b Bound) (Action, error) {
 			a := PruneLocalAction{}
 			a.Repo = b.Str("repo")
@@ -4351,7 +4335,6 @@ const (
 	CmdWatch                  = "watch"
 	CmdNotifyWatch            = "notify-watch"
 	CmdVersion                = "version"
-	CmdLogs                   = "logs"
 	CmdPruneLocal             = "prune-local"
 	CmdRestore                = "restore"
 	CmdClear                  = "clear"
@@ -6224,27 +6207,6 @@ func ParseCmdVersion(sf Surface, args []string, ctx map[string]string) (CatalogA
 	return a, nil
 }
 
-func ParseCmdLogs(sf Surface, args []string, ctx map[string]string) (LogsAction, error) {
-	var zero LogsAction
-	sp, ok := Lookup("logs")
-	if !ok {
-		return zero, fmt.Errorf("logs: not in the verb table")
-	}
-	sp = sp.For(sf)
-	fs := sp.NewFlagSet(flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	b, err := sp.Parse(fs, args)
-	if err != nil {
-		return zero, err
-	}
-	act, err := sp.BuildFunc()(b)
-	if err != nil {
-		return zero, err
-	}
-	a := act.(LogsAction)
-	return a, nil
-}
-
 func ParseCmdPruneLocal(sf Surface, args []string, ctx map[string]string) (PruneLocalAction, error) {
 	var zero PruneLocalAction
 	sp, ok := Lookup("prune-local")
@@ -7643,8 +7605,6 @@ type CLIDispatch[R any] interface {
 	NotifyWatch(CatalogAction) R
 	// version
 	Version(CatalogAction) R
-	// logs
-	Logs(LogsAction) R
 	// prune-local
 	PruneLocal(PruneLocalAction) R
 	// restore
@@ -8196,12 +8156,6 @@ func DispatchCLI[R any](h CLIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.Version(a), true, nil
-	case CmdLogs:
-		a, perr := ParseCmdLogs(CLI, args, ctx)
-		if perr != nil {
-			return r, true, perr
-		}
-		return h.Logs(a), true, nil
 	case CmdPruneLocal:
 		a, perr := ParseCmdPruneLocal(CLI, args, ctx)
 		if perr != nil {
@@ -8702,8 +8656,6 @@ func DispatchCLIAction[R any](h CLIDispatch[R], act Action) (r R, handled bool) 
 		case "version":
 			return h.Version(a), true
 		}
-	case LogsAction:
-		return h.Logs(a), true
 	case PruneLocalAction:
 		return h.PruneLocal(a), true
 	case RestoreAction:
@@ -9243,12 +9195,6 @@ func ParseCLICommand(tokens []string, ctx map[string]string) (act Action, handle
 			return a, true, nil
 		case CmdVersion:
 			a, perr := ParseCmdVersion(CLI, tokens[n:], ctx)
-			if perr != nil {
-				return nil, true, perr
-			}
-			return a, true, nil
-		case CmdLogs:
-			a, perr := ParseCmdLogs(CLI, tokens[n:], ctx)
 			if perr != nil {
 				return nil, true, perr
 			}
