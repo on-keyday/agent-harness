@@ -71,7 +71,7 @@ func TestDeclaredRulesRefuseWhatTheBuildsRefused(t *testing.T) {
 		{"caps set-parent", []string{id, "--parent", ""}, "needs a task id"},
 
 		// spawn: the prompt, the terminal rules, the one-runner rule.
-		{"submit", []string{"--repo", "/r"}, "a prompt is required"},
+		{"session new", []string{"--repo", "/r", "--oneshot"}, "--oneshot needs --prompt"},
 		{"session new", []string{"--repo", "/r", "--x11", "--detach"}, "mutually exclusive"},
 		{"session new", []string{"--repo", "/r", "--stream"}, "needs --detach"},
 		{"session new", []string{"--repo", "/r", "--stream", "--detach", "--x11"}, "mutually exclusive"},
@@ -81,8 +81,6 @@ func TestDeclaredRulesRefuseWhatTheBuildsRefused(t *testing.T) {
 		// --exact takes the task's recorded settings, so it needs a task and
 		// refuses every setting flag; a prompt is a setting too.
 		{"session new", []string{"--repo", "/r", "--exact"}, "needs --resume"},
-		{"submit", []string{"--resume", id, "--exact", "--task", "x"}, "mutually exclusive"},
-		{"submit", []string{"--resume", id, "--exact", "do", "it"}, "--exact"},
 		{"session new", []string{"--resume", id, "--exact", "--agent", "bash"}, "mutually exclusive"},
 		{"session new", []string{"--resume", id, "--exact", "--agent-arg", "--x"}, "mutually exclusive"},
 		{"session new", []string{"--resume", id, "--exact", "--caps", "none"}, "mutually exclusive"},
@@ -161,14 +159,13 @@ func TestDeclaredRulesAcceptTheOrdinaryForms(t *testing.T) {
 		// --resize makes the text optional: size, repaint and capture, typing nothing.
 		{"session send", []string{"--resize", "45x200", "--snapshot", id}},
 		{"session send", []string{"--resize", "45x200", "--snapshot", id, ""}},
-		{"submit", []string{"--repo", "/r", "--task", "do it"}},
-		{"submit", []string{"--repo", "/r", "do", "it"}}, // the prompt as trailing words
+		{"session new", []string{"--repo", "/r", "--oneshot", "--prompt", "do it"}},
 		{"session new", []string{"--repo", "/r", "--stream", "--detach"}},
 		{"caps audit", nil},
 		{"caps audit", []string{"--all", "--empty", "--cap", "spawn", "--json"}},
 		{"session new", []string{"--resume", id, "--exact", "-d"}},
-		{"submit", []string{"--resume", id, "--exact", "--runner", "a"}},
-		{"submit", []string{"--resume", id, "--exact"}}, // no prompt: the record's is used
+		{"session new", []string{"--resume", id, "--exact", "--runner", "a"}},
+		{"session new", []string{"--resume", id, "--exact"}}, // no prompt: the record's is used
 		{"grid", nil},
 		{"grid", []string{"--under", id, "--descendants"}},
 		{"grid", []string{id}},

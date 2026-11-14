@@ -24,14 +24,14 @@ func TestCapsPresenceIsSeparateFromItsValue(t *testing.T) {
 	id := strings.Repeat("ab", 16)
 	parse := func(t *testing.T, args ...string) verb.SpawnAction {
 		t.Helper()
-		act, handled, err := verb.ParseCLICommand(append([]string{"submit"}, args...), nil)
+		act, handled, err := verb.ParseCLICommand(append([]string{"session", "new"}, args...), nil)
 		if !handled || err != nil {
-			t.Fatalf("submit %v: handled=%t err=%v", args, handled, err)
+			t.Fatalf("session new %v: handled=%t err=%v", args, handled, err)
 		}
 		return act.(verb.SpawnAction)
 	}
 
-	omitted := parse(t, "--repo", "/r", "hello")
+	omitted := parse(t, "--repo", "/r")
 	if omitted.CapsPresent {
 		t.Error("no --caps: CapsPresent must be false")
 	}
@@ -40,7 +40,7 @@ func TestCapsPresenceIsSeparateFromItsValue(t *testing.T) {
 	}
 
 	// The case the two questions come apart on: an explicit "none".
-	explicit := parse(t, "--repo", "/r", "--caps", "none", "hello")
+	explicit := parse(t, "--repo", "/r", "--caps", "none")
 	if !explicit.CapsPresent {
 		t.Error("--caps none: CapsPresent must be true — it was typed")
 	}
@@ -50,11 +50,11 @@ func TestCapsPresenceIsSeparateFromItsValue(t *testing.T) {
 
 	// And a resume is where the difference is spent: only a typed --caps
 	// re-grants, which spawnOpts reads off exactly this bit.
-	resumed := parse(t, "--resume", id, "--caps", "none", "hello")
+	resumed := parse(t, "--resume", id, "--caps", "none")
 	if !spawnOpts(resumed).ResumeCapsOverride {
 		t.Error("--resume with a typed --caps must re-grant that mask")
 	}
-	kept := parse(t, "--resume", id, "hello")
+	kept := parse(t, "--resume", id)
 	if spawnOpts(kept).ResumeCapsOverride {
 		t.Error("--resume without --caps must keep the task's persisted caps")
 	}

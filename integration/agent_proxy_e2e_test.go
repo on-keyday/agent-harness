@@ -19,7 +19,7 @@
 //     "ServerNotConnected").
 //  4. Inject a fake task on the runner side via the test hook + register a
 //     matching auth_ticket on the server-side board. This skips the real
-//     Submit+Assign+spawn-claude pipeline.
+//     session-open+spawn-claude pipeline.
 //  5. cli.DialViaProxy → end-to-end *peer.Conn against the SERVER (handshake
 //     forwarded packet-by-packet by the runner; SetProxy is now in effect).
 //  6. Run the PSK + ClientHello dance on that conn and assert

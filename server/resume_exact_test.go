@@ -11,12 +11,13 @@ import (
 	"github.com/on-keyday/objtrsf/objproto"
 )
 
-// exactRunner registers a runner serving /shared that advertises profiles.
+// exactRunner registers a runner serving /shared that advertises profiles; a
+// nil conn is one any number of opens can start a session on.
 func exactRunner(t *testing.T, h *TaskHandler, name string, conn ConnHandle, profiles ...string) {
 	t.Helper()
 	now := time.Now()
 	if conn == nil {
-		conn = stubConn{}
+		conn = newOpenableConn(t)
 	}
 	h.Registry.Add(&RunnerEntry{
 		ID: tcid(name), Identity: testRunnerID(name), Hostname: "h-" + name,
@@ -37,32 +38,39 @@ func recordedTask(t *testing.T, h *TaskHandler, kind protocol.TaskKind, prompt s
 	return id
 }
 
-func exactSubmit(t *testing.T, id string) *protocol.SubmitRequest {
+// exactOpen is a detached exact-resume open of id.
+func exactOpen(t *testing.T, id string) *protocol.OpenInteractiveRequest {
 	t.Helper()
-	req := &protocol.SubmitRequest{ResumeTaskId: hexToTaskID(t, id)}
-	req.SetResumeExact(true)
-	return req
+	oi := &protocol.OpenInteractiveRequest{ResumeTaskId: hexToTaskID(t, id)}
+	oi.SetResumeExact(true)
+	oi.SetDetached(true)
+	oi.SetInitialRows(0)
+	oi.SetInitialCols(0)
+	return oi
+}
+
+func openExact(h *TaskHandler, oi *protocol.OpenInteractiveRequest) (protocol.OpenInteractiveResponse, *protocol.RunnerCandidatesBody) {
+	return h.handleOpenInteractive("", nil, oi, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All, "")
 }
 
 func TestExactMismatchEachField(t *testing.T) {
 	for _, c := range []struct {
 		field string
-		set   func(*protocol.SubmitRequest)
+		set   func(*protocol.OpenInteractiveRequest)
 	}{
-		{"prompt", func(r *protocol.SubmitRequest) { r.SetPrompt([]byte("new")) }},
-		{"--agent-arg", func(r *protocol.SubmitRequest) { r.ExtraArgs = protocol.AgentArgsFromStrings([]string{"--y"}) }},
-		{"--agent", func(r *protocol.SubmitRequest) { r.SetAgentProfile([]byte("bash")) }},
-		{"--caps", func(r *protocol.SubmitRequest) { r.SetResumeCapsOverride(true) }},
-		{"--scope", func(r *protocol.SubmitRequest) { r.SetScopePresent(true) }},
+		{"--agent-arg", func(r *protocol.OpenInteractiveRequest) { r.ExtraArgs = protocol.AgentArgsFromStrings([]string{"--y"}) }},
+		{"--agent", func(r *protocol.OpenInteractiveRequest) { r.SetAgentProfile([]byte("bash")) }},
+		{"--caps", func(r *protocol.OpenInteractiveRequest) { r.SetResumeCapsOverride(true) }},
+		{"--scope", func(r *protocol.OpenInteractiveRequest) { r.SetScopePresent(true) }},
 	} {
 		t.Run(c.field, func(t *testing.T) {
 			h := newTestHandler(t)
 			exactRunner(t, h, "A", nil, "bash")
-			id := recordedTask(t, h, protocol.TaskKind_Oneshot, "p", nil, "bash", "A")
-			req := exactSubmit(t, id)
+			id := recordedTask(t, h, protocol.TaskKind_Interactive, "", nil, "bash", "A")
+			req := exactOpen(t, id)
 			c.set(req)
-			resp, _ := h.handleSubmit("", req, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All)
-			if resp.Status != protocol.SubmitStatus_ResumeExactMismatch {
+			resp, _ := openExact(h, req)
+			if resp.Status != protocol.OpenInteractiveStatus_ResumeExactMismatch {
 				t.Fatalf("status = %v, want resume_exact_mismatch", resp.Status)
 			}
 			if !strings.Contains(string(resp.ErrorMsg), c.field) {
@@ -75,10 +83,12 @@ func TestExactMismatchEachField(t *testing.T) {
 func TestExactKindMismatch(t *testing.T) {
 	h := newTestHandler(t)
 	exactRunner(t, h, "A", nil, "bash")
-	inter := recordedTask(t, h, protocol.TaskKind_Interactive, "", nil, "bash", "A")
-	resp, _ := h.handleSubmit("", exactSubmit(t, inter), protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All)
-	if resp.Status != protocol.SubmitStatus_ResumeExactMismatch || !strings.Contains(string(resp.ErrorMsg), "kind") {
-		t.Fatalf("submit of an interactive task: status %v msg %q, want a kind mismatch", resp.Status, resp.ErrorMsg)
+	// A task recorded before A3 as a oneshot: no path opens that kind any more,
+	// so nothing resumes it exactly.
+	one := recordedTask(t, h, protocol.TaskKind_Oneshot, "p", nil, "bash", "A")
+	resp, _ := openExact(h, exactOpen(t, one))
+	if resp.Status != protocol.OpenInteractiveStatus_ResumeExactMismatch || !strings.Contains(string(resp.ErrorMsg), "kind") {
+		t.Fatalf("open of a oneshot task: status %v msg %q, want a kind mismatch", resp.Status, resp.ErrorMsg)
 	}
 
 	stream := recordedTask(t, h, protocol.TaskKind_Stream, "", nil, "bash", "A")
@@ -93,12 +103,6 @@ func TestExactKindMismatch(t *testing.T) {
 func TestExactWithoutResumeID(t *testing.T) {
 	h := newTestHandler(t)
 	exactRunner(t, h, "A", nil, "bash")
-	sub := &protocol.SubmitRequest{}
-	sub.SetRepoPath([]byte("/shared/repo"))
-	sub.SetResumeExact(true)
-	if resp, _ := h.handleSubmit("", sub, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All); resp.Status != protocol.SubmitStatus_ResumeExactMismatch {
-		t.Fatalf("submit: status %v, want resume_exact_mismatch", resp.Status)
-	}
 	oi := &protocol.OpenInteractiveRequest{}
 	oi.SetRepoPath([]byte("/shared/repo"))
 	oi.SetResumeExact(true)
@@ -110,25 +114,24 @@ func TestExactWithoutResumeID(t *testing.T) {
 func TestExactKeepsRecordedSettings(t *testing.T) {
 	h := newTestHandler(t)
 	exactRunner(t, h, "A", nil, "bash")
-	id := recordedTask(t, h, protocol.TaskKind_Oneshot, "p", []string{"--x"}, "bash", "A")
-	resp, _ := h.handleSubmit("", exactSubmit(t, id), protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All)
-	if resp.Status != protocol.SubmitStatus_Ok {
+	id := recordedTask(t, h, protocol.TaskKind_Interactive, "", []string{"--x"}, "bash", "A")
+	resp, _ := openExact(h, exactOpen(t, id))
+	if resp.Status != protocol.OpenInteractiveStatus_Ok {
 		t.Fatalf("exact resume: status %v msg %q", resp.Status, resp.ErrorMsg)
 	}
 	e, _ := h.Tasks.Get(id)
-	if e.Prompt != "p" || len(e.ExtraArgs) != 1 || e.ExtraArgs[0] != "--x" || e.AgentProfile != "bash" {
-		t.Fatalf("after exact resume: prompt=%q args=%v profile=%q, want the record", e.Prompt, e.ExtraArgs, e.AgentProfile)
+	if len(e.ExtraArgs) != 1 || e.ExtraArgs[0] != "--x" || e.AgentProfile != "bash" {
+		t.Fatalf("after exact resume: args=%v profile=%q, want the record", e.ExtraArgs, e.AgentProfile)
 	}
 
-	// The contrast, pinned: a plain resume with no args clears them (today's
-	// behaviour, unchanged).
-	h.Tasks.Finish(id, 0, nil)
-	plain := &protocol.SubmitRequest{ResumeTaskId: hexToTaskID(t, id)}
-	plain.SetPrompt([]byte("q"))
-	if resp, _ := h.handleSubmit("", plain, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All); resp.Status != protocol.SubmitStatus_Ok {
-		t.Fatalf("plain resume: status %v", resp.Status)
+	// The contrast, pinned: a plain resume with no args clears them.
+	other := recordedTask(t, h, protocol.TaskKind_Interactive, "", []string{"--x"}, "bash", "A")
+	plain := exactOpen(t, other)
+	plain.SetResumeExact(false)
+	if resp, _ := openExact(h, plain); resp.Status != protocol.OpenInteractiveStatus_Ok {
+		t.Fatalf("plain resume: status %v msg %q", resp.Status, resp.ErrorMsg)
 	}
-	if e, _ := h.Tasks.Get(id); len(e.ExtraArgs) != 0 {
+	if e, _ := h.Tasks.Get(other); len(e.ExtraArgs) != 0 {
 		t.Fatalf("plain resume kept args %v; it replaces them", e.ExtraArgs)
 	}
 }
@@ -173,10 +176,12 @@ func TestExactPinsLastRunner(t *testing.T) {
 	h := newTestHandler(t)
 	exactRunner(t, h, "A", nil, "bash")
 	exactRunner(t, h, "B", nil, "bash")
-	id := recordedTask(t, h, protocol.TaskKind_Oneshot, "p", nil, "bash", "B")
 
-	resp, _ := h.handleSubmit("", exactSubmit(t, id), protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All)
-	if resp.Status != protocol.SubmitStatus_Ok {
+	// Each case resumes its own task recorded on B, so no case has to wind
+	// down the session the one before it started.
+	id := recordedTask(t, h, protocol.TaskKind_Interactive, "", nil, "bash", "B")
+	resp, _ := openExact(h, exactOpen(t, id))
+	if resp.Status != protocol.OpenInteractiveStatus_Ok {
 		t.Fatalf("two candidates, last runner B present: status %v, want ok on B", resp.Status)
 	}
 	if e, _ := h.Tasks.Get(id); e.BoundRunnerID != tcid("B").String() {
@@ -184,10 +189,9 @@ func TestExactPinsLastRunner(t *testing.T) {
 	}
 
 	// B gone, one candidate left: Any picks it.
-	h.Tasks.Assign(id, testRunnerID("B"), "/wt", false)
-	h.Tasks.Finish(id, 0, nil)
 	h.Registry.Remove(tcid("B"))
-	if resp, _ := h.handleSubmit("", exactSubmit(t, id), protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All); resp.Status != protocol.SubmitStatus_Ok {
+	id = recordedTask(t, h, protocol.TaskKind_Interactive, "", nil, "bash", "B")
+	if resp, _ := openExact(h, exactOpen(t, id)); resp.Status != protocol.OpenInteractiveStatus_Ok {
 		t.Fatalf("B gone, A left: status %v, want ok", resp.Status)
 	}
 	if e, _ := h.Tasks.Get(id); e.BoundRunnerID != tcid("A").String() {
@@ -195,10 +199,9 @@ func TestExactPinsLastRunner(t *testing.T) {
 	}
 
 	// B gone, two candidates left: Any is ambiguous, as for any resume.
-	h.Tasks.Assign(id, testRunnerID("B"), "/wt", false)
-	h.Tasks.Finish(id, 0, nil)
 	exactRunner(t, h, "C", nil, "bash")
-	if resp, _ := h.handleSubmit("", exactSubmit(t, id), protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All); resp.Status != protocol.SubmitStatus_AmbiguousRunner {
+	id = recordedTask(t, h, protocol.TaskKind_Interactive, "", nil, "bash", "B")
+	if resp, _ := openExact(h, exactOpen(t, id)); resp.Status != protocol.OpenInteractiveStatus_AmbiguousRunner {
 		t.Fatalf("B gone, A and C left: status %v, want ambiguous_runner", resp.Status)
 	}
 }
@@ -208,16 +211,16 @@ func TestExactPinsLastRunner(t *testing.T) {
 func TestExactProfileGone(t *testing.T) {
 	h := newTestHandler(t)
 	exactRunner(t, h, "A", nil, "claude")
-	id := recordedTask(t, h, protocol.TaskKind_Oneshot, "p", nil, "bash", "A")
-	resp, _ := h.handleSubmit("", exactSubmit(t, id), protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All)
-	if resp.Status != protocol.SubmitStatus_ProfileUnavailable {
+	id := recordedTask(t, h, protocol.TaskKind_Interactive, "", nil, "bash", "A")
+	resp, _ := openExact(h, exactOpen(t, id))
+	if resp.Status != protocol.OpenInteractiveStatus_ProfileUnavailable {
 		t.Fatalf("status %v, want profile_unavailable", resp.Status)
 	}
 }
 
-// Both paths filter by the recorded profile before preferring the last runner:
-// a last runner that no longer offers the profile is not a reason to fail when
-// another one does.
+// The recorded profile filters the candidates before the last runner is
+// preferred: a last runner that no longer offers the profile is not a reason
+// to fail when another one does.
 func TestExactPrefersProfileOverLastRunner(t *testing.T) {
 	h := newTestHandler(t)
 	exactRunner(t, h, "A", nil, "claude") // last runner, lost the profile
@@ -235,10 +238,5 @@ func TestExactPrefersProfileOverLastRunner(t *testing.T) {
 	}
 	if e, _ := h.Tasks.Get(inter); e.BoundRunnerID != tcid("B").String() {
 		t.Fatalf("open bound to %q, want B", e.BoundRunnerID)
-	}
-
-	one := recordedTask(t, h, protocol.TaskKind_Oneshot, "p", nil, "bash", "A")
-	if resp, _ := h.handleSubmit("", exactSubmit(t, one), protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All); resp.Status != protocol.SubmitStatus_Ok {
-		t.Fatalf("submit: status %v, want ok on B", resp.Status)
 	}
 }

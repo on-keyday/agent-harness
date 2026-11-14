@@ -79,11 +79,11 @@ func TestFileTransferE2E(t *testing.T) {
 	}()
 	time.Sleep(500 * time.Millisecond)
 
-	taskID, err := cli.Submit(ctx, peerCID, repo, "long-running")
+	taskID, err := openOneshot(ctx, peerCID, repo, "long-running")
 	if err != nil {
-		t.Fatalf("submit: %v", err)
+		t.Fatalf("session new --oneshot: %v", err)
 	}
-	t.Logf("submitted task %s", taskID)
+	t.Logf("opened oneshot session %s", taskID)
 
 	// Poll until the worktree exists (signals the runner has started
 	// executing the task).
@@ -266,9 +266,9 @@ func TestFileDirTransferE2E(t *testing.T) {
 	}()
 	time.Sleep(500 * time.Millisecond)
 
-	taskID, err := cli.Submit(ctx, peerCID, repo, "long-running")
+	taskID, err := openOneshot(ctx, peerCID, repo, "long-running")
 	if err != nil {
-		t.Fatalf("submit: %v", err)
+		t.Fatalf("session new --oneshot: %v", err)
 	}
 
 	worktree := filepath.Join(repo, ".harness-worktrees", taskID)

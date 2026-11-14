@@ -168,14 +168,21 @@ func dialClient(t *testing.T, serverCID objproto.ConnectionID) *cli.Client {
 	return c
 }
 
-// mustSubmit submits a task and fails the test on error.
-func mustSubmit(t *testing.T, c *cli.Client, repo, prompt string) string {
+// mustOpenOneshot opens a detached --oneshot session (openOneshotWith) and
+// fails the test on error.
+func mustOpenOneshot(t *testing.T, c *cli.Client, repo, prompt string) string {
 	t.Helper()
-	id, err := c.Submit(context.Background(), repo, prompt, cli.SessionOpts{})
+	id, err := openOneshotWith(context.Background(), c, repo, prompt, cli.SessionOpts{})
 	if err != nil {
-		t.Fatalf("submit(%q): %v", prompt, err)
+		t.Fatalf("session new --oneshot (%q): %v", prompt, err)
 	}
 	return id
+}
+
+// taskLive reports a task whose process is running. A detached session reads
+// Detached rather than Running: no client holds its seat.
+func taskLive(st protocol.TaskStatus) bool {
+	return st == protocol.TaskStatus_Running || st == protocol.TaskStatus_Detached
 }
 
 // getTask returns the TaskInfo for taskID from a Snapshot, or the zero value if not found.
@@ -261,17 +268,42 @@ func TestIntegrationCapacityQueueing(t *testing.T) {
 
 	c := dialClient(t, serverCID)
 
+	// Only a background open queues (a foreground one at capacity is refused
+	// runner_busy), and a background open names its agent and its deadline.
+	// Lifecycle turn-end: the run ends when the process exits, not on quiet.
+	bg := cli.SessionOpts{
+		AgentProfile: "default",
+		RunModeSet:   true,
+		Background:   true,
+		Conditions: &protocol.BackgroundConditions{
+			DeadlineMs: 120_000,
+			TurnEnd:    protocol.TurnEndSignal_Lifecycle,
+		},
+	}
+	open := func(prompt string) string {
+		t.Helper()
+		id, err := openOneshotWith(context.Background(), c, repo, prompt, bg)
+		if err != nil {
+			t.Fatalf("session new --oneshot --background (%q): %v", prompt, err)
+		}
+		return id
+	}
 	// id1 will block the slow runner (fake-claude-slow sleeps 60s).
-	id1 := mustSubmit(t, c, repo, "blocking task")
+	id1 := open("blocking task")
+	// Wait for id1 to take the slot before id2 is opened, so it is id2 that
+	// waits.
+	eventually(t, func() bool {
+		return taskLive(getTask(t, c, id1).Status)
+	}, 10*time.Second, 100*time.Millisecond, "id1 live")
 	// id2 should be queued while id1 holds the slot.
-	id2 := mustSubmit(t, c, repo, "queued task")
+	id2 := open("queued task")
 
-	// Wait for id1 to be Running and id2 to be Queued.
+	// Wait for id1 to be live and id2 to be Queued.
 	eventually(t, func() bool {
 		t1 := getTask(t, c, id1)
 		t2 := getTask(t, c, id2)
-		return t1.Status == protocol.TaskStatus_Running && t2.Status == protocol.TaskStatus_Queued
-	}, 10*time.Second, 100*time.Millisecond, "id1 Running and id2 Queued")
+		return taskLive(t1.Status) && t2.Status == protocol.TaskStatus_Queued
+	}, 10*time.Second, 100*time.Millisecond, "id1 live and id2 Queued")
 
 	// Close the slow runner (simulates it going away). This disconnects it:
 	// - id1 gets marked Failed by the disconnect handler
@@ -312,8 +344,8 @@ func TestIntegrationAmbiguousRunner(t *testing.T) {
 
 	c := dialClient(t, serverCID)
 
-	// Both runners serve the same repo. With Any selector, submit should return ambiguous_runner.
-	_, err := c.Submit(context.Background(), repo, "echo test", cli.SessionOpts{Selector: protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}})
+	// Both runners serve the same repo. With Any selector, the open should return ambiguous_runner.
+	_, err := openOneshotWith(context.Background(), c, repo, "echo test", cli.SessionOpts{Selector: protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}})
 	// The candidates arrive on a stream, one row per runner, across the real
 	// wire — not as a hostname string.
 	var are *cli.AmbiguousRunnerError
@@ -351,9 +383,9 @@ func TestIntegrationPinByHostnameSuccess(t *testing.T) {
 		t.Fatalf("build selector: %v", err)
 	}
 
-	id, err := c.Submit(context.Background(), repo, "echo pinned", cli.SessionOpts{Selector: sel})
+	id, err := openOneshotWith(context.Background(), c, repo, "echo pinned", cli.SessionOpts{Selector: sel})
 	if err != nil {
-		t.Fatalf("submit with hostname pin: %v", err)
+		t.Fatalf("session new --oneshot with hostname pin: %v", err)
 	}
 
 	waitTaskTerminal(t, c, id, 30*time.Second)
@@ -381,7 +413,7 @@ func TestIntegrationPinNotFound(t *testing.T) {
 		t.Fatalf("build selector: %v", err)
 	}
 
-	_, err = c.Submit(context.Background(), repo, "echo pinned", cli.SessionOpts{Selector: sel})
+	_, err = openOneshotWith(context.Background(), c, repo, "echo pinned", cli.SessionOpts{Selector: sel})
 	if err == nil {
 		t.Fatal("expected pinned_not_found error, got nil")
 	}
@@ -409,13 +441,19 @@ func TestIntegrationCancelKillsClaude(t *testing.T) {
 
 	c := dialClient(t, serverCID)
 
-	id := mustSubmit(t, c, repo, "cancel me")
+	id := mustOpenOneshot(t, c, repo, "cancel me")
 
 	// Wait for the task to be Running.
 	eventually(t, func() bool {
-		ti := getTask(t, c, id)
-		return ti.Status == protocol.TaskStatus_Running
-	}, 10*time.Second, 100*time.Millisecond, "task to be Running before cancel")
+		return taskLive(getTask(t, c, id).Status)
+	}, 10*time.Second, 100*time.Millisecond, "task to be live before cancel")
+	// A session reads live from the open on, which can be before the runner
+	// has started the process. Cancel mid-execution: wait for the agent's own
+	// first line on the session's screen.
+	eventually(t, func() bool {
+		screen, err := c.SessionSnapshot(context.Background(), id, 40, 120, 200*time.Millisecond, false)
+		return err == nil && strings.Contains(screen, "slow claude starting")
+	}, 10*time.Second, 100*time.Millisecond, "the agent to be running before cancel")
 
 	// Cancel the task.
 	if err := c.Cancel(context.Background(), id); err != nil {
@@ -466,21 +504,21 @@ func TestIntegrationDisconnectMarksTasksFailed(t *testing.T) {
 	c := dialClient(t, serverCID)
 
 	ids := []string{
-		mustSubmit(t, c, repo, "sleep1"),
-		mustSubmit(t, c, repo, "sleep2"),
-		mustSubmit(t, c, repo, "sleep3"),
+		mustOpenOneshot(t, c, repo, "sleep1"),
+		mustOpenOneshot(t, c, repo, "sleep2"),
+		mustOpenOneshot(t, c, repo, "sleep3"),
 	}
 
 	// Wait for all tasks to be Running.
 	eventually(t, func() bool {
 		for _, id := range ids {
 			ti := getTask(t, c, id)
-			if ti.Status != protocol.TaskStatus_Running {
+			if !taskLive(ti.Status) {
 				return false
 			}
 		}
 		return true
-	}, 10*time.Second, 100*time.Millisecond, "all tasks Running before disconnect")
+	}, 10*time.Second, 100*time.Millisecond, "all tasks live before disconnect")
 
 	// Disconnect the runner abruptly.
 	r.Close()
@@ -510,8 +548,8 @@ func TestIntegrationTwoTasksConcurrent(t *testing.T) {
 
 	c := dialClient(t, serverCID)
 
-	id1 := mustSubmit(t, c, repo, "echo one")
-	id2 := mustSubmit(t, c, repo, "echo two")
+	id1 := mustOpenOneshot(t, c, repo, "echo one")
+	id2 := mustOpenOneshot(t, c, repo, "echo two")
 
 	waitTaskTerminal(t, c, id1, 30*time.Second)
 	waitTaskTerminal(t, c, id2, 30*time.Second)

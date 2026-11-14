@@ -15,6 +15,7 @@ import (
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/trsf"
 )
 
 // TestPeerSenderPublishCachesStreamPerTopic verifies that the runner's
@@ -122,17 +123,19 @@ func TestRunnerAnswersCancelForUnknownTaskWithTaskFinished(t *testing.T) {
 	}
 }
 
-// The cancel can overtake its own AssignTask: the body is fetched on a goroutine
-// of its own. The runner has already told the server the task is over, so the
-// late assignment must be refused, not started — otherwise the task runs with
-// its slot released and its ticket revoked.
-func TestCancelBeforeAssignRefusesTheLateTask(t *testing.T) {
+// The cancel can overtake its own OpenExec: the open runs on a goroutine of its
+// own (dispatchRunnerRequest). The runner has already told the server the task
+// is over, so the late open must be refused, not started — otherwise the task
+// runs with its slot released and its ticket revoked.
+func TestCancelBeforeOpenRefusesTheLateTask(t *testing.T) {
 	ms := &mockSender{}
+	const streamID trsf.StreamID = 99
+	stream := &noopBidiStream{streamID: streamID}
 	s := &Session{
 		AllowedRoots: []string{"/some/repo"},
 		Profiles:     singleProfile(t, "/bin/true"),
-		Timeout:      time.Second,
 		Sender:       ms,
+		Streams:      &fakeBidiLookup{streams: map[trsf.StreamID]trsf.BidirectionalStream{streamID: stream}},
 		Now:          time.Now,
 	}
 	s.mu.Lock()
@@ -140,17 +143,17 @@ func TestCancelBeforeAssignRefusesTheLateTask(t *testing.T) {
 	s.mu.Unlock()
 
 	taskID := protocol.TaskID{Id: [16]byte{0xCA}}
-	// The AssignTask envelope arrived (the receive loop marks it pending), and
-	// the CancelTask overtook its body.
+	// The OpenExec arrived (the receive loop marks it pending), and the
+	// CancelTask overtook the open's goroutine.
 	endPending := s.beginPendingTask(taskID)
 	s.handleCancelTask(taskID)
 
-	body := &protocol.AssignTaskBody{Prompt: []byte("x")}
-	body.SetRepoPath([]byte("/some/repo"))
-	s.handleAssign(context.Background(), taskID, body)
+	oer := &protocol.OpenExecRunnerRequest{TaskId: taskID, StreamId: uint64(streamID)}
+	oer.SetRepoPath([]byte("/some/repo"))
+	s.handleOpenExec(context.Background(), oer)
 	endPending()
 
-	// Cancel's TaskFinished, the assign's TaskAccepted, then the refusal's
+	// Cancel's TaskFinished, the open's TaskAccepted, then the refusal's
 	// TaskFinished — and NO TaskStarted, which is the proof nothing ran.
 	var kinds []protocol.RunnerMessageType
 	var last *protocol.TaskFinished
@@ -170,6 +173,9 @@ func TestCancelBeforeAssignRefusesTheLateTask(t *testing.T) {
 	if _, ok := s.reg.get(hex.EncodeToString(taskID.Id[:])); ok {
 		t.Fatal("the refused task was left in the registry")
 	}
+	if !stream.closed.Load() {
+		t.Fatal("the refused open left its exec stream open — the server's splice would hang")
+	}
 }
 
 // A cancel for a task that is NOT pending must not refuse a later run of the
@@ -178,11 +184,12 @@ func TestCancelBeforeAssignRefusesTheLateTask(t *testing.T) {
 // the pending window refused `session new --resume` right after.
 func TestCancelOfUnknownTaskDoesNotRefuseALaterRun(t *testing.T) {
 	ms := &mockSender{}
+	const streamID trsf.StreamID = 99
 	s := &Session{
 		AllowedRoots: []string{"/some/repo"},
 		Profiles:     singleProfile(t, "/bin/true"),
-		Timeout:      time.Second,
 		Sender:       ms,
+		Streams:      &fakeBidiLookup{streams: map[trsf.StreamID]trsf.BidirectionalStream{streamID: &noopBidiStream{streamID: streamID}}},
 		Now:          time.Now,
 	}
 	// A live runner's registry exists before any cancel can reach it (Config.Tasks,
@@ -194,10 +201,10 @@ func TestCancelOfUnknownTaskDoesNotRefuseALaterRun(t *testing.T) {
 	taskID := protocol.TaskID{Id: [16]byte{0xCB}}
 	s.handleCancelTask(taskID) // the run is already gone: answered, not recorded
 
-	endPending := s.beginPendingTask(taskID) // the resume's AssignTask
-	body := &protocol.AssignTaskBody{Prompt: []byte("x")}
-	body.SetRepoPath([]byte("/some/repo"))
-	s.handleAssign(context.Background(), taskID, body)
+	endPending := s.beginPendingTask(taskID) // the resume's OpenExec
+	oer := &protocol.OpenExecRunnerRequest{TaskId: taskID, StreamId: uint64(streamID)}
+	oer.SetRepoPath([]byte("/some/repo"))
+	s.handleOpenExec(context.Background(), oer)
 	endPending()
 
 	last := decodeRunnerMsg(t, ms.sent[len(ms.sent)-1]).TaskFinished()
@@ -352,7 +359,7 @@ func TestRunnerCanonicalIdentityIsZeroBeforeHelloResponse(t *testing.T) {
 }
 
 // runHooks is a test seam used by TestRun_RunCtxCancelsOnPeerDone to inject
-// a handleAssign-shaped goroutine without spinning up real claude processes.
+// a task-handler-shaped goroutine without spinning up real claude processes.
 type runHooks struct {
 	spawnTask func(ctx context.Context)
 	kicker    chan struct{}

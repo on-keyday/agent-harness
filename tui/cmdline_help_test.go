@@ -124,7 +124,6 @@ func TestHelpNamesNothingUnreachable(t *testing.T) {
 	for _, extra := range []string{
 		"sync", "exit",
 		"F", "picker", "push/pull", "--shell", "--sshd-parent",
-		"submit|interactive|session", // one line covering the three spawn verbs
 	} {
 		reachable[extra] = true
 	}

@@ -81,72 +81,8 @@ test("RUNCMD_DISPATCH names bridge functions that exist", () => {
 });
 
 test("tokenize keeps a quoted argument whole", () => {
-  eq(page.tokenize('submit --task "hello world"'), ["submit", "--task", "hello world"]);
+  eq(page.tokenize('notify --title "hello world"'), ["notify", "--title", "hello world"]);
   eq(page.tokenize("file mkdir x 'my dir'"), ["file", "mkdir", "x", "my dir"]);
-});
-
-// submit's flags were ALL dropped: sessionReq had no parameter for caps,
-// scope, scope-for, runner or ip, and repo/host came off the dropdown
-// regardless of what was typed.
-test("submit carries every declared flag, not the dropdowns", async () => {
-  const { calls } = await run(
-    `submit --repo /typed/repo --host typedhost --caps spawn,file_read ` +
-    `--scope global --scope-for cancel=none --agent-arg -x --resume ${ID} ` +
-    `--resume-conversation --task "do the thing"`,
-    { repo: "/dropdown/repo", host: "dropdownhost" });
-  const [, req] = named(calls, "sessionReq")[0];
-  assert.equal(req.repo, "/typed/repo", "a typed --repo must beat the dropdown");
-  assert.equal(req.host, "typedhost", "a typed --host must beat the dropdown");
-  assert.equal(req.caps, "spawn,file_read");
-  assert.equal(req.scope, "global");
-  eq(req.scopeFor, ["cancel=none"]);
-  eq(req.agentArgs, ["-x"]);
-  assert.equal(req.resumeTaskId, ID);
-  assert.equal(req.resumeConversation, true);
-  assert.equal(req.task, "do the thing");
-});
-
-// --exact: the record's settings, so the request must say so and carry none
-// of the Compose state's.
-test("submit --exact reaches the request", async () => {
-  const { calls, err } = await run(`submit --resume ${ID} --exact`);
-  assert.equal(err, undefined, "submit --resume <id> --exact is refused");
-  const [, req] = named(calls, "sessionReq")[0];
-  assert.equal(req.resumeExact, true);
-  assert.equal(req.resumeTaskId, ID);
-});
-
-test("submit --runner and --ip reach the request", async () => {
-  const r = await run(`submit --runner ws:h:1-2 --task t`);
-  assert.equal(named(r.calls, "sessionReq")[0][1].runner, "ws:h:1-2");
-  const i = await run(`submit --ip 10.0.0.4 --task t`);
-  assert.equal(named(i.calls, "sessionReq")[0][1].ip, "10.0.0.4");
-});
-
-// --caps none is a real grant of nothing, so presence decides, not truthiness.
-test("an ambiguous submit opens the picker with a submit re-issue", async () => {
-  const amb = Object.assign(new Error("ambiguous_runner"), {
-    code: "ambiguous_runner",
-    candidates: [{ pin: "ws:h:1-1", hostname: "h", profiles: ["claude", "codex"] }],
-  });
-  const { out, err, calls } = await run("submit --task t", { submit: amb });
-  assert.equal(err, undefined);
-  const r = calls.find((c) => c[0] === "routeAmbiguous");
-  assert.ok(r, "routeAmbiguous not called");
-  assert.equal(r[1], "ambiguous_runner");
-  assert.equal(r[3], "function");
-  assert.match(String(out), /pick a runner/);
-});
-
-test("a non-ambiguous submit failure still throws", async () => {
-  const { err, calls } = await run("submit --task t", { submit: new Error("no_runner") });
-  assert.match(String(err), /no_runner/);
-  assert.equal(calls.filter((c) => c[0] === "routeAmbiguous").length, 1);
-});
-
-test("submit without --caps leaves the chips to decide", async () => {
-  const { calls } = await run("submit --task t");
-  assert.equal(named(calls, "sessionReq")[0][1].caps, null);
 });
 
 test("ls --json and --tree reach the renderers", async () => {
@@ -544,7 +480,7 @@ test("conns refuses --runner / --watch without --trsf", async () => {
 // the help text red. Now the bridge answers under `help`, parseOrHelp unwinds
 // it past whichever case was parsing, and it prints as that command's output.
 test("-h prints the flag block instead of failing", async () => {
-  for (const line of ["file push -h", "submit --help"]) {
+  for (const line of ["file push -h", "prune --help"]) {
     const { out, err } = await run(line);
     assert.equal(err, undefined, `${line} must not throw, got: ${err}`);
     assert.match(String(out), /\nflags:\n/, `${line} must list its flags`);

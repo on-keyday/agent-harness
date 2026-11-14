@@ -1,7 +1,6 @@
 package server
 
 import (
-	"errors"
 	"testing"
 	"time"
 
@@ -36,7 +35,7 @@ func TestSchedulerAssignsOnePair(t *testing.T) {
 	})
 
 	store := NewTaskStore()
-	taskID := store.Create("/x", "prompt-a", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}}, "")
+	taskID := queueBG(t, store, "/x", "prompt-a", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}}, "")
 
 	var captured []assignPair
 	assignFn := func(runnerID objproto.ConnectionID, tID string) error {
@@ -92,7 +91,7 @@ func TestSchedulerNoMatch(t *testing.T) {
 	})
 
 	store := NewTaskStore()
-	taskID := store.Create("/x", "prompt-a", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}}, "")
+	taskID := queueBG(t, store, "/x", "prompt-a", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}}, "")
 
 	assignFn := func(runnerID objproto.ConnectionID, tID string) error {
 		t.Fatal("assignFn must not be called when there is no repo match")
@@ -142,7 +141,7 @@ func TestSchedulerSkipsBusy(t *testing.T) {
 	})
 
 	store := NewTaskStore()
-	taskID := store.Create("/x", "prompt-a", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}}, "")
+	taskID := queueBG(t, store, "/x", "prompt-a", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}}, "")
 
 	var assigned []string
 	assignFn := func(runnerID objproto.ConnectionID, tID string) error {
@@ -167,53 +166,6 @@ func TestSchedulerSkipsBusy(t *testing.T) {
 	}
 }
 
-// TestSchedulerAssignErrorLeavesQueued verifies that when assignFn errors,
-// neither the task nor the runner change state.
-func TestSchedulerAssignErrorLeavesQueued(t *testing.T) {
-	reg := NewRegistry()
-	reg.Add(&RunnerEntry{
-		ID:               tcid("r1"),
-		Hostname:         "h1",
-		AllowedRoots:     []string{"/x"},
-		MaxTasks:         1,
-		ActiveTasks:      map[string]struct{}{},
-		ConnectedAt:      time.Unix(1, 0),
-		LastTaskActivity: time.Unix(1, 0),
-		Conn:             &fakeConn{},
-	})
-
-	store := NewTaskStore()
-	taskID := store.Create("/x", "prompt-a", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}}, "")
-
-	assignFn := func(runnerID objproto.ConnectionID, tID string) error {
-		return errors.New("boom")
-	}
-
-	s := NewScheduler(reg, store, assignFn)
-	s.Tick() // must not panic; error is logged, not propagated
-
-	// Runner must remain Idle (no active tasks added due to error).
-	entry, ok := reg.Get(tcid("r1"))
-	if !ok {
-		t.Fatal("runner r1 not found")
-	}
-	if entry.Status() != protocol.RunnerStatus_Idle {
-		t.Fatalf("expected runner to remain Idle after assign error, got %v", entry.Status())
-	}
-	if len(entry.ActiveTasks) != 0 {
-		t.Fatalf("expected runner ActiveTasks empty, got %v", entry.ActiveTasks)
-	}
-
-	// Task must remain Queued.
-	task, ok := store.Get(taskID)
-	if !ok {
-		t.Fatal("task not found")
-	}
-	if task.Status != protocol.TaskStatus_Queued {
-		t.Fatalf("expected task to remain Queued after assign error, got %v", task.Status)
-	}
-}
-
 // The runner may answer the moment AssignTask leaves — TaskAccepted, and the
 // JOIN its first log line makes — and both are authorized by ownsTask. So the
 // reservation has to exist before the send, as ownsTask's comment says.
@@ -223,7 +175,7 @@ func TestSchedulerBindsBeforeSending(t *testing.T) {
 	r.Identity = testRunnerID("r1")
 	reg.Add(r)
 	store := NewTaskStore()
-	store.Create("/x", "prompt-a", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}}, "")
+	queueBG(t, store, "/x", "prompt-a", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}}, "")
 
 	sent := 0
 	s := NewScheduler(reg, store, func(runnerID objproto.ConnectionID, tID string) error {
@@ -266,9 +218,9 @@ func TestSchedulerMultipleRunnersFIFO(t *testing.T) {
 	})
 
 	store := NewTaskStore()
-	taskA := store.Create("/x", "a", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}}, "")
-	taskB := store.Create("/x", "b", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}}, "")
-	taskC := store.Create("/x", "c", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}}, "")
+	taskA := queueBG(t, store, "/x", "a", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}}, "")
+	taskB := queueBG(t, store, "/x", "b", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}}, "")
+	taskC := queueBG(t, store, "/x", "c", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}}, "")
 
 	var assigned []assignPair
 	assignFn := func(runnerID objproto.ConnectionID, tID string) error {
@@ -344,9 +296,9 @@ func idleRunner(id, hostname string, profiles []string) *RunnerEntry {
 }
 
 // TestSchedulerHonorsSelector: the assignment step must respect the selector the
-// task was submitted with. handleSubmit only VALIDATES the pin (PinnedNotFound /
+// task was queued with. The open only VALIDATES the pin (PinnedNotFound /
 // AmbiguousRunner) — without this, Tick handed the task to whichever idle runner
-// served a matching repo path, so `submit --host h2` ran on h1 roughly half the
+// served a matching repo path, so a task pinned with --host h2 ran on h1 roughly half the
 // time. Interactive opens never had the bug: they assign synchronously to the
 // candidate they resolved.
 func TestSchedulerHonorsSelector(t *testing.T) {
@@ -355,7 +307,7 @@ func TestSchedulerHonorsSelector(t *testing.T) {
 	reg.Add(idleRunner("r2", "h2", nil))
 
 	store := NewTaskStore()
-	taskID := store.Create("/x", "pinned", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified,
+	taskID := queueBG(t, store, "/x", "pinned", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified,
 		protocol.TaskID{}, "r2", hostnameSelector(t, "h2"), nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}},
 		"")
 
@@ -384,7 +336,7 @@ func TestSchedulerHonorsAgentProfile(t *testing.T) {
 	reg.Add(idleRunner("r2", "h2", []string{"codex"}))
 
 	store := NewTaskStore()
-	taskID := store.Create("/x", "codex task", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified,
+	taskID := queueBG(t, store, "/x", "codex task", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified,
 		protocol.TaskID{}, "r2", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}},
 		"codex")
 
@@ -412,7 +364,7 @@ func TestSchedulerIdentityPinSurvivesReconnect(t *testing.T) {
 	sel := protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_ByRunnerId}
 	sel.SetRunnerId(id)
 	store := NewTaskStore()
-	taskID := store.Create("/x", "queued", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified,
+	taskID := queueBG(t, store, "/x", "queued", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified,
 		protocol.TaskID{}, tcid("A").String(), sel, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}},
 		"claude")
 
@@ -459,7 +411,7 @@ func TestRunnerIDPinMatchesOnlyTheIdentityHolder(t *testing.T) {
 	}
 
 	store := NewTaskStore()
-	taskID := store.Create("/x", "queued", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified,
+	taskID := queueBG(t, store, "/x", "queued", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified,
 		protocol.TaskID{}, tcid("A2").String(), sel, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}},
 		"claude")
 
@@ -482,11 +434,11 @@ func TestSchedulerPinnedTaskDoesNotBlockQueue(t *testing.T) {
 	reg.Add(idleRunner("r1", "h1", nil))
 
 	store := NewTaskStore()
-	blocked := store.Create("/x", "pinned elsewhere", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified,
+	blocked := queueBG(t, store, "/x", "pinned elsewhere", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified,
 		protocol.TaskID{}, "", hostnameSelector(t, "h-absent"), nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}},
 		"")
 
-	runnable := store.Create("/x", "any runner", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified,
+	runnable := queueBG(t, store, "/x", "any runner", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified,
 		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}},
 		"")
 
@@ -514,7 +466,7 @@ func TestSchedulerParentRootDoesNotTakeTask(t *testing.T) {
 	broad.AllowedRoots = []string{"/a"}
 	reg.Add(broad)
 	store := NewTaskStore()
-	id := store.Create("/a/b", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}}, "")
+	id := queueBG(t, store, "/a/b", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}}, "")
 
 	sent := 0
 	NewScheduler(reg, store, func(objproto.ConnectionID, string) error { sent++; return nil }).Tick()
@@ -536,9 +488,9 @@ func TestSchedulerFillsFreeSlotsInOrder(t *testing.T) {
 	reg.Add(r)
 	store := NewTaskStore()
 	g := authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}}
-	a := store.Create("/x", "a", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, g, "")
-	b := store.Create("/x", "b", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, g, "")
-	c := store.Create("/x", "c", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, g, "")
+	a := queueBG(t, store, "/x", "a", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, g, "")
+	b := queueBG(t, store, "/x", "b", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, g, "")
+	c := queueBG(t, store, "/x", "c", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, g, "")
 
 	var order []string
 	NewScheduler(reg, store, func(_ objproto.ConnectionID, id string) error { order = append(order, id); return nil }).Tick()
@@ -569,7 +521,7 @@ func TestSchedulerSkipsDisplacedConnection(t *testing.T) {
 	reg.Add(cur) // takeover; "A" is not torn down yet
 
 	store := NewTaskStore()
-	store.Create("/x", "queued", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}}, "")
+	queueBG(t, store, "/x", "queued", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}}, "")
 
 	var captured []assignPair
 	NewScheduler(reg, store, func(r objproto.ConnectionID, tID string) error {
@@ -592,8 +544,8 @@ func TestSchedulerSkipsTaskCancelledMidWalk(t *testing.T) {
 	reg.Add(r)
 	store := NewTaskStore()
 	g := authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}}
-	a := store.Create("/x", "a", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, g, "")
-	b := store.Create("/x", "b", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, g, "")
+	a := queueBG(t, store, "/x", "a", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, g, "")
+	b := queueBG(t, store, "/x", "b", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, g, "")
 
 	var sent []string
 	NewScheduler(reg, store, func(_ objproto.ConnectionID, tID string) error {
@@ -637,7 +589,6 @@ func TestTickSkipsForegroundSessions(t *testing.T) {
 	store.Create("/x", "", protocol.TaskKind_Stream, protocol.ClientKind_Cli, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{}, "")
 	calls := 0
 	s := NewScheduler(reg, store, func(objproto.ConnectionID, string) error { calls++; return nil })
-	s.SetSessionStart(func(objproto.ConnectionID, string) error { calls++; return nil })
 	s.Tick()
 	if calls != 0 {
 		t.Fatalf("Tick placed a foreground session (%d calls)", calls)
@@ -649,9 +600,8 @@ func TestTickStartsBackgroundSessionWithStart(t *testing.T) {
 	reg.Add(idleRunner("r1", "h1", nil))
 	store := NewTaskStore()
 	id := createBGAt(t, store)
-	assigned, started := 0, []string{}
-	s := NewScheduler(reg, store, func(objproto.ConnectionID, string) error { assigned++; return nil })
-	s.SetSessionStart(func(_ objproto.ConnectionID, tID string) error {
+	started := []string{}
+	s := NewScheduler(reg, store, func(_ objproto.ConnectionID, tID string) error {
 		// Assign comes first, so the session starts on a Running task.
 		if e, _ := store.Get(tID); e.Status != protocol.TaskStatus_Running {
 			t.Errorf("start saw status %v, want Running", e.Status)
@@ -660,8 +610,8 @@ func TestTickStartsBackgroundSessionWithStart(t *testing.T) {
 		return nil
 	})
 	s.Tick()
-	if assigned != 0 || len(started) != 1 || started[0] != id {
-		t.Fatalf("assign %d, started %v", assigned, started)
+	if len(started) != 1 || started[0] != id {
+		t.Fatalf("started %v", started)
 	}
 	if e, _ := store.Get(id); e.Status != protocol.TaskStatus_Running || e.DeadlineAt == 0 {
 		t.Fatalf("status %v deadline %d", e.Status, e.DeadlineAt)
@@ -678,8 +628,7 @@ func TestTickWaitsSecondBackgroundOnOneSlot(t *testing.T) {
 	first := createBGAt(t, store)
 	second := createBGAt(t, store)
 	var started []string
-	s := NewScheduler(reg, store, nil)
-	s.SetSessionStart(func(_ objproto.ConnectionID, tID string) error { started = append(started, tID); return nil })
+	s := NewScheduler(reg, store, func(_ objproto.ConnectionID, tID string) error { started = append(started, tID); return nil })
 	s.Tick()
 	if len(started) != 1 || started[0] != first {
 		t.Fatalf("first tick started %v", started)
@@ -704,8 +653,7 @@ func TestTickNeverPlacesCancelledQueuedBackground(t *testing.T) {
 	by := protocol.TaskID{Id: [16]byte{5}}
 	store.Cancel(id, protocol.EndReason_Cancelled, by)
 	calls := 0
-	s := NewScheduler(reg, store, nil)
-	s.SetSessionStart(func(objproto.ConnectionID, string) error { calls++; return nil })
+	s := NewScheduler(reg, store, func(objproto.ConnectionID, string) error { calls++; return nil })
 	s.Tick()
 	if calls != 0 {
 		t.Fatal("a cancelled background task was started")
@@ -713,4 +661,16 @@ func TestTickNeverPlacesCancelledQueuedBackground(t *testing.T) {
 	if e, _ := store.Get(id); e.EndReason != protocol.EndReason_Cancelled || e.CancelledBy != by {
 		t.Fatalf("end %v by %v", e.EndReason, e.CancelledBy)
 	}
+}
+
+// queueBG queues a background interactive task, as Create would a task of
+// kind, for the placement tests: since A3 only background sessions are placed.
+func queueBG(t *testing.T, store *TaskStore, repo, prompt string, kind protocol.TaskKind, origin protocol.ClientKind, creator protocol.TaskID, bound string, sel protocol.RunnerSelector, extra []string, g authority.Grant, profile string) string {
+	t.Helper()
+	id, err := store.CreateWithinLimits(repo, prompt, kind, origin, creator, bound, sel, extra, g, profile,
+		RunSpec{Mode: protocol.RunMode_Background, Cond: RunConditions{Deadline: time.Hour}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
 }

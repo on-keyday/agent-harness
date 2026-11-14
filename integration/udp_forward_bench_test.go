@@ -117,10 +117,10 @@ func newForwardBenchFixtureOn(b *testing.B, scheme, addr string) *forwardBenchFi
 	}()
 	time.Sleep(500 * time.Millisecond)
 
-	taskID, err := cli.Submit(ctx, peerCID, repo, "udp-forward-bench")
+	taskID, err := openOneshot(ctx, peerCID, repo, "udp-forward-bench")
 	if err != nil {
 		cancel()
-		b.Fatalf("submit: %v", err)
+		b.Fatalf("session new --oneshot: %v", err)
 	}
 	worktree := filepath.Join(repo, ".harness-worktrees", taskID)
 	deadline := time.Now().Add(20 * time.Second)

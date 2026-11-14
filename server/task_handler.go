@@ -8,8 +8,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -402,38 +400,13 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 
 	switch req.Header.Kind {
 	case protocol.TaskControlKind_Submit:
-		sub := req.Submit()
-		if sub == nil {
-			slog.Error("TaskHandler: Submit variant is nil")
-			return
-		}
-		// Request-dependent gate: create needs spawn, resume needs the resume
-		// rank. requiredCap is keyed on the kind alone and cannot tell them apart.
-		if want := resumeRequestCap(sub.ResumeTaskId, sub.ResumeExact()); !hasAnyCap(h.callerCaps(cid), want) {
-			h.denyTaskControl(conn, req.Header.Kind, req.Header.RequestId, want)
-			return
-		}
-		origin := h.lookupClientKind(cid)
-		creator := h.lookupPrincipal(cid)
-		creatorCaps := h.callerCaps(cid)
-		submitResp, body := h.handleSubmit(cid, sub, origin, creator, creatorCaps)
-		send := func(r protocol.SubmitResponse) {
-			resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_Submit, RequestId: req.Header.RequestId}
-			resp.SetSubmit(r)
-			conn.SendMessage(resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})) //nolint:errcheck
-		}
-		if body != nil {
-			respondWithBody(conn, "submit candidates", body, func(streamID uint64) {
-				submitResp.SetCandidatesStreamId(streamID)
-				send(submitResp)
-			})
-		} else {
-			send(submitResp)
-		}
-
-		if submitResp.Status == protocol.SubmitStatus_Ok && h.OnChange != nil {
-			h.OnChange()
-		}
+		// Retired (A3, A-D31): an older client's submit is answered with the
+		// verb that replaces it rather than dropped.
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_Submit, RequestId: req.Header.RequestId}
+		sr := protocol.SubmitResponse{Status: protocol.SubmitStatus_InternalError}
+		sr.SetErrorMsg([]byte("submit is retired: use session new --oneshot"))
+		resp.SetSubmit(sr)
+		conn.SendMessage(resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})) //nolint:errcheck
 
 	case protocol.TaskControlKind_List:
 		h.handleList(conn, req.Header.RequestId, cid)
@@ -1275,88 +1248,6 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 	}
 }
 
-// handleSubmit resolves the runner selector and either enqueues the task or
-// returns a synchronous error status. The four possible outcomes:
-//
-//   - SubmitStatus_Ok            — exactly one candidate, task created and queued
-//   - SubmitStatus_NoRunner      — no candidates match (Any selector)
-//   - SubmitStatus_PinnedNotFound — no candidates match (pinned selector)
-//   - SubmitStatus_AmbiguousRunner — more than one candidate (error_msg lists hostnames)
-//
-// On Ok, the returned SubmitResponse carries the new TaskId.
-func (h *TaskHandler) handleSubmit(cid string, req *protocol.SubmitRequest, origin protocol.ClientKind, creator protocol.TaskID, creatorCaps protocol.Capability) (protocol.SubmitResponse, *protocol.RunnerCandidatesBody) {
-	// Resume branch: when ResumeTaskId is non-zero the server reuses that id
-	// (so the runner re-attaches the worktree to the retained `harness/<id>`
-	// branch) instead of allocating a fresh one. The repo on the request is
-	// ignored — the existing TaskEntry's RepoPath is authoritative because
-	// that's the directory claude's session storage is keyed under.
-	if !isZeroTaskID(req.ResumeTaskId) {
-		return h.handleSubmitResume(cid, req, origin, creatorCaps)
-	}
-	if req.ResumeExact() {
-		return exactMismatchResponse("--resume (an exact resume names the task it restores)"), nil
-	}
-
-	// Request validation before runner resolution: whether the caller may ask
-	// for this scope does not depend on which runners happen to be up, and
-	// resolving first would answer no_runner to a request that is malformed
-	// either way.
-	grant, err := h.grantFor(h.granter(cid, creatorCaps), submitGrantRequest(req), "")
-	if err != nil {
-		resp := protocol.SubmitResponse{Status: protocol.SubmitStatus_ScopeNotPermitted}
-		resp.SetErrorMsg([]byte(err.Error()))
-		return resp, nil
-	}
-	// The spawn limits, also before runner resolution, so a creation they
-	// refuse is not first answered no_runner or a runner picker. Advisory:
-	// CreateWithinLimits re-checks under the lock that inserts.
-	if err := h.Tasks.CheckSpawnLimits(creator); err != nil {
-		resp := protocol.SubmitResponse{Status: protocol.SubmitStatus_SpawnLimit}
-		resp.SetErrorMsg([]byte(err.Error()))
-		return resp, nil
-	}
-
-	// Wire is POSIX '/'-paths; use path.Clean (not filepath.Clean) so the
-	// server stays OS-agnostic when matching runner-supplied roots.
-	repo := path.Clean(string(req.RepoPath))
-	cands := h.Registry.Candidates(repo, req.Selector)
-	switch {
-	case len(cands) == 0 && req.Selector.Kind != protocol.RunnerSelectorKind_Any:
-		return protocol.SubmitResponse{Status: protocol.SubmitStatus_PinnedNotFound}, nil
-	case len(cands) == 0:
-		return protocol.SubmitResponse{Status: protocol.SubmitStatus_NoRunner}, nil
-	}
-
-	// The same rule as an interactive open (expandCombos): with no --agent
-	// and an unpinned selector, every advertised profile of every matching
-	// runner is a choice, so a multi-profile runner is ambiguous on its own.
-	// A pinned selector takes the runner's default, and an explicit --agent
-	// narrows to the runners advertising it.
-	profile := string(req.AgentProfile)
-	if profile != "" && len(filterByProfile(cands, profile)) == 0 {
-		resp := protocol.SubmitResponse{Status: protocol.SubmitStatus_ProfileUnavailable}
-		resp.SetErrorMsg(profileUnavailableMsg(profile, cands))
-		return resp, nil
-	}
-	combos := expandCombos(cands, profile, req.Selector.Kind)
-	if len(combos) > 1 {
-		return protocol.SubmitResponse{Status: protocol.SubmitStatus_AmbiguousRunner}, candidatesBody(combos, repo)
-	}
-	bound := combos[0].Entry
-	resolved := combos[0].Profile
-	taskIDHex, err := h.Tasks.CreateWithinLimits(repo, string(req.Prompt), protocol.TaskKind_Oneshot, origin, creator, bound.ID.String(), req.Selector, req.ExtraArgs.AsStrings(), grant.To, resolved, RunSpec{})
-	if err != nil {
-		resp := protocol.SubmitResponse{Status: protocol.SubmitStatus_SpawnLimit}
-		resp.SetErrorMsg([]byte(err.Error()))
-		return resp, nil
-	}
-	h.Tasks.SetResumeConversation(taskIDHex, req.ResumeConversation())
-	var tid protocol.TaskID
-	raw, _ := hex.DecodeString(taskIDHex)
-	copy(tid.Id[:], raw)
-	return protocol.SubmitResponse{Status: protocol.SubmitStatus_Ok, TaskId: tid}, nil
-}
-
 // grantRequest is the authority half of a submit or an interactive open,
 // read once so the two paths cannot read it differently. The presence bits
 // matter on a resume only; a fresh task writes every half.
@@ -1370,17 +1261,6 @@ type grantRequest struct {
 
 	SpawnDepth, MaxDescendants               protocol.SpawnLimit
 	SpawnDepthPresent, MaxDescendantsPresent bool
-}
-
-func submitGrantRequest(req *protocol.SubmitRequest) grantRequest {
-	return grantRequest{
-		Caps: req.RequestedCaps, Scope: authority.ScopeFromWire(req.Scope, req.Overrides),
-		DelegateCaps: req.DelegateCaps, DelegateScope: authority.ScopeFromWire(req.DelegateScope, nil),
-		CapsPresent: req.ResumeCapsOverride(), ScopePresent: req.ScopePresent(),
-		DelegateCapsPresent: req.DelegateCapsPresent(), DelegateScopePresent: req.DelegateScopePresent(),
-		SpawnDepth: req.SpawnDepth, MaxDescendants: req.MaxDescendants,
-		SpawnDepthPresent: req.SpawnDepthPresent(), MaxDescendantsPresent: req.MaxDescendantsPresent(),
-	}
 }
 
 func openGrantRequest(req *protocol.OpenInteractiveRequest) grantRequest {
@@ -1459,163 +1339,6 @@ func (h *TaskHandler) previousRunStopping(idHex string) (string, bool) {
 	return "task " + idHex[:8] + "'s previous run is still stopping on its runner; retry in a few seconds", true
 }
 
-// handleSubmitResume implements the resume_task_id branch of handleSubmit.
-// Validation order (mirrors the fresh-submit path in handleSubmit exactly,
-// so the same "roots-matching runner set narrowed by profile before the
-// ambiguity check" shape applies to both):
-//  1. Existing TaskEntry must exist (else resume_not_found).
-//  2. Its previously recorded TaskKind is NOT checked — mode is per-open,
-//     latest-recorded (spec §4c). A Submit resuming a task last opened
-//     Interactive is a valid "reopen this worktree headless" flow; Tasks.Resume
-//     records the invoked mode (Oneshot, since this is the submit path).
-//  3. Runner candidates against the existing repo + the request's selector.
-//     Empty candidates map to NoRunner / PinnedNotFound.
-//  4. Profile filter — resolved is the explicit request profile, or else
-//     the task's recorded AgentProfile (unlike fresh-submit, an empty
-//     resume profile defaults to the original profile, not the bound
-//     runner's own default). Narrows cands to profile-advertising runners
-//     BEFORE the ambiguity check, exactly like the fresh-submit path — so a
-//     resume with no --agent unambiguously picks the one runner still
-//     advertising the recorded profile even when other roots-matching
-//     runners exist. A nonempty pre-filter set filtering down to empty maps
-//     to ProfileUnavailable.
-//  5. Ambiguity check on the (possibly filtered) cands: >1 remaining maps
-//     to AmbiguousRunner.
-//  6. Tasks.Resume — atomic terminal-check + reset. Errors map to the new
-//     resume_not_terminal / resume_not_found wire codes; the latter handles
-//     the (rare) race where the entry was pruned between steps 1 and 6.
-func (h *TaskHandler) handleSubmitResume(cid string, req *protocol.SubmitRequest, origin protocol.ClientKind, callerCaps protocol.Capability) (protocol.SubmitResponse, *protocol.RunnerCandidatesBody) {
-	idHex := hex.EncodeToString(req.ResumeTaskId.Id[:])
-	// Resume is an operation on someone else's task, not a lookup: it re-queues
-	// that id under a prompt of the caller's choosing, and with
-	// resume_caps_override it rewrites the target's authority. Gate the target
-	// like any other, and report an out-of-scope task as absent.
-	if !h.resumeTargetAllowed(cid, req.ResumeExact(), idHex) {
-		return protocol.SubmitResponse{Status: protocol.SubmitStatus_ResumeNotFound}, nil
-	}
-	// The two halves of authority re-grant independently: caps behind
-	// resume_caps_override, scope behind scope_present — same shape as
-	// SetCapsRequest. Validated up front for the same reason as the fresh
-	// path, but only when the scope will actually be written.
-	grant, err := h.grantFor(h.granter(cid, callerCaps), submitGrantRequest(req), idHex)
-	if err != nil {
-		resp := protocol.SubmitResponse{Status: protocol.SubmitStatus_ScopeNotPermitted}
-		resp.SetErrorMsg([]byte(err.Error()))
-		return resp, nil
-	}
-	// Mode (Kind) is per-open, latest-recorded (spec §4c) — a resume through
-	// the submit path is valid regardless of the task's previously recorded
-	// Kind; the invoked path (submit ⇒ Oneshot) is what Tasks.Resume records
-	// below. Existence/terminal-state are the only preconditions here.
-	repo, _, ok := h.Tasks.PeekRepo(idHex)
-	if !ok {
-		return protocol.SubmitResponse{Status: protocol.SubmitStatus_ResumeNotFound}, nil
-	}
-	if msg, stopping := h.previousRunStopping(idHex); stopping {
-		resp := protocol.SubmitResponse{Status: protocol.SubmitStatus_ResumeNotTerminal}
-		resp.SetErrorMsg([]byte(msg))
-		return resp, nil
-	}
-	// A background task resumed through submit would become a oneshot with no
-	// session to watch (A-D1).
-	if t, ok := h.Tasks.Get(idHex); ok && t.RunMode == protocol.RunMode_Background {
-		resp := protocol.SubmitResponse{Status: protocol.SubmitStatus_ModeMismatch}
-		resp.SetErrorMsg([]byte("task " + idHex[:8] + " is a background task; resume it with session new --resume"))
-		return resp, nil
-	}
-	prompt, args := string(req.Prompt), req.ExtraArgs.AsStrings()
-	var exactRec *TaskEntry
-	if req.ResumeExact() {
-		rec, ok := h.Tasks.Get(idHex)
-		if !ok {
-			return protocol.SubmitResponse{Status: protocol.SubmitStatus_ResumeNotFound}, nil
-		}
-		if field := exactMismatch(exactFields{
-			Prompt: prompt, ExtraArgs: args, AgentProfile: string(req.AgentProfile),
-			CapsOverride: req.ResumeCapsOverride(), ScopePresent: req.ScopePresent(),
-			DelegateCapsPresent: req.DelegateCapsPresent(), DelegateScopePresent: req.DelegateScopePresent(),
-			SpawnDepthPresent: req.SpawnDepthPresent(), MaxDescendantsPresent: req.MaxDescendantsPresent(),
-			Kind: protocol.TaskKind_Oneshot,
-		}, rec); field != "" {
-			return exactMismatchResponse(field), nil
-		}
-		exactRec = &rec
-		prompt, args = rec.Prompt, rec.ExtraArgs
-	}
-	cands := h.Registry.Candidates(repo, req.Selector)
-	switch {
-	case len(cands) == 0 && req.Selector.Kind != protocol.RunnerSelectorKind_Any:
-		return protocol.SubmitResponse{Status: protocol.SubmitStatus_PinnedNotFound}, nil
-	case len(cands) == 0:
-		return protocol.SubmitResponse{Status: protocol.SubmitStatus_NoRunner}, nil
-	}
-
-	// Unlike the fresh-submit path, an empty request profile on resume falls
-	// back to the profile the task was originally bound to (not the bound
-	// runner's own default) — resuming should stay on the same agent profile
-	// unless the caller explicitly asks to switch.
-	resolved := string(req.AgentProfile)
-	if resolved == "" {
-		if existing, ok := h.Tasks.Get(idHex); ok {
-			resolved = existing.AgentProfile
-		}
-	}
-	if exactRec != nil {
-		resolved = exactRec.AgentProfile
-	}
-
-	// Same profile filter as the fresh-submit path, applied BEFORE the
-	// ambiguity check below: narrows cands whenever there's a profile to
-	// resolve to (explicit request or recorded resume profile). This lets a
-	// resume with no --agent unambiguously narrow to the one runner that
-	// still advertises the recorded profile, instead of first binding to
-	// cands[0] and only then checking that single runner's profile support.
-	if resolved != "" {
-		filtered := filterByProfile(cands, resolved)
-		if len(filtered) == 0 {
-			resp := protocol.SubmitResponse{Status: protocol.SubmitStatus_ProfileUnavailable}
-			resp.SetErrorMsg(profileUnavailableMsg(resolved, cands))
-			return resp, nil
-		}
-		cands = filtered
-	}
-	if exactRec != nil && req.Selector.Kind == protocol.RunnerSelectorKind_Any {
-		cands = preferLastRunner(cands, exactRec.AssignedTo)
-	}
-
-	if len(cands) > 1 {
-		combos := make([]interactiveCombo, len(cands))
-		for i, c := range cands {
-			p := resolved
-			if p == "" {
-				p = c.DefaultProfile()
-			}
-			combos[i] = interactiveCombo{Entry: c, Profile: p}
-		}
-		return protocol.SubmitResponse{Status: protocol.SubmitStatus_AmbiguousRunner}, candidatesBody(combos, repo)
-	}
-	bound := cands[0]
-
-	// Invoked mode is Oneshot (this is the submit path); resolved is the
-	// profile computed above (explicit --agent, else the task's recorded
-	// AgentProfile) — persisting it here closes the Task 4/6 gap where
-	// handleSubmitResume computed `resolved` but never wrote it back through
-	// Tasks.Resume.
-	if _, err := h.Tasks.Resume(idHex, prompt, args, req.Selector, bound.ID.String(), origin, grant, protocol.TaskKind_Oneshot, resolved, h.lookupPrincipal(cid), req.ResumeConversation(), RunSpec{}); err != nil {
-		switch err {
-		case ResumeErrNotFound:
-			return protocol.SubmitResponse{Status: protocol.SubmitStatus_ResumeNotFound}, nil
-		case ResumeErrNotTerminal:
-			return protocol.SubmitResponse{Status: protocol.SubmitStatus_ResumeNotTerminal}, nil
-		default:
-			resp := protocol.SubmitResponse{Status: protocol.SubmitStatus_InternalError}
-			resp.SetErrorMsg([]byte(err.Error()))
-			return resp, nil
-		}
-	}
-	return protocol.SubmitResponse{Status: protocol.SubmitStatus_Ok, TaskId: req.ResumeTaskId}, nil
-}
-
 // filterByProfile narrows cands to those whose HasProfile(profile) is true.
 // Preserves the input order (Candidates already returns a deterministic
 // ConnectedAt/ID-sorted slice).
@@ -1674,13 +1397,6 @@ func exactMismatch(req exactFields, rec TaskEntry) string {
 		return "kind (the task was recorded as " + rec.Kind.String() + ")"
 	}
 	return ""
-}
-
-// exactMismatchResponse is the submit path's answer to exactMismatch.
-func exactMismatchResponse(field string) protocol.SubmitResponse {
-	resp := protocol.SubmitResponse{Status: protocol.SubmitStatus_ResumeExactMismatch}
-	resp.SetErrorMsg([]byte("resume_exact: " + field + " is a setting; an exact resume takes the task's recorded one"))
-	return resp
 }
 
 // preferLastRunner narrows cands to the runner the task last ran on when it is
@@ -1757,35 +1473,6 @@ func advertisedProfiles(e RunnerEntry) []string {
 	return []string{""}
 }
 
-// profileUnavailableMsg builds the SubmitStatus_ProfileUnavailable error_msg:
-// the requested profile plus the deduped, sorted union of profile names
-// advertised across cands (the pre-filter candidate set).
-func profileUnavailableMsg(requested string, cands []RunnerEntry) []byte {
-	seen := make(map[string]struct{})
-	var names []string
-	for _, c := range cands {
-		if len(c.AgentProfiles) == 0 {
-			// Legacy runner: its implicit profile is AgentBin (see HasProfile).
-			if c.AgentBin == "" {
-				continue
-			}
-			if _, ok := seen[c.AgentBin]; !ok {
-				seen[c.AgentBin] = struct{}{}
-				names = append(names, c.AgentBin)
-			}
-			continue
-		}
-		for _, p := range c.AgentProfiles {
-			if _, ok := seen[p]; !ok {
-				seen[p] = struct{}{}
-				names = append(names, p)
-			}
-		}
-	}
-	sort.Strings(names)
-	return []byte("profile unavailable: " + requested + "; advertised: " + strings.Join(names, ", "))
-}
-
 // isZeroTaskID reports whether t is the all-zero sentinel used by the wire
 // to encode "no resume target — create a new task".
 func isZeroTaskID(t protocol.TaskID) bool {
@@ -1832,7 +1519,10 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 	// task entry is then transitioned via Tasks.Resume (atomic) instead of
 	// Tasks.Create. The downstream stream-allocation + open_exec block is
 	// shared between the two paths.
-	// Validated before runner resolution — see handleSubmit.
+	// Request validation before runner resolution: whether the caller may ask
+	// for this scope does not depend on which runners happen to be up, and
+	// resolving first would answer no_runner_for_repo to a request that is
+	// malformed either way.
 	grantTarget := ""
 	if !isZeroTaskID(req.ResumeTaskId) {
 		grantTarget = hex.EncodeToString(req.ResumeTaskId.Id[:])
@@ -1848,7 +1538,9 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 	if req.ResumeExact() && !resuming {
 		return errResp(protocol.OpenInteractiveStatus_ResumeExactMismatch)
 	}
-	// As in handleSubmit: the spawn limits before runner resolution, advisory.
+	// The spawn limits, also before runner resolution, so a creation they
+	// refuse is not first answered no_runner_for_repo or a runner picker.
+	// Advisory: CreateWithinLimits re-checks under the lock that inserts.
 	if !resuming {
 		if err := h.Tasks.CheckSpawnLimits(creator); err != nil {
 			resp, body := errResp(protocol.OpenInteractiveStatus_SpawnLimit)
@@ -1861,7 +1553,8 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 	var exactRec *TaskEntry
 	if resuming {
 		idHex := hex.EncodeToString(req.ResumeTaskId.Id[:])
-		// Same target gate as the oneshot resume path — see handleSubmitResume.
+		// The resume target is gated by the resume rank's scope; a target out
+		// of it answers resume_not_found, never "exists but not yours".
 		if !h.resumeTargetAllowed(cid, req.ResumeExact(), idHex) {
 			return errResp(protocol.OpenInteractiveStatus_ResumeNotFound)
 		}
@@ -1894,7 +1587,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 				Kind: interactiveKind(req),
 			}, rec); field != "" {
 				resp, body := errResp(protocol.OpenInteractiveStatus_ResumeExactMismatch)
-				resp.SetErrorMsg(exactMismatchResponse(field).ErrorMsg)
+				resp.SetErrorMsg([]byte("resume_exact: " + field + " is a setting; an exact resume takes the task's recorded one"))
 				return resp, body
 			}
 			exactRec = &rec

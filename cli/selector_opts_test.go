@@ -3,9 +3,6 @@
 package cli
 
 import (
-	"context"
-	"errors"
-	"strings"
 	"testing"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -102,74 +99,6 @@ func TestBuildSelectorByRunnerInvalidHex(t *testing.T) {
 	_, err := buildSelector(SelectorOpts{Runner: "ZZZZ"})
 	if err == nil {
 		t.Error("expected error for invalid hex, got nil")
-	}
-}
-
-// TestSubmitStatusError verifies that non-Ok statuses map to named errors.
-func TestSubmitStatusError(t *testing.T) {
-	tests := []struct {
-		status  protocol.SubmitStatus
-		errMsg  string
-		wantSub string
-	}{
-		{protocol.SubmitStatus_Ok, "", ""},
-		{protocol.SubmitStatus_NoRunner, "", "no_runner"},
-		{protocol.SubmitStatus_PinnedNotFound, "", "pinned_not_found"},
-		{protocol.SubmitStatus_InternalError, "", "internal_error"},
-	}
-	for _, tc := range tests {
-		t.Run(tc.status.String(), func(t *testing.T) {
-			sr := &protocol.SubmitResponse{Status: tc.status}
-			if tc.errMsg != "" {
-				sr.SetErrorMsg([]byte(tc.errMsg))
-			}
-			err := submitStatusError(context.Background(), nil, sr)
-			if tc.wantSub == "" {
-				if err != nil {
-					t.Errorf("expected nil error, got %v", err)
-				}
-				return
-			}
-			if err == nil {
-				t.Fatalf("expected error containing %q, got nil", tc.wantSub)
-			}
-			if !contains(err.Error(), tc.wantSub) {
-				t.Errorf("error %q does not contain %q", err.Error(), tc.wantSub)
-			}
-		})
-	}
-}
-
-// An ambiguous answer is the candidates on a stream; one that names no stream
-// is an error saying so, never an empty candidate list.
-func TestSubmitAmbiguousWithoutStreamIsAnError(t *testing.T) {
-	var resp protocol.SubmitResponse
-	resp.Status = protocol.SubmitStatus_AmbiguousRunner
-	resp.SetCandidatesStreamId(0)
-	err := submitStatusError(context.Background(), nil, &resp)
-	var are *AmbiguousRunnerError
-	if err == nil || errors.As(err, &are) || !strings.Contains(err.Error(), "candidate") {
-		t.Fatalf("stream id 0 must be a plain error naming the candidates: %v", err)
-	}
-}
-
-// TestBuildSubmitRequestAgentProfile verifies that a non-empty agentProfile
-// passed to buildSubmitRequest (and therefore SubmitWithSelectorArgsAndCaps)
-// ends up set on the wire SubmitRequest.
-func TestBuildSubmitRequestAgentProfile(t *testing.T) {
-	sub := buildSubmitRequest("/repo", "prompt", SessionOpts{Selector: protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}, Caps: protocol.Capability_All, AgentProfile: "codex"})
-	if string(sub.AgentProfile) != "codex" {
-		t.Errorf("AgentProfile = %q, want %q", sub.AgentProfile, "codex")
-	}
-}
-
-// TestBuildSubmitRequestAgentProfileEmpty verifies the default ("") case
-// leaves AgentProfile empty, so existing callers that don't pass a profile
-// are unaffected.
-func TestBuildSubmitRequestAgentProfileEmpty(t *testing.T) {
-	sub := buildSubmitRequest("/repo", "prompt", SessionOpts{Selector: protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}, Caps: protocol.Capability_All})
-	if len(sub.AgentProfile) != 0 {
-		t.Errorf("AgentProfile = %q, want empty", sub.AgentProfile)
 	}
 }
 

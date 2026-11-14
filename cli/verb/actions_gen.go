@@ -846,7 +846,7 @@ type SetParentAction struct {
 	TaskID string
 }
 
-// SpawnAction is built by: session new, submit.
+// SpawnAction is built by: session new.
 type SpawnAction struct {
 	ActionMarker
 	// repo identifier; must match a runner-registered RepoPath verbatim
@@ -893,9 +893,6 @@ type SpawnAction struct {
 	Host string
 	// pin to a runner by IP address
 	IP string
-	// prompt text
-	Task string
-	Kind string
 	// forward X11: inject DISPLAY/XAUTHORITY so GUI apps render on your local X server
 	X11 bool
 	// with --x11: the local display number (0..99)
@@ -930,6 +927,7 @@ type SpawnAction struct {
 	NoRecord bool
 	// run the agent's one-shot (print-mode) argv in the session, which ends when it answers (needs --promp…
 	Oneshot bool
+	Kind    string
 }
 
 // TranscriptGetAction is built by: transcript get.
@@ -2378,225 +2376,6 @@ func init() {
 			a.Sub = "wake"
 			if len(b.Args) > 0 {
 				a.Topic = b.Args[0]
-			}
-			return a, nil
-		},
-		"submit\x00cli": func(b Bound) (Action, error) {
-			a := SpawnAction{}
-			a.Kind = "submit"
-			a.Repo = b.Str("repo")
-			a.ResumeTaskID = b.Str("resume")
-			a.ResumeConversation = b.Bool("resume-conversation")
-			a.Exact = b.Bool("exact")
-			a.CapsPresent = b.Set["caps"]
-			if b.Set["caps"] {
-				v, err := parseCapsFlag(b.Str("caps"))
-				if err != nil {
-					return nil, fmt.Errorf("submit: --caps: %w", err)
-				}
-				a.Caps = v
-			}
-			a.ScopePresent = b.Set["scope"] || b.Set["scope-for"]
-			if b.Set["scope"] {
-				v, err := parseScopeFlag(b.Str("scope"))
-				if err != nil {
-					return nil, fmt.Errorf("submit: --scope: %w", err)
-				}
-				a.Scope = v
-			}
-			a.Agent = b.Str("agent")
-			if b.Set["scope-for"] {
-				v, err := parseScopeForList(stringsOf(b.Custom["scope-for"]))
-				if err != nil {
-					return nil, fmt.Errorf("submit: --scope-for: %w", err)
-				}
-				a.Overrides = v
-			}
-			a.DelegateCapsPresent = b.Set["delegate-caps"]
-			if b.Set["delegate-caps"] {
-				v, err := parseCapsFlag(b.Str("delegate-caps"))
-				if err != nil {
-					return nil, fmt.Errorf("submit: --delegate-caps: %w", err)
-				}
-				a.DelegateCaps = v
-			}
-			a.DelegateScopePresent = b.Set["delegate-scope"]
-			if b.Set["delegate-scope"] {
-				v, err := parseScopeFlag(b.Str("delegate-scope"))
-				if err != nil {
-					return nil, fmt.Errorf("submit: --delegate-scope: %w", err)
-				}
-				a.DelegateScope = v
-			}
-			a.SpawnDepthPresent = b.Set["spawn-depth"]
-			if b.Set["spawn-depth"] {
-				v, err := parseSpawnLimitFlag(b.Str("spawn-depth"))
-				if err != nil {
-					return nil, fmt.Errorf("submit: --spawn-depth: %w", err)
-				}
-				a.SpawnDepth = v
-			}
-			a.MaxDescendantsPresent = b.Set["max-descendants"]
-			if b.Set["max-descendants"] {
-				v, err := parseSpawnLimitFlag(b.Str("max-descendants"))
-				if err != nil {
-					return nil, fmt.Errorf("submit: --max-descendants: %w", err)
-				}
-				a.MaxDescendants = v
-			}
-			a.ExtraArgs = stringsOf(b.Custom["agent-arg"])
-			a.Runner = b.Str("runner")
-			a.Host = b.Str("host")
-			a.IP = b.Str("ip")
-			a.Task = b.Str("task")
-			if a.Task == "" {
-				a.Task = b.Trail
-			}
-			return a, nil
-		},
-		"submit\x00tui": func(b Bound) (Action, error) {
-			a := SpawnAction{}
-			a.Kind = "submit"
-			a.Repo = b.Str("repo")
-			a.ResumeTaskID = b.Str("resume")
-			a.ResumeConversation = b.Bool("resume-conversation")
-			a.Exact = b.Bool("exact")
-			a.CapsPresent = b.Set["caps"]
-			if b.Set["caps"] {
-				v, err := parseCapsFlag(b.Str("caps"))
-				if err != nil {
-					return nil, fmt.Errorf("submit: --caps: %w", err)
-				}
-				a.Caps = v
-			}
-			a.ScopePresent = b.Set["scope"] || b.Set["scope-for"]
-			if b.Set["scope"] {
-				v, err := parseScopeFlag(b.Str("scope"))
-				if err != nil {
-					return nil, fmt.Errorf("submit: --scope: %w", err)
-				}
-				a.Scope = v
-			}
-			a.Agent = b.Str("agent")
-			if b.Set["scope-for"] {
-				v, err := parseScopeForList(stringsOf(b.Custom["scope-for"]))
-				if err != nil {
-					return nil, fmt.Errorf("submit: --scope-for: %w", err)
-				}
-				a.Overrides = v
-			}
-			a.DelegateCapsPresent = b.Set["delegate-caps"]
-			if b.Set["delegate-caps"] {
-				v, err := parseCapsFlag(b.Str("delegate-caps"))
-				if err != nil {
-					return nil, fmt.Errorf("submit: --delegate-caps: %w", err)
-				}
-				a.DelegateCaps = v
-			}
-			a.DelegateScopePresent = b.Set["delegate-scope"]
-			if b.Set["delegate-scope"] {
-				v, err := parseScopeFlag(b.Str("delegate-scope"))
-				if err != nil {
-					return nil, fmt.Errorf("submit: --delegate-scope: %w", err)
-				}
-				a.DelegateScope = v
-			}
-			a.SpawnDepthPresent = b.Set["spawn-depth"]
-			if b.Set["spawn-depth"] {
-				v, err := parseSpawnLimitFlag(b.Str("spawn-depth"))
-				if err != nil {
-					return nil, fmt.Errorf("submit: --spawn-depth: %w", err)
-				}
-				a.SpawnDepth = v
-			}
-			a.MaxDescendantsPresent = b.Set["max-descendants"]
-			if b.Set["max-descendants"] {
-				v, err := parseSpawnLimitFlag(b.Str("max-descendants"))
-				if err != nil {
-					return nil, fmt.Errorf("submit: --max-descendants: %w", err)
-				}
-				a.MaxDescendants = v
-			}
-			a.ExtraArgs = stringsOf(b.Custom["agent-arg"])
-			a.Runner = b.Str("runner")
-			a.Host = b.Str("host")
-			a.IP = b.Str("ip")
-			a.Task = b.Str("task")
-			if a.Task == "" {
-				a.Task = b.Trail
-			}
-			return a, nil
-		},
-		"submit\x00webui": func(b Bound) (Action, error) {
-			a := SpawnAction{}
-			a.Kind = "submit"
-			a.Repo = b.Str("repo")
-			a.ResumeTaskID = b.Str("resume")
-			a.ResumeConversation = b.Bool("resume-conversation")
-			a.Exact = b.Bool("exact")
-			a.CapsPresent = b.Set["caps"]
-			if b.Set["caps"] {
-				v, err := parseCapsFlag(b.Str("caps"))
-				if err != nil {
-					return nil, fmt.Errorf("submit: --caps: %w", err)
-				}
-				a.Caps = v
-			}
-			a.ScopePresent = b.Set["scope"] || b.Set["scope-for"]
-			if b.Set["scope"] {
-				v, err := parseScopeFlag(b.Str("scope"))
-				if err != nil {
-					return nil, fmt.Errorf("submit: --scope: %w", err)
-				}
-				a.Scope = v
-			}
-			a.Agent = b.Str("agent")
-			if b.Set["scope-for"] {
-				v, err := parseScopeForList(stringsOf(b.Custom["scope-for"]))
-				if err != nil {
-					return nil, fmt.Errorf("submit: --scope-for: %w", err)
-				}
-				a.Overrides = v
-			}
-			a.DelegateCapsPresent = b.Set["delegate-caps"]
-			if b.Set["delegate-caps"] {
-				v, err := parseCapsFlag(b.Str("delegate-caps"))
-				if err != nil {
-					return nil, fmt.Errorf("submit: --delegate-caps: %w", err)
-				}
-				a.DelegateCaps = v
-			}
-			a.DelegateScopePresent = b.Set["delegate-scope"]
-			if b.Set["delegate-scope"] {
-				v, err := parseScopeFlag(b.Str("delegate-scope"))
-				if err != nil {
-					return nil, fmt.Errorf("submit: --delegate-scope: %w", err)
-				}
-				a.DelegateScope = v
-			}
-			a.SpawnDepthPresent = b.Set["spawn-depth"]
-			if b.Set["spawn-depth"] {
-				v, err := parseSpawnLimitFlag(b.Str("spawn-depth"))
-				if err != nil {
-					return nil, fmt.Errorf("submit: --spawn-depth: %w", err)
-				}
-				a.SpawnDepth = v
-			}
-			a.MaxDescendantsPresent = b.Set["max-descendants"]
-			if b.Set["max-descendants"] {
-				v, err := parseSpawnLimitFlag(b.Str("max-descendants"))
-				if err != nil {
-					return nil, fmt.Errorf("submit: --max-descendants: %w", err)
-				}
-				a.MaxDescendants = v
-			}
-			a.ExtraArgs = stringsOf(b.Custom["agent-arg"])
-			a.Runner = b.Str("runner")
-			a.Host = b.Str("host")
-			a.IP = b.Str("ip")
-			a.Task = b.Str("task")
-			if a.Task == "" {
-				a.Task = b.Trail
 			}
 			return a, nil
 		},
@@ -4551,7 +4330,6 @@ const (
 	CmdBoardPurgeThread       = "board purge-thread"
 	CmdBoardSend              = "board send"
 	CmdBoardWake              = "board wake"
-	CmdSubmit                 = "submit"
 	CmdSessionNew             = "session new"
 	CmdSessionSend            = "session send"
 	CmdSessionExec            = "session exec"
@@ -4640,7 +4418,6 @@ const (
 	KindDispatch       = "dispatch"
 	KindSend           = "send"
 	KindSessionNew     = "session-new"
-	KindSubmit         = "submit"
 	SubApply           = "apply"
 	SubArchive         = "archive"
 	SubArchives        = "archives"
@@ -6000,30 +5777,6 @@ func ParseCmdBoardWake(sf Surface, args []string, ctx map[string]string) (BoardA
 		return zero, err
 	}
 	a := act.(BoardAction)
-	return a, nil
-}
-
-func ParseCmdSubmit(sf Surface, args []string, ctx map[string]string) (SpawnAction, error) {
-	var zero SpawnAction
-	sp, ok := Lookup("submit")
-	if !ok {
-		return zero, fmt.Errorf("submit: not in the verb table")
-	}
-	sp = sp.For(sf)
-	fs := sp.NewFlagSet(flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	b, err := sp.Parse(fs, args)
-	if err != nil {
-		return zero, err
-	}
-	act, err := sp.BuildFunc()(b)
-	if err != nil {
-		return zero, err
-	}
-	a := act.(SpawnAction)
-	if r := sp.Resolve(b, "repo", EnvLookup, WorkspaceLookup, ctx); r != "" {
-		a.Repo = r
-	}
 	return a, nil
 }
 
@@ -7852,8 +7605,6 @@ type CLIDispatch[R any] interface {
 	BoardSend(BoardSendAction) R
 	// board wake
 	BoardWake(BoardAction) R
-	// submit
-	Submit(SpawnAction) R
 	// session new
 	SessionNew(SpawnAction) R
 	// session send
@@ -8331,12 +8082,6 @@ func DispatchCLI[R any](h CLIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.BoardWake(a), true, nil
-	case CmdSubmit:
-		a, perr := ParseCmdSubmit(CLI, args, ctx)
-		if perr != nil {
-			return r, true, perr
-		}
-		return h.Submit(a), true, nil
 	case CmdSessionNew:
 		a, perr := ParseCmdSessionNew(CLI, args, ctx)
 		if perr != nil {
@@ -8881,8 +8626,6 @@ func DispatchCLIAction[R any](h CLIDispatch[R], act Action) (r R, handled bool) 
 		return h.BoardSend(a), true
 	case SpawnAction:
 		switch a.Kind {
-		case "submit":
-			return h.Submit(a), true
 		case "session-new":
 			return h.SessionNew(a), true
 		}
@@ -9390,12 +9133,6 @@ func ParseCLICommand(tokens []string, ctx map[string]string) (act Action, handle
 				return nil, true, perr
 			}
 			return a, true, nil
-		case CmdSubmit:
-			a, perr := ParseCmdSubmit(CLI, tokens[n:], ctx)
-			if perr != nil {
-				return nil, true, perr
-			}
-			return a, true, nil
 		case CmdSessionNew:
 			a, perr := ParseCmdSessionNew(CLI, tokens[n:], ctx)
 			if perr != nil {
@@ -9880,8 +9617,6 @@ type TUIDispatch[R any] interface {
 	WorkspaceForwardAdd(WorkspaceAction) R
 	// workspace forward rm
 	WorkspaceForwardRm(WorkspaceAction) R
-	// submit
-	Submit(SpawnAction) R
 	// session new
 	SessionNew(SpawnAction) R
 	// session stream turn
@@ -10223,12 +9958,6 @@ func DispatchTUI[R any](h TUIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.WorkspaceForwardRm(a), true, nil
-	case CmdSubmit:
-		a, perr := ParseCmdSubmit(TUI, args, ctx)
-		if perr != nil {
-			return r, true, perr
-		}
-		return h.Submit(a), true, nil
 	case CmdSessionNew:
 		a, perr := ParseCmdSessionNew(TUI, args, ctx)
 		if perr != nil {
@@ -10639,8 +10368,6 @@ func DispatchTUIAction[R any](h TUIDispatch[R], act Action) (r R, handled bool) 
 		}
 	case SpawnAction:
 		switch a.Kind {
-		case "submit":
-			return h.Submit(a), true
 		case "session-new":
 			return h.SessionNew(a), true
 		}
@@ -11005,12 +10732,6 @@ func ParseTUICommand(tokens []string, ctx map[string]string) (act Action, handle
 			return a, true, nil
 		case CmdWorkspaceForwardRm:
 			a, perr := ParseCmdWorkspaceForwardRm(TUI, tokens[n:], ctx)
-			if perr != nil {
-				return nil, true, perr
-			}
-			return a, true, nil
-		case CmdSubmit:
-			a, perr := ParseCmdSubmit(TUI, tokens[n:], ctx)
 			if perr != nil {
 				return nil, true, perr
 			}

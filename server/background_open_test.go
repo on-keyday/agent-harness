@@ -193,23 +193,6 @@ func TestResumeNamingForegroundSwitchesIt(t *testing.T) {
 	}
 }
 
-func TestSubmitResumeOfBackgroundIsModeMismatch(t *testing.T) {
-	h := newTestHandler(t)
-	id := endedBG(t, h, protocol.TaskKind_Interactive)
-	sub := protocol.SubmitRequest{}
-	raw, _ := hex.DecodeString(id)
-	copy(sub.ResumeTaskId.Id[:], raw)
-	sub.SetPrompt([]byte("x"))
-	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_Submit, RequestId: 3}}
-	req.SetSubmit(sub)
-	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9150-1")}
-	h.Handle(conn, encodeTaskControlRequest(t, req))
-	resp := lastTaskControlResponse(t, conn)
-	if s := resp.Submit(); s == nil || s.Status != protocol.SubmitStatus_ModeMismatch {
-		t.Fatalf("submit resume of a background task = %+v", s)
-	}
-}
-
 func TestForegroundOpenPassesPromptToRunner(t *testing.T) {
 	h := newTestHandler(t)
 	st := newFakeStream(t)

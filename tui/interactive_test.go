@@ -59,13 +59,6 @@ func TestAmbiguousResultOpensPickerOnlyWithRetry(t *testing.T) {
 	if !a.runnerPicker.IsOpen() {
 		t.Fatal("retry present: picker must open")
 	}
-	a.runnerPicker.Close()
-
-	m, _ = a.Update(SubmitResultMsg{Err: are, Retry: r.retry})
-	a = m.(*App)
-	if !a.runnerPicker.IsOpen() {
-		t.Fatal("submit result with a retry must open the picker")
-	}
 }
 
 // A pick re-issues over the client the TUI holds WHEN THE PICK HAPPENS. A

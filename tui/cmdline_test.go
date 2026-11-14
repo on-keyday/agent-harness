@@ -10,94 +10,15 @@ import (
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
-func TestParseSubmitWithRepo(t *testing.T) {
-	got, err := ParseCommand(`submit --repo /foo "long prompt with spaces"`, "/cwd")
-	if err != nil {
-		t.Fatal(err)
-	}
-	a, ok := got.(verb.SpawnAction)
-	if !ok {
-		t.Fatalf("got %T, want verb.SpawnAction", got)
-	}
-	if a.Repo != "/foo" {
-		t.Errorf("Repo=%q", a.Repo)
-	}
-	if a.Task != "long prompt with spaces" {
-		t.Errorf("Prompt=%q", a.Task)
-	}
-}
-
-func TestParseSubmitDefaultRepo(t *testing.T) {
-	got, err := ParseCommand(`submit hello`, "/cwd")
-	if err != nil {
-		t.Fatal(err)
-	}
-	a := got.(verb.SpawnAction)
-	if a.Repo != "/cwd" {
-		t.Errorf("Repo=%q, want /cwd", a.Repo)
-	}
-	if a.Task != "hello" {
-		t.Errorf("Prompt=%q", a.Task)
-	}
-}
-
-func TestParseSubmitMissingPrompt(t *testing.T) {
-	_, err := ParseCommand(`submit`, "/cwd")
+func TestParseOneshotMissingPrompt(t *testing.T) {
+	_, err := ParseCommand(`session new --oneshot`, "/cwd")
 	if err == nil {
 		t.Fatal("expected error on missing prompt")
 	}
 }
 
-func TestParseSubmitWithAgentArgs(t *testing.T) {
-	got, err := ParseCommand(`submit --agent-arg --resume --agent-arg deadbeef "do work"`, "/cwd")
-	if err != nil {
-		t.Fatal(err)
-	}
-	a := got.(verb.SpawnAction)
-	if a.Task != "do work" {
-		t.Errorf("Prompt=%q", a.Task)
-	}
-	want := []string{"--resume", "deadbeef"}
-	if len(a.ExtraArgs) != len(want) {
-		t.Fatalf("ExtraArgs=%v want %v", a.ExtraArgs, want)
-	}
-	for i := range want {
-		if a.ExtraArgs[i] != want[i] {
-			t.Errorf("ExtraArgs[%d]=%q want %q", i, a.ExtraArgs[i], want[i])
-		}
-	}
-}
-
-func TestParseSubmitResumeConversation(t *testing.T) {
-	got, err := ParseCommand(`submit --resume abc123 --resume-conversation "do work"`, "/cwd")
-	if err != nil {
-		t.Fatal(err)
-	}
-	a := got.(verb.SpawnAction)
-	if a.ResumeTaskID != "abc123" {
-		t.Errorf("ResumeTaskID=%q want abc123", a.ResumeTaskID)
-	}
-	if !a.ResumeConversation {
-		t.Fatal("ResumeConversation=false want true")
-	}
-	if a.Task != "do work" {
-		t.Errorf("Prompt=%q want do work", a.Task)
-	}
-}
-
-func TestParseSubmitWithAgent(t *testing.T) {
-	got, err := ParseCommand(`submit --agent codex "do work"`, "/cwd")
-	if err != nil {
-		t.Fatal(err)
-	}
-	a := got.(verb.SpawnAction)
-	if a.Agent != "codex" {
-		t.Errorf("AgentProfile=%q want codex", a.Agent)
-	}
-}
-
-func TestParseSubmitDefaultAgentEmpty(t *testing.T) {
-	got, err := ParseCommand(`submit hello`, "/cwd")
+func TestParseSessionNewDefaultAgentEmpty(t *testing.T) {
+	got, err := ParseCommand(`session new`, "/cwd")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,8 +68,8 @@ func TestParseCancelMissingID(t *testing.T) {
 
 // The default is still 7 days -- what changed is that the sweep has to be
 // ASKED for. A bare `prune` forgot every terminal task older than it, and the
-// server deletes each TaskEntry and its log, after which `submit --resume
-// <id>` answers resume_not_found.
+// server deletes each TaskEntry and its log, after which `session new
+// --resume <id>` answers resume_not_found.
 func TestParsePruneRefusesTheBareSweep(t *testing.T) {
 	if _, err := ParseCommand(`prune`, "/cwd"); err == nil {
 		t.Fatal("a bare `prune` parsed; the widest form must be typed out")
@@ -665,28 +586,28 @@ func TestParseCapsOnResumeRemoved(t *testing.T) {
 	}
 }
 
-// TestParseSpawnCapsFlag covers the per-invocation --caps on the three spawn
-// commands: absent leaves Caps nil (fall back to the session default), and an
+// TestParseSpawnCapsFlag covers the per-invocation --caps on the spawn
+// command: absent leaves Caps nil (fall back to the session default), and an
 // explicit "none" must survive as a real value rather than read as absence.
 func TestParseSpawnCapsFlag(t *testing.T) {
-	act, err := ParseCommand("submit hello", "r")
+	act, err := ParseCommand("session new", "r")
 	if err != nil {
-		t.Fatalf("submit: %v", err)
+		t.Fatalf("session new: %v", err)
 	}
 	if c := act.(verb.SpawnAction).Caps; c != nil {
-		t.Errorf("submit without --caps: Caps = %v, want nil", *c)
+		t.Errorf("session new without --caps: Caps = %v, want nil", *c)
 	}
 
-	act, err = ParseCommand("submit --caps all,-spawn hello", "r")
+	act, err = ParseCommand("session new --caps all,-spawn", "r")
 	if err != nil {
-		t.Fatalf("submit --caps: %v", err)
+		t.Fatalf("session new --caps: %v", err)
 	}
 	c := act.(verb.SpawnAction).Caps
 	if c == nil {
-		t.Fatal("submit --caps: Caps is nil")
+		t.Fatal("session new --caps: Caps is nil")
 	}
 	if *c&protocol.Capability_Spawn != 0 {
-		t.Errorf("submit --caps all,-spawn still grants spawn: %#x", *c)
+		t.Errorf("session new --caps all,-spawn still grants spawn: %#x", *c)
 	}
 
 	act, err = ParseCommand("session new --caps none", "r")
@@ -702,7 +623,7 @@ func TestParseSpawnCapsFlag(t *testing.T) {
 	}
 
 	// A bad mask must fail the whole command, not spawn with a default.
-	if _, err := ParseCommand("submit --caps bogus hello", "r"); err == nil {
+	if _, err := ParseCommand("session new --caps bogus", "r"); err == nil {
 		t.Error("expected an error for an unknown capability name")
 	}
 }
@@ -710,21 +631,21 @@ func TestParseSpawnCapsFlag(t *testing.T) {
 // TestParseSpawnScopeFlag: --scope on the cmdline spawn commands, the
 // target-set half of --caps, with the same unset-vs-zero distinction.
 func TestParseSpawnScopeFlag(t *testing.T) {
-	act, err := ParseCommand("submit hello", "r")
+	act, err := ParseCommand("session new", "r")
 	if err != nil {
-		t.Fatalf("submit: %v", err)
+		t.Fatalf("session new: %v", err)
 	}
 	if s := act.(verb.SpawnAction).Scope; s != nil {
-		t.Errorf("submit without --scope: Scope = %v, want nil", *s)
+		t.Errorf("session new without --scope: Scope = %v, want nil", *s)
 	}
 
-	act, err = ParseCommand("submit --scope none hello", "r")
+	act, err = ParseCommand("session new --scope none", "r")
 	if err != nil {
-		t.Fatalf("submit --scope none: %v", err)
+		t.Fatalf("session new --scope none: %v", err)
 	}
 	s := act.(verb.SpawnAction).Scope
 	if s == nil || s.Base != protocol.ScopeBase_None {
-		t.Fatalf("submit --scope none = %v, want base none", s)
+		t.Fatalf("session new --scope none = %v, want base none", s)
 	}
 
 	act, err = ParseCommand("session new --scope subtree", "r")
@@ -736,7 +657,7 @@ func TestParseSpawnScopeFlag(t *testing.T) {
 		t.Fatal("session new --scope subtree: explicit subtree must be distinguishable from unset")
 	}
 
-	if _, err := ParseCommand("submit --scope bogus hello", "r"); err == nil {
+	if _, err := ParseCommand("session new --scope bogus", "r"); err == nil {
 		t.Error("expected an error for an unknown scope form")
 	}
 }
@@ -745,7 +666,7 @@ func TestParseSpawnScopeFlag(t *testing.T) {
 // through its own presence bit (scope_present), with or without --caps.
 func TestParseScopeOnResumeStandsAlone(t *testing.T) {
 	id := "0123456789abcdef0123456789abcdef"
-	act, err := ParseCommand("submit --resume "+id+" --scope none hello", "r")
+	act, err := ParseCommand("session new --resume "+id+" --scope none", "r")
 	if err != nil {
 		t.Fatalf("lone --scope on resume must parse: %v", err)
 	}

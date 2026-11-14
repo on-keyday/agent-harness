@@ -6,7 +6,6 @@ import (
 	"github.com/on-keyday/objtrsf/objproto"
 
 	"github.com/on-keyday/agent-harness/appwire"
-	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 func TestDispatchRoutesByKind(t *testing.T) {
@@ -116,31 +115,6 @@ func TestDispatchUnknownKind(t *testing.T) {
 		[]byte{0x44, 0x01, 0x02})
 	if runnerControlCalled || taskControlCalled {
 		t.Error("the retired agent_message kind reached a handler")
-	}
-}
-
-// TestBuildAssignMsg_CarriesAgentProfile verifies that a task's resolved
-// AgentProfile is threaded through buildAssignMsg into the streamed
-// AssignTaskBody, so the runner can decode it on the other end.
-func TestBuildAssignMsg_CarriesAgentProfile(t *testing.T) {
-	task := TaskEntry{
-		ID:           "00112233445566778899aabbccddeef",
-		RepoPath:     "/repo",
-		Prompt:       "do work",
-		AgentProfile: "codex",
-	}
-
-	_, bodyBytes, err := buildAssignMsg(task, [16]byte{1, 2, 3}, 7)
-	if err != nil {
-		t.Fatalf("buildAssignMsg: %v", err)
-	}
-
-	body := &protocol.AssignTaskBody{}
-	if err := body.DecodeExact(bodyBytes); err != nil {
-		t.Fatalf("decode AssignTaskBody: %v", err)
-	}
-	if string(body.AgentProfile) != "codex" {
-		t.Errorf("expected agent_profile %q, got %q", "codex", body.AgentProfile)
 	}
 }
 

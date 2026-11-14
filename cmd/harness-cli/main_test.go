@@ -46,14 +46,14 @@ func TestCLI_ServerCIDEnvFallback(t *testing.T) {
 	}
 }
 
-// TestCLI_RepoFlagBeatsEnv: submit must use --repo over HARNESS_REPO_PATH.
+// TestCLI_RepoFlagBeatsEnv: session new must use --repo over HARNESS_REPO_PATH.
 // We can't observe the resolved repo path on the wire (server is down), but
 // we can confirm the flag was accepted (no "required" error) and the
 // program proceeded to dial.
 func TestCLI_RepoFlagBeatsEnv(t *testing.T) {
 	cmd := exec.Command("go", "run", ".",
 		"--server-cid=ws:127.0.0.1:19994-1",
-		"submit", "--repo=/tmp/from-flag", "--task=x")
+		"session", "new", "-d", "--oneshot", "--repo=/tmp/from-flag", "--prompt=x")
 	cmd.Env = append(os.Environ(), "HARNESS_REPO_PATH=/tmp/from-env")
 	out, _ := cmd.CombinedOutput()
 	s := string(out)
@@ -69,7 +69,7 @@ func TestCLI_RepoFlagBeatsEnv(t *testing.T) {
 func TestCLI_RepoEnvFallback(t *testing.T) {
 	cmd := exec.Command("go", "run", ".",
 		"--server-cid=ws:127.0.0.1:19995-1",
-		"submit", "--task=x")
+		"session", "new", "-d", "--oneshot", "--prompt=x")
 	cmd.Env = append(os.Environ(), "HARNESS_REPO_PATH=/tmp/from-env")
 	out, _ := cmd.CombinedOutput()
 	s := string(out)
@@ -77,25 +77,6 @@ func TestCLI_RepoEnvFallback(t *testing.T) {
 		t.Errorf("env fallback not applied: %s", s)
 	}
 	if !strings.Contains(s, "127.0.0.1:19995") {
-		t.Errorf("did not reach dial step: %s", s)
-	}
-}
-
-// TestCLI_SubmitAgentFlagParses: --agent must be a recognized flag on submit
-// (not "flag provided but not defined") and parsing must proceed all the way
-// to the dial step, which is the only observable signal in this black-box,
-// no-server harness — the funnel forwarding itself (agentProfile arg to
-// SubmitWithSelectorArgsAndCaps) is exercised by this same code path.
-func TestCLI_SubmitAgentFlagParses(t *testing.T) {
-	cmd := exec.Command("go", "run", ".",
-		"--server-cid=ws:127.0.0.1:19996-1",
-		"submit", "--repo=/tmp/from-flag", "--task=x", "--agent=codex")
-	out, _ := cmd.CombinedOutput()
-	s := string(out)
-	if strings.Contains(s, "flag provided but not defined") {
-		t.Errorf("--agent not recognized on submit: %s", s)
-	}
-	if !strings.Contains(s, "127.0.0.1:19996") {
 		t.Errorf("did not reach dial step: %s", s)
 	}
 }

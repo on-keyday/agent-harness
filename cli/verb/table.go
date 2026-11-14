@@ -1701,65 +1701,21 @@ var Verbs = []VerbSpec{
 		Args:            []Arg{{Name: "topic", Type: ArgTopic, Field: "Topic"}},
 		Examples:        []string{"board wake chat.abcd1234"},
 	},
-	// --- spawning: submit / session new ---
+	// --- spawning: session new ---
 	//
-	// One shape, three verbs. The inventory found the TUI's submit had no
-	// --runner/--host/--ip at all and its session new no --repo/--rows/--cols,
-	// and that the TUI's copies accepted only --claude-arg, the spelling the
-	// CLI had already renamed to --agent-arg (the old spelling is gone now).
-	// Declaring the family once gives every surface the same set.
-	{
-		Path:          []string{"submit"},
-		WebUIDispatch: WebUIDispatch{Fn: "submit"},
-		SurfaceNotes:  map[Surface][]string{WebUI: {"submit task (use repo dropdown / Resume task id; --agent overrides the Agent dropdown)"}, TUI: {"submit/resume a task"}},
-		ModalSurfaces: []ModalSurface{
-			// The s popup; DoSubmitWithOpts is what it runs, not where it is.
-			{Surface: TUI, At: "tui/popup.go:PopupModel"},
-			{Surface: WebUI, At: "webui/index.html#compose"},
-		},
-		Notes: []string{
-			"enqueue a new task (--repo: HARNESS_REPO_PATH)",
-			"--resume reuses an existing terminal task id + worktree branch (so `--agent-arg --resume <uuid>` forwards the agent's stored-session flag)",
-		},
-		CmdlineSurfaces: CLI | TUI | WebUI,
-		// The prompt is a positional on the TUI and the WebUI and --task on the
-		// CLI. Both work everywhere now: the flag wins when given, the trailing
-		// words are the prompt otherwise.
-		Action: "SpawnAction",
-		Const:  map[string]string{"Kind": "submit"},
-		Trailing: &Trailing{
-			Name: "prompt", Field: "Task", IfFieldEmpty: true,
-			Reason: "the prompt is free-form text, so a word beginning with '-' cannot be told from a flag",
-		},
-		Flags:     spawnFlags(spawnSubmit),
-		Exclusive: spawnExclusive(spawnSubmit),
-		Requires:  spawnRequires(spawnSubmit),
-		// A rule spanning a flag and the trailing text, which no attribute
-		// reaches: Trailing.Required would refuse the --task form.
-		Validate: func(b Bound) error {
-			if err := spawnValidate(b); err != nil {
-				return fmt.Errorf("submit: %w", err)
-			}
-			if b.Bool("exact") {
-				// The record's prompt is the one that runs; --task is refused
-				// by a Rule, the trailing words here.
-				if b.Trail != "" {
-					return fmt.Errorf("submit: --exact runs the task's recorded prompt; drop the prompt words or drop --exact")
-				}
-				return nil
-			}
-			if b.Str("task") == "" && b.Trail == "" {
-				return fmt.Errorf("submit: a prompt is required, as --task or as the trailing words")
-			}
-			return nil
-		},
-		Examples: []string{`submit --repo /r --task "do the thing"`, `submit --repo /r do the thing`},
-	},
+	// The spawn flags are declared once (spawnFlags) so every surface gets the
+	// same set. `submit` was the second spawn verb until A3 retired the
+	// oneshot kind; `session new --oneshot` replaces it.
 	{
 		Path:         []string{"session", "new"},
 		SurfaceNotes: map[Surface][]string{TUI: {"open/resume detachable interactive; --detach backgrounds it and prints the id"}},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/actions.go:onSession"},
+			// s: a detached --oneshot (A3), where it used to submit.
+			{Surface: TUI, At: "tui/popup.go:PopupModel"},
+			// Compose builds a session-new request, its one-shot checkbox
+			// included (A3).
+			{Surface: WebUI, At: "webui/index.html#compose"},
 			// N, and a resume key on a background task (A-D15).
 			{Surface: TUI, At: "tui/bgform.go:BgFormModel"},
 			{Surface: WebUI, At: "webui/index.html#open-detachable"},

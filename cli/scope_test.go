@@ -112,14 +112,6 @@ func TestBothSpawnBuildersCarryScope(t *testing.T) {
 	}
 	opts := SessionOpts{Scope: sc, Overrides: []protocol.ScopeOverride{ov}}
 
-	sub := buildSubmitRequest("/r", "p", opts)
-	if sub.Scope.Base != sc.Base || sub.Scope.IdsLen != 1 {
-		t.Errorf("submit request scope = %+v, want %+v", sub.Scope, sc)
-	}
-	if sub.OverridesLen != 1 || len(sub.Overrides) != 1 {
-		t.Errorf("submit request overrides = %d/%d, want one", sub.OverridesLen, len(sub.Overrides))
-	}
-
 	oi := buildOpenInteractiveRequest("/r", opts)
 	if oi.Scope.Base != sc.Base || oi.Scope.IdsLen != 1 {
 		t.Errorf("open-interactive request scope = %+v, want %+v", oi.Scope, sc)

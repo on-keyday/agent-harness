@@ -157,7 +157,7 @@ func waitForRegisteredRunner(t *testing.T, c *cli.Client, repo string, deadline 
 }
 
 // TestUDPRunner_RegistersAndCompletesTask brings up a UDP-only server,
-// dials a UDP runner against it, then submits a task via a UDP-dialed
+// dials a UDP runner against it, then opens a oneshot session via a UDP-dialed
 // CLI client. End-to-end smoke that exercises the entire transport
 // substitution chain (server.Run UDP path, runner.Connect udp branch,
 // cli.Dial udp branch).
@@ -178,7 +178,7 @@ func TestUDPRunner_RegistersAndCompletesTask(t *testing.T) {
 		t.Fatalf("runner did not register over UDP within 5s")
 	}
 
-	taskID := mustSubmit(t, c, repo, "echo hello-udp")
+	taskID := mustOpenOneshot(t, c, repo, "echo hello-udp")
 	waitTaskTerminal(t, c, taskID, 10*time.Second)
 
 	ti := getTask(t, c, taskID)
@@ -213,8 +213,8 @@ func TestDualStackServer_AcceptsBothLegs(t *testing.T) {
 		t.Fatalf("UDP runner did not register within 5s")
 	}
 
-	idWS := mustSubmit(t, cWS, repoWS, "echo ws-side")
-	idUDP := mustSubmit(t, cWS, repoUDP, "echo udp-side")
+	idWS := mustOpenOneshot(t, cWS, repoWS, "echo ws-side")
+	idUDP := mustOpenOneshot(t, cWS, repoUDP, "echo udp-side")
 
 	waitTaskTerminal(t, cWS, idWS, 10*time.Second)
 	waitTaskTerminal(t, cWS, idUDP, 10*time.Second)

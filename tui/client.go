@@ -2,7 +2,6 @@ package tui
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -21,15 +20,6 @@ import (
 // loop expects (echo strings, prefix/resolved IDs for cancel, structured
 // snapshots for List). The methods themselves are defined in package cli;
 // we only own the result-message wrapping here.
-
-type SubmitResultMsg struct {
-	TaskID string
-	Err    error
-	Echo   string // human-readable echo of the request, e.g. "submit --repo /r \"prompt\""
-	// Retry re-issues this submit pinned to a picked runner and agent. Set
-	// only on an ambiguous_runner answer.
-	Retry pickerRetry
-}
 
 type CancelResultMsg struct {
 	IDPrefix string
@@ -81,7 +71,6 @@ type LogHistoryMsg struct {
 	Gen int
 }
 
-// DoSubmit issues a Submit RPC over the existing persistent client.
 // Authority is what a spawn grants the new task: the capability mask AND the
 // scope bounding which tasks those capabilities may target. The two always
 // travel together, so they are one value rather than two adjacent positional
@@ -193,75 +182,6 @@ func (a Authority) opts(r sessionRequest) cli.SessionOpts {
 	}
 	r.RunMode.Apply(&o)
 	return o
-}
-
-func DoSubmit(c *cli.Client, repo, prompt string, auth Authority) tea.Cmd {
-	return DoSubmitWithOpts(c, repo, prompt, cli.SelectorOpts{}, nil, "", auth, false, false, false, "")
-}
-
-// DoSubmitWithOpts issues a Submit RPC with an optional runner selector,
-// optional per-task extra agent args, and optional resume target id. When
-// host is non-empty a ByHostname selector is built; otherwise Any is used.
-// extraArgs are forwarded verbatim to the runner and appended to its
-// --agent-args baseline at exec time. resumeTaskID, when non-empty, asks
-// the server to reuse that terminal task's id and worktree branch.
-// auth carries RequestedCaps and the target scope; pass
-// Authority{Caps: protocol.Capability_All} for the inherit-all behaviour.
-// resumeCapsOverride, when true, signals the server to re-grant caps from
-// the resumer's caps rather than keeping the persisted caps of the resumed task.
-// Ignored (no-op) when resumeTaskID is empty (fresh submit).
-// agentProfile selects a named agent profile (e.g. "codex"). "" with an
-// unpinned selector lets the server answer ambiguous_runner when more than
-// one (runner, agent) choice matches; the result then carries a Retry the
-// runner picker re-issues through. On resume, "" means the task's recorded
-// profile (resolved server-side).
-func DoSubmitWithOpts(c *cli.Client, repo, prompt string, selOpts cli.SelectorOpts, extraArgs []string, resumeTaskID string, auth Authority, resumeCapsOverride bool, resumeConversation bool, exact bool, agentProfile string) tea.Cmd {
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		echo := buildSubmitEcho(repo, prompt, selOpts.Host, extraArgs, resumeTaskID, agentProfile)
-		sel, err := cli.BuildSelector(selOpts)
-		if err != nil {
-			return SubmitResultMsg{Err: fmt.Errorf("selector: %w", err), Echo: echo}
-		}
-		id, err := c.Submit(ctx, repo, prompt, auth.opts(sessionRequest{
-			Selector: sel, ExtraArgs: extraArgs, ResumeTaskID: resumeTaskID,
-			ResumeCapsOverride: resumeCapsOverride,
-			ResumeConversation: resumeConversation, AgentProfile: agentProfile,
-			ResumeExact: exact,
-		}))
-		if err != nil {
-			msg := SubmitResultMsg{Err: err, Echo: echo}
-			var are *cli.AmbiguousRunnerError
-			if errors.As(err, &are) {
-				msg.Retry = func(c *cli.Client, sel cli.SelectorOpts, agent string) tea.Cmd {
-					return DoSubmitWithOpts(c, repo, prompt, sel, extraArgs, resumeTaskID, auth, resumeCapsOverride, resumeConversation, exact, agent)
-				}
-			}
-			return msg
-		}
-		return SubmitResultMsg{TaskID: id, Echo: echo}
-	}
-}
-
-// buildSubmitEcho formats the human-readable echo string for the cmdline
-// result panel. Annotations are added only when the corresponding option is
-// set so the common case (just repo + prompt) stays readable.
-func buildSubmitEcho(repo, prompt, host string, extraArgs []string, resumeTaskID, agentProfile string) string {
-	annot := ""
-	if host != "" {
-		annot += fmt.Sprintf(" --host %q", host)
-	}
-	if agentProfile != "" {
-		annot += fmt.Sprintf(" --agent %q", agentProfile)
-	}
-	if len(extraArgs) > 0 {
-		annot += fmt.Sprintf(" (+%d agent-args)", len(extraArgs))
-	}
-	if resumeTaskID != "" {
-		annot += fmt.Sprintf(" --resume %s", shortTaskID(resumeTaskID))
-	}
-	return fmt.Sprintf("submit --repo %q%s %q", repo, annot, prompt)
 }
 
 // shortTaskID truncates a 32-char hex task id to its first 12 for display.

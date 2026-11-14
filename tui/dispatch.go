@@ -524,11 +524,6 @@ func (h tuiVerbs) spawnPrologue(v verb.SpawnAction) (repo string, auth Authority
 	return repo, a.spawnAuthority(v, caps), capsOverride
 }
 
-func (h tuiVerbs) Submit(v verb.SpawnAction) tea.Cmd {
-	repo, auth, capsOverride := h.spawnPrologue(v)
-	return DoSubmitWithOpts(h.a.client, repo, v.Task, cli.SelectorOpts{Host: v.Host, Runner: v.Runner, IP: v.IP}, v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Exact, v.Agent)
-}
-
 func (h tuiVerbs) SessionNew(v verb.SpawnAction) tea.Cmd {
 	a := h.a
 	repo, auth, capsOverride := h.spawnPrologue(v)
@@ -909,7 +904,7 @@ outer:
 		}
 	}
 	if !hasRunner {
-		a.cmdresult.Append(WarnStyle.Render(fmt.Sprintf("repo: no runner currently registered for %s — submit/interactive will fail with NoRunnerForRepo until one connects", path)))
+		a.cmdresult.Append(WarnStyle.Render(fmt.Sprintf("repo: no runner currently registered for %s — session opens will fail with NoRunnerForRepo until one connects", path)))
 	}
 	a.defaultRepo = path
 	a.cmdresult.Append(fmt.Sprintf("default repo set to %s", path))

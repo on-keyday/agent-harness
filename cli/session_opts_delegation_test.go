@@ -17,11 +17,6 @@ func TestSessionOptsCarryBound(t *testing.T) {
 		DelegateCaps: protocol.Capability_FileRead, DelegateScope: scope,
 		DelegateCapsPresent: true, DelegateScopePresent: true,
 	}
-	sub := buildSubmitRequest("/r", "p", opts)
-	if sub.DelegateCaps != protocol.Capability_FileRead || sub.DelegateScope.Base != protocol.ScopeBase_None ||
-		!sub.DelegateScope.ExcludeSelf() || !sub.DelegateCapsPresent() || !sub.DelegateScopePresent() {
-		t.Errorf("buildSubmitRequest lost the bound: %+v", sub)
-	}
 	oi := buildOpenInteractiveRequest("/r", opts)
 	if oi.DelegateCaps != protocol.Capability_FileRead || oi.DelegateScope.Base != protocol.ScopeBase_None ||
 		!oi.DelegateScope.ExcludeSelf() || !oi.DelegateCapsPresent() || !oi.DelegateScopePresent() {

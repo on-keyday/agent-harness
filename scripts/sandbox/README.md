@@ -386,7 +386,7 @@ The wrapper (`agent-in-podman.sh`) bind-mounts, at identical host paths:
   short-TTL — the win is "dedicated + revocable", not "harmless if leaked".
 - **harness control plane bridged in (default):** the host `harness-cli` binary
   is mounted onto PATH and the runner's `HARNESS_*` env is forwarded, so the
-  confined agent can still `submit` / agentboard / file-transfer. This re-grants
+  confined agent can still `session new` / agentboard / file-transfer. This re-grants
   the harness control plane (a deliberate agent could spawn an unsandboxed task
   and escape) — fine for trusted dogfood, where the goal is preventing *accidental*
   host damage, not adversarial containment.
@@ -399,13 +399,13 @@ The wrapper (`agent-in-podman.sh`) bind-mounts, at identical host paths:
   **Capability middle ground (without removing the control plane):** the
   sandbox-escape risk above is closed by DEFAULT — an omitted `--caps` grants
   nothing, so a sandboxed task has no control plane to escape through unless
-  the spawn asked for one. `submit --caps` / `session new --caps` widen it
+  the spawn asked for one. `session new --caps` widens it
   within what the spawner holds (the server enforces `caps_child = caps_parent
   ∩ requested` at spawn time — the sandboxed task's own caps cannot exceed what
   its parent granted). Examples, of which the first is now what you get for
   free:
 
-  - `submit --caps none` (the default) — data-plane only: the agent can still use
+  - `session new --caps none` (the default) — data-plane only: the agent can still use
     `agent send` / `inbox` to talk to its parent, but the server denies
     `spawn`, `file_read`, `file_write`, `forward_local`, `forward_remote`,
     the three `exec_*` attach caps, `notify`, and all other control-plane
@@ -415,7 +415,7 @@ The wrapper (`agent-in-podman.sh`) bind-mounts, at identical host paths:
     Its own task subtree stays visible in `ls` — that needs no cap; reading a
     task's log does (`exec_view`) — as does a redacted row for its direct parent: status and busy/idle only,
     with the repo, worktree, prompt and assigned runner stripped.
-  - `submit --scope global/subtree` — widens what it SEES to every task and
+  - `session new --scope global/subtree` — widens what it SEES to every task and
     every runner without granting anything to act with. The agentboard topic
     list is a separate bit, `board_observe`.
 
@@ -526,7 +526,7 @@ auto memory, prompt history, `/rewind` checkpoints, user `CLAUDE.md`, skills,
 plugins, MCP config — starts empty every run and is discarded.
 
 - **Enabling it:** per task, `--agent-arg --history-window` (the CLI, the TUI
-  submit popup's args field, the WebUI). A slot's `--agent-args` does not work:
+  session popup's args field, the WebUI). A slot's `--agent-args` does not work:
   it reaches the default profile only. **A plain resume does not carry it**:
   only `--exact` reuses a task's recorded args, so resuming without the flag
   runs that turn shared. Nothing fails; the runner log's `history=shared` is the
@@ -665,12 +665,15 @@ that must be refused), whether the harness-server carve-out is still one port
 (`server_other_port` must not read `open` — that is how the host-wide carve-out
 above was found, and curl can't see it because it is L4 on a non-HTTP port), and
 what caps the server grants the bridged control plane.
-Run it as a task on the sandbox slot; `--topic` also publishes the report to the
-agentboard so a supervising agent needn't read logs:
+Run it as a one-shot session on the sandbox slot. Through the `sandbox-bash`
+profile the prompt is the command itself; through an agent profile it is an
+instruction to run it. The report is printed to the session's terminal, which
+ends with the run, so `--topic` also publishes it to the agentboard where a
+supervising agent can read it afterwards:
 
 ```sh
-harness-cli submit --repo <sandbox-root> \
-  --task 'bash scripts/sandbox/probe.sh --topic chat.<your-task-id>'
+harness-cli session new -d --oneshot --agent sandbox-bash --repo <sandbox-root> \
+  --prompt 'bash scripts/sandbox/probe.sh --topic chat.<your-task-id>'
 ```
 
 ## Scope / roadmap

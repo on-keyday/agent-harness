@@ -37,7 +37,7 @@ func walStore(t *testing.T) (*TaskStore, func() []WALEvent, string) {
 // intact.
 //
 // The reason it exists at all: a prune deletes the TaskEntry, and
-// handleSubmitResume's first precondition is that the entry still exists -- so
+// the resume path's first precondition is that the entry still exists -- so
 // before this, a pruned id could not be resumed, and the sweep that removed it
 // was reachable by typing the bare verb.
 func TestRestoreBringsBackAPrunedTask(t *testing.T) {

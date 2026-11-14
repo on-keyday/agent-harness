@@ -34,7 +34,7 @@ type sessionStart struct {
 
 // startSession issues the ticket, opens the runner stream (and the client
 // stream for an attached open), sends OpenExec — with the prompt on its own
-// send stream first, as sendAssign sends AssignTask's body — and builds the
+// send stream first — and builds the
 // session's mux. On any failure the task is finished with the reason, unbound
 // and revoked, and a non-ok status is returned; the caller answers with it.
 func (h *TaskHandler) startSession(ss sessionStart) (trsf.BidirectionalStream, protocol.OpenInteractiveStatus, string) {
@@ -128,7 +128,7 @@ func (h *TaskHandler) startSession(ss sessionStart) (trsf.BidirectionalStream, p
 	if ss.Prompt != "" {
 		// The prompt has no bound that fits one datagram (A-D17): it rides its
 		// own send stream, written and EOF'd before the request that names it,
-		// in sendAssign's order. At most protocol.PromptMax bytes into a fresh
+		// as AssignTask's body was before A3. At most protocol.PromptMax bytes into a fresh
 		// stream's buffer, so this does not block the caller (Tick).
 		ps := runnerConn.CreateSendStream()
 		if ps == nil {

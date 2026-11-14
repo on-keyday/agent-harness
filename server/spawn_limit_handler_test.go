@@ -30,19 +30,24 @@ func limitFixture(t *testing.T, depth, max protocol.SpawnLimit, n int) (h *TaskH
 	return h, p, bindPrincipal(t, h, p), runner, kids
 }
 
-const ownFullText = "your own descendant limit is reached (1/1); resume an existing task, or ask the operator to prune or raise the limit"
-
-func TestSubmitRefusedBySpawnLimit(t *testing.T) {
-	h, _, cid, _, _ := limitFixture(t, authority.Unbounded(), authority.LimitOf(1), 1)
-	before := len(h.Tasks.List(0))
-	resp, _ := h.handleSubmit(cid, submitReq(delegReq{}), protocol.ClientKind_Agent, h.lookupPrincipal(cid), delegHeld)
-	if resp.Status != protocol.SubmitStatus_SpawnLimit || string(resp.ErrorMsg) != ownFullText {
-		t.Fatalf("status %v msg %q, want spawn_limit %q", resp.Status, resp.ErrorMsg, ownFullText)
+// rearmRunner gives openRunner's runner a fresh stream for the next open that
+// starts a session; openRunner arms one.
+func rearmRunner(t *testing.T, h *TaskHandler) {
+	t.Helper()
+	e, ok := h.Registry.Get(tcid("R"))
+	if !ok {
+		t.Fatal("runner R is not registered")
 	}
-	if len(h.Tasks.List(0)) != before {
-		t.Error("a refused submit added a row")
-	}
+	e.Conn.(*fakeConn).nextBidi = newFakeStream(t)
 }
+
+// agentOpen is a detached open by the agent on cid.
+func agentOpen(h *TaskHandler, cid string, req *protocol.OpenInteractiveRequest) protocol.OpenInteractiveResponse {
+	resp, _ := h.handleOpenInteractive(cid, nil, req, protocol.ClientKind_Agent, h.lookupPrincipal(cid), delegHeld, "")
+	return resp
+}
+
+const ownFullText = "your own descendant limit is reached (1/1); resume an existing task, or ask the operator to prune or raise the limit"
 
 // Review Focus 4: a refused open leaves no task row and sends the runner
 // nothing.
@@ -66,18 +71,19 @@ func TestOpenInteractiveRefusedLeavesNoTask(t *testing.T) {
 
 func TestSpawnWritesChildLimits(t *testing.T) {
 	h, _, cid, _, _ := limitFixture(t, authority.LimitOf(3), authority.Unbounded(), 0)
-	req := submitReq(delegReq{})
+	req := openReq(delegReq{})
 	req.SpawnDepth, req.MaxDescendants = authority.LimitOf(5), authority.LimitOf(4)
-	resp, _ := h.handleSubmit(cid, req, protocol.ClientKind_Agent, h.lookupPrincipal(cid), delegHeld)
-	if resp.Status != protocol.SubmitStatus_Ok {
-		t.Fatalf("submit: %v %s", resp.Status, resp.ErrorMsg)
+	resp := agentOpen(h, cid, req)
+	if resp.Status != protocol.OpenInteractiveStatus_Ok {
+		t.Fatalf("open with limits: %v %s", resp.Status, resp.ErrorMsg)
 	}
 	e := entryOf(t, h, resp.TaskId)
 	if !sameSpawnLimit(e.SpawnDepth, authority.LimitOf(2)) || !sameSpawnLimit(e.MaxDescendants, authority.LimitOf(4)) {
 		t.Errorf("requested 5/4 under depth 3: got %s/%s, want 2/4",
 			authority.LimitLabel(e.SpawnDepth), authority.LimitLabel(e.MaxDescendants))
 	}
-	oresp, _ := h.handleOpenInteractive(cid, nil, detachedOpen(0, 0), protocol.ClientKind_Agent, h.lookupPrincipal(cid), delegHeld, "")
+	rearmRunner(t, h)
+	oresp := agentOpen(h, cid, detachedOpen(0, 0))
 	if oresp.Status != protocol.OpenInteractiveStatus_Ok {
 		t.Fatalf("open: %v %s", oresp.Status, oresp.ErrorMsg)
 	}
@@ -92,12 +98,12 @@ func TestSpawnWritesChildLimits(t *testing.T) {
 // writes the depth as a creation would.
 func TestResumeNotCheckedAndRegrants(t *testing.T) {
 	h, p, cid, _, kids := limitFixture(t, authority.LimitOf(3), authority.LimitOf(1), 1)
-	req := submitReq(delegReq{})
+	req := openReq(delegReq{})
 	req.ResumeTaskId = hexToTaskID(t, kids[0])
 	req.SpawnDepth = authority.LimitOf(5)
 	req.SetSpawnDepthPresent(true)
-	resp, _ := h.handleSubmit(cid, req, protocol.ClientKind_Agent, h.lookupPrincipal(cid), delegHeld)
-	if resp.Status != protocol.SubmitStatus_Ok {
+	resp := agentOpen(h, cid, req)
+	if resp.Status != protocol.OpenInteractiveStatus_Ok {
 		t.Fatalf("resume under a full parent: %v %s", resp.Status, resp.ErrorMsg)
 	}
 	if n := h.Tasks.DescendantCounts()[p]; n != 1 {
@@ -111,17 +117,18 @@ func TestResumeNotCheckedAndRegrants(t *testing.T) {
 func TestExactResumeRefusesLimitBits(t *testing.T) {
 	for _, c := range []struct {
 		flag string
-		set  func(*protocol.SubmitRequest)
+		set  func(*protocol.OpenInteractiveRequest)
 	}{
-		{"--spawn-depth", func(r *protocol.SubmitRequest) { r.SetSpawnDepthPresent(true) }},
-		{"--max-descendants", func(r *protocol.SubmitRequest) { r.SetMaxDescendantsPresent(true) }},
+		{"--spawn-depth", func(r *protocol.OpenInteractiveRequest) { r.SetSpawnDepthPresent(true) }},
+		{"--max-descendants", func(r *protocol.OpenInteractiveRequest) { r.SetMaxDescendantsPresent(true) }},
 	} {
 		h, _, cid, _, kids := limitFixture(t, authority.Unbounded(), authority.Unbounded(), 1)
-		req := &protocol.SubmitRequest{ResumeTaskId: hexToTaskID(t, kids[0])}
+		req := openReq(delegReq{})
+		req.ResumeTaskId = hexToTaskID(t, kids[0])
 		req.SetResumeExact(true)
 		c.set(req)
-		resp, _ := h.handleSubmit(cid, req, protocol.ClientKind_Agent, h.lookupPrincipal(cid), delegHeld)
-		if resp.Status != protocol.SubmitStatus_ResumeExactMismatch || !strings.Contains(string(resp.ErrorMsg), c.flag) {
+		resp := agentOpen(h, cid, req)
+		if resp.Status != protocol.OpenInteractiveStatus_ResumeExactMismatch || !strings.Contains(string(resp.ErrorMsg), c.flag) {
 			t.Errorf("%s: status %v msg %q, want resume_exact_mismatch naming it", c.flag, resp.Status, resp.ErrorMsg)
 		}
 	}
@@ -164,19 +171,19 @@ func TestResumeRegrantCannotWidenAncestorLimit(t *testing.T) {
 		protocol.RunnerSelector{}, nil, authority.Grant{Caps: delegHeld, Scope: authority.Scope{IDs: []string{a}}}, "")
 	cid := bindPrincipal(t, h, r)
 
-	if resp, _ := h.handleSubmit(cid, submitReq(delegReq{}), protocol.ClientKind_Agent, h.lookupPrincipal(cid), delegHeld); resp.Status != protocol.SubmitStatus_SpawnLimit {
+	if resp := agentOpen(h, cid, openReq(delegReq{})); resp.Status != protocol.OpenInteractiveStatus_SpawnLimit {
 		t.Fatalf("spawn under a full A: %v, want spawn_limit", resp.Status)
 	}
-	req := submitReq(delegReq{})
+	req := openReq(delegReq{})
 	req.ResumeTaskId = hexToTaskID(t, a)
 	req.SetMaxDescendantsPresent(true) // the zero value: unbounded
-	if resp, _ := h.handleSubmit(cid, req, protocol.ClientKind_Agent, h.lookupPrincipal(cid), delegHeld); resp.Status != protocol.SubmitStatus_Ok {
+	if resp := agentOpen(h, cid, req); resp.Status != protocol.OpenInteractiveStatus_Ok {
 		t.Fatalf("resume of A: %v %s", resp.Status, resp.ErrorMsg)
 	}
 	if e, _ := h.Tasks.Get(a); !sameSpawnLimit(e.MaxDescendants, authority.LimitOf(1)) {
 		t.Errorf("an agent's resume widened A's limit to %s", authority.LimitLabel(e.MaxDescendants))
 	}
-	if resp, _ := h.handleSubmit(cid, submitReq(delegReq{}), protocol.ClientKind_Agent, h.lookupPrincipal(cid), delegHeld); resp.Status != protocol.SubmitStatus_SpawnLimit {
+	if resp := agentOpen(h, cid, openReq(delegReq{})); resp.Status != protocol.OpenInteractiveStatus_SpawnLimit {
 		t.Errorf("spawn after the resume: %v, want spawn_limit", resp.Status)
 	}
 }
@@ -188,9 +195,6 @@ func TestSpawnLimitBeforeRunnerResolution(t *testing.T) {
 	p := h.Tasks.Create("/r", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli, protocol.TaskID{}, "",
 		protocol.RunnerSelector{}, nil, authority.Grant{Caps: delegHeld, SpawnDepth: authority.LimitOf(0)}, "")
 	cid := bindPrincipal(t, h, p)
-	if resp, _ := h.handleSubmit(cid, submitReq(delegReq{}), protocol.ClientKind_Agent, h.lookupPrincipal(cid), delegHeld); resp.Status != protocol.SubmitStatus_SpawnLimit {
-		t.Errorf("submit: %v, want spawn_limit", resp.Status)
-	}
 	if resp, _ := h.handleOpenInteractive(cid, nil, detachedOpen(0, 0), protocol.ClientKind_Agent, h.lookupPrincipal(cid), delegHeld, ""); resp.Status != protocol.OpenInteractiveStatus_SpawnLimit {
 		t.Errorf("open: %v, want spawn_limit", resp.Status)
 	}
@@ -205,9 +209,9 @@ func TestHandlerDepthChain(t *testing.T) {
 		protocol.RunnerSelector{}, nil, authority.Grant{Caps: delegHeld, DelegateCaps: delegHeld, SpawnDepth: authority.LimitOf(3)}, "")
 	for gen, want := range []uint32{2, 1, 0} {
 		cid := bindPrincipal(t, h, cur)
-		req := submitReq(delegReq{caps: delegHeld, dcaps: delegHeld})
-		resp, _ := h.handleSubmit(cid, req, protocol.ClientKind_Agent, h.lookupPrincipal(cid), delegHeld)
-		if resp.Status != protocol.SubmitStatus_Ok {
+		rearmRunner(t, h)
+		resp := agentOpen(h, cid, openReq(delegReq{caps: delegHeld, dcaps: delegHeld}))
+		if resp.Status != protocol.OpenInteractiveStatus_Ok {
 			t.Fatalf("generation %d: %v %s", gen+1, resp.Status, resp.ErrorMsg)
 		}
 		e := entryOf(t, h, resp.TaskId)
@@ -217,7 +221,7 @@ func TestHandlerDepthChain(t *testing.T) {
 		cur = e.ID
 	}
 	cid := bindPrincipal(t, h, cur)
-	if resp, _ := h.handleSubmit(cid, submitReq(delegReq{}), protocol.ClientKind_Agent, h.lookupPrincipal(cid), delegHeld); resp.Status != protocol.SubmitStatus_SpawnLimit {
+	if resp := agentOpen(h, cid, openReq(delegReq{})); resp.Status != protocol.OpenInteractiveStatus_SpawnLimit {
 		t.Errorf("D at depth 0: %v, want spawn_limit", resp.Status)
 	}
 }

@@ -3,7 +3,6 @@
 package integration
 
 import (
-	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -85,8 +84,12 @@ func TestWSS_CLIRunnerAndAgentCID(t *testing.T) {
 	clearAgentEnv(t)
 	cid := startWSSServer(t)
 
-	agent := filepath.Join(t.TempDir(), "print-server-cid.sh")
-	if err := os.WriteFile(agent, []byte("#!/bin/bash\necho \"server_cid=$HARNESS_SERVER_CID\"\n"), 0o755); err != nil {
+	// The agent writes what it was handed to a file outside the worktree: the
+	// session's PTY output is gone once the process exits.
+	dir := t.TempDir()
+	out := filepath.Join(dir, "server-cid.txt")
+	agent := filepath.Join(dir, "print-server-cid.sh")
+	if err := os.WriteFile(agent, []byte("#!/bin/bash\necho \"server_cid=$HARNESS_SERVER_CID\" > '"+out+"'\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	repo := tempRepo(t)
@@ -119,16 +122,16 @@ func TestWSS_CLIRunnerAndAgentCID(t *testing.T) {
 		t.Fatal("runner did not register over wss within 10s")
 	}
 
-	id := mustSubmit(t, c, repo, "print the server cid")
+	id := mustOpenOneshot(t, c, repo, "print the server cid")
 	waitTaskTerminal(t, c, id, 15*time.Second)
 	if ti := getTask(t, c, id); ti.Status != protocol.TaskStatus_Succeeded {
 		t.Fatalf("task status = %v, want Succeeded", ti.Status)
 	}
-	var logs bytes.Buffer
-	if err := c.Logs(context.Background(), id, &logs, false); err != nil {
-		t.Fatalf("logs: %v", err)
+	got, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("agent output: %v", err)
 	}
-	if !strings.Contains(logs.String(), "server_cid=wss:127.0.0.1:") {
-		t.Errorf("agent's HARNESS_SERVER_CID is not wss:; logs:\n%s", logs.String())
+	if !strings.Contains(string(got), "server_cid=wss:127.0.0.1:") {
+		t.Errorf("agent's HARNESS_SERVER_CID is not wss:; agent wrote:\n%s", got)
 	}
 }

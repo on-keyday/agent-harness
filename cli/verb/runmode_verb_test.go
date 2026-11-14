@@ -75,3 +75,17 @@ func TestSessionNewOneshotFlag(t *testing.T) {
 		t.Fatal("--oneshot with --stream accepted")
 	}
 }
+
+// A3 (A-D31): submit is gone from every surface; session new --oneshot
+// replaces it.
+func TestSubmitVerbIsGone(t *testing.T) {
+	// An unknown verb is (nil, false, nil): not handled, not an error.
+	if act, handled, err := ParseCLICommand(strings.Fields("submit --repo /r --task hi"), nil); handled || act != nil {
+		t.Fatalf("submit still parses: %+v, %v", act, err)
+	}
+	for _, s := range Verbs {
+		if len(s.Path) == 1 && s.Path[0] == "submit" {
+			t.Fatal("a submit row is still declared")
+		}
+	}
+}

@@ -134,42 +134,6 @@ func (d *Dispatcher) Dispatch(conn ConnHandle, msg []byte) {
 	}
 }
 
-// buildAssignMsg constructs the RunnerControl/AssignTask request
-// message that carries only TaskID + StreamID. The actual body
-// (auth_ticket / repo_path / prompt / extra_args) is encoded separately
-// and written to the trsf send-stream with the returned ID; the runner
-// reads from that stream and decodes AssignTaskBody.
-//
-// Streamed via trsf instead of inline so long prompts don't exceed path
-// MTU on UDP transport.
-func buildAssignMsg(task TaskEntry, ticket [16]byte, streamID uint64) (*protocol.RunnerRequest, []byte, error) {
-	var tid protocol.TaskID
-	raw, _ := hex.DecodeString(task.ID)
-	copy(tid.Id[:], raw)
-
-	assign := protocol.AssignTask{
-		TaskId:   tid,
-		StreamId: streamID,
-	}
-
-	req := &protocol.RunnerRequest{Kind: protocol.RunnerRequestType_AssignTask}
-	req.SetAssignTask(assign)
-
-	body := protocol.AssignTaskBody{
-		AuthTicket: ticket,
-		ExtraArgs:  protocol.AgentArgsFromStrings(task.ExtraArgs),
-	}
-	body.SetResumeConversation(task.ResumeConversation)
-	body.SetRepoPath([]byte(task.RepoPath))
-	body.SetPrompt([]byte(task.Prompt))
-	body.SetAgentProfile([]byte(task.AgentProfile))
-	bodyBytes, err := body.EncodeCopy(nil)
-	if err != nil {
-		return nil, nil, err
-	}
-	return req, bodyBytes, nil
-}
-
 // taskIDFromHex converts a hex task ID string to a protocol.TaskID.
 func taskIDFromHex(taskIDHex string) protocol.TaskID {
 	var tid protocol.TaskID
@@ -193,8 +157,8 @@ var defaultCancelResendDelays = []time.Duration{
 
 // OnCancel looks up the runner that is executing taskID (AssignedTo) and sends a
 // CancelTask message to it. A task that was never dispatched gets nothing: it
-// has no runner-side state, and handleSubmit's BoundRunnerID (the candidate it
-// picked at submit) is not where it runs. Sending there was once harmless — the
+// has no runner-side state, and its BoundRunnerID (the candidate picked when it
+// was opened) is not where it runs. Sending there was once harmless — the
 // runner ignored an unknown id — but a runner now answers one with
 // TaskFinished(-1), which would turn a cancelled Queued task into Failed. Capacity is
 // intentionally NOT released here; the TaskFinished message from the runner (or

@@ -162,31 +162,14 @@ func (h cliVerbs) FileNew(a verb.FileNewAction) error {
 // applied AFTER Validate runs, so a table-side "required" would refuse a line
 // that HARNESS_REPO_PATH was about to answer. It cannot be per-verb either --
 // it was, inside parseSpawn, and moving the three spawn verbs onto the
-// generated parser dropped it, so `submit hello` with no repo dialed the
-// server and sent an empty one instead of exiting 2 without connecting.
-//
-// One implementation; the three call sites are the three methods the
-// interface guarantees exist.
+// generated parser dropped it, so a spawn with no repo dialed the server and
+// sent an empty one instead of exiting 2 without connecting.
 func requireRepo(name string, a verb.SpawnAction) error {
 	if a.Repo != "" || a.ResumeTaskID != "" {
 		return nil
 	}
 	return fmt.Errorf("%s: --repo or HARNESS_REPO_PATH required (must match a runner's RepoPath verbatim) — "+
 		"except when --resume is set, which uses the existing task's repo", name)
-}
-
-func (h cliVerbs) Submit(a verb.SpawnAction) error {
-	if err := requireRepo("submit", a); err != nil {
-		return err
-	}
-	return h.withClient(func(c *cli.Client) error {
-		id, err := c.Submit(h.ctx, a.Repo, a.Task, spawnOpts(a))
-		if err != nil {
-			return exitOnAmbiguous(err)
-		}
-		fmt.Println(id)
-		return nil
-	})
 }
 
 func (h cliVerbs) Ls(a verb.ListAction) error {

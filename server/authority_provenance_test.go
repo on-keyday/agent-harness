@@ -176,18 +176,18 @@ func TestResumeWritesResumer(t *testing.T) {
 	f := newResumeFixture(t, protocol.Capability_Resume|protocol.Capability_FileRead, authority.Scope{})
 	now := time.Now()
 	f.h.Registry.Add(&RunnerEntry{ID: tcid("R"), Hostname: "r", AllowedRoots: []string{"/r"}, MaxTasks: 4,
-		ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
+		ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: newOpenableConn(t)})
 	resumeWith := func(conn *fakeConn, id string) {
-		sub := protocol.SubmitRequest{ResumeTaskId: hexToTaskID(t, id), RequestedCaps: protocol.Capability_FileRead}
-		sub.SetRepoPath([]byte("/r"))
-		sub.SetPrompt([]byte("again"))
-		sub.SetResumeCapsOverride(true)
-		req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_Submit, RequestId: 9}}
-		req.SetSubmit(sub)
+		oi := detachedOpen(40, 120)
+		oi.ResumeTaskId = hexToTaskID(t, id)
+		oi.RequestedCaps = protocol.Capability_FileRead
+		oi.SetResumeCapsOverride(true)
+		req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_OpenInteractive, RequestId: 9}}
+		req.SetOpenInteractive(*oi)
 		f.h.Handle(conn, encodeTaskControlRequest(t, req))
 		resp := lastTaskControlResponse(t, conn)
-		if s := resp.Submit(); s == nil || s.Status != protocol.SubmitStatus_Ok {
-			t.Fatalf("resume of %s: %v", id[:8], s)
+		if o := resp.OpenInteractive(); o == nil || o.Status != protocol.OpenInteractiveStatus_Ok {
+			t.Fatalf("resume of %s: %v", id[:8], o)
 		}
 	}
 	byAgent := f.terminalTask(t, true)

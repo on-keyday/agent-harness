@@ -8,7 +8,6 @@ import { loadPage, recordingCtx, named } from "./harness_env.mjs";
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const page = await loadPage(dir);
-const ID = "a".repeat(32);
 
 const run = async (line, overrides) => {
   const ctx = recordingCtx(page, overrides);
@@ -20,21 +19,6 @@ const run = async (line, overrides) => {
   }
   return { out, err, calls: ctx.calls };
 };
-
-test("a typed bound reaches the request, beating the panel", async () => {
-  const { calls, err } = await run(`submit --delegate-caps file_read --delegate-scope descendants --task t`);
-  assert.equal(err, undefined);
-  const [, req] = named(calls, "sessionReq")[0];
-  assert.equal(req.delegateCaps, "file_read");
-  assert.equal(req.delegateScope, "descendants");
-});
-
-test("an untyped bound leaves the panel's to sessionReq", async () => {
-  const { calls } = await run(`submit --resume ${ID} --task t`);
-  const [, req] = named(calls, "sessionReq")[0];
-  assert.equal(req.delegateCaps, null, "no typed --delegate-caps: the panel decides, and a resume re-grants nothing");
-  assert.equal(req.delegateScope, null);
-});
 
 test("caps set-defaults writes the bound into the panel through the bridge", async () => {
   const { calls, out, err } = await run(`caps set-defaults --delegate-caps file_read --delegate-scope none`);

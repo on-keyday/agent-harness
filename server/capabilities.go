@@ -28,10 +28,11 @@ import (
 // discriminate. It is also the one task-scoped kind that does NOT require
 // Running/Detached; see handleGitQuery for why.
 //
-// Submit and OpenInteractive are absent because their bit depends on the
-// request: a zero resume_task_id creates a task (spawn), a non-zero one resumes
-// (resume, or resume_exact when the exact flag is set). The gate is inline in
-// both dispatch cases, via resumeRequestCap.
+// OpenInteractive is absent because its bit depends on the request: a zero
+// resume_task_id creates a task (spawn), a non-zero one resumes (resume, or
+// resume_exact when the exact flag is set). The gate is inline in the dispatch
+// case, via resumeRequestCap. Submit is absent because it is retired (A3): it
+// is answered with an error and creates nothing.
 //
 // AttachSession is absent because its cap depends on the requested AttachMode,
 // which this map cannot see — the gate is inline in the dispatch case, via
@@ -112,8 +113,8 @@ var requiredCap = map[protocol.TaskControlKind]protocol.Capability{
 	protocol.TaskControlKind_OpenExecTap: protocol.Capability_ExecTap,
 }
 
-// resumeRequestCap returns the capability set that satisfies a submit or an
-// interactive open. Creating a task (zero resumeID) is spawn alone. Resuming is
+// resumeRequestCap returns the capability set that satisfies an interactive
+// open. Creating a task (zero resumeID) is spawn alone. Resuming is
 // the resume rank, which spawn does NOT imply: resume ⊇ resume_exact, checked
 // with hasAnyCap like authority.AttachModeCap, so a holder of resume may also resume
 // exactly.

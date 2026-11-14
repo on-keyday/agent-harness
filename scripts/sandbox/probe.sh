@@ -2,15 +2,15 @@
 # Confinement capability probe — runs INSIDE the podman sandbox container.
 #
 # Measures what this kit's README *claims* (filesystem / process / network /
-# control-plane confinement) instead of trusting it. Run it as the task of a
-# task assigned to a sandbox-preset runner slot:
+# control-plane confinement) instead of trusting it. Run it as a one-shot
+# session on a sandbox-preset runner slot:
 #
-#   harness-cli submit --repo <sandbox-root> \
-#     --task 'bash scripts/sandbox/probe.sh --topic chat.<your-task-id>'
+#   harness-cli session new -d --oneshot --agent sandbox-bash --repo <sandbox-root> \
+#     --prompt 'bash scripts/sandbox/probe.sh --topic chat.<your-task-id>'
 #
-# The report always goes to stdout (so it lands in the task log). With --topic
-# it is ALSO published to that agentboard topic, so a supervising agent gets it
-# without reading logs.
+# The report always goes to stdout (the session's terminal, which ends with the
+# run). With --topic it is ALSO published to that agentboard topic, so a
+# supervising agent gets it after the session is gone.
 #
 # Flags:
 #   --topic T   agentboard topic to publish the report to (default: stdout only)

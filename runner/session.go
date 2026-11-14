@@ -21,7 +21,6 @@ import (
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/runner/streamagent"
 	"github.com/on-keyday/agent-harness/termmode"
-	"github.com/on-keyday/agent-harness/topics"
 	agentexec "github.com/on-keyday/objtrsf/exec"
 	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/objtrsf/trsf"
@@ -195,8 +194,7 @@ type taskEntry struct {
 	// wake delivers one wake to the running agent, in the form its stdin
 	// takes: a PTY session gets the marker typed and submitted, a stream
 	// session gets it as a user turn. Set from OnStdinWriter by the two
-	// handleOpenExec paths; a oneshot task run via handleAssign has no stdin
-	// and never sets it, so it stays nil for that task's whole lifetime. It
+	// handleOpenExec paths; until it is set the task has no stdin to wake. It
 	// reports the form it wrote, for the log.
 	wake func() (wakeForm, error)
 
@@ -347,7 +345,7 @@ type Session struct {
 	// configured with: the default profile (from --agent-bin/--agent-args/
 	// --agent-*-argv) plus any extra profiles from --agent-profiles. Each
 	// AssignTask / OpenExec request carries an AgentProfile name (empty ==
-	// default) that handleAssign / handleOpenExec resolve against this set
+	// default) that handleOpenExec resolves against this set
 	// via resolveExec to pick the bin + argv actually exec'd.
 	Profiles ProfileSet
 	Timeout  time.Duration
@@ -422,13 +420,13 @@ type Session struct {
 
 	// runnerCanonicalID is the RunnerID the server keys this runner as in
 	// its registry / agentboard ticket store. Filled from RunnerHelloResponse
-	// (server → runner) before any AssignTask. Reads/writes are guarded by
-	// mu — the wire ordering guarantees Set happens before any handleAssign
+	// (server → runner) before any OpenExec. Reads/writes are guarded by
+	// mu — the wire ordering guarantees Set happens before any handleOpenExec
 	// reads, but the lock provides a memory barrier for the cross-goroutine
 	// happens-before.
 	runnerCanonicalID protocol.RunnerID
 
-	// NoWorktree, when true, makes handleAssign / handleOpenExec skip the
+	// NoWorktree, when true, makes handleOpenExec skip the
 	// worktree create / branch / cleanup steps and run the agent process
 	// directly in the request's RepoPath. Settings/skills injection is also
 	// skipped by default (use ForceInjectHarnessSettings to override).
@@ -464,9 +462,9 @@ type Session struct {
 	processCtx context.Context
 	wms        map[string]*WorktreeManager // repoPath → WorktreeManager
 
-	// testHookHandleAssign is called at the start of handleAssign in tests to
-	// inject faults (e.g. panics). It is nil in production.
-	testHookHandleAssign func()
+	// testHookOpenExec is called in handleOpenExec, after its panic guard is
+	// in place, in tests to inject faults (e.g. panics). Nil in production.
+	testHookOpenExec func()
 
 	// chainedRelayPendingMu guards chainedRelayPendingCh. One-at-a-time
 	// invariant: at most one RequestChainedRelay may be in flight per
@@ -642,241 +640,13 @@ func resolveExec(ps ProfileSet, profile string, oneshot, resume bool, extra []st
 	return p.Bin, argv, nil
 }
 
-// handleAssign performs the full lifecycle for one assigned task:
-//  1. TaskAccepted control message
-//  2. Worktree creation (failure → TaskFinished with error info)
-//  3. TaskStarted control message
-//  4. Process exec, with each stdout/stderr line published to task.<id>.log
-//  5. TaskFinished control message
-//
-// Errors during steps 2 or 4 are conveyed via the TaskFinished message's exit code and
-// DiffInfo (textual error). The runner does NOT retry; the server can re-dispatch.
-//
-// A per-task context derived from ctx is used so CancelTask can cancel individual
-// tasks without affecting others. Panics are recovered and reported as TaskFinished.
-// handleAssign drives one assigned task through its full lifecycle.
-//
-// taskID is the wire-level TaskID (carried inline in the AssignTask
-// envelope so the runner can correlate immediately, even before the body
-// stream is drained). body holds the rest of the assignment payload —
-// auth_ticket, repo_path, prompt, extra_args — read from a server-
-// initiated trsf send-stream by dispatchRunnerRequest before this
-// function is invoked.
-func (s *Session) handleAssign(ctx context.Context, taskID protocol.TaskID, body *protocol.AssignTaskBody) {
-	taskIDHex := hex.EncodeToString(taskID.Id[:])
-	topic := topics.TaskLog(taskIDHex)
-
-	// Validate repo path from the body.
-	repoPath := string(body.RepoPath)
-
-	// Step 1: Send TaskAccepted — signals we are committed even if worktree fails.
-	{
-		m := &protocol.RunnerMessage{Kind: protocol.RunnerMessageType_TaskAccepted}
-		m.SetTaskAccepted(protocol.TaskAccepted{TaskId: taskID})
-		data := m.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)})
-		_ = s.Sender.Send(data)
-	}
-
-	finishWithError := func(code int32, reason string) {
-		m := &protocol.RunnerMessage{Kind: protocol.RunnerMessageType_TaskFinished}
-		tf := protocol.TaskFinished{
-			TaskId:       taskID,
-			ExitCode:     code,
-			ErrorMessage: []byte(reason),
-		}
-		m.SetTaskFinished(tf)
-		data := m.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)})
-		_ = s.sendTaskMsg(taskIDHex, data)
-	}
-
-	// Panic recovery: report as TaskFinished so the server doesn't wait forever.
-	// Must be deferred BEFORE the test hook so that hook-injected panics are caught.
-	defer func() {
-		if r := recover(); r != nil {
-			s.logger().Error("handleAssign panic", "task_id", taskIDHex, "panic", r)
-			finishWithError(-1, "runner_panic")
-		}
-	}()
-
-	// testHookHandleAssign runs after TaskAccepted and the recover defer are in place,
-	// so that hook-injected panics are caught and result in a TaskFinished message.
-	if s.testHookHandleAssign != nil {
-		s.testHookHandleAssign()
-	}
-
-	// Gate: check repo is one of the allowed roots (skip check if AllowedRoots is
-	// empty so existing tests that don't set AllowedRoots continue to work).
-	if len(s.AllowedRoots) > 0 && !s.repoAllowed(repoPath) {
-		finishWithError(-1, "repo_not_allowed: "+repoPath)
-		return
-	}
-
-	// Gate: resolve the requested agent profile up front. An unknown profile
-	// name (or a misconfigured profile's argv templates) fails the task
-	// immediately with a clear error — never a silent fallback to the
-	// default profile.
-	agentProfile, err := s.Profiles.Resolve(string(body.AgentProfile))
-	if err != nil {
-		finishWithError(-1, "agent_profile: "+err.Error())
-		return
-	}
-
-	// If the body didn't provide a RepoPath, fall back to AllowedRoots[0]
-	// (for backward compatibility with tests that don't set body.RepoPath).
-	if repoPath == "" && len(s.AllowedRoots) > 0 {
-		repoPath = s.AllowedRoots[0]
-	}
-
-	// Register per-task cancellable context.
-	//
-	// ctx is the PROCESS's context when a hold-capable registry is wired, not
-	// the connection's, so a disconnect no longer cancels this by parentage.
-	// What ends a task on a disconnect is now an explicit decision:
-	// Session.cancelTasksUnlessHeld.
-	taskCtx, cancel := context.WithCancel(s.taskRootCtx(ctx))
-	entry := &taskEntry{cancel: cancel, repoPath: repoPath, ticket: body.AuthTicket}
-	s.mu.Lock()
-	s.initMaps()
-	registered := s.reg.putUnlessCancelled(taskIDHex, entry)
-	s.mu.Unlock()
-	if !registered {
-		cancel()
-		finishWithError(-1, cancelledBeforeStart)
-		return
-	}
-	defer func() {
-		cancel()
-		s.mu.Lock()
-		s.reg.remove(taskIDHex)
-		s.mu.Unlock()
-	}()
-
-	// Step 2: Create worktree (skipped in NoWorktree mode — agent runs in repoPath directly).
-	var dir string
-	var wm *WorktreeManager
-	if s.NoWorktree {
-		dir = repoPath
-		s.logger().Info("no-worktree mode: using repo path as cwd", "task_id", taskIDHex, "repo", repoPath)
-	} else {
-		wm = s.getWorktreeManager(repoPath)
-		d, err := wm.Create(taskIDHex)
-		if err != nil {
-			finishWithError(-1, "worktree_error: "+err.Error())
-			return
-		}
-		dir = d
-	}
-
-	// Step 3: Send TaskStarted.
-	{
-		m := &protocol.RunnerMessage{Kind: protocol.RunnerMessageType_TaskStarted}
-		ts := protocol.TaskStarted{TaskId: taskID}
-		ts.SetWorktreeDir([]byte(dir))
-		m.SetTaskStarted(ts)
-		data := m.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)})
-		_ = s.Sender.Send(data)
-	}
-
-	// Write Claude Code and Codex hook settings into the worktree.
-	// Non-fatal: task continues even if settings file can't be written.
-	// In NoWorktree mode this is skipped by default to avoid polluting the
-	// user's repo; ForceInjectHarnessSettings re-enables it.
-	if !s.NoWorktree || s.ForceInjectHarnessSettings {
-		if err := WriteAgentSettings(dir); err != nil {
-			s.logger().Warn("write agent settings failed", "task_id", taskIDHex, "err", err)
-		}
-		if err := WriteAgentSkills(dir, s.AgentSkillsFS); err != nil {
-			s.logger().Warn("write agent skills failed", "task_id", taskIDHex, "err", err)
-		}
-	}
-
-	// Build HARNESS_* env vars for the subprocess. RunnerID is the canonical
-	// value the server keys this runner as (from RunnerHelloResponse), NOT
-	// s.Sender.ID() — the latter is the peer's symmetric ConnectionID, which
-	// is the server's own CID from the runner's vantage.
-	env := BuildAgentEnv(AgentEnvSpec{
-		ServerCID:    s.ServerCID,
-		RunnerID:     s.runnerCanonicalRunnerID(),
-		TaskID:       taskID,
-		RepoPath:     repoPath,
-		Hostname:     s.Hostname,
-		WSPath:       s.WSPath,
-		AuthTicket:   body.AuthTicket,
-		BinDir:       s.BinDir,
-		ServerPubKey: s.ServerPubKey,
-		ProxyVia:     s.ProxyVia,
-	})
-
-	// Step 4: Execute the process, publishing log lines to the task log topic.
-	// Args order: profile baseline first, per-task extras appended last
-	// so that a per-task --resume / --add-dir / etc. wins on conflict (claude
-	// flags are largely last-wins).
-	proc := &Process{
-		AgentBin:                  agentProfile.Bin,
-		CWD:                       dir,
-		Timeout:                   s.Timeout,
-		ExtraArgs:                 mergeExtraArgs(agentProfile.AgentArgs, body.ExtraArgs.AsStrings()),
-		ResumeConversation:        body.ResumeConversation(),
-		OneshotArgvTemplate:       agentProfile.OneshotArgv,
-		ResumeOneshotArgvTemplate: agentProfile.ResumeOneshotArgv,
-		Env:                       env,
-		LogFormat:                 agentProfile.LogFormat,
-	}
-	// Through the REGISTRY, not through s.Sender: a held task outlives this
-	// Session, and a sink bound to this connection publishes into a dead one
-	// forever after a re-adoption. It also waits rather than dropping while a
-	// hold is armed, which is D12 on this path.
-	logSink := func(data []byte) {
-		_ = s.reg.publishWhenConnected(topic, data, s.Sender)
-	}
-	// The oneshot path's child brackets: Run starts the process and returns
-	// when it has exited, so the pair is exact here without a hook. A hold may
-	// only promise a task with a live child, and an entry alone is not one.
-	entry.started.Store(true)
-	exit, runErr := proc.Run(taskCtx, string(body.Prompt), logSink)
-	entry.exited.Store(true)
-
-	// Step 5: Send TaskFinished.
-	{
-		m := &protocol.RunnerMessage{Kind: protocol.RunnerMessageType_TaskFinished}
-		tf := protocol.TaskFinished{
-			TaskId:   taskID,
-			ExitCode: int32(exit),
-		}
-		if runErr != nil {
-			tf.ExitCode = -1
-			tf.ErrorMessage = []byte("process_error: " + runErr.Error())
-		}
-		m.SetTaskFinished(tf)
-		data := m.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)})
-		_ = s.sendTaskMsg(taskIDHex, data)
-	}
-
-	// Step 6: Conditionally clean up the worktree directory. The branch ref
-	// harness/<id> is intentionally retained so any commits claude made are
-	// reachable via `git checkout harness/<id>`. The directory itself is
-	// removed only when `git status --porcelain` (excluding harness-injected
-	// paths) is empty — uncommitted in-flight work is preserved across the
-	// resume boundary, and the long-tail cleanup is left to `harness-cli
-	// prune-local`. Status / remove errors are logged but never bubble up:
-	// TaskFinished is already sent and the lifecycle must complete.
-	if !s.NoWorktree {
-		switch r := wm.RemoveIfClean(taskIDHex, HarnessInjectedPaths); {
-		case r.StatusErr != nil:
-			s.logger().Warn("worktree cleanup skipped", "task_id", taskIDHex, "err", r.StatusErr)
-		case !r.Removed:
-			s.logger().Info("worktree retained — uncommitted work present", "task_id", taskIDHex, "dirty", r.DirtyPaths)
-		}
-	}
-}
-
 // handleOpenExec is the runner-side counterpart of the server's
 // handleOpenInteractive. The server has already created a bidi stream
 // toward us and stored its id in oer.StreamId; we look it up and feed it
 // to exec.ExecuteCommand for an interactive PTY claude session in a fresh
 // worktree.
 //
-// Lifecycle messages mirror handleAssign:
+// Lifecycle messages:
 //   - TaskAccepted (we are committed even if worktree creation later fails)
 //   - TaskStarted with worktree dir (after a successful worktree create)
 //   - TaskFinished with claude's exit code (after exec.ExecuteCommand returns)
@@ -931,6 +701,18 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 		writeEndFrame(stream, -1, reason)
 		_ = stream.CloseBoth()
 		finishWithError(-1, reason)
+	}
+
+	// A panic fails this task alone: it runs on its own goroutine, and an
+	// unrecovered panic there would end the runner and every task on it.
+	defer func() {
+		if r := recover(); r != nil {
+			s.logger().Error("handleOpenExec panic", "task_id", taskIDHex, "panic", r)
+			refuse(fmt.Sprintf("runner_panic: %v", r))
+		}
+	}()
+	if s.testHookOpenExec != nil {
+		s.testHookOpenExec()
 	}
 
 	// The session's initial prompt, on its own stream (A-D17), read before any
@@ -1079,7 +861,7 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 		}
 	}
 
-	// Build HARNESS_* env vars for the subprocess. See handleAssign comment.
+	// Build HARNESS_* env vars for the subprocess.
 	var x11Display int
 	var x11AuthFile string
 	var x11Enabled bool
@@ -1121,7 +903,7 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 	// Step 4: spawn claude under PTY, hand the stream to exec.
 	// ExecuteCommandWithOption defers stream.CloseBoth() so we don't double-close here.
 	// agentBin/agentArgv were already resolved from the requested profile by
-	// the gate above. Args order matches handleAssign: profile baseline
+	// the gate above. Args order: profile baseline
 	// first, per-task extras appended.
 	// PWD is derived from `dir` — the same value passed as the working
 	// directory on the next line — so the two cannot drift; see AgentCwdEnv

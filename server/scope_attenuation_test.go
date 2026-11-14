@@ -227,7 +227,7 @@ func TestAttenuateScopeVisibilityClampsToTheCreatorsVisibility(t *testing.T) {
 }
 
 // End to end through the dispatch loop: the status is reported, not clamped.
-func TestSubmitRejectsUnpermittedScope(t *testing.T) {
+func TestOpenRejectsUnpermittedScope(t *testing.T) {
 	h, _, c, _, u := scopeFixture(t)
 	h.Registry = NewRegistry()
 	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9800-1")}
@@ -236,19 +236,17 @@ func TestSubmitRejectsUnpermittedScope(t *testing.T) {
 	}
 	h.principals[conn.ConnectionID().String()] = hexToTaskID(t, c)
 
-	utid := hexToTaskID(t, u)
-	sub := protocol.SubmitRequest{RequestedCaps: protocol.Capability_All}
-	sub.SetRepoPath([]byte("/r"))
-	sub.SetPrompt([]byte("p"))
-	sub.Scope = authority.Scope{Base: protocol.ScopeBase_None, IDs: []string{u}}.ToWire()
-	_ = utid
-	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_Submit, RequestId: 1}}
-	req.SetSubmit(sub)
+	oi := detachedOpen(40, 120)
+	oi.SetRepoPath([]byte("/r"))
+	oi.RequestedCaps = protocol.Capability_All
+	oi.Scope = authority.Scope{Base: protocol.ScopeBase_None, IDs: []string{u}}.ToWire()
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_OpenInteractive, RequestId: 1}}
+	req.SetOpenInteractive(*oi)
 	h.Handle(conn, encodeTaskControlRequest(t, req))
 
 	resp := lastTaskControlResponse(t, conn)
-	got := resp.Submit()
-	if got == nil || got.Status != protocol.SubmitStatus_ScopeNotPermitted {
+	got := resp.OpenInteractive()
+	if got == nil || got.Status != protocol.OpenInteractiveStatus_ScopeNotPermitted {
 		t.Fatalf("status = %v, want scope_not_permitted", got)
 	}
 	if !strings.Contains(string(got.ErrorMsg), u) {
@@ -272,15 +270,15 @@ func TestResumeOfOutOfScopeTaskIsNotFound(t *testing.T) {
 	h.Tasks.Assign(u, testRunnerID("runner-x"), "/wt/u", false)
 	h.Tasks.Finish(u, 0, nil)
 
-	sub := protocol.SubmitRequest{ResumeTaskId: hexToTaskID(t, u), RequestedCaps: protocol.Capability_All}
-	sub.SetRepoPath([]byte("/r"))
-	sub.SetPrompt([]byte("takeover"))
-	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_Submit, RequestId: 2}}
-	req.SetSubmit(sub)
+	oi := detachedOpen(40, 120)
+	oi.ResumeTaskId = hexToTaskID(t, u)
+	oi.RequestedCaps = protocol.Capability_All
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_OpenInteractive, RequestId: 2}}
+	req.SetOpenInteractive(*oi)
 	h.Handle(conn, encodeTaskControlRequest(t, req))
 
 	resp := lastTaskControlResponse(t, conn)
-	if got := resp.Submit(); got == nil || got.Status != protocol.SubmitStatus_ResumeNotFound {
+	if got := resp.OpenInteractive(); got == nil || got.Status != protocol.OpenInteractiveStatus_ResumeNotFound {
 		t.Fatalf("status = %v, want resume_not_found", got)
 	}
 	if ut, _ := h.Tasks.Get(u); ut.Status == protocol.TaskStatus_Queued {

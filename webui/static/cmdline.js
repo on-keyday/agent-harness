@@ -196,68 +196,6 @@ async function runVerbCommandDispatch(tokens, ctx) {
   const cmd = tokens[0];
   let out;
   switch (cmd) {
-    case "submit": {
-      // Parsed by the shared declaration. The repo comes from the Compose
-      // dropdown through the surface-context tier of --repo's ladder, the
-      // same ladder the CLI reads env and workspace config from -- one
-      // ladder with three injections, instead of three ladders.
-      const dropdownRepo = ctx.composeRepo();
-      const dropdownHost = ctx.composeHost();
-      const b = parseOrHelp(ctx, tokens, {
-        repo: dropdownRepo, host: dropdownHost,
-        agent: ctx.composeAgent(),
-      });
-      // b.flags.repo is already the ladder's answer -- typed flag first,
-      // dropdown second -- because parseCommand applies the
-      // surface-context tier from the object above. Both were read
-      // straight off the dropdown before, so `submit --repo /not/a/repo`
-      // queued against the dropdown's repo instead.
-      const repo = b.flags.repo || dropdownRepo;
-      const resumeTaskId = b.flags.resume || ctx.resumeTaskID();
-      if (!repo && !resumeTaskId) {
-        throw new Error("no runner selected (pick one from the dropdown, or fill in Resume task id)");
-      }
-      const task = b.flags.task || b.trail;
-      // --exact runs the task's recorded prompt; the declaration already
-      // refuses one typed beside it.
-      if (!task && !b.flags.exact) throw new Error("submit: missing task prompt");
-      const scopeFor = (b.custom && b.custom["scope-for"]) || null;
-      const req = ctx.sessionReq({
-        repo, task,
-        host: b.flags.host || dropdownHost,
-        // The three runner selectors are mutually exclusive in the
-        // declaration, so at most one of these is non-empty.
-        runner: b.flags.runner || "",
-        ip: b.flags.ip || "",
-        agent: b.flags.agent || ctx.composeAgent(),
-        agentArgs: (b.custom && b.custom["agent-arg"]) || ctx.agentArgs(),
-        // b.set, not truthiness: --caps none is a real grant of nothing.
-        caps: b.set && b.set.caps ? b.flags.caps : null,
-        scope: b.set && b.set.scope ? b.flags.scope : null,
-        scopeFor: scopeFor && scopeFor.length ? scopeFor : null,
-        delegateCaps: b.set && b.set["delegate-caps"] ? b.flags["delegate-caps"] : null,
-        delegateScope: b.set && b.set["delegate-scope"] ? b.flags["delegate-scope"] : null,
-        spawnDepth: b.set && b.set["spawn-depth"] ? b.flags["spawn-depth"] : null,
-        maxDescendants: b.set && b.set["max-descendants"] ? b.flags["max-descendants"] : null,
-        resumeTaskId,
-        resumeConversation: !!b.flags["resume-conversation"],
-        resumeExact: !!b.flags.exact,
-      });
-      try {
-        out = await ctx.harness.submit(req);
-      } catch (e) {
-        // More than one (runner, agent) choice matched: the same picker the
-        // interactive opens use, re-issuing THIS submit pinned.
-        if (ctx.routeAmbiguous(e, req, async (r) => {
-          ctx.echo(await ctx.harness.submit(r));
-        })) {
-          out = "submit: more than one runner/agent matches — pick a runner";
-          break;
-        }
-        throw e;
-      }
-      break;
-    }
     case "conns": {
       // The tab and, with --trsf, the reading panel inside it. Nothing is
       // fetched here: the tab is already fed by the snapshot poll, and the

@@ -533,7 +533,7 @@ def start_harness(st: dict, args, extra: list[str]) -> None:
         "--no-worktree", "--max-tasks", "4",
     ]
     # No profile at all beats one that registers and then fails per task; an
-    # absent `bash` agent is rejected at submit with a name you can act on.
+    # absent `bash` agent is rejected at session open with a name you can act on.
     bash = dh.bash_bin()
     if bash:
         runner_args += ["--agent-profiles", dh.agent_profiles_json(["bash"])]
@@ -764,9 +764,10 @@ def cmd_bench(args) -> int:
     size = payload.stat().st_size
     cli_bin = str(dh.daemon.bin_path("harness-cli"))
 
-    task = ns_run(st, "cli", [cli_bin, "--server-cid", st["CID"], "submit",
-                              "--repo", st["REPO"], "--agent", "bash",
-                              "--task", "sleep 3600"]).stdout
+    task = ns_run(st, "cli", [cli_bin, "--server-cid", st["CID"], "session",
+                              "new", "-d", "--oneshot", "--agent", "bash",
+                              "--repo", st["REPO"],
+                              "--prompt", "sleep 3600"]).stdout
     task_id = next((ln.strip() for ln in task.splitlines()
                     if len(ln.strip()) == 32 and all(c in "0123456789abcdef"
                                                      for c in ln.strip())), "")

@@ -93,12 +93,12 @@ func TestScopeRoundTripAndLiveSetCaps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	taskID, err := c.Submit(ctx, repo, "scoped", cli.SessionOpts{
+	taskID, err := openOneshotWith(ctx, c, repo, "scoped", cli.SessionOpts{
 		Caps:  protocol.Capability_Spawn | protocol.Capability_FileRead,
 		Scope: scope,
 	})
 	if err != nil {
-		t.Fatalf("submit: %v", err)
+		t.Fatalf("session new --oneshot: %v", err)
 	}
 
 	row := lsRow(t, ctx, c, taskID)
@@ -134,6 +134,9 @@ func TestScopeRoundTripAndLiveSetCaps(t *testing.T) {
 		t.Fatalf("scope after set = %q, want global", got)
 	}
 	t.Logf("task %s re-granted live: caps=file_read scope=global", taskID)
+	// Let the run end before the test does: a session still being set up when
+	// t.TempDir's cleanup runs leaves the cleanup racing the runner's writes.
+	waitTaskTerminal(t, c, taskID, 15*time.Second)
 }
 
 // An unpermitted scope is reported, not silently clamped. The operator here is
@@ -157,20 +160,24 @@ func TestScopeGrammarErrorsReachTheClient(t *testing.T) {
 
 	// A well-formed scope naming a real task is accepted from an operator,
 	// whose own set is unrestricted.
-	first, err := c.Submit(ctx, repo, "first", cli.SessionOpts{})
+	first, err := openOneshotWith(ctx, c, repo, "first", cli.SessionOpts{})
 	if err != nil {
-		t.Fatalf("submit first: %v", err)
+		t.Fatalf("session new --oneshot first: %v", err)
 	}
+	// The runner has one slot and a foreground open does not queue: let the
+	// first run end before the second is opened.
+	waitTaskTerminal(t, c, first, 15*time.Second)
 	sc, err := cli.ParseScope("ids:" + first)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := c.Submit(ctx, repo, "second", cli.SessionOpts{Scope: sc})
+	second, err := openOneshotWith(ctx, c, repo, "second", cli.SessionOpts{Scope: sc})
 	if err != nil {
-		t.Fatalf("submit with ids scope: %v", err)
+		t.Fatalf("session new --oneshot with ids scope: %v", err)
 	}
 	row := lsRow(t, ctx, c, second)
 	if got, _ := row["scope"].(string); got != "ids:"+first {
 		t.Fatalf("scope = %q, want ids:%s", got, first)
 	}
+	waitTaskTerminal(t, c, second, 15*time.Second)
 }

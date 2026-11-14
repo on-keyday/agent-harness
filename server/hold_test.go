@@ -42,7 +42,7 @@ func replayInto(t *testing.T, path string) *TaskStore {
 
 func runningTask(t *testing.T, s *TaskStore, runner protocol.RunnerID) string {
 	t.Helper()
-	id := s.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified,
+	id := s.Create("/repo", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified,
 		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_None, Scope: authority.Scope{}},
 		"")
 

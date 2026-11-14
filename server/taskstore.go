@@ -93,7 +93,7 @@ type TaskEntry struct {
 	// Selector is the runner-selection constraint supplied at task submission.
 	// A zero value (Kind == RunnerSelectorKind_Any) means "any available runner".
 	Selector protocol.RunnerSelector
-	// BoundRunnerID records the candidate handleSubmit resolved at submit time
+	// BoundRunnerID records the candidate resolved when the task was opened
 	// (the registry's string key). It is used for cancel routing and display —
 	// it is NOT the pin the scheduler enforces. Selector is: a reconnected
 	// runner returns under a new ConnectionID, so enforcing this snapshot would
@@ -799,7 +799,7 @@ func (s *TaskStore) Resume(id, prompt string, extraArgs []string, selector proto
 }
 
 // PeekRepo returns the RepoPath + Kind for an existing TaskEntry without
-// transitioning it. Used by the resume path in handleSubmit/handleOpenInteractive
+// transitioning it. Used by the resume path in handleOpenInteractive
 // so candidate resolution runs against the original repo (the request's
 // RepoPath is ignored on resume — only the original worktree is meaningful).
 // Returns ok=false if the id does not exist.
@@ -1589,9 +1589,22 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 	// never by being swept here, or the whole hold would be undone by the
 	// replay that was supposed to restore it.
 	for _, t := range s.tasks {
+		// A oneshot from before A3 left Queued or Held: nothing places a
+		// oneshot any more and nothing reads its output, so a hold would only
+		// keep a child whose answer is lost (A-D32). Running ones fall to the
+		// rule below like any survivor.
+		if t.Kind == protocol.TaskKind_Oneshot && (t.Status == protocol.TaskStatus_Queued || t.Status == protocol.TaskStatus_Held) {
+			t.Status = protocol.TaskStatus_Failed
+			now := time.Now()
+			t.EndedAt = &now
+			t.ErrorMsg = []byte("oneshot_retired")
+			t.EndReason = protocol.EndReason_Failed
+			t.DeadlineAt, t.QueueDeadlineAt = 0, 0
+			continue
+		}
 		// A foreground session left Queued (a crash between its create or
 		// resume and its Assign) has nothing to place it: Tick places only
-		// oneshot and background work. Failed like a Running survivor.
+		// background work. Failed like a Running survivor.
 		if t.Status == protocol.TaskStatus_Queued && t.RunMode == protocol.RunMode_Foreground &&
 			(t.Kind == protocol.TaskKind_Interactive || t.Kind == protocol.TaskKind_Stream) {
 			t.Status = protocol.TaskStatus_Running

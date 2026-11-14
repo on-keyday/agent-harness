@@ -2,10 +2,12 @@ package runner
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
+
+	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 // TestSpawnedAgentGetsOneServerCIDNotTheCandidateList pins the property that
@@ -21,43 +23,34 @@ import (
 // A list reaching either one fails, and the sandbox fails CLOSED — the bridged
 // harness-cli simply stops reaching the server.
 //
-// The guard is the ordering in Process.Run's `append(os.Environ(), extraEnv...)`
-// plus os/exec's dedup-keeps-last. Nothing else asserts it, and a future spawn
+// The guard is the ordering in agentexec's `append(os.Environ(), extraEnv...)`
+// (objtrsf/exec), with handleOpenExec's BuildAgentEnv as the extra, plus
+// os/exec's dedup-keeps-last. Nothing else asserts it, and a future spawn
 // path that skips BuildAgentEnv would inherit the list silently.
 func TestSpawnedAgentGetsOneServerCIDNotTheCandidateList(t *testing.T) {
 	t.Setenv("HARNESS_SERVER_CID", "ws:10.0.0.1:8539-1,ws:10.0.0.2:8539-2")
 
-	repo := initRepo(t)
-	wm := &WorktreeManager{Repo: repo}
-	dir, err := wm.Create("single-cid")
-	if err != nil {
-		t.Fatalf("worktree: %v", err)
-	}
-	script := writeFakeClaude(t, `echo "CID=[$HARNESS_SERVER_CID]"`)
+	repo := t.TempDir()
+	out := filepath.Join(t.TempDir(), "out")
+	script := writeFakeClaude(t, `echo "CID=[$HARNESS_SERVER_CID]" > '`+out+`'`)
 
 	live := mustParseCID(t, "ws:127.0.0.1:8539-31062")
-	p := &Process{
-		AgentBin: script,
-		CWD:      dir,
-		Timeout:  10 * time.Second,
-		Env:      BuildAgentEnv(AgentEnvSpec{ServerCID: live}),
+	ms := &mockSender{}
+	s := &Session{
+		AllowedRoots: []string{repo},
+		Profiles:     singleProfile(t, script),
+		Sender:       ms,
+		Now:          time.Now,
+		NoWorktree:   true,
+		ServerCID:    live,
 	}
+	rig := newOpenRig(s)
+	s.handleOpenExec(context.Background(), rig.oneshot(t, protocol.TaskID{Id: [16]byte{0x5C}}, repo, "hi"))
 
-	var mu sync.Mutex
-	var out strings.Builder
-	exit, err := p.Run(context.Background(), "hi", func(data []byte) {
-		mu.Lock()
-		out.Write(data)
-		mu.Unlock()
-	})
-	if err != nil || exit != 0 {
-		t.Fatalf("run: exit=%d err=%v", exit, err)
+	if tf := lastFinished(t, ms); tf.ExitCode != 0 {
+		t.Fatalf("run: exit=%d %q", tf.ExitCode, tf.ErrorMessage)
 	}
-
-	mu.Lock()
-	got := out.String()
-	mu.Unlock()
-
+	got := readOut(t, out)
 	want := "CID=[" + live.String() + "]"
 	if !strings.Contains(got, want) {
 		t.Fatalf("agent saw the wrong HARNESS_SERVER_CID.\nwant substring: %s\ngot: %s", want, got)

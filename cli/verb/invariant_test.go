@@ -422,7 +422,7 @@ var tuiParseNotDeclared = map[string]string{
 // plus permuted parsing closed that. This is the other half: a positional
 // whose ABSENCE is the widest form. `prune` with no ids forgets every terminal
 // task older than the default -- deleting each TaskEntry and its log, after
-// which `submit --resume <id>` answers resume_not_found -- and typing nothing
+// which `session new --resume <id>` answers resume_not_found -- and typing nothing
 // at all was the way to ask for it.
 //
 // So: a positional carrying WidensIfUnset must appear in an AtLeastOne group,

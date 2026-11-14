@@ -262,7 +262,14 @@ func New(cfg Config) *Server {
 		pendingDialOrigin: make(map[objproto.ConnectionID]*DialOrigin),
 		activeConns:       make(map[objproto.ConnectionID]streamingConn),
 	}
-	s.scheduler = NewScheduler(s.registry, s.tasks, s.sendAssign)
+	// Tick starts queued background sessions through the same session start
+	// an interactive open uses (A-D12). The task handler is built below.
+	s.scheduler = NewScheduler(s.registry, s.tasks, func(runnerID objproto.ConnectionID, taskID string) error {
+		if s.taskHandler == nil {
+			return fmt.Errorf("start queued session %s: task handler not wired yet", taskID)
+		}
+		return s.taskHandler.StartQueuedSession(runnerID, taskID)
+	})
 	s.runnerHandler = &RunnerHandler{
 		Registry:                     s.registry,
 		Tasks:                        s.tasks,
@@ -394,9 +401,6 @@ func New(cfg Config) *Server {
 		ResolveVia:            s.registry.GetLiveByIdentity,
 		ViaSendEstablishRelay: s.sendEstablishRelayRequest,
 	}
-	// Tick starts queued background sessions through the same session start
-	// an interactive open uses (A-D12).
-	s.scheduler.SetSessionStart(s.taskHandler.StartQueuedSession)
 	// Wire the conn-drop hook so a set_caps narrowing reaches in-flight work.
 	s.taskHandler.DropConnsForPrincipal = s.dropConnsForPrincipal
 	s.taskHandler.RevokeDataPlaneForTask = s.revokeDataPlaneForTask
@@ -1794,41 +1798,6 @@ func (s *Server) SetBoard(b *agentboard.Board) {
 	// Reach is decided from the task store on every board read and publish;
 	// without this the board enforces nothing (agentboard.SetReach).
 	b.SetReach(storeReach{s.tasks})
-}
-
-// sendAssign sends an AssignTask runner-control message to the runner identified by runnerID.
-// It is used as the AssignFunc supplied to the Scheduler. A fresh agentboard
-// auth ticket is generated and registered before send so that the spawned
-// claude can authenticate its agent_message Hello against the same Board.
-func (s *Server) sendAssign(runnerID objproto.ConnectionID, taskID string) error {
-	entry, ok := s.registry.Get(runnerID)
-	if !ok || entry.Conn == nil {
-		return fmt.Errorf("runner %s not connected", runnerID)
-	}
-	task, ok := s.tasks.Get(taskID)
-	if !ok {
-		return fmt.Errorf("task %s not found", taskID)
-	}
-	var ticket [16]byte
-	if _, err := rand.Read(ticket[:]); err != nil {
-		return fmt.Errorf("ticket gen: %w", err)
-	}
-	boardRegisterTask(s.Board, entry.Identity, taskID, ticket, task.AgentProfile, conversationOf(task.ResumeConversation))
-	stream := entry.Conn.CreateSendStream()
-	if stream == nil {
-		return fmt.Errorf("CreateSendStream returned nil")
-	}
-	envelope, body, err := buildAssignMsg(task, ticket, uint64(stream.ID()))
-	if err != nil {
-		return fmt.Errorf("buildAssignMsg: %w", err)
-	}
-	if werr := stream.AppendData(false, body); werr != nil {
-		return fmt.Errorf("stream body write: %w", werr)
-	}
-	if werr := stream.AppendData(true); werr != nil {
-		return fmt.Errorf("stream EOF: %w", werr)
-	}
-	return sendRunnerRequest(entry.Conn, envelope)
 }
 
 // onDialed receives every connection the server made (one-shot dial, via

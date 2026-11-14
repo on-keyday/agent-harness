@@ -19,7 +19,7 @@ import (
 // Add / Remove / BindTask / UnbindTask / NoteTaskActivity methods.
 //
 // Conn is set by the server when registering and is the path through which
-// sendAssign reaches the runner. The value-snapshot semantics still hold
+// every runner request reaches the runner. The value-snapshot semantics still hold
 // (the field is a copy of an interface value). Conn may be nil if the entry
 // was constructed without an active connection (e.g. in tests).
 //

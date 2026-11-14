@@ -125,10 +125,12 @@ func TestReplaySweepFailsQueuedForegroundSession(t *testing.T) {
 	if e, _ := got.Get(fg); e.Status != protocol.TaskStatus_Failed || e.EndReason != protocol.EndReason_Failed {
 		t.Fatalf("foreground session: %v %v", e.Status, e.EndReason)
 	}
-	for _, id := range []string{bg, one} {
-		if e, _ := got.Get(id); e.Status != protocol.TaskStatus_Queued {
-			t.Fatalf("%s: %v, want still Queued", id, e.Status)
-		}
+	if e, _ := got.Get(bg); e.Status != protocol.TaskStatus_Queued {
+		t.Fatalf("background: %v, want still Queued", e.Status)
+	}
+	// A3 (A-D32): nothing places a oneshot any more.
+	if e, _ := got.Get(one); e.Status != protocol.TaskStatus_Failed || string(e.ErrorMsg) != "oneshot_retired" {
+		t.Fatalf("oneshot: %v %q, want Failed oneshot_retired", e.Status, e.ErrorMsg)
 	}
 	_ = objproto.ConnectionID{}
 }

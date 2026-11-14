@@ -14,9 +14,34 @@ import (
 
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/runner"
+	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/server"
 	"github.com/on-keyday/objtrsf/objproto"
 )
+
+// openOneshotWith opens a detached `session new --oneshot` session on repo and
+// returns its task id: the runner runs the profile's oneshot argv (the
+// built-in `<bin> -p <prompt>` for these fixtures' template-free profiles) in
+// a PTY, and the task ends when that process exits. It is how the suite gets a
+// live task with a worktree now that submit is retired. opts carries what else
+// the open needs (selector, caps, scope, run mode); the prompt, the oneshot
+// bit and the PTY size are set here.
+func openOneshotWith(ctx context.Context, c *cli.Client, repo, prompt string, opts cli.SessionOpts) (string, error) {
+	opts.Prompt = prompt
+	opts.Oneshot = true
+	opts.InitialRows, opts.InitialCols = 40, 120
+	return c.OpenDetached(ctx, repo, opts)
+}
+
+// openOneshot is openOneshotWith on a client dialed for the one call.
+func openOneshot(ctx context.Context, serverCID objproto.ConnectionID, repo, prompt string) (string, error) {
+	c, err := cli.Dial(ctx, serverCID, protocol.ClientKind_Cli)
+	if err != nil {
+		return "", err
+	}
+	defer c.Close()
+	return openOneshotWith(ctx, c, repo, prompt, cli.SessionOpts{})
+}
 
 // initRepo creates a tempdir git repo with a single commit.
 func initRepo(t *testing.T) string {
@@ -55,7 +80,7 @@ func waitForFile(t *testing.T, path string, timeout time.Duration) bool {
 	return false
 }
 
-func TestSubmitFakeClaudeE2E(t *testing.T) {
+func TestOneshotFakeClaudeE2E(t *testing.T) {
 	if testing.Short() {
 		t.Skip("E2E test skipped in -short mode")
 	}
@@ -106,12 +131,12 @@ func TestSubmitFakeClaudeE2E(t *testing.T) {
 	// Give the runner time to connect, hello, and become Idle.
 	time.Sleep(500 * time.Millisecond)
 
-	// Submit a task.
-	taskID, err := cli.Submit(ctx, peerCID, repo, "do-the-thing")
+	// Open a oneshot session.
+	taskID, err := openOneshot(ctx, peerCID, repo, "do-the-thing")
 	if err != nil {
-		t.Fatalf("submit: %v", err)
+		t.Fatalf("session new --oneshot: %v", err)
 	}
-	t.Logf("submitted task %s", taskID)
+	t.Logf("opened oneshot session %s", taskID)
 
 	// Wait for the worktree's `hello.txt` to appear (fake-claude.sh creates it).
 	wt := filepath.Join(repo, ".harness-worktrees", taskID, "hello.txt")
@@ -155,10 +180,10 @@ func TestSubmitFakeClaudeE2E(t *testing.T) {
 	}
 }
 
-// TestSubmitFakeClaudeE2E_NoWorktree mirrors TestSubmitFakeClaudeE2E but starts
+// TestOneshotFakeClaudeE2E_NoWorktree mirrors TestOneshotFakeClaudeE2E but starts
 // the runner with NoWorktree=true over a non-git tempdir. Verifies the full
 // server↔runner↔CLI flow works end-to-end without git worktree machinery.
-func TestSubmitFakeClaudeE2E_NoWorktree(t *testing.T) {
+func TestOneshotFakeClaudeE2E_NoWorktree(t *testing.T) {
 	if testing.Short() {
 		t.Skip("E2E test skipped in -short mode")
 	}
@@ -171,7 +196,7 @@ func TestSubmitFakeClaudeE2E_NoWorktree(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	addr := "127.0.0.1:18540" // distinct port from TestSubmitFakeClaudeE2E
+	addr := "127.0.0.1:18540" // distinct port from TestOneshotFakeClaudeE2E
 	peerCID, err := objproto.ParseConnectionID("ws:"+addr+"-*",
 		objproto.ParseOption_AllowRandomID|objproto.ParseOption_ResolveAddr)
 	if err != nil {
@@ -201,11 +226,11 @@ func TestSubmitFakeClaudeE2E_NoWorktree(t *testing.T) {
 	}()
 	time.Sleep(500 * time.Millisecond)
 
-	taskID, err := cli.Submit(ctx, peerCID, repo, "nw-e2e")
+	taskID, err := openOneshot(ctx, peerCID, repo, "nw-e2e")
 	if err != nil {
-		t.Fatalf("submit: %v", err)
+		t.Fatalf("session new --oneshot: %v", err)
 	}
-	t.Logf("submitted task %s", taskID)
+	t.Logf("opened oneshot session %s", taskID)
 
 	// fake-claude.sh creates hello.txt in cwd. With NoWorktree, cwd == repo.
 	helloPath := filepath.Join(repo, "hello.txt")

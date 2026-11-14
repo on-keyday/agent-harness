@@ -11,8 +11,8 @@ import (
 
 // RestoreFromWAL puts back task records a prune forgot.
 //
-// A prune deletes the TaskEntry and its log file, and `submit --resume <id>`
-// answers resume_not_found afterwards because handleSubmitResume's first
+// A prune deletes the TaskEntry and its log file, and a resume of <id>
+// answers resume_not_found afterwards because the resume path's first
 // precondition is that the entry still exists. So the sweep had no undo, and
 // its widest form was the bare verb -- which is how 22 records went in one
 // mistyped line meant to print a usage string.

@@ -77,13 +77,13 @@ lines. `down` / `destroy` and `snapshot` / `revert` do what they say.
 They report the **same hostname**, and that is fine: they are addressed by
 profile, not by host. A runner names its default profile after its
 `--agent-bin` basename, so these advertise `claude` and `bash`, and
-`submit --agent bash` narrows the candidates before the ambiguity check.
-Interactive opens list one row per *(runner, profile)* combo, so the picker
-separates them too.
+`session new --agent bash` narrows the candidates before the ambiguity check.
+An open naming no profile lists one row per *(runner, profile)* combo, so the
+picker separates them.
 
 ```sh
-harness-cli submit --host <name> --agent bash   --repo ~/workspace          --task '...'
-harness-cli submit --host <name> --agent claude --repo ~/workspace/ebpf-lab --task '...'
+harness-cli session new -d --oneshot --host <name> --agent bash   --repo ~/workspace          --prompt '...'
+harness-cli session new -d --oneshot --host <name> --agent claude --repo ~/workspace/ebpf-lab --prompt '...'
 ```
 
 The roots are a deliberate super-set/sub-set pair: candidate matching keeps only

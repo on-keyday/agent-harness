@@ -223,7 +223,7 @@ type App struct {
 	authorityPicker AuthorityPickerModel
 
 	// runnerPicker shows the candidates of an ambiguous spawn; a pick runs the
-	// Retry the ambiguous result carried (InteractiveReadyMsg / SubmitResultMsg).
+	// Retry the ambiguous result carried (InteractiveReadyMsg).
 	runnerPicker RunnerPickerModel
 
 	// log-following state
@@ -1167,25 +1167,6 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// over the alt-screen TUI.
 		a.cmdresult.Append(FooterStyle.Render("[log] " + msg.Line))
 		return a, nil
-
-	case SubmitResultMsg:
-		if msg.Err != nil {
-			var are *cli.AmbiguousRunnerError
-			if msg.Retry != nil && errors.As(msg.Err, &are) {
-				return a, a.runnerPicker.Open(are.Candidates, msg.Retry, a.client)
-			}
-			a.cmdresult.Append(ErrorStyle.Render("submit failed: " + msg.Err.Error()))
-			return a, nil
-		}
-		short := msg.TaskID
-		if len(short) > 12 {
-			short = short[:12]
-		}
-		a.cmdresult.Append(OKStyle.Render("submitted: ") + short)
-		// Pull a fresh snapshot so the new row shows up populated (Repo /
-		// Prompt) without waiting for the periodic refresh — and without
-		// leaving the user looking at a stub that arrived via TaskEventMsg.
-		return a, RefreshSnapshot(a.client)
 
 	case RecordListMsg:
 		a.detail.SetRecordList(msg.TaskID, msg.Records, msg.Err)
@@ -2558,37 +2539,12 @@ func (a *App) gitReload(taskID string, limits func(cli.GitQuery) cli.GitQuery) t
 	)
 }
 
-// runSpawnAction executes a parsed spawn. The two verbs share their grammar
-// (cli/verb) and differ only here, in what the TUI does with the result:
-// submit queues, session new opens a detachable one.
-func (a *App) runSpawnAction(v verb.SpawnAction) (tea.Model, tea.Cmd) {
-	repo := v.Repo
-	if repo == "" {
-		repo = a.defaultRepo
-	}
-	caps, capsOverride := a.resolveSpawnCaps(v.Caps, v.ResumeTaskID != "")
-	auth := a.spawnAuthority(v, caps)
-	switch v.Kind {
-	case verb.KindSubmit:
-		return a, DoSubmitWithOpts(a.client, repo, v.Task, cli.SelectorOpts{Host: v.Host, Runner: v.Runner, IP: v.IP}, v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Exact, v.Agent)
-	}
-	sel := cli.SelectorOpts{Host: v.Host, Runner: v.Runner, IP: v.IP}
-	if v.X11 {
-		return a, openX11Session(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, int(v.X11Display), a.program, auth, capsOverride, v.ResumeConversation, v.Exact, v.Agent, spawnRunMode(v))
-	}
-	if v.Detach || v.Background {
-		return a, DoStartDetachedSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Exact, v.Agent, TermSize{Rows: uint16(a.height), Cols: uint16(a.width)}, v.Stream, spawnRunMode(v))
-	}
-	// Stream without Detach cannot reach here: the declaration refuses it.
-	return a, openAttachedSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Exact, v.Agent, spawnRunMode(v))
-}
-
 // cmdlinePlaceholder is the cmdline's ghost text: a width-limited SUMMARY, so
 // unlike cmdlineHelpLines it does not name every verb. What it must not do is
 // name one the cmdline cannot parse, which is what
 // TestPlaceholderNamesNothingUnreachable checks -- the placeholder is the
 // first thing an operator reads, and a verb listed there is a promise.
-const cmdlinePlaceholder = "submit / session / file / forward / conns / ssh-gateway / server / workspace / cancel / notify / prune / repo / caps / clear / help / quit"
+const cmdlinePlaceholder = "session / file / forward / conns / ssh-gateway / server / workspace / cancel / notify / prune / repo / caps / clear / help / quit"
 
 // tuiKeyHelp is the part no table holds: what a KEY does, and how a verb
 // pairs with one. It stays hand-written because a keybinding is not a verb --
@@ -2604,7 +2560,7 @@ var tuiKeyHelp = []string{
 // synopsis generated and its description declared, then the key bindings.
 func cmdlineHelpLines() []string {
 	out := []string{
-		"commands: submit / session / file / git / forward / exec / conns / grid / workspace / " +
+		"commands: session / file / git / forward / exec / conns / grid / workspace / " +
 			"cancel / notify / prune / restore / repo / caps / caps set-defaults / refresh / clear / help / quit",
 	}
 	for _, path := range verb.PathsForSurface(verb.TUI) {
@@ -2612,7 +2568,7 @@ func cmdlineHelpLines() []string {
 		if !ok {
 			continue
 		}
-		// Synopsis and description on separate lines. `submit`'s declared
+		// Synopsis and description on separate lines. `session new`'s declared
 		// flags run past 300 characters, and this panel is narrower than a
 		// terminal -- one line carrying both put the description where a
 		// reader never reaches it.

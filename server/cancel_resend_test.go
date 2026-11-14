@@ -135,8 +135,8 @@ func TestRepeatedCancelResends(t *testing.T) {
 	}
 }
 
-// A Queued task has nothing on a runner to cancel, even though handleSubmit
-// records the candidate runner (BoundRunnerID) at submit. Sending it a
+// A Queued task has nothing on a runner to cancel, even though the open
+// records the candidate runner (BoundRunnerID) at open. Sending it a
 // CancelTask is now answered with TaskFinished(-1) — the runner does not have
 // the task — which would turn the operator's Cancelled into Failed.
 func TestCancelOfQueuedTaskSendsNothing(t *testing.T) {

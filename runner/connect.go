@@ -734,27 +734,14 @@ func dispatchRunnerRequest(ctx context.Context, session *Session, log *slog.Logg
 	}
 	switch req.Kind {
 	case protocol.RunnerRequestType_AssignTask:
-		at := req.AssignTask()
-		if at == nil {
-			return
+		// Retired (A3, A-D32): the oneshot kind is gone and a current server
+		// never sends this. An older server would mark the task Running
+		// before it sent it, so say so rather than drop it unseen; the
+		// restart order (server first) keeps the pair from meeting.
+		if at := req.AssignTask(); at != nil {
+			log.Error("assign_task from a server older than this runner: oneshot tasks are retired; restart the server first",
+				"task_id", hex.EncodeToString(at.TaskId.Id[:]))
 		}
-		// Spawn the task handler so the receive loop stays responsive.
-		// The body (auth_ticket / repo_path / prompt / extra_args) is on
-		// a server-initiated send-stream — fetch+decode here so handleAssign
-		// receives a fully-resolved request.
-		endPending := session.beginPendingTask(at.TaskId)
-		go func() {
-			defer endPending()
-			body, err := waitForAssignTaskBody(ctx, session.Streams, trsf.StreamID(at.StreamId))
-			if err != nil {
-				log.Error("AssignTask body fetch failed",
-					"task_id", hex.EncodeToString(at.TaskId.Id[:]),
-					"stream_id", at.StreamId,
-					"err", err)
-				return
-			}
-			session.handleAssign(ctx, at.TaskId, body)
-		}()
 	case protocol.RunnerRequestType_CancelTask:
 		ct := req.CancelTask()
 		if ct == nil {
@@ -1120,17 +1107,4 @@ func waitForStreamBody(ctx context.Context, p peer.BidirectionalStreamLookup, id
 			return raw, nil
 		}
 	}
-}
-
-// waitForAssignTaskBody reads and decodes AssignTask's body.
-func waitForAssignTaskBody(ctx context.Context, p peer.BidirectionalStreamLookup, id trsf.StreamID) (*protocol.AssignTaskBody, error) {
-	raw, err := waitForStreamBody(ctx, p, id, "AssignTask")
-	if err != nil {
-		return nil, err
-	}
-	body := &protocol.AssignTaskBody{}
-	if err := body.DecodeExact(raw); err != nil {
-		return nil, fmt.Errorf("decode AssignTaskBody (%d bytes): %w", len(raw), err)
-	}
-	return body, nil
 }

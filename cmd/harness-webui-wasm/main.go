@@ -94,7 +94,6 @@ func main() {
 
 	js.Global().Set("harness", js.ValueOf(map[string]any{
 		"connect":            js.FuncOf(harnessConnect),
-		"submit":             js.FuncOf(harnessSubmit),
 		"list":               js.FuncOf(harnessList),
 		"restore":            js.FuncOf(harnessRestore),
 		"snapshot":           js.FuncOf(harnessSnapshot),
@@ -1500,121 +1499,6 @@ func harnessParseAuthority(this js.Value, args []js.Value) any {
 		}
 	}
 	return js.ValueOf(out)
-}
-
-// harnessSubmit submits a task and resolves with the server-assigned task id.
-// An optional "host" field pins the task to a specific runner by hostname.
-//
-//	harness.submit({repo: "/abs/path", task: "...", host: "raspi", agent: "codex"}) -> Promise<taskIDHex>
-//
-// runner / host / ip are the declared selector trio and all three are read
-// here. Only host was, and the fix for that landed in harnessStartInteractive
-// -- a function the command input cannot reach, since `session new` is not
-// declared for this surface. So `submit --runner X` and `--ip Y` kept being
-// dropped after the commit that said they were not.
-func harnessSubmit(this js.Value, args []js.Value) any {
-	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
-		resolve := promiseArgs[0]
-		reject := promiseArgs[1]
-		go func() {
-			c, err := currentClient()
-			if err != nil {
-				rejectErr(reject, err)
-				return
-			}
-			if len(args) < 1 {
-				rejectErr(reject, errors.New("submit: missing options arg"))
-				return
-			}
-			opts := args[0]
-			repo := opts.Get("repo").String()
-			task := opts.Get("task").String()
-			extraArgs := jsArrayToStringSlice(opts.Get("agentArgs"))
-			resumeVal := opts.Get("resumeTaskId")
-			resumeTaskID := ""
-			if resumeVal.Type() == js.TypeString {
-				resumeTaskID = resumeVal.String()
-			}
-			selOpts, selErr := selectorFromOpts(opts)
-			if selErr != nil {
-				rejectErr(reject, fmt.Errorf("submit: selector: %w", selErr))
-				return
-			}
-			sel, err := cli.BuildSelector(selOpts)
-			if err != nil {
-				rejectErr(reject, fmt.Errorf("submit: selector: %w", err))
-				return
-			}
-			// Default-deny, matching ParseCaps(""): a JS caller that omits
-			// `caps` spawns a task with no control plane. The WebUI always
-			// sends its Compose state, so this is the floor for scripted
-			// callers, not the button path.
-			caps, capsErr := capsFromOpts(opts)
-			if capsErr != nil {
-				rejectErr(reject, capsErr)
-				return
-			}
-			scope, scopeErr := scopeFromOpts(opts)
-			overrides, ovErr := overridesFromOpts(opts)
-			if ovErr != nil && scopeErr == nil {
-				scopeErr = ovErr
-			}
-			if scopeErr != nil {
-				rejectErr(reject, scopeErr)
-				return
-			}
-			resumeCapsOverride := false
-			if rcov := opts.Get("resumeCapsOverride"); rcov.Type() == js.TypeBoolean {
-				resumeCapsOverride = rcov.Bool()
-			}
-			scopePresent := false
-			if sp := opts.Get("scopePresent"); sp.Type() == js.TypeBoolean {
-				scopePresent = sp.Bool()
-			}
-			resumeConversation := false
-			if rc := opts.Get("resumeConversation"); rc.Type() == js.TypeBoolean {
-				resumeConversation = rc.Bool()
-			}
-			resumeExact := false
-			if re := opts.Get("resumeExact"); re.Type() == js.TypeBoolean {
-				resumeExact = re.Bool()
-			}
-			// agent selects a named agent profile advertised by the target
-			// runner (multi-agent-profile design §6); empty = runner default
-			// / (on resume) the resumed task's own profile.
-			agentProfile := ""
-			if av := opts.Get("agent"); av.Type() == js.TypeString {
-				agentProfile = av.String()
-			}
-			bound, boundErr := boundFromOpts(opts)
-			if boundErr != nil {
-				rejectErr(reject, fmt.Errorf("submit: %w", boundErr))
-				return
-			}
-			id, err := c.Submit(rootCtx, repo, task, cli.SessionOpts{
-				Selector: sel, ExtraArgs: extraArgs, ResumeTaskID: resumeTaskID,
-				Caps: caps, Scope: scope, Overrides: overrides,
-				ScopePresent: scopePresent, ResumeCapsOverride: resumeCapsOverride,
-				ResumeConversation: resumeConversation, AgentProfile: agentProfile,
-				ResumeExact:  resumeExact,
-				DelegateCaps: bound.DelegateCaps, DelegateScope: bound.DelegateScope,
-				DelegateCapsPresent: bound.DelegateCapsPresent, DelegateScopePresent: bound.DelegateScopePresent,
-				SpawnDepth: bound.SpawnDepth, MaxDescendants: bound.MaxDescendants,
-				SpawnDepthPresent: bound.SpawnDepthPresent, MaxDescendantsPresent: bound.MaxDescendantsPresent,
-			})
-			if err != nil {
-				if rejectAmbiguous(reject, err) {
-					return
-				}
-				rejectErr(reject, fmt.Errorf("submit: %w", err))
-				return
-			}
-			resolve.Invoke(js.ValueOf(id))
-		}()
-		return nil
-	})
-	defer executor.Release()
-	return js.Global().Get("Promise").New(executor)
 }
 
 // rejectAmbiguous rejects with the ambiguous_runner shape the page's picker

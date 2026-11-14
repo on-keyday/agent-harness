@@ -78,13 +78,13 @@ func TestCallerCaps(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Task 3: spawn attenuation via handleSubmit
+// Task 3: spawn attenuation through an interactive open
 // ---------------------------------------------------------------------------
 
 func TestSpawnAttenuation(t *testing.T) {
 	h := newTestHandler(t)
 	now := time.Now()
-	// Register a runner so handleSubmit can resolve a candidate.
+	// Register a runner so the open can resolve a candidate and start on it.
 	h.Registry.Add(&RunnerEntry{
 		ID:               tcid("A"),
 		Hostname:         "runner-a",
@@ -93,12 +93,12 @@ func TestSpawnAttenuation(t *testing.T) {
 		ActiveTasks:      map[string]struct{}{},
 		ConnectedAt:      now,
 		LastTaskActivity: now,
-		Conn:             stubConn{},
+		Conn:             newOpenableConn(t),
 	})
 
 	// Create the parent task with a limited cap set (Spawn + FileRead).
 	parentCaps := protocol.Capability_Spawn | protocol.Capability_FileRead
-	parentIDHex := h.Tasks.Create("/x/repo", "parent", protocol.TaskKind_Oneshot,
+	parentIDHex := h.Tasks.Create("/x/repo", "parent", protocol.TaskKind_Interactive,
 		protocol.ClientKind_Cli, protocol.TaskID{}, "A",
 		protocol.RunnerSelector{}, nil, authority.Grant{Caps: parentCaps, Scope: authority.Scope{},
 			// Unbounded, so this test pins caps ∩ requested alone; the bound
@@ -114,59 +114,31 @@ func TestSpawnAttenuation(t *testing.T) {
 	}
 	h.principals["agent-conn"] = ptid
 
-	// Case 1: request Capability_All from a limited parent → child gets parent's set.
-	req1 := &protocol.SubmitRequest{RequestedCaps: protocol.Capability_All}
-	req1.SetRepoPath([]byte("/x/repo"))
-	req1.SetPrompt([]byte("child1"))
+	open := func(name, cid string, creator protocol.TaskID, requested protocol.Capability) TaskEntry {
+		t.Helper()
+		req := detachedOpen(0, 0)
+		req.SetRepoPath([]byte("/x/repo"))
+		req.RequestedCaps = requested
+		resp, _ := h.handleOpenInteractive(cid, nil, req, protocol.ClientKind_Cli, creator, h.callerCaps(cid), "")
+		if resp.Status != protocol.OpenInteractiveStatus_Ok {
+			t.Fatalf("%s status=%v want Ok (%s)", name, resp.Status, resp.ErrorMsg)
+		}
+		return taskOf(t, h, resp)
+	}
 
-	resp1, _ := h.handleSubmit("agent-conn", req1, protocol.ClientKind_Cli, ptid, h.callerCaps("agent-conn"))
-	if resp1.Status != protocol.SubmitStatus_Ok {
-		t.Fatalf("case1 status=%v want Ok", resp1.Status)
-	}
-	child1IDHex := hex.EncodeToString(resp1.TaskId.Id[:])
-	entry1, ok := h.Tasks.Get(child1IDHex)
-	if !ok {
-		t.Fatalf("child1 task %q not found", child1IDHex)
-	}
-	if entry1.Capabilities != parentCaps {
-		t.Fatalf("child1 caps = %#x, want parent caps %#x", entry1.Capabilities, parentCaps)
+	// Case 1: request Capability_All from a limited parent → child gets parent's set.
+	if c := open("case1", "agent-conn", ptid, protocol.Capability_All).Capabilities; c != parentCaps {
+		t.Fatalf("child1 caps = %#x, want parent caps %#x", c, parentCaps)
 	}
 
 	// Case 2: request a cap the parent does NOT hold → child does not get it.
-	req2 := &protocol.SubmitRequest{RequestedCaps: protocol.Capability_FileWrite}
-	req2.SetRepoPath([]byte("/x/repo"))
-	req2.SetPrompt([]byte("child2"))
-
-	resp2, _ := h.handleSubmit("agent-conn", req2, protocol.ClientKind_Cli, ptid, h.callerCaps("agent-conn"))
-	if resp2.Status != protocol.SubmitStatus_Ok {
-		t.Fatalf("case2 status=%v want Ok", resp2.Status)
-	}
-	child2IDHex := hex.EncodeToString(resp2.TaskId.Id[:])
-	entry2, ok := h.Tasks.Get(child2IDHex)
-	if !ok {
-		t.Fatalf("child2 task %q not found", child2IDHex)
-	}
-	if entry2.Capabilities != protocol.Capability_None {
-		t.Fatalf("child2 caps = %#x, want None (parent lacks FileWrite)", entry2.Capabilities)
+	if c := open("case2", "agent-conn", ptid, protocol.Capability_FileWrite).Capabilities; c != protocol.Capability_None {
+		t.Fatalf("child2 caps = %#x, want None (parent lacks FileWrite)", c)
 	}
 
 	// Case 3: operator (connID not in principals) → child inherits full set.
-	req3 := &protocol.SubmitRequest{RequestedCaps: protocol.Capability_All}
-	req3.SetRepoPath([]byte("/x/repo"))
-	req3.SetPrompt([]byte("child3"))
-
-	operatorCaps := h.callerCaps("operator-conn") // not in principals → All
-	resp3, _ := h.handleSubmit("", req3, protocol.ClientKind_Cli, protocol.TaskID{}, operatorCaps)
-	if resp3.Status != protocol.SubmitStatus_Ok {
-		t.Fatalf("case3 status=%v want Ok", resp3.Status)
-	}
-	child3IDHex := hex.EncodeToString(resp3.TaskId.Id[:])
-	entry3, ok := h.Tasks.Get(child3IDHex)
-	if !ok {
-		t.Fatalf("child3 task %q not found", child3IDHex)
-	}
-	if entry3.Capabilities != protocol.Capability_All {
-		t.Fatalf("child3 caps = %#x, want All (operator creator)", entry3.Capabilities)
+	if c := open("case3", "", protocol.TaskID{}, protocol.Capability_All).Capabilities; c != protocol.Capability_All {
+		t.Fatalf("child3 caps = %#x, want All (operator creator)", c)
 	}
 }
 

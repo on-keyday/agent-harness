@@ -143,9 +143,9 @@ func TestIPLinkE2E(t *testing.T) {
 	}()
 	time.Sleep(500 * time.Millisecond)
 
-	taskID, err := cli.Submit(ctx, peerCID, repo, "ip-link-test")
+	taskID, err := openOneshot(ctx, peerCID, repo, "ip-link-test")
 	if err != nil {
-		t.Fatalf("submit: %v", err)
+		t.Fatalf("session new --oneshot: %v", err)
 	}
 	worktree := filepath.Join(repo, ".harness-worktrees", taskID)
 	for deadline := time.Now().Add(20 * time.Second); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {

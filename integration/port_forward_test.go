@@ -73,11 +73,11 @@ func TestPortForwardE2E(t *testing.T) {
 	}()
 	time.Sleep(500 * time.Millisecond)
 
-	taskID, err := cli.Submit(ctx, peerCID, repo, "pf-test")
+	taskID, err := openOneshot(ctx, peerCID, repo, "pf-test")
 	if err != nil {
-		t.Fatalf("submit: %v", err)
+		t.Fatalf("session new --oneshot: %v", err)
 	}
-	t.Logf("submitted task %s", taskID)
+	t.Logf("opened oneshot session %s", taskID)
 
 	// Wait until the runner has the task registered (worktree appears).
 	worktree := filepath.Join(repo, ".harness-worktrees", taskID)
@@ -346,9 +346,9 @@ func TestRemotePortForwardE2E(t *testing.T) {
 	}()
 	time.Sleep(500 * time.Millisecond)
 
-	taskID, err := cli.Submit(ctx, peerCID, repo, "rpf-test")
+	taskID, err := openOneshot(ctx, peerCID, repo, "rpf-test")
 	if err != nil {
-		t.Fatalf("submit: %v", err)
+		t.Fatalf("session new --oneshot: %v", err)
 	}
 
 	worktree := filepath.Join(repo, ".harness-worktrees", taskID)
@@ -662,11 +662,11 @@ func TestLocalForwardRegisterListKill(t *testing.T) {
 	}()
 	time.Sleep(500 * time.Millisecond)
 
-	taskID, err := cli.Submit(ctx, peerCID, repo, "lfwd-test")
+	taskID, err := openOneshot(ctx, peerCID, repo, "lfwd-test")
 	if err != nil {
-		t.Fatalf("submit: %v", err)
+		t.Fatalf("session new --oneshot: %v", err)
 	}
-	t.Logf("submitted task %s", taskID)
+	t.Logf("opened oneshot session %s", taskID)
 
 	// Wait until the runner has the task registered (worktree appears).
 	worktree := filepath.Join(repo, ".harness-worktrees", taskID)
@@ -805,9 +805,9 @@ func TestLocalForwardKillDropsConnection(t *testing.T) {
 	}()
 	time.Sleep(500 * time.Millisecond)
 
-	taskID, err := cli.Submit(ctx, peerCID, repo, "lfwd-drop-test")
+	taskID, err := openOneshot(ctx, peerCID, repo, "lfwd-drop-test")
 	if err != nil {
-		t.Fatalf("submit: %v", err)
+		t.Fatalf("session new --oneshot: %v", err)
 	}
 
 	worktree := filepath.Join(repo, ".harness-worktrees", taskID)
@@ -982,9 +982,9 @@ func TestLocalForwardMultiSpecIndependentKill(t *testing.T) {
 	}()
 	time.Sleep(500 * time.Millisecond)
 
-	taskID, err := cli.Submit(ctx, peerCID, repo, "lfwd-multi-test")
+	taskID, err := openOneshot(ctx, peerCID, repo, "lfwd-multi-test")
 	if err != nil {
-		t.Fatalf("submit: %v", err)
+		t.Fatalf("session new --oneshot: %v", err)
 	}
 
 	worktree := filepath.Join(repo, ".harness-worktrees", taskID)
@@ -1205,9 +1205,9 @@ func TestLocalForwardPartialFailureDeregistersStartedSpecs(t *testing.T) {
 	}()
 	time.Sleep(500 * time.Millisecond)
 
-	taskID, err := cli.Submit(ctx, peerCID, repo, "lfwd-partial-fail-test")
+	taskID, err := openOneshot(ctx, peerCID, repo, "lfwd-partial-fail-test")
 	if err != nil {
-		t.Fatalf("submit: %v", err)
+		t.Fatalf("session new --oneshot: %v", err)
 	}
 
 	worktree := filepath.Join(repo, ".harness-worktrees", taskID)
@@ -1361,11 +1361,11 @@ func TestRawForwardRoundTripListKill(t *testing.T) {
 	}()
 	time.Sleep(500 * time.Millisecond)
 
-	taskID, err := cli.Submit(ctx, serverCID, repo, "rawfwd-test")
+	taskID, err := openOneshot(ctx, serverCID, repo, "rawfwd-test")
 	if err != nil {
-		t.Fatalf("submit: %v", err)
+		t.Fatalf("session new --oneshot: %v", err)
 	}
-	t.Logf("submitted task %s", taskID)
+	t.Logf("opened oneshot session %s", taskID)
 
 	// Wait until the runner has the task registered (worktree appears).
 	worktree := filepath.Join(repo, ".harness-worktrees", taskID)

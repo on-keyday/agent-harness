@@ -48,24 +48,6 @@ func (f *resumeFixture) terminalTask(t *testing.T, child bool) string {
 	return id
 }
 
-// submit sends a SubmitRequest; resume == "" is a fresh spawn.
-func (f *resumeFixture) submit(t *testing.T, resume string, exact bool) protocol.TaskControlResponse {
-	t.Helper()
-	f.reqID++
-	sub := protocol.SubmitRequest{}
-	sub.SetRepoPath([]byte("/r"))
-	if resume == "" {
-		sub.SetPrompt([]byte("p"))
-	} else {
-		sub.ResumeTaskId = hexToTaskID(t, resume)
-	}
-	sub.SetResumeExact(exact)
-	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_Submit, RequestId: f.reqID}}
-	req.SetSubmit(sub)
-	f.h.Handle(f.conn, encodeTaskControlRequest(t, req))
-	return lastTaskControlResponse(t, f.conn)
-}
-
 // open sends a detached OpenInteractiveRequest, so the seat never decides it.
 func (f *resumeFixture) open(t *testing.T, resume string, exact bool) protocol.TaskControlResponse {
 	t.Helper()
@@ -87,9 +69,6 @@ func (f *resumeFixture) open(t *testing.T, resume string, exact bool) protocol.T
 
 // resumeStatus reports whether a resume reached past the target gate.
 func resumeNotFound(resp protocol.TaskControlResponse) bool {
-	if s := resp.Submit(); s != nil {
-		return s.Status == protocol.SubmitStatus_ResumeNotFound
-	}
 	if o := resp.OpenInteractive(); o != nil {
 		return o.Status == protocol.OpenInteractiveStatus_ResumeNotFound
 	}
@@ -117,7 +96,7 @@ func TestResumeGateMatrix(t *testing.T) {
 	}
 	for held, ok := range allowed {
 		for _, op := range []string{fresh, plain, exact} {
-			for _, path := range []string{"submit", "open"} {
+			for _, path := range []string{"open"} {
 				name := fmt.Sprintf("%s/%s/%s", held, op, path)
 				t.Run(name, func(t *testing.T) {
 					f := newResumeFixture(t, held, authority.Scope{Base: protocol.ScopeBase_Global})
@@ -125,10 +104,7 @@ func TestResumeGateMatrix(t *testing.T) {
 					if op != fresh {
 						target = f.terminalTask(t, true)
 					}
-					send := f.submit
-					if path == "open" {
-						send = f.open
-					}
+					send := f.open
 					resp := send(t, target, op == exact)
 					denied := resp.Kind == protocol.TaskControlKind_PermissionDenied
 					if denied == ok[op] {
@@ -156,10 +132,10 @@ func TestResumeTargetRuleD19(t *testing.T) {
 			{Caps: protocol.Capability_Resume, Base: protocol.ScopeBase_None, IDs: []string{a}},
 		}
 		f.h.Tasks.mu.Unlock()
-		if resumeNotFound(f.submit(t, a, false)) {
+		if resumeNotFound(f.open(t, a, false)) {
 			t.Fatal("A is named by the resume override but was refused")
 		}
-		if !resumeNotFound(f.submit(t, c, false)) {
+		if !resumeNotFound(f.open(t, c, false)) {
 			t.Fatal("child C is outside the narrowed resume scope but was allowed")
 		}
 	})
@@ -172,10 +148,10 @@ func TestResumeTargetRuleD19(t *testing.T) {
 			{Caps: protocol.Capability_ResumeExact, Base: protocol.ScopeBase_None, IDs: []string{x}},
 		}
 		f.h.Tasks.mu.Unlock()
-		if resumeNotFound(f.submit(t, x, true)) {
+		if resumeNotFound(f.open(t, x, true)) {
 			t.Fatal("X refused")
 		}
-		if !resumeNotFound(f.submit(t, other, true)) {
+		if !resumeNotFound(f.open(t, other, true)) {
 			t.Fatal("a task outside resume_exact's scope was allowed")
 		}
 	})
@@ -190,13 +166,13 @@ func TestResumeTargetRuleD19(t *testing.T) {
 			{Caps: protocol.Capability_ResumeExact, Base: protocol.ScopeBase_None, IDs: []string{b}},
 		}
 		f.h.Tasks.mu.Unlock()
-		if resumeNotFound(f.submit(t, a, true)) || resumeNotFound(f.submit(t, b, true)) {
+		if resumeNotFound(f.open(t, a, true)) || resumeNotFound(f.open(t, b, true)) {
 			t.Fatal("exact resume of A or B refused")
 		}
-		if resumeNotFound(f.submit(t, a, false)) {
+		if resumeNotFound(f.open(t, a, false)) {
 			t.Fatal("plain resume of A refused")
 		}
-		if !resumeNotFound(f.submit(t, b, false)) {
+		if !resumeNotFound(f.open(t, b, false)) {
 			t.Fatal("plain resume of B allowed, but only resume_exact's scope names B")
 		}
 	})
@@ -207,7 +183,7 @@ func TestResumeTargetRuleD19(t *testing.T) {
 func TestResumeOutOfBothScopesIsNotFound(t *testing.T) {
 	f := newResumeFixture(t, protocol.Capability_ResumeExact, authority.Scope{Base: protocol.ScopeBase_None})
 	target := f.terminalTask(t, false)
-	for _, send := range []func(*testing.T, string, bool) protocol.TaskControlResponse{f.submit, f.open} {
+	for _, send := range []func(*testing.T, string, bool) protocol.TaskControlResponse{f.open} {
 		resp := send(t, target, true)
 		if resp.Kind == protocol.TaskControlKind_PermissionDenied {
 			t.Fatal("out-of-scope target answered PermissionDenied")

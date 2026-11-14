@@ -39,7 +39,8 @@ First bring-up is three commands:
   scripts/kvm-runner/kvm-runner.py runner up
 
 then `harness-cli ls --json` lists the slot under "runners", and a task
-reaches it with `submit --host <name> --repo <guest lab path>`.
+reaches it with `session new -d --oneshot --host <name> --agent <profile>
+--repo <guest lab path> --prompt '...'`.
 
 A second slot in the same guest — a bash one that runs commands in the lab
 directory itself rather than in a per-task worktree — is:
@@ -49,12 +50,11 @@ directory itself rather than in a per-task worktree — is:
 Both slots report the SAME hostname, and that is fine: they are told apart
 by profile, not by host. A runner's default profile is named after its
 --agent-bin basename (cmd/agent-runner/main.go), so these advertise
-"claude" and "bash", and `submit --agent bash` narrows the candidates to one
-(server/task_handler.go filterByProfile; a name no candidate has answers
-ProfileUnavailable, not ambiguous). Interactive opens list one row per
-(runner, profile) combo, so the picker separates them too. Only a bare
-`submit` naming neither profile nor a distinct repo can still come back
-ambiguous.
+"claude" and "bash", and `session new --agent bash` narrows the candidates
+to one (server/task_handler.go expandCombos; a name no candidate has answers
+ProfileUnavailable, not ambiguous). An open naming no profile lists one row
+per (runner, profile) combo, so with two slots on one host it comes back
+ambiguous and the picker separates them.
 """
 
 from __future__ import annotations
@@ -691,7 +691,7 @@ def runner_flags(args) -> list[str]:
     --agent-bin is rewritten only for a bridged agent. Leaving a non-bridged
     one as the preset's bare name is load-bearing twice over: the guest's own
     PATH then resolves it, and the runner names its default profile after the
-    basename, which is what `submit --agent <name>` matches on.
+    basename, which is what `session new --agent <name>` matches on.
     """
     flags = agent_presets.expand_agents_preset(args.agent, [])
     out: list[str] = []
@@ -779,8 +779,8 @@ tail -6 {base}.log
 """)
     print(f"\nhostname={args.name}, profile={args.agent}"
           f"{' (no-worktree)' if args.no_worktree else ''}; reach it with:\n"
-          f"  harness-cli submit --host {args.name} --agent {args.agent} "
-          f"--repo {lab} --task '...'")
+          f"  harness-cli session new -d --oneshot --host {args.name} "
+          f"--agent {args.agent} --repo {lab} --prompt '...'")
     return 0
 
 

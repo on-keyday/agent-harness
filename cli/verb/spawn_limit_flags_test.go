@@ -8,12 +8,9 @@ import (
 )
 
 func TestSpawnLimitFlagsOnEverySpawnVerb(t *testing.T) {
-	for _, path := range [][]string{{"submit"}, {"session", "new"}} {
+	for _, path := range [][]string{{"session", "new"}} {
 		for _, sf := range []Surface{CLI, TUI, WebUI} {
 			args := []string{"--repo", "/r", "--spawn-depth", "2", "--max-descendants", "unbounded"}
-			if path[0] == "submit" {
-				args = append(args, "x")
-			}
 			act, err := buildOn(t, sf, path, args...)
 			if err != nil {
 				t.Fatalf("%v on %v: %v", path, sf, err)
@@ -53,7 +50,7 @@ func limitOf(n uint32) protocol.SpawnLimit {
 
 func TestSpawnLimitFlagsConflictWithExact(t *testing.T) {
 	for _, flagName := range []string{"--spawn-depth", "--max-descendants"} {
-		_, err := buildOn(t, CLI, []string{"submit"}, "--resume", idA, "--exact", flagName, "1")
+		_, err := buildOn(t, CLI, []string{"session", "new"}, "--resume", idA, "--exact", flagName, "1")
 		if err == nil || !strings.Contains(err.Error(), "exact") || !strings.Contains(err.Error(), strings.TrimPrefix(flagName, "--")) {
 			t.Errorf("--exact %s: err = %v, want a conflict naming both", flagName, err)
 		}

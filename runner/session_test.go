@@ -16,7 +16,6 @@ import (
 
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/runner/protocol"
-	"github.com/on-keyday/agent-harness/topics"
 	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/objtrsf/trsf"
 )
@@ -82,46 +81,118 @@ func TestSessionResolvesProfile(t *testing.T) {
 	}
 }
 
-func TestHandleAssignSuccessSequence(t *testing.T) {
+// fakeClaudePath returns the absolute path to testdata/fake-claude.sh from the runner package directory.
+func fakeClaudePath(t *testing.T) string {
+	t.Helper()
+	abs, err := filepath.Abs("../testdata/fake-claude.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(abs); err != nil {
+		t.Fatalf("fake-claude.sh missing: %v", err)
+	}
+	return abs
+}
+
+// writeFakeClaude creates a temporary executable script with the given body and returns its path.
+func writeFakeClaude(t *testing.T, body string) string {
+	t.Helper()
+	script := filepath.Join(t.TempDir(), "fake-claude.sh")
+	fullBody := "#!/usr/bin/env bash\nset -e\n" + body + "\nexit 0\n"
+	if err := os.WriteFile(script, []byte(fullBody), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return script
+}
+
+// openRig serves handleOpenExec its streams: per task, a held exec stream (see
+// heldStream: its reads wait, as a live client's do, so the agent runs to its
+// own exit instead of being hung up on) and the prompt stream of a oneshot
+// open. Register every task before running any, so the lookup is not written
+// while an open reads it.
+type openRig struct {
+	lookup *fakeBidiLookup
+	next   trsf.StreamID
+}
+
+func newOpenRig(s *Session) *openRig {
+	r := &openRig{lookup: &fakeBidiLookup{
+		streams: map[trsf.StreamID]trsf.BidirectionalStream{},
+		recv:    map[trsf.StreamID]trsf.ReceiveStream{},
+	}, next: 200}
+	s.Streams = r.lookup
+	return r
+}
+
+// oneshot registers a `session new --oneshot` open of prompt in repo: the
+// profile's oneshot argv in the PTY, ended by the agent's own exit.
+func (r *openRig) oneshot(t *testing.T, tid protocol.TaskID, repo, prompt string) *protocol.OpenExecRunnerRequest {
+	t.Helper()
+	streamID, promptID := r.next, r.next+1
+	r.next += 2
+	held := &heldStream{noopBidiStream: &noopBidiStream{streamID: streamID}, release: make(chan struct{})}
+	release := time.AfterFunc(10*time.Second, func() { held.once.Do(func() { close(held.release) }) })
+	t.Cleanup(func() { release.Stop(); held.once.Do(func() { close(held.release) }) })
+	r.lookup.streams[streamID] = held
+	r.lookup.recv[promptID] = &promptRecv{data: promptBodyBytes(prompt)}
+	oer := &protocol.OpenExecRunnerRequest{TaskId: tid, StreamId: uint64(streamID)}
+	oer.SetRepoPath([]byte(repo))
+	oer.SetOneshot(true)
+	oer.SetPromptPresent(true)
+	oer.SetPromptStreamId(uint64(promptID))
+	return oer
+}
+
+// lastFinished returns the last message sent, which must be a TaskFinished.
+func lastFinished(t *testing.T, ms *mockSender) *protocol.TaskFinished {
+	t.Helper()
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+	if len(ms.sent) == 0 {
+		t.Fatal("nothing sent")
+	}
+	m := decodeRunnerMsg(t, ms.sent[len(ms.sent)-1])
+	tf := m.TaskFinished()
+	if m.Kind != protocol.RunnerMessageType_TaskFinished || tf == nil {
+		t.Fatalf("last message kind %v, want TaskFinished", m.Kind)
+	}
+	return tf
+}
+
+// readOut reads what an agent wrote to out. The agents in these tests report
+// through a file rather than their terminal output so the assertion does not
+// depend on how the PTY's bytes are framed on the exec stream.
+func readOut(t *testing.T, out string) string {
+	t.Helper()
+	b, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("the agent wrote nothing to %s: %v", out, err)
+	}
+	return string(b)
+}
+
+func TestOneshotOpenSuccessSequence(t *testing.T) {
 	repo := initRepo(t)
 	ms := &mockSender{}
-	fakePath, _ := filepath.Abs("../testdata/fake-claude.sh") // relative from runner/
 	s := &Session{
 		AllowedRoots: []string{repo},
-		Profiles:     singleProfile(t, fakePath),
-		Timeout:      5 * time.Second,
+		Profiles:     singleProfile(t, fakeClaudePath(t)),
 		Sender:       ms,
 		Now:          time.Now,
 	}
-	var taskIDBytes [16]byte
-	taskIDBytes[0] = 0xAB
-	taskID := protocol.TaskID{Id: taskIDBytes}
-	body := &protocol.AssignTaskBody{Prompt: []byte("hello")}
-	body.SetRepoPath([]byte(repo))
-	s.handleAssign(context.Background(), taskID, body)
+	rig := newOpenRig(s)
+	s.handleOpenExec(context.Background(), rig.oneshot(t, protocol.TaskID{Id: [16]byte{0xAB}}, repo, "hello"))
 
-	// Should have sent at least 3 control messages: Accepted, Started, Finished.
+	// TaskAccepted, TaskStarted, TaskFinished with exit_code=0.
 	if len(ms.sent) < 3 {
 		t.Fatalf("expected ≥3 messages, got %d", len(ms.sent))
 	}
-
-	// First should be TaskAccepted.
-	accepted := decodeRunnerMsg(t, ms.sent[0])
-	if accepted.Kind != protocol.RunnerMessageType_TaskAccepted {
-		t.Fatalf("first msg kind: %v", accepted.Kind)
+	if k := decodeRunnerMsg(t, ms.sent[0]).Kind; k != protocol.RunnerMessageType_TaskAccepted {
+		t.Fatalf("first msg kind: %v", k)
 	}
-
-	// Last should be TaskFinished with exit_code=0.
-	last := decodeRunnerMsg(t, ms.sent[len(ms.sent)-1])
-	if last.Kind != protocol.RunnerMessageType_TaskFinished {
-		t.Fatalf("last msg kind: %v", last.Kind)
+	if tf := lastFinished(t, ms); tf.ExitCode != 0 {
+		t.Fatalf("finished: exit %d %q", tf.ExitCode, tf.ErrorMessage)
 	}
-	tf := last.TaskFinished()
-	if tf == nil || tf.ExitCode != 0 {
-		t.Fatalf("finished: %+v", tf)
-	}
-
-	// Some TaskStarted in between.
 	foundStarted := false
 	for _, m := range ms.sent[1 : len(ms.sent)-1] {
 		if decodeRunnerMsg(t, m).Kind == protocol.RunnerMessageType_TaskStarted {
@@ -132,90 +203,26 @@ func TestHandleAssignSuccessSequence(t *testing.T) {
 	if !foundStarted {
 		t.Fatalf("missing TaskStarted in: %v", ms.sent)
 	}
-
-	// Logs published to the right topic.
-	expectedTopic := topics.TaskLog("ab" + strings.Repeat("00", 15))
-	if len(ms.publishes) == 0 {
-		t.Fatalf("expected log publishes, got none")
-	}
-	for _, p := range ms.publishes {
-		if p.topic != expectedTopic {
-			t.Fatalf("unexpected topic %q (want %q)", p.topic, expectedTopic)
-		}
-	}
-	// Some chunk should contain the prompt echo.
-	var combined []byte
-	for _, p := range ms.publishes {
-		combined = append(combined, p.data...)
-	}
-	if !strings.Contains(string(combined), "hello") {
-		t.Fatalf("prompt not echoed in logs: %q", combined)
-	}
 }
 
-func TestHandleAssignResumeConversationAddsOneshotContinue(t *testing.T) {
-	repo := initRepo(t)
-	ms := &mockSender{}
-	fake := writeFakeClaude(t, `echo "ARGS=$*"`)
-	s := &Session{
-		AllowedRoots: []string{repo},
-		Profiles:     singleProfile(t, fake),
-		Timeout:      5 * time.Second,
-		Sender:       ms,
-		Now:          time.Now,
-	}
-
-	var taskIDBytes [16]byte
-	taskIDBytes[0] = 0xAB
-	taskID := protocol.TaskID{Id: taskIDBytes}
-	body := &protocol.AssignTaskBody{Prompt: []byte("hello")}
-	body.SetRepoPath([]byte(repo))
-	body.SetResumeConversation(true)
-
-	s.handleAssign(context.Background(), taskID, body)
-
-	ms.mu.Lock()
-	var combined []byte
-	for _, p := range ms.publishes {
-		combined = append(combined, p.data...)
-	}
-	ms.mu.Unlock()
-
-	output := string(combined)
-	if !strings.Contains(output, "--continue") {
-		t.Fatalf("resume conversation was not forwarded to oneshot args; output=%q", output)
-	}
-	idxContinue := strings.Index(output, "--continue")
-	idxPrompt := strings.Index(output, "-p hello")
-	if idxPrompt < 0 || idxContinue > idxPrompt {
-		t.Fatalf("--continue should be inserted before -p prompt args; output=%q", output)
-	}
-}
-
-func TestHandleAssignWorktreeFailureReportsFinished(t *testing.T) {
-	// Use a non-existent repo path; WorktreeManager.Create will fail.
+func TestOpenExecWorktreeFailureReportsFinished(t *testing.T) {
+	// A non-existent repo path; WorktreeManager.Create will fail.
 	ms := &mockSender{}
 	s := &Session{
 		AllowedRoots: []string{"/no/such/repo"},
 		Profiles:     singleProfile(t, "/bin/true"),
-		Timeout:      1 * time.Second,
 		Sender:       ms,
 		Now:          time.Now,
 	}
-	body := &protocol.AssignTaskBody{Prompt: []byte("x")}
-	body.SetRepoPath([]byte("/no/such/repo"))
-	s.handleAssign(context.Background(), protocol.TaskID{}, body)
+	rig := newOpenRig(s)
+	s.handleOpenExec(context.Background(), rig.oneshot(t, protocol.TaskID{}, "/no/such/repo", "x"))
 
-	// Should have sent: TaskAccepted, then TaskFinished with error info.
+	// TaskAccepted, then TaskFinished with error info.
 	if len(ms.sent) < 2 {
 		t.Fatalf("expected ≥2 messages, got %d", len(ms.sent))
 	}
-	last := decodeRunnerMsg(t, ms.sent[len(ms.sent)-1])
-	if last.Kind != protocol.RunnerMessageType_TaskFinished {
-		t.Fatalf("last kind: %v", last.Kind)
-	}
-	tf := last.TaskFinished()
-	if tf == nil || tf.ExitCode == 0 {
+	tf := lastFinished(t, ms)
+	if tf.ExitCode == 0 {
 		t.Fatalf("expected non-zero exit on worktree failure, got %+v", tf)
 	}
 	if !bytes.Contains(tf.ErrorMessage, []byte("worktree_error")) {
@@ -223,48 +230,125 @@ func TestHandleAssignWorktreeFailureReportsFinished(t *testing.T) {
 	}
 }
 
-// TestHandleAssignPanicSendsTaskFinished verifies that a panic inside handleAssign
-// is recovered and reported as a TaskFinished message so the server doesn't wait
-// forever. Uses the testHookHandleAssign seam to inject the panic.
-func TestHandleAssignPanicSendsTaskFinished(t *testing.T) {
+// TestOpenExecPassesEnvToAgent verifies that HARNESS_* env vars built from
+// session fields and request data are visible to the spawned agent.
+func TestOpenExecPassesEnvToAgent(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "out")
+	fake := writeFakeClaude(t, `echo "TICKET=$HARNESS_AUTH_TICKET" > '`+out+`'
+echo "TASK=$HARNESS_TASK_ID" >> '`+out+`'`)
+
+	repo := initRepo(t)
 	ms := &mockSender{}
-	s := &Session{
-		AllowedRoots: []string{"/some/repo"},
-		Profiles:     singleProfile(t, "/bin/true"),
-		Timeout:      1 * time.Second,
+	sess := &Session{
+		AllowedRoots: []string{repo},
+		Profiles:     singleProfile(t, fake),
 		Sender:       ms,
+		ServerCID:    mustParseCID(t, "ws:127.0.0.1:8539-1"),
+		Hostname:     "test-host",
+		WSPath:       "/ws",
 		Now:          time.Now,
-		testHookHandleAssign: func() {
-			panic("injected test panic")
-		},
 	}
+	var ticket [16]byte
+	ticket[0] = 0xCD
+	ticket[15] = 0xEF
+	rig := newOpenRig(sess)
+	oer := rig.oneshot(t, protocol.TaskID{Id: [16]byte{0xAB}}, repo, "env-test")
+	oer.AuthTicket = ticket
+	sess.handleOpenExec(context.Background(), oer)
 
-	var taskIDBytes [16]byte
-	taskIDBytes[0] = 0xCC
-	taskID := protocol.TaskID{Id: taskIDBytes}
-	body := &protocol.AssignTaskBody{Prompt: []byte("test")}
-	body.SetRepoPath([]byte("/some/repo"))
-
-	// handleAssign should not re-panic; it should send Accepted then Finished.
-	s.handleAssign(context.Background(), taskID, body)
-
-	// Must have sent at least TaskAccepted + TaskFinished.
-	if len(ms.sent) < 2 {
-		t.Fatalf("expected ≥2 messages (Accepted + Finished), got %d", len(ms.sent))
+	if tf := lastFinished(t, ms); tf.ExitCode != 0 {
+		t.Fatalf("finished: exit %d %q", tf.ExitCode, tf.ErrorMessage)
 	}
-
-	first := decodeRunnerMsg(t, ms.sent[0])
-	if first.Kind != protocol.RunnerMessageType_TaskAccepted {
-		t.Fatalf("first message should be TaskAccepted, got %v", first.Kind)
+	output := readOut(t, out)
+	// ticket[0]=0xCD, ticket[15]=0xEF, all others zero → 32-char hex
+	expectedTicket := "TICKET=cd" + strings.Repeat("00", 14) + "ef"
+	// taskID[0]=0xAB, rest zero
+	expectedTask := "TASK=ab" + strings.Repeat("00", 15)
+	if !strings.Contains(output, expectedTicket) {
+		t.Errorf("auth ticket env not visible to the agent; output=%q want substring %q", output, expectedTicket)
 	}
-
-	last := decodeRunnerMsg(t, ms.sent[len(ms.sent)-1])
-	if last.Kind != protocol.RunnerMessageType_TaskFinished {
-		t.Fatalf("last message should be TaskFinished, got %v", last.Kind)
+	if !strings.Contains(output, expectedTask) {
+		t.Errorf("task id env not visible to the agent; output=%q want substring %q", output, expectedTask)
 	}
-	tf := last.TaskFinished()
-	if tf == nil || tf.ExitCode == 0 {
-		t.Fatalf("expected non-zero exit on panic, got %+v", tf)
+}
+
+// TestOpenExecOmitsEmptyHostname verifies that when Session.Hostname is empty
+// the spawned agent gets no HARNESS_HOSTNAME at all — not an empty one. This
+// tests the session-level flow, complementing the unit-level BuildAgentEnv
+// test.
+func TestOpenExecOmitsEmptyHostname(t *testing.T) {
+	// The agent inherits the runner's environment, and a test run inside a
+	// harness task has HARNESS_HOSTNAME there; take it out for this test so
+	// what the agent sees is only what the session added.
+	t.Setenv("HARNESS_HOSTNAME", "")
+	os.Unsetenv("HARNESS_HOSTNAME")
+
+	out := filepath.Join(t.TempDir(), "out")
+	fake := writeFakeClaude(t, `echo "HOSTNAME=${HARNESS_HOSTNAME-<unset>}" > '`+out+`'`)
+
+	repo := initRepo(t)
+	ms := &mockSender{}
+	sess := &Session{
+		AllowedRoots: []string{repo},
+		Profiles:     singleProfile(t, fake),
+		Sender:       ms,
+		ServerCID:    mustParseCID(t, "ws:127.0.0.1:8539-1"),
+		Hostname:     "", // Empty hostname — should not be passed to the agent
+		WSPath:       "/ws",
+		Now:          time.Now,
+	}
+	rig := newOpenRig(sess)
+	sess.handleOpenExec(context.Background(), rig.oneshot(t, protocol.TaskID{Id: [16]byte{0xEE}}, repo, "test-empty-hostname"))
+
+	if tf := lastFinished(t, ms); tf.ExitCode != 0 {
+		t.Fatalf("finished: exit %d %q", tf.ExitCode, tf.ErrorMessage)
+	}
+	if got := strings.TrimSpace(readOut(t, out)); got != "HOSTNAME=<unset>" {
+		t.Errorf("empty hostname should not be passed; agent saw %q", got)
+	}
+}
+
+// TestOpenExecWritesSettingsAndPropagatesEnv verifies the full open chain in
+// worktree mode: (1) .claude/settings.json is written into the worktree before
+// the agent starts, (2) it contains the UserPromptSubmit hook entry, (3)
+// HARNESS_AUTH_TICKET is visible to the agent.
+func TestOpenExecWritesSettingsAndPropagatesEnv(t *testing.T) {
+	outDir := t.TempDir()
+	// set -e: a missing settings.json fails the cat, and the task with it.
+	fake := writeFakeClaude(t, `cat .claude/settings.json > '`+filepath.Join(outDir, "settings")+`'
+echo "TICKET=$HARNESS_AUTH_TICKET" > '`+filepath.Join(outDir, "ticket")+`'`)
+
+	repo := initRepo(t)
+	ms := &mockSender{}
+	sess := &Session{
+		AllowedRoots: []string{repo},
+		Profiles:     singleProfile(t, fake),
+		Sender:       ms,
+		ServerCID:    mustParseCID(t, "ws:127.0.0.1:8539-1"),
+		Hostname:     "test-host",
+		WSPath:       "/ws",
+		Now:          time.Now,
+	}
+	var ticket [16]byte
+	ticket[0] = 0xFE
+	ticket[15] = 0xED
+	rig := newOpenRig(sess)
+	oer := rig.oneshot(t, protocol.TaskID{Id: [16]byte{0xAB}}, repo, "settings-smoke")
+	oer.AuthTicket = ticket
+	sess.handleOpenExec(context.Background(), oer)
+
+	// (1) settings.json was there for the agent to read.
+	if tf := lastFinished(t, ms); tf.ExitCode != 0 {
+		t.Fatalf("settings.json not written to the worktree: exit %d %q", tf.ExitCode, tf.ErrorMessage)
+	}
+	// (2) settings.json contains UserPromptSubmit.
+	if settings := readOut(t, filepath.Join(outDir, "settings")); !strings.Contains(settings, "UserPromptSubmit") {
+		t.Errorf("settings.json missing UserPromptSubmit hook; content=%q", settings)
+	}
+	// (3) HARNESS_AUTH_TICKET reaches the agent.
+	expectedLine := "TICKET=" + hex.EncodeToString(ticket[:])
+	if got := readOut(t, filepath.Join(outDir, "ticket")); !strings.Contains(got, expectedLine) {
+		t.Errorf("auth ticket env not propagated to the agent; output=%q want substring %q", got, expectedLine)
 	}
 }
 
@@ -327,140 +411,6 @@ func collectTaskFinished(t *testing.T, sent [][]byte) map[[16]byte]protocol.Task
 		result[tf.TaskId.Id] = *tf
 	}
 	return result
-}
-
-// TestSessionPanicIsolatesSiblingTask verifies that a panic in handleAssign for
-// one task is recovered and reported as TaskFinished (with ExitCode -1), while a
-// concurrently running sibling task completes normally with ExitCode 0.
-//
-// The test uses testHookHandleAssign to inject a panic into the FIRST task only.
-// A sync.Once ensures exactly one invocation triggers the panic; subsequent calls
-// (from the sibling goroutine) return without panicking.
-func TestSessionPanicIsolatesSiblingTask(t *testing.T) {
-	repo := initRepo(t)
-	ms := &mockSender{}
-	fakePath, _ := filepath.Abs("../testdata/fake-claude.sh")
-
-	s := &Session{
-		AllowedRoots: []string{repo},
-		Profiles:     singleProfile(t, fakePath),
-		Timeout:      10 * time.Second,
-		Sender:       ms,
-		Now:          time.Now,
-	}
-
-	// Arm panic for the FIRST invocation only; subsequent invocations are no-ops.
-	var once sync.Once
-	s.testHookHandleAssign = func() {
-		once.Do(func() {
-			panic("test-panic-isolation")
-		})
-	}
-
-	var wg sync.WaitGroup
-	wg.Add(2)
-
-	// Task 0x01 — panics.
-	go func() {
-		defer wg.Done()
-		body := &protocol.AssignTaskBody{Prompt: []byte("task-a")}
-		body.SetRepoPath([]byte(repo))
-		s.handleAssign(context.Background(), protocol.TaskID{Id: [16]byte{0x01}}, body)
-	}()
-
-	// Task 0x02 — runs normally. Small delay to allow 0x01 to fire the once.Do first.
-	go func() {
-		defer wg.Done()
-		time.Sleep(80 * time.Millisecond)
-		body := &protocol.AssignTaskBody{Prompt: []byte("task-b")}
-		body.SetRepoPath([]byte(repo))
-		s.handleAssign(context.Background(), protocol.TaskID{Id: [16]byte{0x02}}, body)
-	}()
-
-	wg.Wait()
-
-	ms.mu.Lock()
-	sentCopy := append([][]byte{}, ms.sent...)
-	ms.mu.Unlock()
-
-	finished := collectTaskFinished(t, sentCopy)
-
-	// Task 0x01 must be panic-reported: ExitCode -1, DiffInfo contains "runner_panic".
-	tf01, ok := finished[[16]byte{0x01}]
-	if !ok {
-		t.Fatal("no TaskFinished for task 0x01")
-	}
-	if tf01.ExitCode != -1 {
-		t.Errorf("task 0x01: want ExitCode -1, got %d", tf01.ExitCode)
-	}
-	if !bytes.Contains(tf01.ErrorMessage, []byte("runner_panic")) {
-		t.Errorf("task 0x01: expected 'runner_panic' in ErrorMessage, got %q", tf01.ErrorMessage)
-	}
-
-	// Task 0x02 must have succeeded: ExitCode 0.
-	tf02, ok := finished[[16]byte{0x02}]
-	if !ok {
-		t.Fatal("no TaskFinished for task 0x02")
-	}
-	if tf02.ExitCode != 0 {
-		t.Errorf("task 0x02: want ExitCode 0 (success), got %d", tf02.ExitCode)
-	}
-}
-
-// TestHandleAssign_PassesEnvToProcess verifies that HARNESS_* env vars built from
-// session fields and request data are visible to the spawned claude process.
-func TestHandleAssign_PassesEnvToProcess(t *testing.T) {
-	// Fake claude: print the two env vars we care about, then exit 0.
-	fake := writeFakeClaude(t, `echo "TICKET=$HARNESS_AUTH_TICKET"
-echo "TASK=$HARNESS_TASK_ID"`)
-
-	repo := initRepo(t)
-	ms := &mockSender{}
-	sess := &Session{
-		AllowedRoots: []string{repo},
-		Profiles:     singleProfile(t, fake),
-		Timeout:      5 * time.Second,
-		Sender:       ms,
-		ServerCID:    mustParseCID(t, "ws:127.0.0.1:8539-1"),
-		Hostname:     "test-host",
-		WSPath:       "/ws",
-		Logger:       nil, // defaults to slog.Default()
-		Now:          time.Now,
-	}
-
-	var taskIDBytes [16]byte
-	taskIDBytes[0] = 0xAB
-	var ticket [16]byte
-	ticket[0] = 0xCD
-	ticket[15] = 0xEF
-	taskID := protocol.TaskID{Id: taskIDBytes}
-	body := &protocol.AssignTaskBody{
-		AuthTicket: ticket,
-		Prompt:     []byte("env-test"),
-	}
-	body.SetRepoPath([]byte(repo))
-
-	sess.handleAssign(context.Background(), taskID, body)
-
-	// Collect all published log data.
-	ms.mu.Lock()
-	var combined []byte
-	for _, p := range ms.publishes {
-		combined = append(combined, p.data...)
-	}
-	ms.mu.Unlock()
-
-	output := string(combined)
-	// ticket[0]=0xCD, ticket[15]=0xEF, all others zero → 32-char hex
-	expectedTicket := "TICKET=cd" + strings.Repeat("00", 14) + "ef"
-	// taskID[0]=0xAB, rest zero
-	expectedTask := "TASK=ab" + strings.Repeat("00", 15)
-	if !strings.Contains(output, expectedTicket) {
-		t.Errorf("auth ticket env not visible to claude; output=%q want substring %q", output, expectedTicket)
-	}
-	if !strings.Contains(output, expectedTask) {
-		t.Errorf("task id env not visible to claude; output=%q want substring %q", output, expectedTask)
-	}
 }
 
 // decodeRunnerMsg parses the wire-prefixed RunnerControl payload from a Sender.Send call.
@@ -545,115 +495,6 @@ func (s *noopBidiStream) EOF() bool         { return true }
 func (s *noopBidiStream) Cancel()           {}
 func (s *noopBidiStream) CloseBoth() error  { s.closed.Store(true); return nil }
 
-// TestHandleAssign_OmitsEmptyHostname verifies that when Session.Hostname is empty,
-// handleAssign does NOT pass a HARNESS_HOSTNAME= env var to the spawned claude process.
-// This tests the full session-level flow, complementing the unit-level BuildAgentEnv test.
-func TestHandleAssign_OmitsEmptyHostname(t *testing.T) {
-	// Fake claude: print the HARNESS_HOSTNAME env var (or empty string if unset).
-	fake := writeFakeClaude(t, `echo "HOSTNAME=$HARNESS_HOSTNAME"`)
-
-	repo := initRepo(t)
-	ms := &mockSender{}
-	sess := &Session{
-		AllowedRoots: []string{repo},
-		Profiles:     singleProfile(t, fake),
-		Timeout:      5 * time.Second,
-		Sender:       ms,
-		ServerCID:    mustParseCID(t, "ws:127.0.0.1:8539-1"),
-		Hostname:     "", // Empty hostname — should not be passed to claude
-		WSPath:       "/ws",
-		Now:          time.Now,
-	}
-
-	var taskIDBytes [16]byte
-	taskIDBytes[0] = 0xEE
-	taskID := protocol.TaskID{Id: taskIDBytes}
-	body := &protocol.AssignTaskBody{Prompt: []byte("test-empty-hostname")}
-	body.SetRepoPath([]byte(repo))
-
-	sess.handleAssign(context.Background(), taskID, body)
-
-	// Collect all published log data.
-	ms.mu.Lock()
-	var combined []byte
-	for _, p := range ms.publishes {
-		combined = append(combined, p.data...)
-	}
-	ms.mu.Unlock()
-
-	output := string(combined)
-	// When HARNESS_HOSTNAME is not set, the echo will print just "HOSTNAME="
-	if !strings.Contains(output, "HOSTNAME=") || strings.Contains(output, "HOSTNAME=test") {
-		t.Errorf("empty hostname should not be passed; output=%q", output)
-	}
-}
-
-// TestHandleAssign_WritesSettingsAndPropagatesEnv verifies the full assign chain:
-// (1) settings.json is written into the worktree under .claude/,
-// (2) the file contains the UserPromptSubmit hook entry,
-// (3) HARNESS_AUTH_TICKET is visible to the spawned claude process.
-func TestHandleAssign_WritesSettingsAndPropagatesEnv(t *testing.T) {
-	// Fake claude: list the settings file, print its first few lines, echo the ticket env.
-	fake := writeFakeClaude(t, `ls -la .claude/settings.json
-cat .claude/settings.json
-echo "TICKET=$HARNESS_AUTH_TICKET"`)
-
-	repo := initRepo(t)
-	ms := &mockSender{}
-	sess := &Session{
-		AllowedRoots: []string{repo},
-		Profiles:     singleProfile(t, fake),
-		Timeout:      5 * time.Second,
-		Sender:       ms,
-		ServerCID:    mustParseCID(t, "ws:127.0.0.1:8539-1"),
-		Hostname:     "test-host",
-		WSPath:       "/ws",
-		Now:          time.Now,
-	}
-
-	var taskIDBytes [16]byte
-	taskIDBytes[0] = 0xAB
-	var ticket [16]byte
-	ticket[0] = 0xFE
-	ticket[15] = 0xED
-
-	taskID := protocol.TaskID{Id: taskIDBytes}
-	body := &protocol.AssignTaskBody{
-		AuthTicket: ticket,
-		Prompt:     []byte("settings-smoke"),
-	}
-	body.SetRepoPath([]byte(repo))
-
-	sess.handleAssign(context.Background(), taskID, body)
-
-	// Collect all published log data.
-	ms.mu.Lock()
-	var combined []byte
-	for _, p := range ms.publishes {
-		combined = append(combined, p.data...)
-	}
-	ms.mu.Unlock()
-
-	output := string(combined)
-
-	// (1) settings.json was written — ls -la output includes the filename.
-	if !strings.Contains(output, "settings.json") {
-		t.Errorf("settings.json not written to worktree; output=%q", output)
-	}
-
-	// (2) settings.json contains UserPromptSubmit — head -5 includes the hook key.
-	if !strings.Contains(output, "UserPromptSubmit") {
-		t.Errorf("settings.json missing UserPromptSubmit hook; output=%q", output)
-	}
-
-	// (3) HARNESS_AUTH_TICKET reaches claude — build expected hex at runtime.
-	expectedTicketHex := hex.EncodeToString(ticket[:])
-	expectedLine := "TICKET=" + expectedTicketHex
-	if !strings.Contains(output, expectedLine) {
-		t.Errorf("auth ticket env not propagated to claude; output=%q want substring %q", output, expectedLine)
-	}
-}
-
 // TestHandleOpenExecGateFailureClosesStream verifies that when the AllowedRoots
 // gate rejects an OpenExec request, the runner closes the server-allocated
 // bidi stream before returning. Without this the server-side splice goroutine
@@ -706,105 +547,63 @@ func TestHandleOpenExecGateFailureClosesStream(t *testing.T) {
 	}
 }
 
-// TestHandleAssign_NoWorktree_NoGitDir verifies that with Session.NoWorktree=true
-// the runner executes claude with cwd=repoPath, does not create a git worktree,
-// does not inject .claude/settings.json or .claude/skills/, and does not delete
-// the repo dir on cleanup. The repoPath in this test is a non-git tempdir, which
-// would otherwise fail the worktree create step.
-func TestHandleAssign_NoWorktree_NoGitDir(t *testing.T) {
-	// repo is a plain tempdir (non-git). In normal (NoWorktree=false) mode,
-	// wm.Create would fail because there is no git repo. With NoWorktree=true
-	// the worktree-create step is entirely skipped, so the plain dir works.
+// TestOneshotOpen_NoWorktree_RunsInRepo verifies that with Session.NoWorktree
+// the agent runs with cwd=repoPath, to its own exit, without Codex hooks, and
+// that the repo dir survives the cleanup. The repoPath is a non-git tempdir,
+// which would otherwise fail the worktree create step.
+// TestHandleOpenExec_NoWorktree_NoGitDir pins the rest of the no-worktree
+// contract (TaskStarted.WorktreeDir == repoPath, no .harness-worktrees/, no
+// .claude/).
+func TestOneshotOpen_NoWorktree_RunsInRepo(t *testing.T) {
 	repo := t.TempDir()
-	// Script echoes cwd and creates a sentinel file to verify the process ran
-	// with the correct working directory.
-	fake := writeFakeClaude(t, `echo "cwd=$(pwd)"
-touch harness_nw_sentinel.txt
-echo "done"`)
+	out := filepath.Join(t.TempDir(), "out")
+	fake := writeFakeClaude(t, `pwd > '`+out+`'
+touch harness_nw_sentinel.txt`)
 
 	ms := &mockSender{}
 	s := &Session{
 		AllowedRoots: []string{repo},
 		Profiles:     singleProfile(t, fake),
-		Timeout:      5 * time.Second,
 		Sender:       ms,
 		Now:          time.Now,
 		NoWorktree:   true,
 	}
-	var taskIDBytes [16]byte
-	taskIDBytes[0] = 0xBB
-	taskID := protocol.TaskID{Id: taskIDBytes}
-	body := &protocol.AssignTaskBody{Prompt: []byte("nw-no-git")}
-	body.SetRepoPath([]byte(repo))
-	s.handleAssign(context.Background(), taskID, body)
+	rig := newOpenRig(s)
+	s.handleOpenExec(context.Background(), rig.oneshot(t, protocol.TaskID{Id: [16]byte{0xBB}}, repo, "nw-no-git"))
 
 	// (1) Last message is TaskFinished, ExitCode 0.
-	if len(ms.sent) < 3 {
-		t.Fatalf("expected ≥3 messages, got %d", len(ms.sent))
-	}
-	last := decodeRunnerMsg(t, ms.sent[len(ms.sent)-1])
-	if last.Kind != protocol.RunnerMessageType_TaskFinished {
-		t.Fatalf("last msg kind: %v", last.Kind)
-	}
-	if tf := last.TaskFinished(); tf == nil || tf.ExitCode != 0 {
-		t.Fatalf("finished: %+v", tf)
+	if tf := lastFinished(t, ms); tf.ExitCode != 0 {
+		t.Fatalf("finished: exit %d %q", tf.ExitCode, tf.ErrorMessage)
 	}
 
-	// (2) TaskStarted carries WorktreeDir == repoPath.
-	var startedDir string
-	for _, raw := range ms.sent {
-		m := decodeRunnerMsg(t, raw)
-		if m.Kind == protocol.RunnerMessageType_TaskStarted {
-			ts := m.TaskStarted()
-			if ts != nil {
-				startedDir = string(ts.WorktreeDir)
-			}
-		}
+	// (2) The agent ran with cwd=repoPath: it reported repo as its working
+	// directory, and the sentinel it touched is in the repo directory.
+	wantResolved, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if startedDir != repo {
-		t.Fatalf("TaskStarted.WorktreeDir: got %q, want %q", startedDir, repo)
-	}
-
-	// (3) claude ran with cwd=repoPath: echo "cwd=$(pwd)" output contains repo, and
-	// touch harness_nw_sentinel.txt was created in the repo directory.
-	var combined []byte
-	ms.mu.Lock()
-	for _, p := range ms.publishes {
-		combined = append(combined, p.data...)
-	}
-	ms.mu.Unlock()
-	if !strings.Contains(string(combined), repo) {
-		t.Fatalf("expected cwd output to contain %q; got %q", repo, combined)
+	if got := strings.TrimSpace(readOut(t, out)); got != repo && got != wantResolved {
+		t.Fatalf("agent cwd = %q, want %q", got, repo)
 	}
 	if _, err := os.Stat(filepath.Join(repo, "harness_nw_sentinel.txt")); err != nil {
-		t.Fatalf("sentinel file not created in repo (claude cwd was not repoPath): %v", err)
+		t.Fatalf("sentinel file not created in repo (agent cwd was not repoPath): %v", err)
 	}
 
-	// (4) No worktree dir created.
-	if _, err := os.Stat(filepath.Join(repo, ".harness-worktrees")); !os.IsNotExist(err) {
-		t.Fatalf(".harness-worktrees should not exist; stat err=%v", err)
-	}
-
-	// (5) No .claude/ injection happened.
-	if _, err := os.Stat(filepath.Join(repo, ".claude")); !os.IsNotExist(err) {
-		t.Fatalf(".claude/ should not exist in no-worktree mode without force-inject; stat err=%v", err)
-	}
-
-	// Codex settings follow the same no-worktree opt-out.
+	// (3) Codex settings follow the no-worktree opt-out.
 	if _, err := os.Stat(filepath.Join(repo, ".codex", "hooks.json")); !os.IsNotExist(err) {
 		t.Fatalf("Codex hooks injected in no-worktree mode: %v", err)
 	}
 
-	// (6) repo dir itself survives the run.
+	// (4) repo dir itself survives the run.
 	if _, err := os.Stat(repo); err != nil {
 		t.Fatalf("repo dir disappeared: %v", err)
 	}
 }
 
-// TestHandleAssign_NoWorktree_GitDir_HEADUntouched verifies that running a task
+// TestOneshotOpen_NoWorktree_GitDir_HEADUntouched verifies that running a task
 // in NoWorktree mode against a real git repo does not modify the user's HEAD,
 // does not create the harness/<id> branch, and does not create a worktree dir.
-func TestHandleAssign_NoWorktree_GitDir_HEADUntouched(t *testing.T) {
+func TestOneshotOpen_NoWorktree_GitDir_HEADUntouched(t *testing.T) {
 	repo := initRepo(t) // git repo on branch "main"
 	headBefore := readHEADRef(t, repo)
 
@@ -813,17 +612,19 @@ func TestHandleAssign_NoWorktree_GitDir_HEADUntouched(t *testing.T) {
 	s := &Session{
 		AllowedRoots: []string{repo},
 		Profiles:     singleProfile(t, fake),
-		Timeout:      5 * time.Second,
 		Sender:       ms,
 		Now:          time.Now,
 		NoWorktree:   true,
 	}
 	var taskIDBytes [16]byte
 	taskIDBytes[0] = 0xCD
-	taskID := protocol.TaskID{Id: taskIDBytes}
-	body := &protocol.AssignTaskBody{Prompt: []byte("nw-git")}
-	body.SetRepoPath([]byte(repo))
-	s.handleAssign(context.Background(), taskID, body)
+	rig := newOpenRig(s)
+	s.handleOpenExec(context.Background(), rig.oneshot(t, protocol.TaskID{Id: taskIDBytes}, repo, "nw-git"))
+
+	// The agent ran, so what follows is not vacuous.
+	if tf := lastFinished(t, ms); tf.ExitCode != 0 {
+		t.Fatalf("finished: exit %d %q", tf.ExitCode, tf.ErrorMessage)
+	}
 
 	// HEAD ref unchanged.
 	if got := readHEADRef(t, repo); got != headBefore {
@@ -862,31 +663,32 @@ func branchExists(t *testing.T, repo, name string) bool {
 	return cmd.Run() == nil
 }
 
-// TestHandleAssign_NoWorktree_ConcurrentTasks verifies that two tasks assigned
-// concurrently to the same Session in NoWorktree mode both reach TaskFinished
+// TestOneshotOpen_NoWorktree_ConcurrentTasks verifies that two tasks opened
+// concurrently on the same Session in NoWorktree mode both reach TaskFinished
 // without serializing on each other (no shared worktree mutex).
-func TestHandleAssign_NoWorktree_ConcurrentTasks(t *testing.T) {
+func TestOneshotOpen_NoWorktree_ConcurrentTasks(t *testing.T) {
 	repo := t.TempDir()
 	fake := writeFakeClaude(t, `sleep 0.1; echo done`)
 	ms := &mockSender{}
 	s := &Session{
 		AllowedRoots: []string{repo},
 		Profiles:     singleProfile(t, fake),
-		Timeout:      5 * time.Second,
 		Sender:       ms,
 		Now:          time.Now,
 		NoWorktree:   true,
 	}
+	rig := newOpenRig(s)
+	oers := []*protocol.OpenExecRunnerRequest{
+		rig.oneshot(t, protocol.TaskID{Id: [16]byte{1}}, repo, "nw-concurrent"),
+		rig.oneshot(t, protocol.TaskID{Id: [16]byte{2}}, repo, "nw-concurrent"),
+	}
 
 	var wg sync.WaitGroup
-	wg.Add(2)
-	for i := byte(1); i <= 2; i++ {
-		i := i
+	for _, oer := range oers {
+		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			body := &protocol.AssignTaskBody{Prompt: []byte("nw-concurrent")}
-			body.SetRepoPath([]byte(repo))
-			s.handleAssign(context.Background(), protocol.TaskID{Id: [16]byte{i}}, body)
+			s.handleOpenExec(context.Background(), oer)
 		}()
 	}
 	wg.Wait()
@@ -909,26 +711,28 @@ func TestHandleAssign_NoWorktree_ConcurrentTasks(t *testing.T) {
 	}
 }
 
-// TestHandleAssign_NoWorktree_Resume verifies that running the same task_id
+// TestOneshotOpen_NoWorktree_Resume verifies that running the same task_id
 // twice in NoWorktree mode does not break (no worktree state to reuse, no
 // branch to re-attach — both runs simply use cwd=repoPath).
-func TestHandleAssign_NoWorktree_Resume(t *testing.T) {
+func TestOneshotOpen_NoWorktree_Resume(t *testing.T) {
 	repo := t.TempDir()
 	fake := writeFakeClaude(t, `echo run`)
 	ms := &mockSender{}
 	s := &Session{
 		AllowedRoots: []string{repo},
 		Profiles:     singleProfile(t, fake),
-		Timeout:      5 * time.Second,
 		Sender:       ms,
 		Now:          time.Now,
 		NoWorktree:   true,
 	}
 	taskID := protocol.TaskID{Id: [16]byte{0x99}}
-	for i := 0; i < 2; i++ {
-		body := &protocol.AssignTaskBody{Prompt: []byte("nw-resume")}
-		body.SetRepoPath([]byte(repo))
-		s.handleAssign(context.Background(), taskID, body)
+	rig := newOpenRig(s)
+	runs := []*protocol.OpenExecRunnerRequest{
+		rig.oneshot(t, taskID, repo, "nw-resume"),
+		rig.oneshot(t, taskID, repo, "nw-resume"),
+	}
+	for _, oer := range runs {
+		s.handleOpenExec(context.Background(), oer)
 	}
 
 	ms.mu.Lock()
@@ -956,8 +760,9 @@ func TestHandleAssign_NoWorktree_Resume(t *testing.T) {
 	}
 }
 
-// TestHandleOpenExec_NoWorktree_NoGitDir mirrors TestHandleAssign_NoWorktree_NoGitDir
-// but for the interactive PTY path. Uses /bin/true as AgentBin and the existing
+// TestHandleOpenExec_NoWorktree_NoGitDir is the no-worktree check for a plain
+// interactive open (TestOneshotOpen_NoWorktree_RunsInRepo runs an agent to its
+// exit). Uses /bin/true as AgentBin and the existing
 // noopBidiStream so the exec terminates immediately; we only verify the
 // runner-side wiring (no worktree create error, WorktreeDir == repoPath, no
 // .harness-worktrees/, no .claude/).
@@ -1028,30 +833,25 @@ func TestHandleOpenExec_NoWorktree_NoGitDir(t *testing.T) {
 	}
 }
 
-// TestHandleAssign_NoWorktree_ForceInject verifies that with both
+// TestOneshotOpen_NoWorktree_ForceInject verifies that with both
 // NoWorktree=true and ForceInjectHarnessSettings=true, the runner writes
 // .claude/settings.json (with harness-cli hooks) and .claude/skills/
 // directly into repoPath. Cleanup is still skipped — the injected files
 // persist past task end.
-func TestHandleAssign_NoWorktree_ForceInject(t *testing.T) {
+func TestOneshotOpen_NoWorktree_ForceInject(t *testing.T) {
 	repo := t.TempDir()
 	fake := writeFakeClaude(t, `echo force-inject`)
 	ms := &mockSender{}
 	s := &Session{
 		AllowedRoots:               []string{repo},
 		Profiles:                   singleProfile(t, fake),
-		Timeout:                    5 * time.Second,
 		Sender:                     ms,
 		Now:                        time.Now,
 		NoWorktree:                 true,
 		ForceInjectHarnessSettings: true,
 	}
-	var taskIDBytes [16]byte
-	taskIDBytes[0] = 0xEE
-	taskID := protocol.TaskID{Id: taskIDBytes}
-	body := &protocol.AssignTaskBody{Prompt: []byte("nw-force-inject")}
-	body.SetRepoPath([]byte(repo))
-	s.handleAssign(context.Background(), taskID, body)
+	rig := newOpenRig(s)
+	s.handleOpenExec(context.Background(), rig.oneshot(t, protocol.TaskID{Id: [16]byte{0xEE}}, repo, "nw-force-inject"))
 
 	// (1) settings.json exists in repoPath.
 	settingsPath := filepath.Join(repo, ".claude", "settings.json")

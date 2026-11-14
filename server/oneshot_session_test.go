@@ -101,8 +101,7 @@ func TestOneshotOpenSkipsRunnersWithoutHelloBit(t *testing.T) {
 	}
 	id := taskOf(t, h, bg).ID
 	var started []string
-	s := NewScheduler(h.Registry, h.Tasks, nil)
-	s.SetSessionStart(func(_ objproto.ConnectionID, tID string) error { started = append(started, tID); return nil })
+	s := NewScheduler(h.Registry, h.Tasks, func(_ objproto.ConnectionID, tID string) error { started = append(started, tID); return nil })
 	s.Tick()
 	if len(started) != 0 {
 		t.Fatalf("Tick placed a --oneshot task on a runner without the bit: %v", started)

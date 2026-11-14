@@ -31,9 +31,6 @@ func TestSessionOptsCapsResolution(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			// Both wire builders must carry the value, not re-derive it.
-			if got := buildSubmitRequest("/repo", "p", tc.opts).RequestedCaps; got != tc.want {
-				t.Errorf("buildSubmitRequest.RequestedCaps = %v, want %v", got, tc.want)
-			}
 			if got := buildOpenInteractiveRequest("/repo", tc.opts).RequestedCaps; got != tc.want {
 				t.Errorf("buildOpenInteractiveRequest.RequestedCaps = %v, want %v", got, tc.want)
 			}
@@ -62,10 +59,6 @@ func TestBuildOpenInteractiveRequestDetached(t *testing.T) {
 
 func TestBuildRequestsCarryResumeExact(t *testing.T) {
 	opts := SessionOpts{ResumeExact: true}
-	sub := buildSubmitRequest("/r", "", opts)
-	if !sub.ResumeExact() {
-		t.Error("buildSubmitRequest dropped ResumeExact")
-	}
 	oi := buildOpenInteractiveRequest("/r", opts)
 	if !oi.ResumeExact() {
 		t.Error("buildOpenInteractiveRequest dropped ResumeExact")
@@ -74,12 +67,6 @@ func TestBuildRequestsCarryResumeExact(t *testing.T) {
 
 // The two new refusals name what to do about them.
 func TestStatusErrorsNameTheFix(t *testing.T) {
-	sub := &protocol.SubmitResponse{Status: protocol.SubmitStatus_ResumeExactMismatch}
-	sub.SetErrorMsg([]byte("resume_exact: --agent-arg is a setting"))
-	err := submitStatusError(nil, nil, sub)
-	if err == nil || !strings.Contains(err.Error(), "--exact") || !strings.Contains(err.Error(), "--agent-arg") {
-		t.Errorf("submit mismatch: %v, want it to name --exact and the server's field", err)
-	}
 	if err := openInteractiveStatusError("/r", "", protocol.OpenInteractiveStatus_ResumeExactMismatch, nil); err == nil || !strings.Contains(err.Error(), "--exact") {
 		t.Errorf("open mismatch: %v, want it to name --exact", err)
 	}

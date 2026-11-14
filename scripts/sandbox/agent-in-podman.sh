@@ -18,11 +18,11 @@
 # The runner invokes this with cwd = the task worktree and forwards the agent's
 # args (including `--dangerously-skip-permissions ... -p <prompt>`) as "$@".
 #
-# SCOPE: one-shot (`-p`) verified end-to-end; interactive gets a container TTY
-# when stdin is one. harness-cli + the HARNESS_* env are bridged in by default so
+# SCOPE: one-shot (`-p`) verified end-to-end; a container TTY whenever stdin
+# is one. harness-cli + the HARNESS_* env are bridged in by default so
 # the confined agent keeps the control plane (--omit-harness-cli to disable).
 # Capability confinement of the bridged control plane is set at spawn time by the
-# parent: `session new --caps <names>` / `submit --caps <names>` (server-enforced
+# parent: `session new --caps <names>` (server-enforced
 # bitmask; the container itself plays no role). --omit-harness-cli is the
 # full-removal option (no harness-cli in the container at all). See README.md.
 set -euo pipefail
@@ -911,25 +911,26 @@ if [ "$history_window" = 1 ] || [ "$inject" = 1 ]; then
   fi
 fi
 # Pure pass-through: claude args (incl. --dangerously-skip-permissions, which the
-# runner forwards via --agent-args / submit --agent-arg) arrive in "$@". The
+# runner forwards via --agent-args / session new --agent-arg) arrive in "$@". The
 # container is the confinement boundary; the runner owns claude's arg policy.
 #
-# TTY: the runner runs an interactive session under a real PTY (exec.ExecuteCommand
-# ptyEnabled=true), so our stdin is a terminal — allocate a TTY inside the
-# container too (-t), else claude's TUI aborts with "stdin is not a TTY". One-shot
-# (`-p`) runs under a pipe (stdin not a tty), where -t would corrupt the captured
-# byte stream — so gate -t on stdin being a terminal.
+# TTY: the runner runs every session under a real PTY (exec.ExecuteCommand
+# ptyEnabled=true), a `session new --oneshot` one included, so our stdin is a
+# terminal — allocate a TTY inside the container too (-t), else claude's TUI
+# aborts with "stdin is not a TTY". Run under a pipe instead (stdin not a tty),
+# -t would corrupt the captured byte stream — so gate -t on stdin being a
+# terminal.
 declare -a TTY=()
 [ -t 0 ] && TTY=( -t )
 
 # harness control plane (default ON; --omit-harness-cli disables). The runner
 # already set HARNESS_* in OUR env and put harness-cli on PATH — forward both in
-# so the confined agent can still submit / agentboard / file-transfer. Works when
+# so the confined agent can still open sessions / agentboard / file-transfer. Works when
 # the server is directly reachable; behind HARNESS_PROXY_VIA_RUNNER a
 # --network=host shim would be needed (left for later).
 #
 # Control-plane authority is server-enforced via capabilities, not by what's
-# in the container: use `submit --caps none` (or other restricted sets) when
+# in the container: use `session new --caps none` (or other restricted sets) when
 # spawning this sandboxed task to close specific control-plane operations
 # (spawn, file_read/write, forward, exec_view/cowrite/control, ...) server-side.
 #

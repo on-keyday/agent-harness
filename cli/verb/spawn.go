@@ -14,8 +14,7 @@ import (
 type spawnKind int
 
 const (
-	spawnSubmit spawnKind = iota
-	spawnSessionNew
+	spawnSessionNew spawnKind = iota
 )
 
 // stringList accumulates one entry per occurrence, in the order given, which
@@ -91,12 +90,8 @@ func spawnFlags(k spawnKind) []Flag {
 		{Name: "host", Type: FlagString, Default: "", Field: "Host", Help: "pin to a runner by hostname"},
 		{Name: "ip", Type: FlagString, Default: "", Field: "IP", Help: "pin to a runner by IP address"},
 	}
-	if k == spawnSubmit {
-		out = append(out, Flag{Name: "task", Type: FlagString, Default: "", Field: "Task", Help: "prompt text"})
-		return out
-	}
 	// `session new`: a session can be detached, streamed, X11-forwarded and
-	// sized. A queued submit has no terminal for any of that to mean.
+	// sized.
 	return append(out,
 		Flag{Name: "x11", Type: FlagBool, Default: false, Field: "X11",
 			Help: "forward X11: inject DISPLAY/XAUTHORITY so GUI apps render on your local X server"},
@@ -154,18 +149,12 @@ func spawnRules(k spawnKind) ([]Rule, []Requirement) {
 		Reason: "they each name one runner, and two of them name two",
 	}}
 	// --exact takes the task's recorded settings, so every flag that sets one
-	// contradicts it. The prompt as trailing words is refused in Validate.
+	// contradicts it.
 	exactConflicts := []string{"agent", "agent-arg", "caps", "scope", "scope-for", "delegate-caps", "delegate-scope", "spawn-depth", "max-descendants"}
-	if k == spawnSubmit {
-		exactConflicts = append(exactConflicts, "task")
-	}
 	for _, f := range exactConflicts {
 		excl = append(excl, Rule{Flags: []string{"exact", f}, Reason: "an exact resume takes the task's recorded settings"})
 	}
 	exactNeeds := Requirement{Flags: []string{"exact"}, Needs: "resume", Reason: "an exact resume names the task it restores"}
-	if k == spawnSubmit {
-		return excl, []Requirement{exactNeeds} // a queued submit has no terminal, so none of the rest apply
-	}
 	excl = append(excl,
 		Rule{Flags: []string{"x11", "detach"},
 			Reason: "a detached session has no client to host the X tunnel"},

@@ -31,7 +31,7 @@ func delegFixture(t *testing.T, scope authority.Scope, dcaps protocol.Capability
 	return h, p, cid, r
 }
 
-// spawnSite is one of the four places authority is granted. It sends a
+// spawnSite is one of the places authority is granted. It sends a
 // request carrying caps, scope and bound from (cid, creatorCaps), and returns
 // the record of the task it wrote plus the refusal text, if any.
 type spawnSite struct {
@@ -57,18 +57,6 @@ func entryOf(t *testing.T, h *TaskHandler, tid protocol.TaskID) TaskEntry {
 	return e
 }
 
-func submitReq(a delegReq) *protocol.SubmitRequest {
-	req := &protocol.SubmitRequest{RequestedCaps: a.caps, DelegateCaps: a.dcaps}
-	req.SetRepoPath([]byte("/r"))
-	req.Scope, req.DelegateScope = a.scope.ToWire(), a.dscope.ToWire()
-	req.SetOverrides(a.scope.OverridesToWire())
-	req.SetResumeCapsOverride(a.capsPresent)
-	req.SetScopePresent(a.scopePresent)
-	req.SetDelegateCapsPresent(a.dcapsPresent)
-	req.SetDelegateScopePresent(a.dscopePresent)
-	return req
-}
-
 func openReq(a delegReq) *protocol.OpenInteractiveRequest {
 	req := detachedOpen(0, 0)
 	req.RequestedCaps, req.DelegateCaps = a.caps, a.dcaps
@@ -82,22 +70,6 @@ func openReq(a delegReq) *protocol.OpenInteractiveRequest {
 }
 
 var spawnSites = []spawnSite{
-	{"submit", func(t *testing.T, h *TaskHandler, cid, _ string, cc protocol.Capability, a delegReq) (TaskEntry, string, bool) {
-		resp, _ := h.handleSubmit(cid, submitReq(a), protocol.ClientKind_Agent, h.lookupPrincipal(cid), cc)
-		if resp.Status != protocol.SubmitStatus_Ok {
-			return TaskEntry{}, string(resp.ErrorMsg), false
-		}
-		return entryOf(t, h, resp.TaskId), "", true
-	}},
-	{"submit resume", func(t *testing.T, h *TaskHandler, cid, r string, cc protocol.Capability, a delegReq) (TaskEntry, string, bool) {
-		req := submitReq(a)
-		req.ResumeTaskId = hexToTaskID(t, r)
-		resp, _ := h.handleSubmit(cid, req, protocol.ClientKind_Agent, h.lookupPrincipal(cid), cc)
-		if resp.Status != protocol.SubmitStatus_Ok {
-			return TaskEntry{}, string(resp.ErrorMsg), false
-		}
-		return entryOf(t, h, resp.TaskId), "", true
-	}},
 	{"open", func(t *testing.T, h *TaskHandler, cid, _ string, cc protocol.Capability, a delegReq) (TaskEntry, string, bool) {
 		resp, _ := h.handleOpenInteractive(cid, nil, openReq(a), protocol.ClientKind_Agent, h.lookupPrincipal(cid), cc, "")
 		if resp.Status != protocol.OpenInteractiveStatus_Ok {
@@ -153,9 +125,8 @@ func TestSpawnCapsThroughBound(t *testing.T) {
 
 func CapsLabelT(c protocol.Capability) string { return authority.CapsLabel(c) }
 
-// Review Focus 1: the ceiling's refusal text reaches the requester on both
-// spawn paths — through error_msg on the interactive one too, which is how
-// agents spawn workers.
+// Review Focus 1: the ceiling's refusal text reaches the requester through the
+// open's error_msg, fresh and resuming — which is how agents spawn workers.
 func TestSpawnScopeCeilingRefusalText(t *testing.T) {
 	x := hex.EncodeToString(make([]byte, 15)) + "ab"
 	for _, site := range spawnSites {
@@ -249,15 +220,7 @@ func TestExactResumeRefusesBoundHalves(t *testing.T) {
 		flag         string
 		dcaps, dscop bool
 	}{{"--delegate-caps", true, false}, {"--delegate-scope", false, true}} {
-		h, p, cid, r := delegFixture(t, authority.Scope{}, 0, authority.Scope{})
-		req := submitReq(delegReq{dcapsPresent: tc.dcaps, dscopePresent: tc.dscop})
-		req.ResumeTaskId = hexToTaskID(t, r)
-		req.SetRepoPath(nil)
-		req.SetResumeExact(true)
-		resp, _ := h.handleSubmit(cid, req, protocol.ClientKind_Agent, h.lookupPrincipal(cid), delegHeld)
-		if resp.Status != protocol.SubmitStatus_ResumeExactMismatch || !strings.Contains(string(resp.ErrorMsg), tc.flag) {
-			t.Errorf("submit %s: %v %q, want resume_exact_mismatch naming %s", tc.flag, resp.Status, resp.ErrorMsg, tc.flag)
-		}
+		h, p, cid, _ := delegFixture(t, authority.Scope{}, 0, authority.Scope{})
 
 		// An interactive record, so the kind check passes and only the bound
 		// bit can be the mismatch.

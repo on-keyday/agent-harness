@@ -3,6 +3,7 @@ package server
 import (
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -25,7 +26,7 @@ func TestResumeConversationSurvivesWALReplay(t *testing.T) {
 	noChange := GrantUpdate{To: authority.Grant{Caps: protocol.Capability_None, Scope: authority.Scope{}}}
 	resume := func(id string, conv bool) {
 		t.Helper()
-		if _, err := s.Resume(id, "again", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli, noChange, protocol.TaskKind_Oneshot, "", protocol.TaskID{}, conv, RunSpec{}); err != nil {
+		if _, err := s.Resume(id, "again", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli, noChange, protocol.TaskKind_Interactive, "", protocol.TaskID{}, conv, bgSpec(time.Hour)); err != nil {
 			t.Fatalf("Resume: %v", err)
 		}
 	}
@@ -34,13 +35,13 @@ func TestResumeConversationSurvivesWALReplay(t *testing.T) {
 		s.Finish(id, 0, nil)
 	}
 
-	withConv := s.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, grant, "")
+	withConv := s.Create("/repo", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Cli, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, grant, "")
 	finish(withConv)
 	resume(withConv, true) // left Queued: the restart window
 
 	// The latest resume wins: an earlier "with conversation" must not leak
 	// into a later fresh one.
-	fresh := s.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, grant, "")
+	fresh := s.Create("/repo", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Cli, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, grant, "")
 	finish(fresh)
 	resume(fresh, true)
 	finish(fresh)
@@ -77,7 +78,7 @@ func TestResumeConversationSurvivesWALReplay(t *testing.T) {
 func TestResumeConversationSetBeforeOnCreate(t *testing.T) {
 	s := NewTaskStore()
 	grant := authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()}
-	id := s.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, grant, "")
+	id := s.Create("/repo", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Cli, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, grant, "")
 	s.Assign(id, testRunnerID("r"), "/wt", false)
 	s.Finish(id, 0, nil)
 
@@ -89,7 +90,7 @@ func TestResumeConversationSetBeforeOnCreate(t *testing.T) {
 		e, _ := s.Get(id)
 		seen, fired = e.ResumeConversation, true
 	}
-	if _, err := s.Resume(id, "again", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli, GrantUpdate{To: authority.Grant{Caps: protocol.Capability_None, Scope: authority.Scope{}}}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}, true, RunSpec{}); err != nil {
+	if _, err := s.Resume(id, "again", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli, GrantUpdate{To: authority.Grant{Caps: protocol.Capability_None, Scope: authority.Scope{}}}, protocol.TaskKind_Interactive, "", protocol.TaskID{}, true, bgSpec(time.Hour)); err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
 	if !fired {

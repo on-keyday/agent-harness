@@ -53,10 +53,12 @@ session on `host`, and bounce `target`.
   harness-cli --server-cid "$CID" ls
   scripts/dummy-harness.py down
 
-Every instance gets a `bash` profile alongside the agent one. A oneshot task
-submitted to it runs its prompt as a shell command with that task's
-HARNESS_* in the environment — which is how you exercise agent-side commands
-(`harness-cli agent send`, inbox, …) without hand-minting a ticket. On Windows
+Every instance gets a `bash` profile alongside the agent one. A one-shot
+session opened on it (`harness-cli session new -d --oneshot --agent bash
+--repo "$REPO" --prompt '...'`) runs its prompt as a shell command with that
+task's HARNESS_* in the environment — which is how you exercise agent-side
+commands (`harness-cli agent send`, inbox, …) without hand-minting a ticket.
+The `fake` agent's --agent-oneshot-argv is what `--oneshot` runs for it. On Windows
 that bash is Git for Windows' own, resolved to an absolute path: bare `bash`
 there is the WSL launcher, which every such task dies inside. If none is found
 `up` says so and ships no bash profile.
@@ -486,7 +488,7 @@ def cmd_up(name: str, agent: str, model: str, detach: bool, udp: bool, tls: bool
         "--max-tasks", "4",
     ]
     # No profile at all beats one that registers and then fails per task: an
-    # absent `bash` agent is rejected at submit with a name you can act on,
+    # absent `bash` agent is rejected at session open with a name you can act on,
     # where a WSL launcher answers with a namespace error about a path nobody
     # asked for. Said at `up` time because that is when it can still be fixed.
     bash = bash_bin()

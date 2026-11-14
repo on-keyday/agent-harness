@@ -173,7 +173,8 @@ scripts/netem-lab/netem-lab.py --name t1 up --profile wan-us
 # 2. Drive it.
 eval "$(scripts/netem-lab/netem-lab.py --name t1 env)"
 scripts/netem-lab/netem-lab.py --name t1 exec cli -- \
-  harness-cli --server-cid "$CID" submit --repo "$REPO" --task "hello"
+  harness-cli --server-cid "$CID" session new -d --oneshot --agent bash \
+    --repo "$REPO" --prompt "echo hello"
 
 # 3. Change ONE parameter under the running connection.
 scripts/netem-lab/netem-lab.py --name t1 shape --profile bufferbloat
