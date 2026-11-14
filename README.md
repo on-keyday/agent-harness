@@ -459,6 +459,31 @@ bin/harness-cli record on|off <task-id>
 # select; the task sheet lists, downloads (raw / .cast), changes the retention
 # (⏲ 期限), deletes and switches.
 
+# 5e. Agent transcripts: the conversation as the agent itself stored it — tool
+# results, subagents, every past run — fetched from the task's runner on demand.
+# Nothing is kept on the server, so a task whose runner is offline answers
+# runner_offline. `ls` lists the sessions any agent recorded for the task's
+# working directory. claude, codex and pi store JSONL files; opencode is read
+# through its own CLI (`session list` / `export`, so its size is unknown until
+# read); agy's SQLite index through the `sqlite3` CLI, which must be on the
+# runner host's PATH (Windows does not ship it). A runner profile names its
+# store with --agent-transcript-store (preset key transcriptStore); a store that
+# cannot be read is named on a `note:` line rather than listed as empty. These
+# are the agents' private on-disk formats: when an agent changes one, the runner
+# needs a matching update. Gate: transcript_read. exec_view is not enough, since
+# a transcript holds what never reached a screen. A row marked `shared` was
+# recorded in the repo itself (a --no-worktree task, where other tasks' and
+# the operator's sessions also land) and needs exec_run on the task as well.
+bin/harness-cli transcript ls <task-id>              # agent, session, created/updated, size
+bin/harness-cli transcript ls <task-id> <session>    # the files that session is made of
+bin/harness-cli transcript get <task-id> <session> <file> > s.jsonl   # one file, as stored
+bin/harness-cli transcript get -o s.tar <task-id> <session>          # the whole session, as a tar
+# -o is created only once the first byte arrives, so a refused fetch leaves no
+# file behind. TUI: `d` lists the sessions under the PTY records; the verbs on
+# the command line (`transcript get` there needs -o). WebUI: 「✎ 会話記録を表示」
+# on the task sheet lists them, opens a session's files, and downloads one file
+# or the session as a .tar.
+
 # 6. File transfer against a running task's worktree (paths are confined
 # to the worktree root; `..` escapes are rejected).
 bin/harness-cli file ls     <task-id> [subdir]
@@ -1073,7 +1098,8 @@ reading a forward's or an exec's payload, notify, prune, board_purge, runner-adm
 enrolling runner keys (`runner_enroll`), global info, publishing to the board beyond the task's own lineage, publishing to the
 board as the operator, keeping a board topic past its TTL (`board_persist`), putting another task on a board topic (`board_member`),
 keeping a session's PTY record — switching recording on or keeping a record longer (`record_persist`) — and
-deleting one, switching recording off or shortening its retention (`record_delete`)) — and a **target scope** bounding WHICH tasks those
+deleting one, switching recording off or shortening its retention (`record_delete`),
+reading the agents' own transcripts of a task's working directory (`transcript_read`)) — and a **target scope** bounding WHICH tasks those
 capabilities may be pointed at.
 
 Attaching to a session is three capabilities, not one, because the three
@@ -1083,7 +1109,7 @@ stronger one never needs the weaker one alongside it:
 
 | cap | what it allows |
 | --- | --- |
-| `exec_view` | observe an agent's output, live or recorded — `session snapshot`, TUI grid panes, `session attach --view`, `session stream attach`, `logs` |
+| `exec_view` | observe an agent's output, live or recorded — `session snapshot`, TUI grid panes, `session attach --view`, `session stream attach`, `logs`. Not the agent's transcript (`transcript ls` / `get`): that holds what never reached a screen — files it read, subagents, past runs — and is `transcript_read`, a strong-tier bit of its own |
 | `exec_cowrite` | additionally type into a session someone else is driving, without evicting them — `session send`, `session exec`, the WebUI preview |
 | `exec_control` | additionally take the session over as sole writer, evicting whoever holds it, and own its size — `session attach`, TUI `r` |
 

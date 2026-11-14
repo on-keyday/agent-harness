@@ -1,6 +1,6 @@
 ---
 name: supervising-workers
-description: Use when acting on ANOTHER agent's task from inside a runner-spawned task — spawning / driving / killing worker sessions, one-shot `submit` + `logs` / `watch`, attenuating a child's capabilities with `--caps`, moving files in or out of a worker's worktree, running a command in one with `exec`, or reading a worker's diff. Peer-to-peer messaging, replying and subscriptions live in the `harness-cli` skill instead.
+description: Use when acting on ANOTHER agent's task from inside a runner-spawned task — spawning / driving / killing worker sessions, one-shot `submit` + `logs` / `watch`, attenuating a child's capabilities with `--caps`, moving files in or out of a worker's worktree, running a command in one with `exec`, or reading a worker's diff or its agent transcripts. Peer-to-peer messaging, replying and subscriptions live in the `harness-cli` skill instead.
 ---
 
 # supervising-workers (another agent's task, end to end)
@@ -630,8 +630,16 @@ and the scope forms (`--json` for the machine-readable form).
 Granular names: `spawn`, `resume_exact`, `resume`, `cancel`, `exec_view`, `exec_cowrite`,
 `exec_control`, `exec_resize`, `exec_run`, `exec_tap`, `file_read`, `file_write`,
 `forward_local`, `forward_remote`, `forward_link`, `forward_tap`, `notify`, `prune`,
-`runner_admin`, `board_observe`, `board_purge`, `board_send`, `board_peer`, `board_persist`, `board_member` — plus the aliases `none` / `all`. `harness-cli caps`
+`runner_admin`, `board_observe`, `board_purge`, `board_send`, `board_peer`, `board_persist`, `board_member`,
+`record_persist`, `record_delete`, `transcript_read` — plus the aliases `none` / `all`. `harness-cli caps`
 prints the authoritative list with a line each; this one can fall behind it.
+`record_persist` keeps a session's PTY record (switches recording on, opens a
+session with `--record`, keeps a record longer) and `record_delete` removes one
+(`record rm`, `record off`, a shorter retention); reading a record is
+`exec_view`. `transcript_read` reads the agents' own transcripts of a task's
+working directory (`transcript ls` / `get`, below). `exec_view` does not imply
+it: a transcript holds what never reached a screen — the files the agent read,
+its subagents, every past run.
 `spawn` creates a task and nothing else. `resume` re-queues a finished one under
 its own id, free to change its prompt, agent, args, caps and scope; it implies
 `resume_exact`, which allows only `--exact` (above). Neither implies `spawn`,
@@ -696,6 +704,8 @@ reports its queued → assigned → started transitions). Observe an
 interactive worker over the **agentboard** — it reports back to you there.
 (`session attach` is a human/PTY tool, not for you — see "Listing and killing
 your sessions" above; `logs` / `watch` don't apply to interactive tasks.)
+What the worker's agent actually did, in either kind of task, is in its
+transcript — see "Reading a worker's conversation" below.
 
 `cancel <id>` and `session kill <id>` (its alias), by contrast, **do** work on
 interactive sessions: they route a `CancelTask` to the assigned runner, which
@@ -899,4 +909,34 @@ applyable patch.
 A nested repo lives inside the task's worktree, so once the worktree is gone
 `--subrepo` answers `no_source` — the retained `harness/<task-id>` branch is
 in the outer repository and says nothing about it.
+
+## Reading a worker's conversation — `harness-cli transcript`
+
+The diff shows what a worker changed; its agent's transcript shows how it got
+there — its tool calls and their results, its subagents, every earlier run —
+as the agent stored it on the runner host. The runner reads it on demand, so
+the task's runner must be online (otherwise `runner_offline`); nothing is
+copied to the server. It needs `transcript_read` with the task in that bit's
+scope.
+
+```bash
+harness-cli transcript ls  "$TASK_ID"                     # agent, session, created/updated, size
+harness-cli transcript ls  "$TASK_ID" <SESSION>           # the files that session is made of
+harness-cli transcript get "$TASK_ID" <SESSION> <FILE> > f.jsonl   # one file, as stored
+harness-cli transcript get -o s.tar "$TASK_ID" <SESSION>           # the whole session, as a tar
+```
+
+- `ls` lists the sessions **every** agent recorded in the task's working
+  directory, so a worker resumed under another agent lists both. To find one
+  run's session, read the `created` times against when the run started.
+- A row marked `shared` was recorded in the repo itself — a `--no-worktree`
+  task, where other tasks' and the operator's sessions also land. It is listed
+  and fetched only if you also hold `exec_run` on the task.
+- The bytes are not rendered: JSONL for claude, codex and pi, the JSON
+  `opencode export` writes (its size reads `unknown` until it is produced),
+  agy's SQLite `.db`. A `<FILE>` must be a name `ls <SESSION>` printed.
+- A store the runner could not read is named on a `note:` line, not passed off
+  as an empty list — for agy, the runner host needs `sqlite3` on its PATH.
+- `-o FILE` is created only once the first byte arrives, so a refused fetch
+  leaves no empty file behind.
 
