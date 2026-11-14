@@ -105,9 +105,9 @@ func TestCurrentByRunnerIdSelectorIsNotMigrated(t *testing.T) {
 	if len(wire) != 17 {
 		t.Fatalf("current by_runner_id is %d bytes, not 1+16 — the length discriminator is void", len(wire))
 	}
-	got, migrated, derr := decodeWALSelector(wire)
+	got, migrated, derr := decodePersistedSelector(wire)
 	if derr != nil {
-		t.Fatalf("decodeWALSelector: %v", derr)
+		t.Fatalf("decodePersistedSelector: %v", derr)
 	}
 	if migrated {
 		t.Error("a current-schema record took the legacy path")
@@ -122,7 +122,7 @@ func TestCurrentByRunnerIdSelectorIsNotMigrated(t *testing.T) {
 // are not an address either.
 func TestUndecodableSelectorReportsTheCurrentSchemaError(t *testing.T) {
 	wire := []byte{byte(protocol.RunnerSelectorKind_ByRunnerId), 1, 2, 3, 4}
-	if _, migrated, err := decodeWALSelector(wire); err == nil || migrated {
+	if _, migrated, err := decodePersistedSelector(wire); err == nil || migrated {
 		t.Fatalf("garbage decoded: migrated=%v err=%v", migrated, err)
 	} else if want := "RunnerID::Id"; !strings.Contains(err.Error(), want) {
 		t.Errorf("error %q does not name the current schema's field %q", err, want)
@@ -138,7 +138,7 @@ func TestUndecodableSelectorReportsTheCurrentSchemaError(t *testing.T) {
 // changed, and nothing anywhere said it would need a migration — the fact was
 // true but unstated, which is why the consequence was not predicted. Embedding
 // a second such type is a decision to take on the same obligation, so it should
-// cost a red test and a look at decodeWALSelector rather than pass unremarked.
+// cost a red test and a look at decodePersistedSelector rather than pass unremarked.
 func TestOnlySelectorEmbedsAWireFormatInTheWAL(t *testing.T) {
 	const protocolPkg = "github.com/on-keyday/agent-harness/runner/protocol"
 	want := map[string]bool{"Selector": true}
@@ -152,7 +152,7 @@ func TestOnlySelectorEmbedsAWireFormatInTheWAL(t *testing.T) {
 			t.Errorf("WALEvent.%s is a %s wire format persisted in the WAL, and no "+
 				"legacy-decode path covers it. Its schema is now frozen into every "+
 				"record written from here on: either store a decomposed form, or give "+
-				"it a migration next to decodeWALSelector and add it to this list.",
+				"it a migration next to decodePersistedSelector and add it to this list.",
 				f.Name, protocolPkg)
 			continue
 		}
@@ -160,6 +160,6 @@ func TestOnlySelectorEmbedsAWireFormatInTheWAL(t *testing.T) {
 	}
 	for name := range want {
 		t.Errorf("WALEvent.%s no longer embeds a wire format — drop it from this "+
-			"list, and from decodeWALSelector if nothing else needs it", name)
+			"list, and from decodePersistedSelector if nothing else needs it", name)
 	}
 }

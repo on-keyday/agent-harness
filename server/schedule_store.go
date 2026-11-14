@@ -1,7 +1,7 @@
 package server
 
 import (
-	"encoding/hex"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -226,15 +226,14 @@ func (st *ScheduleStore) Settle(task func(id string) (run uint32, exists bool)) 
 	for id, s := range st.m {
 		var upd *Schedule
 		for i := range s.History {
-			e := &s.History[i]
-			if e.Outcome != protocol.ScheduleOutcome_Pending {
+			if s.History[i].Outcome != protocol.ScheduleOutcome_Pending {
 				continue
 			}
 			if upd == nil {
 				c := s.clone()
 				upd = &c
-				e = &upd.History[i]
 			}
+			e := &upd.History[i]
 			run, exists := task(e.TaskID)
 			switch {
 			case upd.State == protocol.ScheduleTaskState_PendingCreate:
@@ -335,9 +334,24 @@ func (s Schedule) clone() Schedule {
 	if s.History != nil {
 		s.History = append([]HistoryEntry(nil), s.History...)
 	}
+	s.Selector = cloneSelector(s.Selector)
 	s.Grant.Scope = cloneScope(s.Grant.Scope)
 	s.Grant.DelegateScope = cloneScope(s.Grant.DelegateScope)
 	return s
+}
+
+// cloneSelector copies a RunnerSelector through its wire bytes: its variant is
+// a pointer and its setters write through it, so a struct copy shares state.
+func cloneSelector(sel protocol.RunnerSelector) protocol.RunnerSelector {
+	wire, err := sel.Append(nil)
+	if err != nil {
+		return sel
+	}
+	var out protocol.RunnerSelector
+	if err := out.DecodeExactCopy(wire); err != nil {
+		return sel
+	}
+	return out
 }
 
 func cloneScope(sc authority.Scope) authority.Scope {
@@ -360,10 +374,12 @@ func cloneScope(sc authority.Scope) authority.Scope {
 	return sc
 }
 
-// The JSON shape. RunnerSelector (private variant) and SpawnLimit (private
-// field) do not survive encoding/json, so the file carries the selector as
-// its wire bytes in hex and each spawn limit as {limited, value}. Everything
-// else marshals as is. Times are written as UTC instants.
+// The JSON shape. Every persisted type is a file-only DTO with snake_case
+// keys, so renaming a Go field in RunSpec, HistoryEntry or authority.Scope
+// cannot silently change what the file means (schedulesFixtureV1 pins it).
+// RunnerSelector is stored as base64 wire bytes, like the WAL, and decoded by
+// decodePersistedSelector; no other protocol struct may appear here
+// (TestOnlySelectorEmbedsAWireFormatInSchedules). Times are UTC instants.
 
 type scheduleFileJSON struct {
 	Version   int            `json:"version"`
@@ -375,13 +391,59 @@ type spawnLimitJSON struct {
 	Value   uint32 `json:"value"`
 }
 
+type scopeOverrideJSON struct {
+	Caps        protocol.Capability `json:"caps"`
+	Base        protocol.ScopeBase  `json:"base"`
+	ExcludeSelf bool                `json:"exclude_self"`
+	IDs         []string            `json:"ids"`
+}
+
+type scopeJSON struct {
+	Base           protocol.ScopeBase  `json:"base"`
+	IDs            []string            `json:"ids"`
+	VisBase        protocol.ScopeBase  `json:"vis_base"`
+	VisBasePresent bool                `json:"vis_base_present"`
+	ExcludeSelf    bool                `json:"exclude_self"`
+	VisIDs         []string            `json:"vis_ids"`
+	Overrides      []scopeOverrideJSON `json:"overrides"`
+}
+
 type grantJSON struct {
 	Caps           protocol.Capability `json:"caps"`
-	Scope          authority.Scope     `json:"scope"`
+	Scope          scopeJSON           `json:"scope"`
 	DelegateCaps   protocol.Capability `json:"delegate_caps"`
-	DelegateScope  authority.Scope     `json:"delegate_scope"`
+	DelegateScope  scopeJSON           `json:"delegate_scope"`
 	SpawnDepth     spawnLimitJSON      `json:"spawn_depth"`
 	MaxDescendants spawnLimitJSON      `json:"max_descendants"`
+}
+
+type runSpecJSON struct {
+	Mode           protocol.RunMode       `json:"mode"`
+	DeadlineNs     int64                  `json:"deadline_ns"`
+	QuietNs        int64                  `json:"quiet_ns"`
+	BlockedNs      int64                  `json:"blocked_ns"`
+	QueueTimeoutNs int64                  `json:"queue_timeout_ns"`
+	TurnEnd        protocol.TurnEndSignal `json:"turn_end"`
+	Rows           uint16                 `json:"rows"`
+	Cols           uint16                 `json:"cols"`
+	Record         bool                   `json:"record"`
+	Oneshot        bool                   `json:"oneshot"`
+	NoPTY          bool                   `json:"no_pty"`
+}
+
+type historyEntryJSON struct {
+	Outcome   protocol.ScheduleOutcome `json:"outcome"`
+	DueAt     time.Time                `json:"due_at"`
+	At        time.Time                `json:"at"`
+	ExpectRun uint32                   `json:"expect_run"`
+	TaskID    string                   `json:"task_id"`
+	QueuedAt  time.Time                `json:"queued_at"`
+	StartedAt time.Time                `json:"started_at"`
+	EndedAt   time.Time                `json:"ended_at"`
+	EndReason protocol.EndReason       `json:"end_reason"`
+	ByKind    protocol.ClientKind      `json:"by_kind"`
+	By        string                   `json:"by"`
+	Message   string                   `json:"message"`
 }
 
 type scheduleJSON struct {
@@ -392,18 +454,18 @@ type scheduleJSON struct {
 	TaskID             string                     `json:"task_id"`
 	Repo               string                     `json:"repo"`
 	Agent              string                     `json:"agent"`
-	Selector           string                     `json:"selector"` // hex of the wire encoding
+	SelectorB64        string                     `json:"selector_b64"`
 	Prompt             string                     `json:"prompt"`
 	ExtraArgs          []string                   `json:"extra_args"`
 	ResumeConversation bool                       `json:"resume_conversation"`
-	Run                RunSpec                    `json:"run"`
+	Run                runSpecJSON                `json:"run"`
 	Grant              grantJSON                  `json:"grant"`
 	Creator            string                     `json:"creator"`
 	CreatedAt          time.Time                  `json:"created_at"`
 	EditedAt           time.Time                  `json:"edited_at"`
 	EditedBy           string                     `json:"edited_by"`
 	NextAt             time.Time                  `json:"next_at"`
-	History            []HistoryEntry             `json:"history"`
+	History            []historyEntryJSON         `json:"history"`
 }
 
 func limitToJSON(l protocol.SpawnLimit) spawnLimitJSON {
@@ -417,53 +479,93 @@ func limitFromJSON(j spawnLimitJSON) protocol.SpawnLimit {
 	return authority.LimitOf(j.Value)
 }
 
+func scopeToJSON(s authority.Scope) scopeJSON {
+	j := scopeJSON{Base: s.Base, IDs: s.IDs, VisBase: s.VisBase, VisBasePresent: s.VisBasePresent,
+		ExcludeSelf: s.ExcludeSelf, VisIDs: s.VisIDs}
+	for _, o := range s.Overrides {
+		j.Overrides = append(j.Overrides, scopeOverrideJSON{Caps: o.Caps, Base: o.Base, ExcludeSelf: o.ExcludeSelf, IDs: o.IDs})
+	}
+	return j
+}
+
+func scopeFromJSON(j scopeJSON) authority.Scope {
+	s := authority.Scope{Base: j.Base, IDs: j.IDs, VisBase: j.VisBase, VisBasePresent: j.VisBasePresent,
+		ExcludeSelf: j.ExcludeSelf, VisIDs: j.VisIDs}
+	for _, o := range j.Overrides {
+		s.Overrides = append(s.Overrides, authority.ScopeOverride{Caps: o.Caps, Base: o.Base, ExcludeSelf: o.ExcludeSelf, IDs: o.IDs})
+	}
+	return s
+}
+
 func (s Schedule) toJSON() (scheduleJSON, error) {
 	sel, err := s.Selector.Append(nil)
 	if err != nil {
 		return scheduleJSON{}, fmt.Errorf("schedule %s selector: %w", s.ID, err)
 	}
 	utc := func(t time.Time) time.Time { return t.UTC() }
+	c := s.Run.Cond
 	j := scheduleJSON{
 		ID: s.ID, Cron: s.Cron, TZ: s.TZ, State: s.State, TaskID: s.TaskID,
-		Repo: s.Repo, Agent: s.Agent, Selector: hex.EncodeToString(sel),
+		Repo: s.Repo, Agent: s.Agent, SelectorB64: base64.StdEncoding.EncodeToString(sel),
 		Prompt: s.Prompt, ExtraArgs: s.ExtraArgs, ResumeConversation: s.ResumeConversation,
-		Run: s.Run,
+		Run: runSpecJSON{
+			Mode: s.Run.Mode, DeadlineNs: int64(c.Deadline), QuietNs: int64(c.Quiet), BlockedNs: int64(c.Blocked),
+			QueueTimeoutNs: int64(c.QueueTimeout), TurnEnd: c.TurnEnd, Rows: c.Rows, Cols: c.Cols,
+			Record: s.Run.Record, Oneshot: s.Run.Oneshot, NoPTY: s.Run.NoPTY,
+		},
 		Grant: grantJSON{
-			Caps: s.Grant.Caps, Scope: s.Grant.Scope,
-			DelegateCaps: s.Grant.DelegateCaps, DelegateScope: s.Grant.DelegateScope,
+			Caps: s.Grant.Caps, Scope: scopeToJSON(s.Grant.Scope),
+			DelegateCaps: s.Grant.DelegateCaps, DelegateScope: scopeToJSON(s.Grant.DelegateScope),
 			SpawnDepth: limitToJSON(s.Grant.SpawnDepth), MaxDescendants: limitToJSON(s.Grant.MaxDescendants),
 		},
 		Creator: s.Creator, CreatedAt: utc(s.CreatedAt), EditedAt: utc(s.EditedAt),
 		EditedBy: s.EditedBy, NextAt: utc(s.NextAt),
 	}
 	for _, e := range s.History {
-		e.DueAt, e.At = utc(e.DueAt), utc(e.At)
-		e.QueuedAt, e.StartedAt, e.EndedAt = utc(e.QueuedAt), utc(e.StartedAt), utc(e.EndedAt)
-		j.History = append(j.History, e)
+		j.History = append(j.History, historyEntryJSON{
+			Outcome: e.Outcome, DueAt: utc(e.DueAt), At: utc(e.At), ExpectRun: e.ExpectRun, TaskID: e.TaskID,
+			QueuedAt: utc(e.QueuedAt), StartedAt: utc(e.StartedAt), EndedAt: utc(e.EndedAt),
+			EndReason: e.EndReason, ByKind: e.ByKind, By: e.By, Message: e.Message,
+		})
 	}
 	return j, nil
 }
 
 func (j scheduleJSON) schedule() (Schedule, error) {
-	raw, err := hex.DecodeString(j.Selector)
+	raw, err := base64.StdEncoding.DecodeString(j.SelectorB64)
 	if err != nil {
 		return Schedule{}, fmt.Errorf("selector: %w", err)
 	}
-	var sel protocol.RunnerSelector
-	if err := sel.DecodeExact(raw); err != nil {
+	sel, _, err := decodePersistedSelector(raw)
+	if err != nil {
 		return Schedule{}, fmt.Errorf("selector: %w", err)
 	}
-	return Schedule{
+	r := j.Run
+	s := Schedule{
 		ID: j.ID, Cron: j.Cron, TZ: j.TZ, State: j.State, TaskID: j.TaskID,
 		Repo: j.Repo, Agent: j.Agent, Selector: sel,
 		Prompt: j.Prompt, ExtraArgs: j.ExtraArgs, ResumeConversation: j.ResumeConversation,
-		Run: j.Run,
+		Run: RunSpec{
+			Mode: r.Mode, Record: r.Record, Oneshot: r.Oneshot, NoPTY: r.NoPTY,
+			Cond: RunConditions{
+				Deadline: time.Duration(r.DeadlineNs), Quiet: time.Duration(r.QuietNs), Blocked: time.Duration(r.BlockedNs),
+				QueueTimeout: time.Duration(r.QueueTimeoutNs), TurnEnd: r.TurnEnd, Rows: r.Rows, Cols: r.Cols,
+			},
+		},
 		Grant: authority.Grant{
-			Caps: j.Grant.Caps, Scope: j.Grant.Scope,
-			DelegateCaps: j.Grant.DelegateCaps, DelegateScope: j.Grant.DelegateScope,
+			Caps: j.Grant.Caps, Scope: scopeFromJSON(j.Grant.Scope),
+			DelegateCaps: j.Grant.DelegateCaps, DelegateScope: scopeFromJSON(j.Grant.DelegateScope),
 			SpawnDepth: limitFromJSON(j.Grant.SpawnDepth), MaxDescendants: limitFromJSON(j.Grant.MaxDescendants),
 		},
 		Creator: j.Creator, CreatedAt: j.CreatedAt, EditedAt: j.EditedAt,
-		EditedBy: j.EditedBy, NextAt: j.NextAt, History: j.History,
-	}, nil
+		EditedBy: j.EditedBy, NextAt: j.NextAt,
+	}
+	for _, e := range j.History {
+		s.History = append(s.History, HistoryEntry{
+			Outcome: e.Outcome, DueAt: e.DueAt, At: e.At, ExpectRun: e.ExpectRun, TaskID: e.TaskID,
+			QueuedAt: e.QueuedAt, StartedAt: e.StartedAt, EndedAt: e.EndedAt,
+			EndReason: e.EndReason, ByKind: e.ByKind, By: e.By, Message: e.Message,
+		})
+	}
+	return s, nil
 }

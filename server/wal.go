@@ -176,7 +176,7 @@ type WALEvent struct {
 	Selector protocol.RunnerSelector `json:"-"`
 
 	// SelectorMigrated reports that Selector was reconstructed by
-	// decodeWALSelector's legacy path rather than read straight off the wire
+	// decodePersistedSelector's legacy path rather than read straight off the wire
 	// bytes. Derived from the record, never stored in one, so that a whole file
 	// can say this once instead of every record saying it on every boot — which
 	// is also why it is the single field TestWALEventJSONRoundTripCopiesEveryField
@@ -404,7 +404,7 @@ func (e *WALEvent) UnmarshalJSON(b []byte) error {
 		if err != nil {
 			return err
 		}
-		sel, migrated, derr := decodeWALSelector(wire)
+		sel, migrated, derr := decodePersistedSelector(wire)
 		if derr != nil {
 			return derr
 		}
@@ -478,7 +478,7 @@ type WALReport struct {
 	// returned events, so this is the operator-visible measure of how much
 	// history a read could not account for.
 	Defects []WALDefect
-	// Migrated counts records whose stored selector needed decodeWALSelector's
+	// Migrated counts records whose stored selector needed decodePersistedSelector's
 	// legacy path — history that IS accounted for, under a re-typed selector arm.
 	Migrated int
 	// TruncatedAfter is non-zero when the scanner gave up mid-file, so every

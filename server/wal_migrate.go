@@ -6,8 +6,9 @@ import (
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
-// decodeWALSelector decodes a persisted RunnerSelector, migrating the one arm
-// whose payload changed shape under it.
+// decodePersistedSelector decodes a persisted RunnerSelector, migrating the one arm
+// whose payload changed shape under it. It is the one decoder for every file
+// that stores the selector as wire bytes: the WAL and schedules.json.
 //
 // The WAL stores the selector as raw wire bytes (walEventJSON.SelectorB64), so
 // a schema change to RunnerSelector reaches back into every record ever
@@ -34,7 +35,7 @@ import (
 //
 // migrated reports whether the legacy path was taken, so the caller can say so
 // once for the whole file instead of once per record on every boot.
-func decodeWALSelector(wire []byte) (sel protocol.RunnerSelector, migrated bool, err error) {
+func decodePersistedSelector(wire []byte) (sel protocol.RunnerSelector, migrated bool, err error) {
 	if err := sel.DecodeExact(wire); err == nil {
 		return sel, false, nil
 	} else {
