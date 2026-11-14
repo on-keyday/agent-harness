@@ -1915,13 +1915,21 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 		resp.SetErrorMsg([]byte("recording a session needs record_persist"))
 		return resp, body
 	}
+	// --oneshot (A3, A-D29) runs the profile's oneshot argv, which exists to
+	// run a prompt: none is refused here, in either run mode.
+	oneshot := oneshotOpen(req)
+	if oneshot && prompt == "" {
+		resp, body := errResp(protocol.OpenInteractiveStatus_PromptRequired)
+		resp.SetErrorMsg([]byte("--oneshot needs a prompt"))
+		return resp, body
+	}
 
 	// A background open is queued, never placed here (A-D4); Tick places it.
 	if h.resolveRunMode(req, existingTaskIDHex) == protocol.RunMode_Background {
 		return h.openBackground(backgroundOpen{
 			cid: cid, req: req, origin: origin, creator: creator, grant: grant,
 			resumeHex: existingTaskIDHex, exactRec: exactRec, repo: repo, args: args, prompt: prompt,
-			record: record,
+			record: record, oneshot: oneshot,
 		}), nil
 	}
 	// Background conditions on an open that resolved to foreground would
@@ -1940,6 +1948,22 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 	}
 
 	cands := h.Registry.Candidates(repo, req.Selector)
+	if oneshot && len(cands) > 0 {
+		// Only a runner that said it runs --oneshot may take one; another
+		// would ignore the bit and start the interactive argv.
+		var runs []RunnerEntry
+		for _, c := range cands {
+			if c.OneshotSessions {
+				runs = append(runs, c)
+			}
+		}
+		if len(runs) == 0 {
+			resp, body := errResp(protocol.OpenInteractiveStatus_ProfileUnavailable)
+			resp.SetErrorMsg([]byte("no connected runner for " + repo + " runs --oneshot; restart it with a current build"))
+			return resp, body
+		}
+		cands = runs
+	}
 	switch {
 	case len(cands) == 0 && req.Selector.Kind != protocol.RunnerSelectorKind_Any:
 		return errResp(protocol.OpenInteractiveStatus_PinnedNotFound)
@@ -2037,7 +2061,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 		// persisting it here closes the Task 6 gap where handleOpenInteractive
 		// threaded `resolved` to OpenExec but never wrote it back through
 		// Tasks.Resume.
-		if _, err := h.Tasks.Resume(existingTaskIDHex, prompt, args, req.Selector, runner.ID.String(), origin, grant, interactiveKind(req), resolved, h.lookupPrincipal(cid), req.ResumeConversation(), RunSpec{Mode: protocol.RunMode_Foreground, Record: record}); err != nil {
+		if _, err := h.Tasks.Resume(existingTaskIDHex, prompt, args, req.Selector, runner.ID.String(), origin, grant, interactiveKind(req), resolved, h.lookupPrincipal(cid), req.ResumeConversation(), RunSpec{Mode: protocol.RunMode_Foreground, Record: record, Oneshot: oneshot}); err != nil {
 			switch err {
 			case ResumeErrNotFound:
 				return errResp(protocol.OpenInteractiveStatus_ResumeNotFound)
@@ -2054,7 +2078,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 		// resolved is the (runner,profile) combo's profile — the server-chosen
 		// profile the runner must exec with (empty only when the sole candidate
 		// advertises no profile, i.e. a legacy runner → its AgentBin default).
-		created, err := h.Tasks.CreateWithinLimits(repo, prompt, interactiveKind(req), origin, creator, runner.ID.String(), req.Selector, req.ExtraArgs.AsStrings(), grant.To, resolved, RunSpec{Mode: protocol.RunMode_Foreground, Record: record})
+		created, err := h.Tasks.CreateWithinLimits(repo, prompt, interactiveKind(req), origin, creator, runner.ID.String(), req.Selector, req.ExtraArgs.AsStrings(), grant.To, resolved, RunSpec{Mode: protocol.RunMode_Foreground, Record: record, Oneshot: oneshot})
 		if err != nil {
 			resp, body := errResp(protocol.OpenInteractiveStatus_SpawnLimit)
 			resp.SetErrorMsg([]byte(err.Error()))
@@ -2093,6 +2117,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 		TaskIDHex: taskIDHex, Runner: runner, Profile: resolved, Repo: repo, Args: args,
 		ResumeConversation: req.ResumeConversation(), EventStream: req.EventStream(),
 		Detached: req.Detached(), Rows: rows, Cols: cols, X11: x11, TUIConn: tuiConn, Prompt: prompt,
+		Oneshot: oneshot,
 	})
 	if st != protocol.OpenInteractiveStatus_Ok {
 		resp, cands := errResp(st)

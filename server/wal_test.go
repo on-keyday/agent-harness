@@ -210,6 +210,7 @@ func TestWALEventJSONRoundTripCopiesEveryField(t *testing.T) {
 		CancelledBy:                 "ffeeddccbbaa99887766554433221100",
 		Run:                         5,
 		Record:                      true,
+		Oneshot:                     true,
 		Ts:                          1234567890,
 		Selector:                    sel,
 	}

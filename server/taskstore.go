@@ -176,6 +176,9 @@ type TaskEntry struct {
 	// Record: the current run's session is to be recorded (A-D22), set by its
 	// open and by a switch while it runs.
 	Record bool
+	// Oneshot: the current run is a --oneshot session (A3, A-D29); a queued
+	// one is started with the oneshot argv, and only on a runner that runs it.
+	Oneshot bool
 }
 
 // TaskStore is the in-memory authority for task lifecycle.
@@ -1777,6 +1780,7 @@ func (e *TaskEntry) applyRunSpec(run RunSpec, now int64) {
 	e.RunMode = run.Mode
 	e.Cond = run.Cond
 	e.Record = run.Record
+	e.Oneshot = run.Oneshot
 	e.DeadlineAt, e.QueueDeadlineAt, e.ModeSwitchedAt = 0, 0, 0
 	e.EndReason, e.CancelledBy = protocol.EndReason_None, protocol.TaskID{}
 	if run.Mode == protocol.RunMode_Background && run.Cond.QueueTimeout > 0 {
@@ -1787,6 +1791,7 @@ func (e *TaskEntry) applyRunSpec(run RunSpec, now int64) {
 func (e *TaskEntry) runSpecToWAL(ev *WALEvent) {
 	ev.RunMode = uint8(e.RunMode)
 	ev.Record = e.Record
+	ev.Oneshot = e.Oneshot
 	e.Cond.toWAL(ev)
 	ev.QueueDeadlineNs = e.QueueDeadlineAt
 }
@@ -1796,6 +1801,7 @@ func (e *TaskEntry) runSpecToWAL(ev *WALEvent) {
 func (e *TaskEntry) runSpecFromWAL(ev WALEvent) {
 	e.RunMode = protocol.RunMode(ev.RunMode)
 	e.Record = ev.Record
+	e.Oneshot = ev.Oneshot
 	e.Cond = conditionsFromWAL(ev)
 	e.QueueDeadlineAt = ev.QueueDeadlineNs
 	e.DeadlineAt, e.ModeSwitchedAt = 0, 0

@@ -83,3 +83,10 @@ func (h *TaskHandler) finishRecording(taskID string) {
 		slog.Warn("record: cannot finish the run's record", "task", taskID, "run", t.Run, "err", err)
 	}
 }
+
+// oneshotOpen reports whether an open asks for `session new --oneshot`
+// (A3, A-D29), carried in the open's second flag byte.
+func oneshotOpen(req *protocol.OpenInteractiveRequest) bool {
+	ext := req.Ext()
+	return req.ExtPresent() && ext != nil && ext.Oneshot()
+}

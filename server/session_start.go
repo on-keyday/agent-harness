@@ -29,6 +29,7 @@ type sessionStart struct {
 	X11                *protocol.X11Forward // nil = off
 	TUIConn            ConnHandle           // the requesting client; nil when Detached
 	Prompt             string               // the agent's first turn; "" = none (A-D3)
+	Oneshot            bool                 // run the profile's oneshot argv (A3, A-D29)
 }
 
 // startSession issues the ticket, opens the runner stream (and the client
@@ -107,6 +108,7 @@ func (h *TaskHandler) startSession(ss sessionStart) (trsf.BidirectionalStream, p
 		ExtraArgs: protocol.AgentArgsFromStrings(ss.Args),
 	}
 	oer.SetResumeConversation(ss.ResumeConversation)
+	oer.SetOneshot(ss.Oneshot)
 	// Relay the kind. The runner refuses it when the resolved profile has no
 	// stream adapter, so the check lives where the profiles are rather than
 	// being duplicated here from a stale copy of them.
@@ -242,6 +244,7 @@ func (h *TaskHandler) StartQueuedSession(runnerID objproto.ConnectionID, taskID 
 		Rows:               t.Cond.Rows,
 		Cols:               t.Cond.Cols,
 		Prompt:             t.Prompt,
+		Oneshot:            t.Oneshot,
 	})
 	if st != protocol.OpenInteractiveStatus_Ok {
 		return fmt.Errorf("start queued session %s: %v %s", taskID, st, msg)

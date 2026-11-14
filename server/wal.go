@@ -160,8 +160,11 @@ type WALEvent struct {
 	Run uint32 `json:"run,omitempty"`
 	// task_created / task_resumed / task_record_changed: the run's session is
 	// recorded (A-D22). Zero = not recorded, as before A1.
-	Record bool  `json:"record,omitempty"`
-	Ts     int64 `json:"ts"` // unix nano
+	Record bool `json:"record,omitempty"`
+	// task_created / task_resumed: the run is a --oneshot session (A3,
+	// A-D29). Zero = an ordinary session.
+	Oneshot bool  `json:"oneshot,omitempty"`
+	Ts      int64 `json:"ts"` // unix nano
 
 	// Selector is the runner-selection constraint. It is not stored directly as
 	// a JSON struct — see the selectorB64 field for the serialized form.
@@ -241,6 +244,7 @@ type walEventJSON struct {
 	CancelledBy                 string             `json:"cancelled_by,omitempty"`
 	Run                         uint32             `json:"run,omitempty"`
 	Record                      bool               `json:"record,omitempty"`
+	Oneshot                     bool               `json:"oneshot,omitempty"`
 	Ts                          int64              `json:"ts"`
 	// SelectorB64 holds the base64-encoded wire bytes of the RunnerSelector.
 	// Empty / absent means Kind == RunnerSelectorKind_Any (zero value).
@@ -310,6 +314,7 @@ func (e WALEvent) MarshalJSON() ([]byte, error) {
 		CancelledBy:                 e.CancelledBy,
 		Run:                         e.Run,
 		Record:                      e.Record,
+		Oneshot:                     e.Oneshot,
 		Ts:                          e.Ts,
 	}
 	// Only encode the selector if it carries a non-Any kind (i.e. it has payload).
@@ -384,6 +389,7 @@ func (e *WALEvent) UnmarshalJSON(b []byte) error {
 	e.CancelledBy = j.CancelledBy
 	e.Run = j.Run
 	e.Record = j.Record
+	e.Oneshot = j.Oneshot
 	e.Ts = j.Ts
 
 	if j.SelectorB64 != "" {

@@ -103,6 +103,11 @@ func (s *Scheduler) Tick() {
 			if task.AgentProfile != "" && !c.HasProfile(task.AgentProfile) {
 				continue
 			}
+			// A runner that did not say it runs --oneshot would start the
+			// interactive argv instead (A3, A-D29).
+			if task.Oneshot && !c.OneshotSessions {
+				continue
+			}
 			// Reserve BEFORE sending: the runner may answer the moment
 			// AssignTask leaves, and its TaskAccepted and its log JOIN are both
 			// authorized by ownsTask.
