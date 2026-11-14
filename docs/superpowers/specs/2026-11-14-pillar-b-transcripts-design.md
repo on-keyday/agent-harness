@@ -53,8 +53,9 @@ logs readable remotely, without logging in to the runner host (operator,
 
 ## Anti-goal
 
-A principal that holds only `exec_view` receiving a conversation it could not
-already see: another task's, or the operator's own.
+A principal receiving a conversation it was not granted: one without
+`transcript_read` on the task, or, for a session recorded in a shared
+directory, one that could not already read it through a command (B-D2).
 
 ## Facts
 
@@ -112,6 +113,11 @@ schemas and JSON keys, not conversation content. Agent versions: claude
   run commands there as the runner's user, and so read every transcript on
   that host. A principal holding only `exec_view` cannot: it sees the screens
   of the tasks in its scope.
+- **B-F7 — a transcript holds what no screen showed.** That includes the full
+  text of files the agent read (tool results), the large outputs kept apart
+  (B-F1a), the subagents' conversations, every past run, and other agents run
+  in the same directory. `exec_view` shows only what reached the terminal:
+  the live screen, the replay ring and A1's PTY record.
 
 ## Approaches
 
@@ -134,12 +140,13 @@ schemas and JSON keys, not conversation content. Agent versions: claude
 | # | Decision | Decided by |
 |---|---|---|
 | B-D1 | **Scope of a fetch: the task's working directory, for every agent.** `transcript ls <task>` lists every session that any agent the runner knows (its profiles) stored with a recorded working directory (B-F1's column) equal to the task's. That directory is the worktree, or the repo for a `--no-worktree` task. This covers every agent, not just the task's latest profile: a task's profile is set again on each open, so a task resumed under another agent still lists its earlier agent's sessions, and an agent started inside a shell task's worktree is listed too. Each row gives the agent, its session id, the times the session was created and last written, and its size. The times are what A3's `logs` uses to pick a run's session: the session created after that run's start. Runs from before B are included: their files carry the same directory. **Reverses GD G18**, which bound transcripts to runs by a session id recorded at run start and returned only bound ones. G18 protected against returning another task's conversation, and B-D2 protects against that by directory and gate instead. A row is not labelled with a run: the times can be read against the task's run times | operator (no strict per-run exclusion; whatever a shell on the task could read anyway), this spec (the directory match, the row fields) |
-| B-D2 | **Gate, decided per session by the directory it was recorded in.** The runner sorts each session into one of two kinds. A session recorded in the task's worktree path, `<repo>/.harness-worktrees/<task-id>`, is the task's own. That path is unique to the task and computable whether or not the worktree still exists, so the server needs no persisted classification (the server's `WorktreeDir` is not in the WAL and is cleared on resume). A session recorded in the repo itself is shared: that is how a `--no-worktree` task's sessions are recorded, and other tasks' and the operator's land there too. A session of the task's own kind needs `exec_view` on the task, within its scope (GD G34). **A shared one needs `exec_run` on it.** The server drops shared rows for a caller without it, and refuses `get` for them, because only a principal that can already read them through a command (B-F6) may receive them. A session someone else started inside the task's worktree, such as a parent's `exec` or a human in that directory, counts as the task's: it was run in the task's directory. This is accepted | operator (keep only "a view-only principal gets nothing it cannot see"), this spec (per-session classification, sessions others started in the worktree) |
+| B-D2 | **Gate, decided per session by the directory it was recorded in.** The runner sorts each session into one of two kinds. A session recorded in the task's worktree path, `<repo>/.harness-worktrees/<task-id>`, is the task's own. That path is unique to the task and computable whether or not the worktree still exists, so the server needs no persisted classification (the server's `WorktreeDir` is not in the WAL and is cleared on resume). A session recorded in the repo itself is shared: that is how a `--no-worktree` task's sessions are recorded, and other tasks' and the operator's land there too. A session of the task's own kind needs **`transcript_read`** on the task, within its scope (B-D10). **A shared one needs `exec_run` as well.** The server drops shared rows for a caller without both, and refuses `get` for them, because only a principal that can already read them through a command (B-F6) may receive them. A session someone else started inside the task's worktree, such as a parent's `exec` or a human in that directory, counts as the task's: it was run in the task's directory. This is accepted | operator (keep only "a view-only principal gets nothing it cannot see"), this spec (per-session classification, sessions others started in the worktree) |
 | B-D3 | **The match is checked inside the file, not only by the name.** A name or path match only finds candidates. A session is listed when the directory it records (B-F1) equals the task's. This closes B-F2's truncation case and codex's by-date layout | this spec |
 | B-D4 | **opencode is fetched by `opencode export <session-id>`, run by the runner**, because its store holds every session in one database (B-F1) and returning that file would break the anti-goal (operator, 2026-11-14). Listing reads the `session` table read-only. agy's per-conversation `.db` is returned as the file it is; the client opens it with SQLite | operator (export for opencode), this spec (agy as a file) |
 | B-D5 | **The agent's state directory is resolved in the agent's environment**, as GD's pillar B note says: `$CLAUDE_CONFIG_DIR` for claude, and for each agent the variable or flag it reads (pi's `--session-dir`, for one). The plan names each agent's from its documentation, never from where the runner's own home would put it. A sandboxed profile resolves to the host store B-F4 describes. A run under token auth leaves nothing, so its list is empty: which runs used token auth is set per run through the task's args, and the runner does not track it | GD, this spec |
 | B-D6 | **The runner is the task's assigned runner, as for the git queries** (`server/git_query.go:38-40`). A task whose runner is not connected answers `runner_offline`, naming the runner; no server copy exists (Non-goals). A resumed task waiting in the queue has no assigned runner and answers `runner_offline` until it is placed again. This is accepted as git queries accept it | operator (no copy), this spec (the runner choice, the queued gap) |
 | B-D8 | **A session is a set of files, fetched one by one or whole** (operator, 2026-11-14). `transcript ls <task> <session>` lists the files the runner counts as that session (B-F1a), by a name relative to the session, with sizes. `transcript get <task> <session> <file>` returns that one file as stored. Without `<file>` it returns the whole set as a tar. A `<file>` is accepted only if it is a name that listing produced. The runner resolves it, so no path from the client is ever opened. An opencode session is the single JSON `export` writes | operator (both forms), this spec (tar for the whole, names from the listing only) |
+| B-D10 | **A new capability bit, `transcript_read`, gates reading transcripts**, bounded by the task's scope like every bit (operator, 2026-11-14). **Reverses GD G34's reuse of `exec_view` for transcripts.** G34 reasoned that a transcript shows what that bit already shows. B-F7 shows it does not: a transcript carries what never reached a screen, and an agent granted `exec_view` to watch screens would get all of it. A1's PTY record stays on `exec_view`: it holds only what reached the terminal. Held by the operator; an agent has it only when granted (`caps_child = caps_parent ∩ delegate_parent ∩ requested`). It is the 29th of 32 bits: with pillar S's and pillar C's planned bits, one would remain, so the `u64` widening is due by pillar S (operator memory: widen at two left; never merge gates to save bits). The capability touch-list (descriptions, tiers, completeness tests, every surface's caps lists) applies | operator (own bit), this spec (scope, A1 unchanged, bit count) |
 | B-D9 | **Windows runners are in scope** (operator, 2026-11-14). Before writing code, the plan measures on a Windows runner each agent's store, claude's directory-name encoding, and `opencode export`. B-D3's directory comparison treats paths as the runner's OS does: separators, and case on Windows. E2E runs on a Windows runner too | operator (in scope), this spec (measure first, OS-native comparison) |
 | B-D7 | **Surfaces.** CLI: `transcript ls <task> [<session>]` and `transcript get <task> <session> [<file>] [-o FILE]`. TUI: the `d` popup lists the task's transcripts with time and size under the records, and the command line takes the CLI verbs (`get` needs `-o`, as `record get` does). WebUI: the task sheet lists them; opening one lists its files, each with a download button, plus one for the whole session. The plan walks `surface-parity-checklist` | this spec |
 
@@ -174,9 +181,10 @@ binding (B-D1).
   their times and sizes; `get` returns the stored bytes unchanged; opencode's
   `get` runs `export` for the named session. Each fixture's shape is copied
   from B-F1, which the plan re-reads on the installed versions first.
-- Unit, server: the gate, `exec_view` for a worktree task and `exec_run` for a
-  `--no-worktree` one, both within scope; an unclassifiable task takes the
-  `exec_run` rule; a disconnected runner answers `runner_offline`.
+- Unit, server: the gate. `transcript_read` within scope reads the task's own
+  sessions, and `exec_view` alone is refused. A shared session needs
+  `exec_run` as well: without it, its row is dropped and its `get` refused. A
+  disconnected runner answers `runner_offline`.
 - Dummy harness, real agents: one session per agent in a worktree task, then
   `transcript ls` and `get` from the CLI, the TUI `d` popup and the WebUI
   sheet. One sandboxed session per agent (B-F4). One `--no-worktree` task,
