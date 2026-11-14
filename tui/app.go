@@ -1954,14 +1954,16 @@ func (a *App) shownTable() focus {
 	return a.lastTable
 }
 
-// tableStrip is the one line above the table: which table is shown (the other
-// is one Tab away) and the fleet summary.
+// tableStrip is the one line above the table: which table is shown, the key
+// that reaches the other one, and the fleet summary. The focus cycle runs
+// runners → tasks → notify → …, so from runners it is Tab, and from tasks it
+// is Shift-Tab (Tab goes on to notify and leaves the tasks table up).
 func tableStrip(showRunners bool, rs []protocol.RunnerInfo) string {
-	tab := "[Tasks] Runners"
+	tab := "[Tasks] Runners (Shift-Tab: runners)"
 	if showRunners {
-		tab = "Tasks [Runners]"
+		tab = "Tasks [Runners] (Tab: tasks)"
 	}
-	return " " + tab + " (Tab switches) · " + runnerSummary(rs)
+	return " " + tab + " · " + runnerSummary(rs)
 }
 
 func (a *App) View() string {

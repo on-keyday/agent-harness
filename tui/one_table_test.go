@@ -167,3 +167,14 @@ func TestRunColumnStillNeedsWidth(t *testing.T) {
 	}
 	assertRowsMatchColumns(t, &m)
 }
+
+// The hint names the key that actually reaches the other table: from tasks,
+// Tab goes on to notify, so the way back to runners is Shift-Tab.
+func TestTableStripNamesTheKeyToTheOtherTable(t *testing.T) {
+	if s := tableStrip(false, nil); !strings.Contains(s, "Shift-Tab: runners") || strings.Contains(s, "Tab switches") {
+		t.Errorf("tasks shown: %q", s)
+	}
+	if s := tableStrip(true, nil); !strings.Contains(s, "Tab: tasks") || strings.Contains(s, "Shift-Tab") {
+		t.Errorf("runners shown: %q", s)
+	}
+}

@@ -1824,7 +1824,7 @@ appear when present). The tasks table's `Run` column (a background task's
 deadline or end reason) appears only while some listed task has a Run cell.
 
 ```
- [Tasks] Runners (Tab switches) · runners 3: 1 idle 2 busy
+ [Tasks] Runners (Shift-Tab: runners) · runners 3: 1 idle 2 busy
 ┌───────────────────────────────────────────────────────┐
 │ Status   ID     From  Agent  Act   Repo         About │
 │ Queued   9d50   cli   claude ...   /home/foo    ...   │
