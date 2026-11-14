@@ -919,7 +919,11 @@ type SpawnAction struct {
 	NoRecord bool
 	// run the agent's one-shot (print-mode) argv in the session, which ends when it answers (needs --promp…
 	Oneshot bool
-	Kind    string
+	// run the child in a PTY (an interactive open's default; with --oneshot, where the default is pipes: a…
+	Pty bool
+	// run the child on pipes, no PTY (a --oneshot's default: stdin /dev/null, output byte for byte; intera…
+	NoPty bool
+	Kind  string
 }
 
 // TranscriptGetAction is built by: transcript get.
@@ -2455,6 +2459,8 @@ func init() {
 			a.Record = b.Bool("record")
 			a.NoRecord = b.Bool("no-record")
 			a.Oneshot = b.Bool("oneshot")
+			a.Pty = b.Bool("pty")
+			a.NoPty = b.Bool("no-pty")
 			return a, nil
 		},
 		"session new\x00tui": func(b Bound) (Action, error) {
@@ -2541,6 +2547,8 @@ func init() {
 			a.Record = b.Bool("record")
 			a.NoRecord = b.Bool("no-record")
 			a.Oneshot = b.Bool("oneshot")
+			a.Pty = b.Bool("pty")
+			a.NoPty = b.Bool("no-pty")
 			return a, nil
 		},
 		"session new\x00webui": func(b Bound) (Action, error) {
@@ -2625,6 +2633,8 @@ func init() {
 			a.Record = b.Bool("record")
 			a.NoRecord = b.Bool("no-record")
 			a.Oneshot = b.Bool("oneshot")
+			a.Pty = b.Bool("pty")
+			a.NoPty = b.Bool("no-pty")
 			return a, nil
 		},
 		"session send\x00cli": func(b Bound) (Action, error) {

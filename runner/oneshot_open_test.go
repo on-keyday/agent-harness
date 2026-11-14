@@ -26,18 +26,39 @@ type heldStream struct {
 	*noopBidiStream
 	release chan struct{}
 	once    sync.Once
+	// input, if any, is read before the wait: what a client typed.
+	inMu  sync.Mutex
+	input []byte
 }
 
 func (h *heldStream) wait() { <-h.release }
+
+// takeInput hands out the pending input, at most len(p) bytes of it.
+func (h *heldStream) takeInput(p []byte) int {
+	h.inMu.Lock()
+	defer h.inMu.Unlock()
+	n := copy(p, h.input)
+	h.input = h.input[n:]
+	return n
+}
 
 // CloseBoth cancels the reads, as trsf's does.
 func (h *heldStream) CloseBoth() error {
 	h.once.Do(func() { close(h.release) })
 	return h.noopBidiStream.CloseBoth()
 }
-func (h *heldStream) Cancel()                    { h.once.Do(func() { close(h.release) }) }
-func (h *heldStream) Read(p []byte) (int, error) { h.wait(); return h.noopBidiStream.Read(p) }
+func (h *heldStream) Cancel() { h.once.Do(func() { close(h.release) }) }
+func (h *heldStream) Read(p []byte) (int, error) {
+	if n := h.takeInput(p); n > 0 {
+		return n, nil
+	}
+	h.wait()
+	return h.noopBidiStream.Read(p)
+}
 func (h *heldStream) ReadContext(ctx context.Context, p []byte) (int, error) {
+	if n := h.takeInput(p); n > 0 {
+		return n, nil
+	}
 	h.wait()
 	return h.noopBidiStream.ReadContext(ctx, p)
 }
@@ -78,6 +99,21 @@ func openOneshot(t *testing.T, prompt string, resume, eventStream bool, out stri
 // still runs; handleOpenExec returns once the child exits.
 func openExec(t *testing.T, p AgentProfile, oneshot bool, prompt string, resume, eventStream bool, running func(s *Session, taskIDHex string)) oneshotRun {
 	t.Helper()
+	return openExecOpts(t, p, execOpts{oneshot: oneshot, prompt: prompt, resume: resume, eventStream: eventStream}, running)
+}
+
+// execOpts is what openExecOpts puts on the OpenExec request, plus input: bytes
+// the server's stream delivers first (frames, already encoded), before its
+// reads wait as a live client's do.
+type execOpts struct {
+	oneshot, resume, eventStream, noPTY bool
+	prompt                              string
+	input                               []byte
+}
+
+func openExecOpts(t *testing.T, p AgentProfile, o execOpts, running func(s *Session, taskIDHex string)) oneshotRun {
+	t.Helper()
+	oneshot, prompt, resume, eventStream := o.oneshot, o.prompt, o.resume, o.eventStream
 	repo := t.TempDir()
 	ps, err := NewProfileSet(p, nil)
 	if err != nil {
@@ -86,7 +122,7 @@ func openExec(t *testing.T, p AgentProfile, oneshot bool, prompt string, resume,
 	ms := &mockSender{}
 	const streamID, promptID trsf.StreamID = 100, 7
 	stream := &noopBidiStream{streamID: streamID}
-	held := &heldStream{noopBidiStream: stream, release: make(chan struct{})}
+	held := &heldStream{noopBidiStream: stream, release: make(chan struct{}), input: o.input}
 	release := time.AfterFunc(10*time.Second, func() { held.once.Do(func() { close(held.release) }) })
 	t.Cleanup(func() { release.Stop(); held.once.Do(func() { close(held.release) }) })
 	lookup := &fakeBidiLookup{streams: map[trsf.StreamID]trsf.BidirectionalStream{streamID: held}}
@@ -96,6 +132,7 @@ func openExec(t *testing.T, p AgentProfile, oneshot bool, prompt string, resume,
 	oer.SetOneshot(oneshot)
 	oer.SetResumeConversation(resume)
 	oer.SetEventStream(eventStream)
+	oer.SetNoPty(o.noPTY)
 	if prompt != "" {
 		lookup.recv = map[trsf.StreamID]trsf.ReceiveStream{promptID: &promptRecv{data: promptBodyBytes(prompt)}}
 		oer.SetPromptPresent(true)

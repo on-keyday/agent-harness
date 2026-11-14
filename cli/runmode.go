@@ -212,6 +212,10 @@ type RunModeFlags struct {
 	// Oneshot: session new --oneshot (A3, A-D29), carried here for the same
 	// reason as the record switch.
 	Oneshot bool
+	// PtySet: the open says whether its child gets a PTY (Pty), rather than
+	// leaving it to the mode's default, which the server resolves (A-D33).
+	// Carried here for the record switch's reason.
+	PtySet, Pty bool
 }
 
 // Conditions is the background conditions block the flags describe, nil when
@@ -245,4 +249,5 @@ func (f RunModeFlags) Apply(o *SessionOpts) {
 	}
 	o.RecordSet, o.Record = f.RecordSet, f.RecordSet && f.Record
 	o.Oneshot = f.Oneshot
+	o.PtySet, o.Pty = f.PtySet, f.PtySet && f.Pty
 }

@@ -1626,13 +1626,21 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 		resp.SetErrorMsg([]byte("--oneshot runs in a PTY; an event-stream session has none"))
 		return resp, body
 	}
+	if pty, set := ptyOpen(req); set && pty && req.EventStream() {
+		resp, body := errResp(protocol.OpenInteractiveStatus_PtyStream)
+		resp.SetErrorMsg([]byte("--pty: an event-stream session has no PTY"))
+		return resp, body
+	}
+	// The server resolves the PTY choice (A-D33) and sends the runner the
+	// final answer, so a runner never applies a default of its own.
+	noPTY := resolveNoPTY(req, oneshot, exactRec)
 
 	// A background open is queued, never placed here (A-D4); Tick places it.
 	if h.resolveRunMode(req, existingTaskIDHex) == protocol.RunMode_Background {
 		return h.openBackground(backgroundOpen{
 			cid: cid, req: req, origin: origin, creator: creator, grant: grant,
 			resumeHex: existingTaskIDHex, exactRec: exactRec, repo: repo, args: args, prompt: prompt,
-			record: record, oneshot: oneshot,
+			record: record, oneshot: oneshot, noPTY: noPTY,
 		}), nil
 	}
 	// Background conditions on an open that resolved to foreground would
@@ -1764,7 +1772,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 		// persisting it here closes the Task 6 gap where handleOpenInteractive
 		// threaded `resolved` to OpenExec but never wrote it back through
 		// Tasks.Resume.
-		if _, err := h.Tasks.Resume(existingTaskIDHex, prompt, args, req.Selector, runner.ID.String(), origin, grant, interactiveKind(req), resolved, h.lookupPrincipal(cid), req.ResumeConversation(), RunSpec{Mode: protocol.RunMode_Foreground, Record: record, Oneshot: oneshot}); err != nil {
+		if _, err := h.Tasks.Resume(existingTaskIDHex, prompt, args, req.Selector, runner.ID.String(), origin, grant, interactiveKind(req), resolved, h.lookupPrincipal(cid), req.ResumeConversation(), RunSpec{Mode: protocol.RunMode_Foreground, Record: record, Oneshot: oneshot, NoPTY: noPTY}); err != nil {
 			switch err {
 			case ResumeErrNotFound:
 				return errResp(protocol.OpenInteractiveStatus_ResumeNotFound)
@@ -1781,7 +1789,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 		// resolved is the (runner,profile) combo's profile — the server-chosen
 		// profile the runner must exec with (empty only when the sole candidate
 		// advertises no profile, i.e. a legacy runner → its AgentBin default).
-		created, err := h.Tasks.CreateWithinLimits(repo, prompt, interactiveKind(req), origin, creator, runner.ID.String(), req.Selector, req.ExtraArgs.AsStrings(), grant.To, resolved, RunSpec{Mode: protocol.RunMode_Foreground, Record: record, Oneshot: oneshot})
+		created, err := h.Tasks.CreateWithinLimits(repo, prompt, interactiveKind(req), origin, creator, runner.ID.String(), req.Selector, req.ExtraArgs.AsStrings(), grant.To, resolved, RunSpec{Mode: protocol.RunMode_Foreground, Record: record, Oneshot: oneshot, NoPTY: noPTY})
 		if err != nil {
 			resp, body := errResp(protocol.OpenInteractiveStatus_SpawnLimit)
 			resp.SetErrorMsg([]byte(err.Error()))
@@ -1820,7 +1828,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 		TaskIDHex: taskIDHex, Runner: runner, Profile: resolved, Repo: repo, Args: args,
 		ResumeConversation: req.ResumeConversation(), EventStream: req.EventStream(),
 		Detached: req.Detached(), Rows: rows, Cols: cols, X11: x11, TUIConn: tuiConn, Prompt: prompt,
-		Oneshot: oneshot,
+		Oneshot: oneshot, NoPTY: noPTY,
 	})
 	if st != protocol.OpenInteractiveStatus_Ok {
 		resp, cands := errResp(st)
@@ -2393,6 +2401,8 @@ func toTaskInfo(t TaskEntry) protocol.TaskInfo {
 	// The current run is a --oneshot (A-D29). The kind is interactive either
 	// way, so without this no surface can tell the two apart.
 	info.SetOneshot(t.Oneshot)
+	// The current run's child has no PTY (A-D33): per run, like oneshot.
+	info.SetNoPty(t.NoPTY)
 	info.RingBufferBytes = t.RingBufferBytes
 	info.SetProgress([]byte(t.Progress))
 	info.ProgressAt = uint64(t.ProgressAt)

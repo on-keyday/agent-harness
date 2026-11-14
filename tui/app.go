@@ -2131,6 +2131,7 @@ func (a *App) applyEventProgress(ti *protocol.TaskInfo, id string, ev protocol.T
 	// Per run, not per task (A-D29): a resume can turn it on or off, and this
 	// row hears of the resume only through events.
 	ti.SetOneshot(ev.Oneshot())
+	ti.SetNoPty(ev.NoPty())
 	if ev.ProgressAt != 0 {
 		a.progressRecvAt[id] = time.Now()
 	} else {

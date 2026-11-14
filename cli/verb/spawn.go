@@ -137,6 +137,13 @@ func spawnFlags(k spawnKind) []Flag {
 		// A3 (A-D29): the profile's print-mode argv in the PTY.
 		Flag{Name: "oneshot", Type: FlagBool, Default: false, Field: "Oneshot",
 			Help: "run the agent's one-shot (print-mode) argv in the session, which ends when it answers (needs --prompt; not with --stream)"},
+		// A-D33: the PTY is its own axis. Neither = the mode's default, which
+		// the server resolves: a PTY for an interactive open, none for
+		// --oneshot; an exact resume keeps the task's recorded choice.
+		Flag{Name: "pty", Type: FlagBool, Default: false, Field: "Pty",
+			Help: "run the child in a PTY (an interactive open's default; with --oneshot, where the default is pipes: a pager env is set, and stdin is the terminal)"},
+		Flag{Name: "no-pty", Type: FlagBool, Default: false, Field: "NoPty",
+			Help: "run the child on pipes, no PTY (a --oneshot's default: stdin /dev/null, output byte for byte; interactive: stdin is your input, and nothing echoes it)"},
 	)
 }
 
@@ -175,6 +182,10 @@ func spawnRules(k spawnKind) ([]Rule, []Requirement) {
 			Reason: "they are the two answers to one question"},
 		Rule{Flags: []string{"oneshot", "stream"},
 			Reason: "a one-shot runs in a PTY; an event-stream session has none"},
+		Rule{Flags: []string{"pty", "no-pty"},
+			Reason: "they are the two answers to one question"},
+		Rule{Flags: []string{"pty", "stream"},
+			Reason: "an event-stream session has no PTY; the server refuses the pair too"},
 	)
 	// A stream session needs --detach or --background (which implies it):
 	// checked in spawnValidate, since a Requirement names one flag.

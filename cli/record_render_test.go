@@ -203,3 +203,26 @@ func TestOneshotRidesTheOpenRequest(t *testing.T) {
 		t.Fatal("RunModeFlags.Apply dropped Oneshot")
 	}
 }
+
+// A-D33: --pty / --no-pty share the ext byte; neither leaves it to the server,
+// which resolves the mode's default. The run-mode flags carry the choice to
+// every surface.
+func TestPtyChoiceRidesTheOpenRequest(t *testing.T) {
+	none := buildOpenInteractiveRequest("/r", SessionOpts{})
+	if none.ExtPresent() {
+		t.Fatal("an open that says nothing put the ext byte on the wire")
+	}
+	noPTY := buildOpenInteractiveRequest("/r", SessionOpts{PtySet: true})
+	if ext := noPTY.Ext(); !noPTY.ExtPresent() || ext == nil || !ext.PtySet() || ext.Pty() || ext.Oneshot() {
+		t.Fatalf("--no-pty: ext %+v present %v", ext, noPTY.ExtPresent())
+	}
+	pty := buildOpenInteractiveRequest("/r", SessionOpts{PtySet: true, Pty: true, Oneshot: true})
+	if ext := pty.Ext(); ext == nil || !ext.PtySet() || !ext.Pty() || !ext.Oneshot() {
+		t.Fatalf("--oneshot --pty: ext %+v", ext)
+	}
+	var o SessionOpts
+	RunModeFlags{PtySet: true, Pty: true}.Apply(&o)
+	if !o.PtySet || !o.Pty {
+		t.Fatal("RunModeFlags.Apply dropped the PTY choice")
+	}
+}

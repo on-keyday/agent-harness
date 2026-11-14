@@ -228,6 +228,9 @@ type taskEntry struct {
 	// currently pointed at the server, which is what makes a rebind possible
 	// and what keeps the PTY open across the gap.
 	relay *sessionRelay
+	// noPTY: the child runs on pipes (A-D33), so a cancel cannot hang it up
+	// and ends it through its context at once (cancelTask).
+	noPTY bool
 }
 
 // taskRootCtx is the context a spawned task descends from: the process's when
@@ -640,7 +643,7 @@ func resolveExec(ps ProfileSet, profile string, oneshot, resume bool, extra []st
 // handleOpenInteractive. The server has already created a bidi stream
 // toward us and stored its id in oer.StreamId; we look it up and feed it
 // to exec.ExecuteCommand for an interactive PTY claude session in a fresh
-// worktree.
+// worktree — or, with no_pty (A-D33), for the same child on pipes.
 //
 // Lifecycle messages:
 //   - TaskAccepted (we are committed even if worktree creation later fails)
@@ -803,7 +806,7 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 	// What ends a task on a disconnect is now an explicit decision:
 	// Session.cancelTasksUnlessHeld.
 	taskCtx, cancel := context.WithCancel(s.taskRootCtx(ctx))
-	entry := &taskEntry{cancel: cancel, repoPath: repoPath, ticket: oer.AuthTicket}
+	entry := &taskEntry{cancel: cancel, repoPath: repoPath, ticket: oer.AuthTicket, noPTY: oer.NoPty()}
 	s.mu.Lock()
 	s.initMaps()
 	registered := s.reg.putUnlessCancelled(taskIDHex, entry)
@@ -906,7 +909,11 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 	// for why the chdir alone leaves some agents pointed at the runner's
 	// directory instead of the task's.
 	env = append(env, AgentCwdEnv(dir)...)
-	if oneshot {
+	// No PTY (A-D33): the child runs on pipes, so nothing is a terminal for a
+	// pager to wait on, and a oneshot reads /dev/null. The pager env is for a
+	// oneshot that does have one.
+	noPTY := oer.NoPty()
+	if oneshot && !noPTY {
 		env = append(env, OneshotPagerEnv()...)
 	}
 
@@ -1005,13 +1012,17 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 	// startup would then be typed at the wrong way.
 	modes := termmode.New()
 
-	runErr := agentexec.ExecuteCommandWithOption(taskCtx, relay, log, agentBin, agentArgv, dir, true, env, agentexec.ExecuteOption{
+	opt := agentexec.ExecuteOption{
 		Audit: ptyModeTap{modes: modes},
 		OnStdinWriter: func(write func([]byte) (int, error)) {
 			// A --oneshot child is `claude -p` or a command, not a prompt
 			// reading turns: a wake would only type the marker and an Enter
-			// into whatever it is running.
-			if !oneshot {
+			// into whatever it is running. Nor does a child on pipes get one
+			// (A-D33): with no terminal it is a program reading its input
+			// stream, and the marker is input to it — measured with bash,
+			// which on a pipe is non-interactive, reads the marker as a
+			// command, and exits 2 on its syntax error, ending the session.
+			if !oneshot && !noPTY {
 				s.setWake(taskIDHex, ptyWake(write, modes, wakeInputFor(runtime.GOOS)))
 			}
 			// The child's stdin is wired, so there IS a child now. This is
@@ -1038,7 +1049,27 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 				exitCode.Store(int32(st.ExitCode()))
 			}
 		},
-	})
+	}
+	if noPTY {
+		// Pipes, not a terminal (A-D33). No mode tracker: nothing reads
+		// terminal modes off a pipe. A cancel ends a pipe child the way it
+		// ends the stream kind's (A-D16): TERM to its process group, KILL
+		// after a grace — the hangup ladder needs a terminal to hang up.
+		opt.Audit = nil
+		opt.KillProcessTree = runtime.GOOS != "windows"
+		if oneshot {
+			// /dev/null, not a pipe nobody writes: EOF on the first read,
+			// with no window in which stdin is open and empty. objtrsf
+			// refuses OnStdinWriter alongside it — there is no pipe — so the
+			// child is marked started here, before the call that starts it;
+			// a Start that fails returns at once and is marked exited below.
+			opt.StdinDevNull = true
+			opt.OnStdinWriter = nil
+			entry.started.Store(true)
+		}
+	}
+	runErr := agentexec.ExecuteCommandWithOption(taskCtx, relay, log, agentBin, agentArgv, dir, !noPTY, env, opt)
+	entry.exited.Store(true)
 
 	log.Info("ExecuteCommandWithOption RETURNED — the session is over",
 		"task_id", taskIDHex, "err", runErr)
@@ -1100,10 +1131,10 @@ func (s *Session) WakeStdin(taskIDHex string) {
 	if e.wake == nil {
 		s.mu.Unlock()
 		// Registered, but no wake: the child's stdin does not exist yet,
-		// or it is a --oneshot child. Worth a line anyway — from
+		// or it is a --oneshot child or one with no PTY. Worth a line anyway — from
 		// the outside this is identical to a wake that was written and ignored,
 		// and telling the two apart is the whole reason these logs exist.
-		s.logger().Info("wake skipped", "task_id", taskIDHex, "reason", "task has no stdin writer (not wired yet, or a --oneshot)")
+		s.logger().Info("wake skipped", "task_id", taskIDHex, "reason", "task has no stdin writer (not wired yet, a --oneshot, or no PTY)")
 		return
 	}
 	if e.waking {

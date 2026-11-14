@@ -135,6 +135,13 @@
           <option value="off">off</option>
         </select>
       </label>
+      <label class="limit-field" title="子プロセスに PTY を与えるか。server 既定 = 対話 session は PTY あり、one-shot は PTY なし (stdin は /dev/null、出力はバイトそのまま)。off の対話 session は stdin がパイプで、入力はエコーされない。stream には PTY がない">PTY
+        <select id="compose-pty">
+          <option value="default">server 既定</option>
+          <option value="on">on</option>
+          <option value="off">off</option>
+        </select>
+      </label>
       <div id="compose-bg" class="bg-block" hidden>
         <label class="limit-field">deadline <input id="bg-deadline" type="text" size="7" value="1h"></label>
         <label class="limit-field">turn end

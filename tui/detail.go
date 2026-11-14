@@ -314,8 +314,9 @@ func assignedToDetail(t protocol.TaskInfo, runnerByID map[string]protocol.Runner
 func formatTaskDetail(t protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "id:            %s\n", hex.EncodeToString(t.Id.Id[:]))
-	// The mark names a `session new --oneshot` run, as on the `ls` row.
-	fmt.Fprintf(&sb, "kind:          %s%s\n", taskKindStr(t.Kind), cli.OneshotMark(&t))
+	// The marks name a `session new --oneshot` run and a PTY choice that is
+	// not the mode's default (A-D33), as on the `ls` row.
+	fmt.Fprintf(&sb, "kind:          %s%s\n", taskKindStr(t.Kind), cli.RunMark(&t))
 	fmt.Fprintf(&sb, "status:        %s\n", taskStatusStr(t.Status))
 	if len(t.AgentProfile) > 0 {
 		fmt.Fprintf(&sb, "agent:         %s\n", string(t.AgentProfile))

@@ -651,8 +651,16 @@ func renderPromptCell(t protocol.TaskInfo) string {
 		// started with a prompt to answer, and that prompt is what tells one
 		// row from another. Marked in plain text, like "(title)", so it reads
 		// as a one-shot rather than as a submit row from before A3.
+		// The PTY is marked where it is not the mode's default (A-D33),
+		// with cli.RunMark's words.
 		if t.Oneshot() {
+			if !t.NoPty() {
+				return "(oneshot+pty) " + truncatePrompt(string(t.Prompt))
+			}
 			return "(oneshot) " + truncatePrompt(string(t.Prompt))
+		}
+		if t.NoPty() {
+			return "<interactive+pipe>"
 		}
 		return "<interactive>"
 	case protocol.TaskKind_Stream:

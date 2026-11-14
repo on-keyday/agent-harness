@@ -193,7 +193,9 @@ last run's prompt and `--oneshot` (that prompt is sent again), so it needs only
 **`resume_exact`** (which `resume` implies), and it refuses every setting flag
 beside it — `--agent`, `--agent-arg`, `--caps`, `--scope`, `--scope-for`,
 `--delegate-caps`, `--delegate-scope`, `--prompt` and `--oneshot`. Leave `--repo` and `--runner` off: the server
-reopens it on the runner it last ran on. `--resume-conversation` still works.
+reopens it on the runner it last ran on. `--resume-conversation` still works,
+and so do `-d`, the size and `--pty` / `--no-pty` (without either it takes the
+last run's PTY choice).
 
 ### Unattended work — `--background`
 
@@ -708,10 +710,15 @@ TASK_ID=$(harness-cli session new -d --oneshot --repo /path/to/repo --agent clau
 - **A resume reuses nothing**: pass `--oneshot` again with `--resume`, or the
   resumed session runs the interactive template. `--resume --exact` is the
   exception: it reruns the last run as it was, `--oneshot` and prompt included.
-- **The child runs in a PTY**, so it gets `PAGER`, `GIT_PAGER` and
-  `SYSTEMD_PAGER` set to `cat` — `git log` or `journalctl` would otherwise wait
-  for a key. A command that reads stdin still waits forever: give it
-  `< /dev/null`.
+- **The child has no PTY by default**: its stdin is `/dev/null`, so a command
+  that reads stdin ends at once instead of waiting, and its output reaches the
+  session byte for byte. `--pty` runs it in a PTY instead, for a program that
+  needs a terminal; it then gets `PAGER`, `GIT_PAGER` and `SYSTEMD_PAGER` set
+  to `cat` — `git log` or `journalctl` would otherwise wait for a key — and a
+  command that reads stdin waits forever: give it `< /dev/null`. `ls` marks
+  such a run `interactive+oneshot+pty`. The converse, `session new -d
+  --no-pty`, is an interactive session on pipes (`interactive+pipe`): what you
+  `session send` reaches its stdin, and nothing echoes it.
 
 ### Getting a one-shot's answer back
 
@@ -756,7 +763,9 @@ killing your sessions" above.
 `cancel <id>` and `session kill <id>` (its alias) route a `CancelTask` to the
 assigned runner, which
 hangs up the agent (SIGHUP, then SIGTERM, then SIGKILL within about 2 s) so it
-can stop the tool processes it started; what an agent deliberately detached into
+can stop the tool processes it started — a session with no PTY, which has no
+terminal to hang up, gets SIGTERM to its process group and SIGKILL 2 s later,
+as a stream session does; what an agent deliberately detached into
 a session of its own (`setsid`) is left running. Cancel is
 idempotent and skips already-terminal tasks. (`prune` / `prune-local` are
 post-hoc cleanup of terminal tasks — server-side forget and local worktree

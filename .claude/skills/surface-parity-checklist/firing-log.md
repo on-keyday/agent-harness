@@ -4214,3 +4214,74 @@ omitted: 6 — Compose's prompt, background, record, one-shot and stream fields
          not session defaults, and a line inheriting a checked one-shot box
          would run something not typed.
 missed:  —
+
+### 2026-11-15 (uncommitted) — `session new --pty` / `--no-pty` (A-D33)
+
+Two spawn flags, one open-ext presence+value pair, an `OpenExecRunnerRequest`
+bit (runner-decoded), a `TaskInfo` / `TaskStatusEvent` bit, a per-run WAL key
+and a new open status (`pty_stream`). Spec §A3 A-D33. Walked after the code,
+before the live checks. S1–S6 `n/a`: no agent, bin, argv template, credential,
+egress or `HARNESS_*` change — the same templates run on pipes.
+
+done:    1 (two `Flag`s in `spawnFlags`; `SpawnAction.Pty` / `NoPty`
+         generated for all three command lines), 2 (Rules pty×no-pty and
+         pty×stream; `--exact` deliberately NOT in `exactConflicts` — the PTY
+         is a terminal-shape setting like `-d`), 3 (driven in harness-tui under
+         tmux: `session new -d --no-pty` from the command line), 5 (the N
+         background form gains a `pty` field beside `record`, the record
+         field's three words — the sibling 34a asks for), 6 (Compose
+         `#compose-pty` select, `server 既定/on/off`, the record select's kind),
+         8 (`runModeFromOpts` reads `pty`), 11 (`ls` kind column via
+         `cli.KindLabel`), 12/14 (`pty` boolean on every row, `TaskHasPTY`),
+         16 (About cell `<interactive+pipe>` / `(oneshot+pty) …`), 17 (`d`
+         popup kind line via `cli.RunMark`; seen live: `interactive+pipe`),
+         20 (WebUI row through the Go `kindLabel`; seen live), 22 (Compose
+         prefill sets the select from the raw `noPty`, naming only a
+         non-default choice), 23 (`noPty` raw beside `kindLabel`), 24 (per
+         path: plain resume = mode default, exact resume = recorded unless
+         stated, background queue = stored and sent by `StartQueuedSession`,
+         stream = `--pty` refused / `--no-pty` stored false), 25 (`pty_set`),
+         26 (Compose state feeds only Compose's request; `r`/`R`/`u`/`U` pass
+         none and get the mode default), 27 + 28a (`RunModeFlags` →
+         `SessionOpts` → `buildOpenInteractiveRequest`; the three TUI
+         `session new` builds all go through `spawnRunMode`, the CLI's one
+         `RunModeFlags{` literal and the wasm `runModeFromOpts` set it;
+         `sessionReq` names `pty`, `runSessionNew` passes it), 28 (`no_pty`
+         on task_created / task_resumed, zero = a PTY, which every earlier
+         run had), 29/30 (unchanged result lines; the label carries it), 31
+         (`pty` printed true AND false in JSON; the row marks only a
+         non-default choice — a value decision recorded in `KindLabel`'s doc,
+         with `--json` as the always-present form), 32 (one `cli.RunMark`
+         for `ls`, the `d` popup and the wasm label; the TUI About cell uses
+         its words), 33 (pty×no-pty and pty×stream refused at parse and at
+         the server), 34a (a select like the record select; a form text field
+         like the form's record field), 35 (README Quick start 2/3/5, WebUI
+         paragraph), 36 (supervising-workers ×3: one-shot bullet, `--exact`,
+         cancel), 37 (A-D33 row; A-D29 and two As-built bullets point at it),
+         38 (see below), 39 (A-D33 names no Surfaces table; the brief's
+         surface list was walked and each driven live — CLI, TUI tmux,
+         WebUI Playwright)
+omitted: 4 (no key: the choice is per open), 5 for the `s` popup (a one-shot's
+         default is the no-PTY run it exists for; `--pty` is the command
+         line's), 7 (no new path), 18 / 18a (a run property, not a runner's)
+n/a:     9, 10, 13, 15, 19, 21, 34
+missed:  —
+
+**Item 38, and the 2026-09-30 note it extends.** That entry named "a model the
+server keeps for one kind, applied to every kind". This change made the
+INTERACTIVE kind itself sometimes PTY-less, so the same question came back one
+level down: the server's screen model, every attach replay and the live
+fan-out all assumed the line discipline a PTY provides. Answered by making the
+server do a PTY's two translations for a pipe session — LF→CRLF toward the
+screen model and every client, CR→LF on client input — while the ring and the
+record keep the child's bytes. Driven in the browser: Enter in xterm ran the
+line and `one`/`two` rendered at column 0. The cost is recorded in A-D33:
+`snapshot --raw` is a client's view and carries the added CRs.
+
+**What the live run found that no item asks.** The first build installed the
+agentboard wake on a pipe session as a marker+LF line. A `board wake` then
+ended the task `Failed exit=2`: bash on a pipe is non-interactive and exits on
+the marker's syntax error. Unit tests passed (they checked a wake was
+installed). Removed for pipe sessions, with the measurement in A-D33. Second
+instance of "a field every surface fills and nothing safely consumes", one
+layer over from the 2026-09-30 suggestion entry.

@@ -289,6 +289,7 @@ func TestLsTaskKindOneshotSession(t *testing.T) {
 	one := protocol.TaskInfo{Status: protocol.TaskStatus_Running, Kind: protocol.TaskKind_Interactive}
 	one.Id.Id[0] = 0x01
 	one.SetOneshot(true)
+	one.SetNoPty(true) // a one-shot's default (A-D33)
 	plain := protocol.TaskInfo{Status: protocol.TaskStatus_Running, Kind: protocol.TaskKind_Interactive}
 	plain.Id.Id[0] = 0x02
 	if got := taskLine(one, nil); !strings.Contains(got, "  interactive+oneshot  repo=") {
@@ -302,5 +303,42 @@ func TestLsTaskKindOneshotSession(t *testing.T) {
 	}
 	if got := KindLabel(&plain); got != "interactive" {
 		t.Errorf("KindLabel(plain) = %q", got)
+	}
+}
+
+// A-D33: the kind column marks a run's PTY only where it is not the mode's
+// default — "+pipe" on an interactive run without one, "+pty" on a one-shot
+// run with one — so the common rows stay as they were and every mark names a
+// choice someone made.
+func TestKindLabelMarksTheNonDefaultPTY(t *testing.T) {
+	mk := func(oneshot, noPTY bool) *protocol.TaskInfo {
+		ti := &protocol.TaskInfo{Kind: protocol.TaskKind_Interactive}
+		ti.SetOneshot(oneshot)
+		ti.SetNoPty(noPTY)
+		return ti
+	}
+	for _, c := range []struct {
+		t    *protocol.TaskInfo
+		want string
+		pty  bool
+	}{
+		{mk(false, false), "interactive", true},
+		{mk(false, true), "interactive+pipe", false},
+		{mk(true, true), "interactive+oneshot", false},
+		{mk(true, false), "interactive+oneshot+pty", true},
+		{&protocol.TaskInfo{Kind: protocol.TaskKind_Stream}, "stream", false},
+		{&protocol.TaskInfo{Kind: protocol.TaskKind_Oneshot}, "oneshot", false},
+	} {
+		if got := KindLabel(c.t); got != c.want {
+			t.Errorf("KindLabel = %q, want %q", got, c.want)
+		}
+		if got := TaskHasPTY(c.t); got != c.pty {
+			t.Errorf("%s: TaskHasPTY = %v, want %v", c.want, got, c.pty)
+		}
+	}
+	row := mk(false, true)
+	row.Status = protocol.TaskStatus_Running
+	if got := taskLine(*row, nil); !strings.Contains(got, "  interactive+pipe  repo=") {
+		t.Errorf("no-PTY row lacks the kind mark:\n%s", got)
 	}
 }

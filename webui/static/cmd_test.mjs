@@ -217,6 +217,23 @@ test("session new --foreground, --stream, --record and --no-record reach the req
   assert.equal(named(dflt.calls, "sessionReq")[0][1].record, "", "neither: the server's --record default");
 });
 
+// A-D33: --pty / --no-pty reach the request as the PTY option; neither sends
+// nothing and the server takes the mode's default. They are one question's two
+// answers, and a stream session has no PTY to ask for.
+test("session new --pty and --no-pty reach the request", async () => {
+  const off = await run("session new -d --no-pty --agent bash");
+  assert.equal(named(off.calls, "sessionReq")[0][1].pty, "off");
+  const on = await run("session new -d --oneshot --pty --agent bash --prompt x");
+  assert.equal(named(on.calls, "sessionReq")[0][1].pty, "on");
+  const dflt = await run("session new -d --agent bash");
+  assert.equal(named(dflt.calls, "sessionReq")[0][1].pty, "", "neither: the mode's default, the server's to resolve");
+  for (const line of ["session new -d --pty --no-pty", "session new -d --stream --pty"]) {
+    const r = await run(line);
+    assert.ok(r.err, `${line}: accepted`);
+    assert.equal(named(r.calls, "openSession").length, 0, line);
+  }
+});
+
 // A browser has no local X server to forward to, so the declaration withholds
 // --x11 here rather than this surface accepting it and opening without X.
 test("session new --x11 is not a flag on this surface", async () => {

@@ -181,9 +181,17 @@ type SessionMux struct {
 	// terminal is false for a session whose frames are not terminal output
 	// (the event-stream kind): see NewSessionMux.
 	terminal bool
-	runner   trsf.BidirectionalStream
-	ring     *RingBuffer
-	modes    *termmode.Tracker
+	// pipe: the session's child runs on pipes, not a PTY (A-D33). It writes
+	// bare LF and reads LF, where a terminal's line discipline would have
+	// turned LF into CRLF on output (ONLCR) and Enter's CR into LF on input
+	// (ICRNL). The server makes both translations toward everything that
+	// plays the session as a terminal — the screen model, every client's
+	// output, and client input — and nowhere else: the ring and the record
+	// keep the bytes the child wrote.
+	pipe   bool
+	runner trsf.BidirectionalStream
+	ring   *RingBuffer
+	modes  *termmode.Tracker
 
 	// screen is the session's terminal state as a grid, fed from the same
 	// frames the ring gets. It exists from the mux's first byte rather than
@@ -305,12 +313,19 @@ type SessionMux struct {
 // no trailing newline, so it arrived glued to the stream's next line, and the
 // chat that read it wrote its escapes straight to the operator's terminal.
 func NewSessionMux(parentCtx context.Context, taskID string, kind protocol.TaskKind, runner trsf.BidirectionalStream, ring *RingBuffer, hooks SessionHooks) *SessionMux {
+	return newSessionMux(parentCtx, taskID, kind, false, runner, ring, hooks)
+}
+
+// newSessionMux is NewSessionMux for a session whose child may run on pipes
+// (noPTY, A-D33): see SessionMux.pipe.
+func newSessionMux(parentCtx context.Context, taskID string, kind protocol.TaskKind, noPTY bool, runner trsf.BidirectionalStream, ring *RingBuffer, hooks SessionHooks) *SessionMux {
 	ctx, cancel := context.WithCancel(parentCtx)
 	m := &SessionMux{
 		ctx:      ctx,
 		cancel:   cancel,
 		taskID:   taskID,
 		terminal: protocol.IsPTYKind(kind),
+		pipe:     noPTY && protocol.IsPTYKind(kind),
 		runner:   runner,
 		ring:     ring,
 		modes:    termmode.New(),
@@ -393,10 +408,14 @@ func (m *SessionMux) recordFrame(frameBytes []byte) {
 		case frame.FrameType_Stdout, frame.FrameType_Stderr:
 			output = m.terminal
 			if m.terminal {
-				m.modes.Feed(frameBytes[frame.FrameHeaderSize:])
+				shown := frameBytes[frame.FrameHeaderSize:]
+				if m.pipe {
+					shown = onlcr(shown)
+				}
+				m.modes.Feed(shown)
 				m.screenMu.Lock()
 				before := m.screen.ProgramStatus()
-				_, _ = m.screen.Write(frameBytes[frame.FrameHeaderSize:])
+				_, _ = m.screen.Write(shown)
 				m.stampProgramChange(before, m.screen.ProgramStatus())
 				probes := m.screen.TakeProgramStatusQueries()
 				m.screenMu.Unlock()
@@ -572,6 +591,7 @@ func (m *SessionMux) runnerPump() {
 			m.endReason.Store(&reason)
 		}
 		m.recordFrame(frameBytes)
+		frameBytes = m.clientFrames(frameBytes)
 		m.mu.Lock()
 		tui := m.tui
 		m.mu.Unlock()
@@ -643,7 +663,7 @@ func (m *SessionMux) Attach(ctx context.Context, tui trsf.BidirectionalStream) e
 	if pre := m.modes.Preamble(); len(pre) > 0 {
 		replay = append(replay, encodeSynthFrame(pre)...)
 	}
-	replay = append(replay, m.replaySnapshot()...)
+	replay = append(replay, m.clientFrames(m.replaySnapshot())...)
 	// The screen last, so it overwrites whatever the replayed history left on
 	// it. Never capped: a replay limit bounds HISTORY, and the screen is not
 	// history.
@@ -726,7 +746,7 @@ func (m *SessionMux) attachObserver(stream trsf.BidirectionalStream, forwardInpu
 	// capped: an observer that requested a limit (a monitoring grid pane) gets
 	// just the last replayLimit bytes, frame-aligned, instead of the whole ~1 MiB
 	// ring it would never render.
-	replay = append(replay, capReplayTail(m.replaySnapshot(), replayLimit)...)
+	replay = append(replay, capReplayTail(m.clientFrames(m.replaySnapshot()), replayLimit)...)
 	// Outside the cap, for the same reason as the control path: replayLimit is
 	// how much history this observer wants, and the screen is not history. A
 	// monitoring pane that asks for none still gets a correct screen.
@@ -886,7 +906,7 @@ func (m *SessionMux) forwardControlFrames(acc []byte) ([]byte, bool) {
 			acc = acc[total:]
 			continue
 		}
-		if err := m.writeFrameToRunner(fb); err != nil {
+		if err := m.writeFrameToRunner(m.clientInput(fb)); err != nil {
 			return nil, false
 		}
 		m.stampInput(fb)
@@ -945,7 +965,7 @@ func (m *SessionMux) forwardObserverFrames(v *viewerConn, acc []byte) ([]byte, b
 				}
 			}
 		case v.cowriter:
-			if err := m.writeFrameToRunner(fb); err != nil {
+			if err := m.writeFrameToRunner(m.clientInput(fb)); err != nil {
 				return nil, false
 			}
 			m.stampInput(fb)
@@ -1023,6 +1043,66 @@ func (m *SessionMux) screenSize() (cols, rows int) {
 	m.screenMu.Lock()
 	defer m.screenMu.Unlock()
 	return m.screen.Size()
+}
+
+// onlcr is a terminal's output translation: every LF becomes CRLF. p itself
+// when it holds no LF.
+func onlcr(p []byte) []byte {
+	n := bytes.Count(p, []byte{'\n'})
+	if n == 0 {
+		return p
+	}
+	out := make([]byte, 0, len(p)+n)
+	for _, b := range p {
+		if b == '\n' {
+			out = append(out, '\r')
+		}
+		out = append(out, b)
+	}
+	return out
+}
+
+// clientFrames is what a client is sent for frame-aligned bytes b: b itself,
+// except that a pipe session's Stdout and Stderr payloads go through onlcr,
+// as a PTY's would have (SessionMux.pipe). A malformed tail passes as it is.
+func (m *SessionMux) clientFrames(b []byte) []byte {
+	if !m.pipe {
+		return b
+	}
+	out := make([]byte, 0, len(b))
+	off := 0
+	for off+frame.FrameHeaderSize <= len(b) {
+		end := off + frame.FrameHeaderSize + int(frameHeaderAt(b[off:]).Len)
+		if end > len(b) {
+			break
+		}
+		switch typ := frame.FrameType(b[off]); typ {
+		case frame.FrameType_Stdout, frame.FrameType_Stderr:
+			out = append(out, encodeFrame(typ, onlcr(b[off+frame.FrameHeaderSize:end]))...)
+		default:
+			out = append(out, b[off:end]...)
+		}
+		off = end
+	}
+	return append(out, b[off:]...)
+}
+
+// clientInput is the frame the runner is sent for a client's frame fb: fb
+// itself, except that a pipe session's Stdin has each CR turned into LF, as a
+// PTY's ICRNL would have — every client is a terminal, whose Enter is a CR,
+// and a CR ends no line on a pipe (SessionMux.pipe). Length-preserving.
+func (m *SessionMux) clientInput(fb []byte) []byte {
+	if !m.pipe || len(fb) < frame.FrameHeaderSize || frame.FrameType(fb[0]) != frame.FrameType_Stdin ||
+		bytes.IndexByte(fb[frame.FrameHeaderSize:], '\r') < 0 {
+		return fb
+	}
+	out := append([]byte(nil), fb...)
+	for i := frame.FrameHeaderSize; i < len(out); i++ {
+		if out[i] == '\r' {
+			out[i] = '\n'
+		}
+	}
+	return out
 }
 
 // writeFrameToRunner writes one complete frame to the runner under

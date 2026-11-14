@@ -1828,6 +1828,9 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					// kind as the ls row words it (interactive+oneshot).
 					"oneshot":   t.Oneshot(),
 					"kindLabel": cli.KindLabel(&t),
+					// The run's child has no PTY (A-D33): the raw bit a
+					// Compose prefill sets its PTY select from.
+					"noPty": t.NoPty(),
 					"conditions": map[string]any{
 						"deadlineMs":     float64(t.Conditions.DeadlineMs),
 						"turnEnd":        cli.EnumWireName(t.Conditions.TurnEnd.String()),
@@ -3539,6 +3542,15 @@ func runModeFromOpts(opts js.Value) (cli.RunModeFlags, error) {
 	}
 	// session new --oneshot (A3, A-D29).
 	f.Oneshot = opts.Get("oneshot").Type() == js.TypeBoolean && opts.Get("oneshot").Bool()
+	// --pty / --no-pty (A-D33): "default" (or absent) sends neither and the
+	// server resolves the mode's default; "on" / "off" are the two flags.
+	switch v := optString(opts, "pty"); v {
+	case "", "default":
+	case "on", "off":
+		f.PtySet, f.Pty = true, v == "on"
+	default:
+		return f, fmt.Errorf("pty %q: want default, on or off", v)
+	}
 	return f, recordFromOpts(opts, &f)
 }
 

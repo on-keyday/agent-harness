@@ -176,7 +176,7 @@ function parseOrHelp(ctx, tokens, opts) {
 // ladder, the host, agent, agent args and resume id as submit read them. The
 // compose panel's caps / scope / bound / limits are the session defaults, and
 // sessionReq applies them to whatever is passed as null. Compose's form
-// fields -- prompt, run mode, record, the one-shot and stream boxes -- are the
+// fields -- prompt, run mode, record, PTY, the one-shot and stream boxes -- are the
 // button's request, not defaults, and a line does not inherit them.
 //
 // The request is opened by ctx.openSession, the function Compose's button
@@ -245,6 +245,7 @@ async function runSessionNew(tokens, ctx) {
     cols: b.flags.cols,
     record: b.flags.record ? "on" : b.flags["no-record"] ? "off" : "",
     oneshot: !!b.flags.oneshot,
+    pty: b.flags.pty ? "on" : b.flags["no-pty"] ? "off" : "",
   });
   const say = (r, id) => {
     if (r.runMode === "background") return `background: ${id} queued`;

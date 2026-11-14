@@ -244,9 +244,9 @@ bin/agent-runner --server-cid 'ws:HOSTNAME:8539-*' \
 #   --agent-oneshot-argv 'exec --json {args} {prompt}'
 #   --agent-resume-oneshot-argv 'exec --json resume --last {args} {prompt}'
 #   --agent-resume-interactive-argv 'resume --last {args}'
-# (The oneshot pair is what `session new --oneshot` runs, in a PTY; its output
-#  is shown as emitted — codex's --json event stream included, unconverted.
-#  --agent-log-format is accepted and ignored.)
+# (The oneshot pair is what `session new --oneshot` runs, on pipes unless
+#  --pty; its output is shown as emitted — codex's --json event stream
+#  included, unconverted. --agent-log-format is accepted and ignored.)
 
 # 3. Run a one-shot task. --repo is required (or set HARNESS_REPO_PATH); it must
 # match a runner's --roots entry verbatim (no client-side normalisation).
@@ -256,10 +256,13 @@ bin/agent-runner --server-cid 'ws:HOSTNAME:8539-*' \
 export HARNESS_OPERATOR_PSK_FILE=./harness-data/operator-psk
 bin/harness-cli --server-cid 'ws:HOSTNAME:8539-*' \
                 session new -d --oneshot --repo /abs/path/to/repo --prompt "test task"
-# → prints task ID. A one-shot is an ordinary PTY session running the profile's
+# → prints task ID. A one-shot is an ordinary session running the profile's
 # print-mode argv (claude `-p … --output-format stream-json`, codex
 # `exec --json`, bash `-c`); it ends when the agent answers, and the agent's exit
-# code is the task's. --prompt is required, --stream is refused with it, and a
+# code is the task's. It has no PTY unless --pty: stdin is /dev/null and the
+# output is the bytes the agent wrote. With --pty it runs in a terminal, with
+# PAGER / GIT_PAGER / SYSTEMD_PAGER set to cat, and `ls` reads
+# interactive+oneshot+pty. --prompt is required, --stream is refused with it, and a
 # runner offering several agents needs --agent NAME. It does not queue: with
 # every runner busy it is refused runner_busy — open it --background with a
 # --deadline (5c) to wait for a free runner instead.
@@ -324,6 +327,17 @@ bin/harness-cli session new --repo /abs/path/to/repo
 # carries size authority), and some full-screen TUIs draw nothing at 0x0.
 # --rows 0 --cols 0 sends no size and leaves it 0x0.
 bin/harness-cli session new -d --repo /abs/path/to/repo --rows 40 --cols 150
+# --no-pty runs the child on pipes instead of a PTY (`ls`: interactive+pipe):
+# its stdin is what clients type or `session send`, nothing echoes it, and stdout
+# and stderr arrive apart. The server stands in for the terminal's two
+# translations toward everything that plays the session as one — LF becomes CRLF
+# on the way to the screen model and attached clients, Enter's CR becomes LF on
+# the way in — while `record get` keeps the bytes the child wrote. A cancel
+# TERMs its process group and KILLs it 2 s later. An exact resume keeps the last
+# run's choice unless it states one; a plain resume takes the mode's default.
+# TUI: the flags on the command line and the N form's pty field
+# (default|on|off); WebUI: Compose's PTY select and the command line.
+bin/harness-cli session new -d --no-pty --agent bash --repo /abs/path/to/repo
 bin/harness-cli session resize --size 40x150 <task-id>   # size a live session
                                                  # without taking it over
                                                  # (needs exec_resize; only
@@ -2078,13 +2092,14 @@ The page is organised into tabs (端末 / タスク / ファイル / 通知):
 
 - **Tasks** — runners + task list, the creator tree (🌳) with the
   capability audit folded under it (権限の棚卸し), the compose form
-  (with a `--caps` selector and effective-set readout, and a
-  「one-shot で開く」 checkbox for `--oneshot`), and a command line. The
+  (with a `--caps` selector and effective-set readout, a
+  「one-shot で開く」 checkbox for `--oneshot`, and a PTY select —
+  server 既定 / on / off — for `--pty` / `--no-pty`), and a command line. The
   command line spawns with `session new`, the CLI's flags except `--x11` /
   `--x11-display` (a browser has no local X server). A flag not typed takes
   Compose's value: the repo, host and agent dropdowns, the agent args, the
   Resume task id, and the caps / scope / delegation / limit panel. Compose's
-  prompt, background, record, one-shot and stream fields are not taken. The
+  prompt, background, record, PTY, one-shot and stream fields are not taken. The
   open goes the way Compose's button opens: without `-d` it attaches the
   terminal (`--stream` opens the chat), `-d` starts it detached at 40x120
   unless `--rows` / `--cols` say otherwise, `--background` queues it, and an

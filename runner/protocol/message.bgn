@@ -417,7 +417,14 @@ format OpenExecRunnerRequest:
     # from OpenInteractiveExt.oneshot (A3, A-D29). Sent only to a runner whose
     # hello set oneshot_sessions.
     oneshot :u1
-    reserved :u3
+    # 1 = run the child without a PTY: stdin/stdout/stderr are pipes (stdin is
+    # /dev/null for a oneshot), and stdout and stderr arrive as separate frame
+    # types (A-D33). The SERVER resolves the open's default and sends the final
+    # answer, so 0 — what a server from before A-D33 sends — means a PTY as
+    # before. A runner from before it ignores the bit and runs a PTY, which is
+    # still a working session: no hello bit gates it.
+    no_pty :u1
+    reserved :u2
     # agent_profile: relayed from OpenInteractiveRequest.agent_profile /
     # AssignTaskBody.agent_profile.
     agent_profile_len :u8
@@ -1157,7 +1164,10 @@ format TaskInfo:
     # kind stays interactive; this bit is what tells the run apart from an
     # ordinary session.
     oneshot :u1
-    reserved :u1
+    # no_pty: the current run's child has no PTY, only pipes (A-D33).
+    # Meaningful for the interactive kind; the stream kind never has one, and
+    # a pre-A3 oneshot-kind task ran without one.
+    no_pty :u1
     ring_buffer_bytes :u64    # current bytes buffered (0 for oneshot tasks —
                               # every interactive session has a ring)
     last_output_at :u64   # unix nanos (SERVER clock) of the last Stdout/Stderr
@@ -2552,10 +2562,16 @@ format OpenInteractiveExt:
     # saying off needs nothing (A-D22).
     record_set :u1
     record :u1
-    # 1 = session new --oneshot: the profile's oneshot argv runs in the PTY and
-    # the session ends with it; a prompt is required (A3, A-D29).
+    # 1 = session new --oneshot: the profile's oneshot argv runs and the
+    # session ends with it; a prompt is required (A3, A-D29).
     oneshot :u1
-    reserved :u5
+    # pty_set = 0: the open says nothing about a PTY and the mode's default
+    # applies — a PTY for an interactive open, none for a --oneshot one; an
+    # exact resume takes the task's recorded choice. pty is meaningful only
+    # with pty_set == 1: --pty (1) or --no-pty (0) (A-D33).
+    pty_set :u1
+    pty :u1
+    reserved :u3
 
 enum OpenInteractiveStatus:
     :u8
@@ -2608,6 +2624,9 @@ enum OpenInteractiveStatus:
     # --oneshot with event_stream: a one-shot runs in a PTY, and a stream
     # session has none (A3, A-D29).
     oneshot_stream = "oneshot_stream"
+    # --pty (ext.pty_set and ext.pty) with event_stream: a stream session has
+    # no PTY (A-D33). Appended.
+    pty_stream = "pty_stream"
 
 # One RUNNER offered when a spawn is ambiguous: more than one (runner, agent
 # profile) choice matched. profiles lists the agents the caller may pick on
@@ -3779,7 +3798,9 @@ format TaskStatusEvent:
     # oneshot: as TaskInfo.oneshot. Stamped on every event because a resume
     # changes it per run (A-D29) and the TUI polls no snapshot of its own.
     oneshot :u1
-    reserved :u5
+    # no_pty: as TaskInfo.no_pty, stamped on every event for oneshot's reason.
+    no_pty :u1
+    reserved :u4
     progress_len :u16
     progress :[progress_len]u8
     progress_at :u64

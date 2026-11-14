@@ -203,3 +203,26 @@ func TestRenderListJSONOneshot(t *testing.T) {
 		}
 	}
 }
+
+// A-D33: `pty` is always present, and says whether the run's child has a PTY:
+// an interactive run unless it said --no-pty (or was a one-shot that did not
+// say --pty); never a stream session.
+func TestRenderListJSONPty(t *testing.T) {
+	plain := protocol.TaskInfo{Kind: protocol.TaskKind_Interactive}
+	pipe := protocol.TaskInfo{Kind: protocol.TaskKind_Interactive}
+	pipe.SetNoPty(true)
+	stream := protocol.TaskInfo{Kind: protocol.TaskKind_Stream}
+	var buf bytes.Buffer
+	renderListJSON(&protocol.ListResultBody{Tasks: []protocol.TaskInfo{plain, pipe, stream}}, &buf)
+	var got struct {
+		Tasks []map[string]any `json:"tasks"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	for i, want := range []bool{true, false, false} {
+		if v, ok := got.Tasks[i]["pty"]; !ok || v != want {
+			t.Errorf("task %d: pty=%v present=%v, want %v", i, v, ok, want)
+		}
+	}
+}

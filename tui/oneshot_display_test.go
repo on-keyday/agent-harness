@@ -13,6 +13,7 @@ import (
 func TestOneshotSessionRowAndDetail(t *testing.T) {
 	one := progressTask(protocol.TaskKind_Interactive, "", 0, false, "")
 	one.SetOneshot(true)
+	one.SetNoPty(true) // a one-shot's default (A-D33)
 	plain := progressTask(protocol.TaskKind_Interactive, "", 0, false, "")
 	if got := aboutCell(one); got != "(oneshot) the original ask" {
 		t.Errorf("one-shot About = %q", got)

@@ -90,3 +90,33 @@ func oneshotOpen(req *protocol.OpenInteractiveRequest) bool {
 	ext := req.Ext()
 	return req.ExtPresent() && ext != nil && ext.Oneshot()
 }
+
+// ptyOpen reports the open's own --pty / --no-pty (A-D33): set is false when
+// it says neither, carried in the open's second flag byte.
+func ptyOpen(req *protocol.OpenInteractiveRequest) (pty, set bool) {
+	ext := req.Ext()
+	if !req.ExtPresent() || ext == nil || !ext.PtySet() {
+		return false, false
+	}
+	return ext.Pty(), true
+}
+
+// resolveNoPTY is whether the run's child goes without a PTY (A-D33): what
+// the open says; else, on an exact resume, what the task recorded — the PTY is
+// a terminal-shape setting like -d and the size, which resume_exact lets an
+// open change and otherwise keeps; else the mode's default, a PTY for an
+// interactive open and none for a --oneshot one. A plain resume reuses
+// nothing (A-D7). A stream session never has one, and its kind says so: it is
+// stored false there, so the bit only ever qualifies an interactive run.
+func resolveNoPTY(req *protocol.OpenInteractiveRequest, oneshot bool, exactRec *TaskEntry) bool {
+	if req.EventStream() {
+		return false
+	}
+	if pty, set := ptyOpen(req); set {
+		return !pty
+	}
+	if exactRec != nil {
+		return exactRec.NoPTY
+	}
+	return oneshot
+}

@@ -269,9 +269,16 @@ func (r *TaskRegistry) cancelTask(taskIDHex string) bool {
 		r.mu.Unlock()
 		// An interactive session is ended through its input, so the child is
 		// hung up rather than SIGKILLed (relay.endInput); the context cancel
-		// follows as a backstop. Everything else is cancelled at once.
+		// follows as a backstop. A session without a PTY has nothing to hang
+		// up: its input ends too, and its context is cancelled at once, which
+		// TERMs its process group and KILLs it after a grace, as the stream
+		// kind's (A-D33, A-D16). Everything else is cancelled at once.
 		if rl := e.relay; rl != nil {
 			rl.endInput()
+			if e.noPTY {
+				e.cancel()
+				return true
+			}
 			time.AfterFunc(ptyCancelGrace, e.cancel)
 			return true
 		}

@@ -30,6 +30,7 @@ type sessionStart struct {
 	TUIConn            ConnHandle           // the requesting client; nil when Detached
 	Prompt             string               // the agent's first turn; "" = none (A-D3)
 	Oneshot            bool                 // run the profile's oneshot argv (A3, A-D29)
+	NoPTY              bool                 // run the child on pipes, no PTY (A-D33)
 }
 
 // startSession issues the ticket, opens the runner stream (and the client
@@ -109,6 +110,10 @@ func (h *TaskHandler) startSession(ss sessionStart) (trsf.BidirectionalStream, p
 	}
 	oer.SetResumeConversation(ss.ResumeConversation)
 	oer.SetOneshot(ss.Oneshot)
+	// The resolved answer (A-D33). A runner from before it ignores the bit and
+	// runs a PTY: a working session, if not the one asked for, so no hello bit
+	// gates it.
+	oer.SetNoPty(ss.NoPTY)
 	// Relay the kind. The runner refuses it when the resolved profile has no
 	// stream adapter, so the check lives where the profiles are rather than
 	// being duplicated here from a stale copy of them.
@@ -172,7 +177,7 @@ func (h *TaskHandler) startSession(ss sessionStart) (trsf.BidirectionalStream, p
 	if ss.EventStream {
 		kind = protocol.TaskKind_Stream
 	}
-	mux := NewSessionMux(parentCtx, taskIDHex, kind, runnerStream, NewRingBuffer(ringSize), h.sessionHooks())
+	mux := newSessionMux(parentCtx, taskIDHex, kind, ss.NoPTY, runnerStream, NewRingBuffer(ringSize), h.sessionHooks())
 	// From the ring, which holds just what arrived since the mux was built,
 	// so a recorded run's record starts at the PTY's first byte (A-D22).
 	h.startRecording(taskIDHex, mux, recordFromRing)
@@ -245,6 +250,7 @@ func (h *TaskHandler) StartQueuedSession(runnerID objproto.ConnectionID, taskID 
 		Cols:               t.Cond.Cols,
 		Prompt:             t.Prompt,
 		Oneshot:            t.Oneshot,
+		NoPTY:              t.NoPTY,
 	})
 	if st != protocol.OpenInteractiveStatus_Ok {
 		return fmt.Errorf("start queued session %s: %v %s", taskID, st, msg)

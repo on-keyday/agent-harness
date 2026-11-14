@@ -106,6 +106,7 @@ func TestToTaskInfoMapsEveryField(t *testing.T) {
 		CancelledBy:     protocol.TaskID{Id: [16]byte{0x4e}},
 		Run:             3,
 		Oneshot:         true,
+		NoPTY:           true,
 	}
 	info := toTaskInfo(e)
 	assertNoZeroFields(t, info, map[string]string{
@@ -152,6 +153,9 @@ func TestToTaskInfoMapsEveryField(t *testing.T) {
 	}
 	if !info.Oneshot() {
 		t.Error("TaskInfo.Oneshot is false after mapping Oneshot:true — the mapper forgot it")
+	}
+	if !info.NoPty() {
+		t.Error("TaskInfo.NoPty is false after mapping NoPTY:true — the mapper forgot it")
 	}
 }
 

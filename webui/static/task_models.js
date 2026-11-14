@@ -283,11 +283,24 @@ function composeRecordOption(v) {
   return v === "on" || v === "off" ? v : "";
 }
 
+// composePtyOption is Compose's PTY select as the open's `pty` option (A-D33):
+// "" (the mode's default, which the server resolves), "on" or "off".
+function composePtyOption(v) {
+  return v === "on" || v === "off" ? v : "";
+}
+
 // composeBoxesFromTask is the kind half of prefilling Compose from a task:
-// the stream box and the one-shot box (A3, A-D29) each say what its last run
-// was, so a prefill never leaves either as Compose's previous use left it.
+// the stream box, the one-shot box (A3, A-D29) and the PTY select (A-D33) each
+// say what its last run was, so a prefill never leaves one as Compose's
+// previous use left it. The select names the PTY choice only where it differs
+// from the mode's default (a PTY for an interactive run, none for a one-shot),
+// so the prefilled open resolves to what the last run had.
 function composeBoxesFromTask(t) {
-  return { stream: !!t && t.kind === "Stream", oneshot: !!t && !!t.oneshot };
+  const stream = !!t && t.kind === "Stream";
+  const oneshot = !!t && !!t.oneshot;
+  let pty = "default";
+  if (t && !stream && !!t.noPty !== oneshot) pty = t.noPty ? "off" : "on";
+  return { stream, oneshot, pty };
 }
 
 // recordDownloadName names a downloaded record by its task and run.

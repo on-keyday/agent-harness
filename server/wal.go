@@ -163,8 +163,12 @@ type WALEvent struct {
 	Record bool `json:"record,omitempty"`
 	// task_created / task_resumed: the run is a --oneshot session (A3,
 	// A-D29). Zero = an ordinary session.
-	Oneshot bool  `json:"oneshot,omitempty"`
-	Ts      int64 `json:"ts"` // unix nano
+	Oneshot bool `json:"oneshot,omitempty"`
+	// task_created / task_resumed: the run's child has no PTY (A-D33). Zero =
+	// a PTY, which every run before A-D33 had (a pre-A3 oneshot-kind task ran
+	// without one, and its kind says so).
+	NoPTY bool  `json:"no_pty,omitempty"`
+	Ts    int64 `json:"ts"` // unix nano
 
 	// Selector is the runner-selection constraint. It is not stored directly as
 	// a JSON struct — see the selectorB64 field for the serialized form.
@@ -245,6 +249,7 @@ type walEventJSON struct {
 	Run                         uint32             `json:"run,omitempty"`
 	Record                      bool               `json:"record,omitempty"`
 	Oneshot                     bool               `json:"oneshot,omitempty"`
+	NoPTY                       bool               `json:"no_pty,omitempty"`
 	Ts                          int64              `json:"ts"`
 	// SelectorB64 holds the base64-encoded wire bytes of the RunnerSelector.
 	// Empty / absent means Kind == RunnerSelectorKind_Any (zero value).
@@ -315,6 +320,7 @@ func (e WALEvent) MarshalJSON() ([]byte, error) {
 		Run:                         e.Run,
 		Record:                      e.Record,
 		Oneshot:                     e.Oneshot,
+		NoPTY:                       e.NoPTY,
 		Ts:                          e.Ts,
 	}
 	// Only encode the selector if it carries a non-Any kind (i.e. it has payload).
@@ -390,6 +396,7 @@ func (e *WALEvent) UnmarshalJSON(b []byte) error {
 	e.Run = j.Run
 	e.Record = j.Record
 	e.Oneshot = j.Oneshot
+	e.NoPTY = j.NoPTY
 	e.Ts = j.Ts
 
 	if j.SelectorB64 != "" {

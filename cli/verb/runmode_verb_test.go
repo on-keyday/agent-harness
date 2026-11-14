@@ -89,3 +89,36 @@ func TestSubmitVerbIsGone(t *testing.T) {
 		}
 	}
 }
+
+// A-D33: --pty / --no-pty choose the PTY on either mode; neither leaves the
+// mode's default to the server. They are two answers to one question, and a
+// stream session has no PTY to ask for.
+func TestSessionNewPtyFlags(t *testing.T) {
+	for _, c := range []struct {
+		line       string
+		pty, noPTY bool
+	}{
+		{"session new --repo /r -d --no-pty --agent bash", false, true},
+		{"session new --repo /r -d --oneshot --pty --agent bash --prompt p", true, false},
+		{"session new --repo /r -d --agent bash", false, false},
+		{"session new --resume 0123456789abcdef0123456789abcdef --exact -d --no-pty", false, true},
+		{"session new --repo /r -d --stream --no-pty --agent claude", false, true},
+	} {
+		act, _, err := ParseCLICommand(strings.Fields(c.line), nil)
+		if err != nil {
+			t.Fatalf("%s: %v", c.line, err)
+		}
+		a, ok := act.(SpawnAction)
+		if !ok || a.Pty != c.pty || a.NoPty != c.noPTY {
+			t.Fatalf("%s: parsed %+v", c.line, act)
+		}
+	}
+	for _, line := range []string{
+		"session new --repo /r -d --pty --no-pty --agent bash",
+		"session new --repo /r -d --stream --pty --agent claude",
+	} {
+		if _, _, err := ParseCLICommand(strings.Fields(line), nil); err == nil {
+			t.Fatalf("%s: accepted", line)
+		}
+	}
+}

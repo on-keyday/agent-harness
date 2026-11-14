@@ -584,6 +584,9 @@ type taskJSON struct {
 	// Whether the current run is a `session new --oneshot` (A3, A-D29); kind
 	// stays "interactive" for one.
 	Oneshot bool `json:"oneshot"`
+	// Whether the current run's child has a PTY (A-D33), on every row:
+	// TaskHasPTY.
+	Pty bool `json:"pty"`
 	// The current (or last) run's background conditions, as stored on the
 	// task (A-D7): what a front-end prefills a resume from (A-D15).
 	Conditions conditionsJSON `json:"conditions"`
@@ -731,6 +734,7 @@ func newTaskJSON(t *protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo
 		Run:                 t.Run,
 		Recording:           t.Recording(),
 		Oneshot:             t.Oneshot(),
+		Pty:                 TaskHasPTY(t),
 		Conditions: conditionsJSON{
 			DeadlineMs: t.Conditions.DeadlineMs, TurnEnd: EnumWireName(t.Conditions.TurnEnd.String()),
 			QuietMs: t.Conditions.QuietMs, BlockedMs: t.Conditions.BlockedMs, QueueTimeoutMs: t.Conditions.QueueTimeoutMs,
@@ -819,22 +823,43 @@ func taskKindJSON(k protocol.TaskKind) string {
 	return strings.TrimSpace(taskKindStr(k))
 }
 
-// KindLabel is a task's kind word with its current run's mark: a
+// KindLabel is a task's kind word with its current run's marks: a
 // `session new --oneshot` run is kind interactive (A-D29) and reads
 // "interactive+oneshot". One token, as agent= carries "+skills", so the `ls`
 // row's columns stay whitespace-separated. An ordinary session carries no
 // mark. Shared by the `ls` row, the TUI detail popup and the WebUI row.
+//
+// The PTY (A-D33) is marked only where the run's choice is not its mode's
+// default: "+pipe" on an interactive run without a PTY, "+pty" on a one-shot
+// with one — "interactive+pipe", "interactive+oneshot+pty". The default rows
+// read as before, and every mark names a choice someone made; `ls --json`'s
+// `pty` states it on every row.
 func KindLabel(t *protocol.TaskInfo) string {
-	return taskKindJSON(t.Kind) + OneshotMark(t)
+	return taskKindJSON(t.Kind) + RunMark(t)
 }
 
-// OneshotMark is KindLabel's mark alone, for a surface that words the kind
+// RunMark is KindLabel's marks alone, for a surface that words the kind
 // itself (the TUI detail popup).
-func OneshotMark(t *protocol.TaskInfo) string {
-	if t.Oneshot() {
+func RunMark(t *protocol.TaskInfo) string {
+	if t.Kind != protocol.TaskKind_Interactive {
+		return ""
+	}
+	switch {
+	case t.Oneshot() && !t.NoPty():
+		return "+oneshot+pty"
+	case t.Oneshot():
 		return "+oneshot"
+	case t.NoPty():
+		return "+pipe"
 	}
 	return ""
+}
+
+// TaskHasPTY reports whether the task's current run gives its child a PTY
+// (A-D33): an interactive run unless it went without one. A stream session
+// never has one, nor did a oneshot-kind task from before A3.
+func TaskHasPTY(t *protocol.TaskInfo) bool {
+	return t.Kind == protocol.TaskKind_Interactive && !t.NoPty()
 }
 
 // agentProfileNames returns a runner's advertised agent profile names, falling

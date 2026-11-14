@@ -377,7 +377,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
                         prompt = "", runMode = "", deadlineMs = 0, quietMs = 0,
                         blockedMs = 0, queueTimeoutMs = 0, turnEnd = "",
                         rows = 0, cols = 0, record = "", oneshot = false,
-                        detached = false }) {
+                        pty = "", detached = false }) {
     // An exact resume takes the task's recorded agent, args, prompt,
     // --oneshot, caps and scope, and the server refuses a request that
     // carries any of them, so none of the Compose state rides along.
@@ -432,6 +432,10 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       // field: this function rebuilds the request, so a key it does not
       // name is dropped.
       oneshot: !!oneshot,
+      // --pty / --no-pty (A-D33): "" leaves it to the mode's default, which
+      // the server resolves. Allowed on an exact resume: the PTY is a
+      // terminal-shape setting like -d and the size.
+      pty,
       // session new -d from the command input: open without attaching. No
       // Compose control sets it; a background open is detached by its run
       // mode, and a stream open by its kind.
@@ -4119,6 +4123,8 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     const boxes = composeBoxesFromTask(t);
     if (spawnStreamBox) spawnStreamBox.checked = boxes.stream;
     if (composeOneshotBox) composeOneshotBox.checked = boxes.oneshot;
+    const ptySelect = document.getElementById("compose-pty");
+    if (ptySelect) ptySelect.value = boxes.pty;
     if (resumeConvBox) resumeConvBox.checked = !!resumeConversation;
     if (taskIdInput) taskIdInput.value = t.id;
     setActiveTab("tasks");
@@ -4142,6 +4148,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     ...composeRunMode(),
     record: composeRecordOption((document.getElementById("compose-record") || {}).value),
     oneshot: !!(composeOneshotBox && composeOneshotBox.checked),
+    pty: composePtyOption((document.getElementById("compose-pty") || {}).value),
   });
 
   // --- Cap chips (session-default capability set for new-session spawns) ---

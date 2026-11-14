@@ -50,7 +50,24 @@ test("the sheet lists each record with its size and expiry, and what can be done
 // Gap F (A3): a prefill from a task sets BOTH kind boxes from its last run, so
 // neither is left as the previous use of Compose left it.
 test("a prefill from a task sets Compose's stream and one-shot boxes", () => {
-  assert.deepEqual({ ...page.composeBoxesFromTask({ kind: "Interactive", oneshot: true }) }, { stream: false, oneshot: true });
-  assert.deepEqual({ ...page.composeBoxesFromTask({ kind: "Interactive", oneshot: false }) }, { stream: false, oneshot: false });
-  assert.deepEqual({ ...page.composeBoxesFromTask({ kind: "Stream" }) }, { stream: true, oneshot: false });
+  assert.deepEqual({ ...page.composeBoxesFromTask({ kind: "Interactive", oneshot: true, noPty: true }) }, { stream: false, oneshot: true, pty: "default" });
+  assert.deepEqual({ ...page.composeBoxesFromTask({ kind: "Interactive", oneshot: false }) }, { stream: false, oneshot: false, pty: "default" });
+  assert.deepEqual({ ...page.composeBoxesFromTask({ kind: "Stream" }) }, { stream: true, oneshot: false, pty: "default" });
+});
+
+// A-D33: the PTY select prefills to what the last run had, stated only where
+// it differs from the mode's default, so a prefilled resume runs as it did.
+test("a prefill from a task sets Compose's PTY select", () => {
+  const pty = (t) => page.composeBoxesFromTask(t).pty;
+  assert.equal(pty({ kind: "Interactive", oneshot: false, noPty: true }), "off");
+  assert.equal(pty({ kind: "Interactive", oneshot: true, noPty: false }), "on");
+  assert.equal(pty({ kind: "Interactive", oneshot: true, noPty: true }), "default");
+  assert.equal(pty({ kind: "Interactive", oneshot: false, noPty: false }), "default");
+});
+
+test("Compose's PTY select maps to the open's pty option; default sends nothing", () => {
+  assert.equal(page.composePtyOption("default"), "");
+  assert.equal(page.composePtyOption(""), "");
+  assert.equal(page.composePtyOption("on"), "on");
+  assert.equal(page.composePtyOption("off"), "off");
 });

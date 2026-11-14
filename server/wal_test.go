@@ -211,6 +211,7 @@ func TestWALEventJSONRoundTripCopiesEveryField(t *testing.T) {
 		Run:                         5,
 		Record:                      true,
 		Oneshot:                     true,
+		NoPTY:                       true,
 		Ts:                          1234567890,
 		Selector:                    sel,
 	}

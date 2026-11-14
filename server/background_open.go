@@ -40,6 +40,7 @@ type backgroundOpen struct {
 	prompt    string
 	record    bool // the open's resolved record switch (A-D22)
 	oneshot   bool // session new --oneshot (A3, A-D29)
+	noPTY     bool // the run's child has no PTY, as resolved (A-D33)
 }
 
 // openBackground queues a background session task (A-D4): it never chooses a
@@ -119,7 +120,7 @@ func (h *TaskHandler) openBackground(b backgroundOpen) protocol.OpenInteractiveR
 	if r, c := req.InitialRows(), req.InitialCols(); r != nil && c != nil {
 		cond.Rows, cond.Cols = *r, *c
 	}
-	run := RunSpec{Mode: protocol.RunMode_Background, Cond: cond, Record: b.record, Oneshot: b.oneshot}
+	run := RunSpec{Mode: protocol.RunMode_Background, Cond: cond, Record: b.record, Oneshot: b.oneshot, NoPTY: b.noPTY}
 
 	var taskIDHex string
 	if b.resumeHex != "" {

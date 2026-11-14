@@ -1072,6 +1072,7 @@ func spawnRunMode(v verb.SpawnAction) cli.RunModeFlags {
 		Background: v.Background, Foreground: v.Foreground, Prompt: v.Prompt,
 		Deadline: v.Deadline, Quiet: v.QuietFor, Blocked: v.BlockedFor, QueueTimeout: v.QueueTimeout,
 		TurnEnd: turnEnd, RecordSet: v.Record || v.NoRecord, Record: v.Record, Oneshot: v.Oneshot,
+		PtySet: v.Pty || v.NoPty, Pty: v.Pty,
 	}
 }
 
