@@ -1,7 +1,10 @@
 package server
 
 import (
+	"context"
 	"encoding/hex"
+	"fmt"
+	"github.com/on-keyday/agent-harness/authority"
 	"log/slog"
 	"testing"
 	"time"
@@ -101,5 +104,43 @@ func TestReadoptedTaskIsSweptWhenItsRunnerGoesAway(t *testing.T) {
 	}
 	if string(got.ErrorMsg) != "runner_disconnected" {
 		t.Errorf("reason = %q, want runner_disconnected", got.ErrorMsg)
+	}
+}
+
+// A re-adopted session whose child has no PTY must come back with the
+// line-discipline translations (A-D33): rebindHeldSessions rebuilds the mux
+// from the task's recorded NoPTY, and a mux built with false would hand
+// clients a staircase and feed Enter to the child as CR.
+func TestReadoptRebuildsAPipeSessionAsPipe(t *testing.T) {
+	for _, noPTY := range []bool{true, false} {
+		t.Run(fmt.Sprintf("no_pty=%v", noPTY), func(t *testing.T) {
+			srv, reg, store, identity, cid, _ := readoptFixture(t)
+			taskID, err := store.CreateWithinLimits("/repo", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified,
+				protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{}, "",
+				RunSpec{Mode: protocol.RunMode_Foreground, NoPTY: noPTY})
+			if err != nil {
+				t.Fatal(err)
+			}
+			store.Assign(taskID, identity, "/wt", false)
+			reg.Add(&RunnerEntry{
+				ID: cid, Identity: identity, Hostname: "h", MaxTasks: 4,
+				ActiveTasks: map[string]struct{}{},
+				ConnectedAt: time.Unix(1, 0), LastTaskActivity: time.Unix(1, 0),
+				Conn: &fakeConn{id: cid, nextBidi: newFakeStream(t), autoSendStreams: true},
+			})
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			t.Cleanup(cancel)
+			srv.taskHandler = &TaskHandler{Tasks: store, Registry: reg, Sessions: NewSessionRegistry(), Ctx: ctx}
+
+			srv.rebindHeldSessions(identity, []string{taskID})
+			mux := srv.taskHandler.Sessions.Get(taskID)
+			if mux == nil {
+				t.Fatal("no session mux registered")
+			}
+			t.Cleanup(mux.Stop)
+			if mux.pipe != noPTY {
+				t.Fatalf("re-adopted mux.pipe=%v, want %v", mux.pipe, noPTY)
+			}
+		})
 	}
 }

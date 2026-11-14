@@ -355,3 +355,29 @@ func TestPTYSessionIsNotTranslated(t *testing.T) {
 		t.Fatal("a PTY session's input was translated")
 	}
 }
+
+// The mux a session start builds is the one that stands in for the line
+// discipline, so the resolved choice has to reach it, not only the runner's
+// OpenExec (A-D33): server/session_start.go hands ss.NoPTY to newSessionMux.
+func TestSessionStartGivesTheMuxItsPipeMode(t *testing.T) {
+	for _, noPTY := range []bool{true, false} {
+		t.Run(fmt.Sprintf("no_pty=%v", noPTY), func(t *testing.T) {
+			h := newTestHandler(t)
+			rc := oneshotRunner(h, "A", true)
+			rc.nextBidi = newFakeStream(t) // a stream that stays open, so the mux outlives the open
+			oi := withPty(detachedOpen(40, 120), !noPTY)
+			oi.SetAgentProfile([]byte("claude"))
+			resp, _ := h.handleOpenInteractive("", nil, oi, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All, "p")
+			if resp.Status != protocol.OpenInteractiveStatus_Ok {
+				t.Fatalf("status %v %q", resp.Status, resp.ErrorMsg)
+			}
+			mux := h.Sessions.Get(taskOf(t, h, resp).ID)
+			if mux == nil {
+				t.Fatal("no session mux registered")
+			}
+			if mux.pipe != noPTY {
+				t.Fatalf("mux.pipe=%v, want %v", mux.pipe, noPTY)
+			}
+		})
+	}
+}
