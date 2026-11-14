@@ -421,8 +421,9 @@ format OpenExecRunnerRequest:
     # /dev/null for a oneshot), and stdout and stderr arrive as separate frame
     # types (A-D33). The SERVER resolves the open's default and sends the final
     # answer, so 0 — what a server from before A-D33 sends — means a PTY as
-    # before. A runner from before it ignores the bit and runs a PTY, which is
-    # still a working session: no hello bit gates it.
+    # before. No hello bit gates it: a runner from before A-D33 would ignore
+    # the bit and run a PTY under the server's pipe line discipline, and that
+    # skew is not supported — both ends are deployed together.
     no_pty :u1
     reserved :u2
     # agent_profile: relayed from OpenInteractiveRequest.agent_profile /
