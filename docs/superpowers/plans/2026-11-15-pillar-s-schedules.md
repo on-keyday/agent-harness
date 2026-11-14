@@ -18,7 +18,8 @@ firing, on the CLI, TUI and WebUI.
   CLI client.
 
 **Tech Stack:** Go (server, runner/protocol, cli, tui, wasm), `.bgn` →
-`make protoregen`, JS (webui), `github.com/robfig/cron/v3` v3.0.1.
+`make protoregen`, JS (webui). No new module: the cron parser is
+self-written (spec S-D2, amended 2026-11-15).
 
 **Spec:** `docs/superpowers/specs/2026-11-15-pillar-s-schedules-design.md`
 (facts F1–F10, decisions S-D1–S-D22, Design, Testing), inside
@@ -29,10 +30,10 @@ firing, on the CLI, TUI and WebUI.
 - **Before starting:** read `.claude/skills/implementation-pitfalls/SKILL.md`.
 - **Where to work:** this worktree, its `harness/<dir>` branch. The spec is
   already committed there; it lands with this code.
-- **Dependency:** `github.com/robfig/cron/v3 v3.0.1` only (approved by the
-  operator after the F1 check). No other module may be added.
-- **`parseCron` is the only caller of the library's parser** (S-D2). A grep
-  for `cron.Parse` outside `server/schedule_cron.go` must find nothing.
+- **Dependency:** none may be added. The cron parser is self-written
+  (S-D2); `robfig/cron` was dropped (F1, F11).
+- **`parseCron` is the only way an expression becomes a `cronExpr`**
+  (S-D2): every path that reads one — create, edit, server start — calls it.
 - **Wire:** every `.bgn` change is in Task 1 and only there; enum values are
   appended; `make protoregen`. No runner-decoded format changes, so the
   wire-skew check is expected to pass trivially; run it anyway.
@@ -97,9 +98,13 @@ firing, on the CLI, TUI and WebUI.
 
 ```go
 // parseCron is the only way an expression becomes a schedule (S-D2).
-func parseCron(expr string) (cron.Schedule, error)
-// nextFiring is s.Next(after.In(loc)) as a UTC instant; zero means none (F2).
-func nextFiring(s cron.Schedule, loc *time.Location, after time.Time) time.Time
+type cronExpr struct { minute, hour, dom, month, dow uint64; domStar, dowStar bool }
+func parseCron(expr string) (cronExpr, error)
+// nextWall: the smallest whole minute strictly after `after` (wall-clock
+// fields carried in UTC) that matches; zero if none within five years.
+func (c cronExpr) nextWall(after time.Time) time.Time
+// nextFiring maps nextWall to an instant in loc (S-D3a); zero means none.
+func nextFiring(c cronExpr, loc *time.Location, after time.Time) time.Time
 // loadZone resolves "" to time.Local's name and refuses a name that does not load.
 func loadZone(name string) (*time.Location, string, error)
 ```
@@ -123,7 +128,13 @@ func loadZone(name string) (*time.Location, string, error)
   from now.
 - [ ] **Step 4: Run** the tests, then `go test ./server -run '^$' -fuzz
   FuzzParseCron -fuzztime 60s` → PASS.
-- [ ] **Step 5: Commit.** `git commit -m "server: parseCron over robfig/cron, guarded (pillar S)"`
+- [ ] **Step 5: Commit.** `git commit -m "server: parseCron and nextFiring, self-written (pillar S)"`
+
+> Amended 2026-11-15 during execution: the library was dropped (spec S-D2,
+> F11). The controller's instruction to the Task 0 implementer replaced
+> Steps 1–4 with the S-D2 grammar, a table test, a brute-force comparison of
+> `nextWall` against minute-by-minute stepping, the S-D3a DST test and the
+> fuzz test; the ledger records it as Ruling R5.
 
 ---
 

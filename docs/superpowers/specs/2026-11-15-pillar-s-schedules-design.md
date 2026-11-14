@@ -83,6 +83,10 @@ times, not only at intervals (operator, 2026-11-15).
 - **F9 — `ClientKind` is client↔server only** (`message.bgn:795`); it tags a
   caller in `ClientHello` and is echoed in `TaskInfo.resumed_by_kind`
   (`:1116`). A new value is not decoded by any runner.
+- **F11 — the same library skips the spring-forward day.** For
+  `30 2 * * *` in America/New_York its `Next` goes from 2027-03-13 02:30 to
+  2027-03-15 02:30, so 2027-03-14 never fires (measured 2026-11-15 while
+  implementing). With F1 this is why the library was dropped (S-D2).
 - **F10 — the name `Scheduler` is taken** by the queue placer
   (`server/scheduler.go`). This spec's types are `Schedule…` and the firing
   loop is not called a scheduler.
@@ -95,9 +99,9 @@ author's call; those rows are the ones to check.
 | # | Decision | Decided by |
 | --- | --- | --- |
 | S-D1 | **Times are a standard 5-field cron expression** (minute hour day-of-month month day-of-week, with lists, ranges, steps, month and weekday names, and the `@hourly`-style descriptors). An interval is written as a step (`*/30 * * * *`); there is no separate interval option, and `@every` is refused so that every schedule fires on clock boundaries | operator (fixed clock times; no interval option and `@every` refused, on this spec's proposal) |
-| S-D2 | **Parsed with `github.com/robfig/cron/v3` v3.0.1** (`ParseStandard`, then `Schedule.Next`), behind one function `parseCron(expr string) (cron.Schedule, error)` that (a) refuses an expression whose trimmed form starts with `TZ=` or `CRON_TZ=` (F1; the zone is S-D3's field), (b) refuses `@every`, (c) recovers a panic into an error, and (d) refuses an expression whose `Next` from now is the zero time (F2). Every path that reads an expression — create, edit, server start — goes through it | operator (the dependency, after the F1 check), this spec (the guard) |
+| S-D2 | **A self-written parser and matcher; no cron dependency.** Reverses this spec's first choice of `robfig/cron/v3` (F1, F11): once S-D3a moved zones and DST to our side, the library's remaining work was parsing and matching on UTC, both small. Grammar, exactly: ≤ 256 bytes; a descriptor (`@yearly`/`@annually`, `@monthly`, `@weekly`, `@daily`/`@midnight`, `@hourly`; any other `@word` refused) or 5 fields — minute 0-59, hour 0-23, day-of-month 1-31, month 1-12 or `jan`…`dec`, day-of-week 0-7 (0 and 7 are Sunday) or `sun`…`sat`, names case-insensitive. A field is a comma list of `*`, `N` or `N-M`, each optionally `/S` (S ≥ 1; `N/S` runs N to the field's maximum); `N > M`, out-of-range values, empty items and any other character (`?`, `L`, `W`, `#`, a sixth field) are refused. Day rule (Vixie): if the day-of-month or the day-of-week field begins with `*`, a day must match both; otherwise either. `parseCron` also refuses an expression with no match within five years. Every path that reads an expression — create, edit, server start — goes through `parseCron` | operator (self-written, 2026-11-15, on this spec's proposal), this spec (the grammar) |
 | S-D3 | **Each schedule has a time zone**, an IANA name (`--tz Asia/Tokyo`), defaulting to the server's local zone, resolved and stored as a name at create. Every surface shows the next firing with its zone | this spec |
-| S-D3a | **The expression is matched against local wall-clock time, and each matching day fires exactly once, never early.** The library alone skips the spring-forward day: for `30 2 * * *` in America/New_York its `Next` goes from 2027-03-13 02:30 to 2027-03-15 02:30 (measured 2026-11-15, Task 0). So `nextFiring` runs the library's `Next` on the local wall-clock fields carried in UTC (which has no transitions), then maps the match back to an instant in the zone: a match inside a spring-forward gap fires at the end of the gap (the transition instant, `Time.ZoneBounds`; 02:30 → 03:00 EDT) — not where `time.Date` puts it, which is an hour early (02:30 → 01:30 EST, measured 2026-11-15); a match inside a repeated hour fires once, at the earlier instant (`time.Date`'s choice, measured: 01:30 → 01:30 EDT). A mapped instant not after the previous firing is skipped | this spec |
+| S-D3a | **The expression is matched against local wall-clock time, and each matching day fires exactly once, never early.** `nextFiring` matches on the local wall-clock fields carried in UTC (which has no transitions), then maps the match back to an instant in the zone: a match inside a spring-forward gap fires at the end of the gap (the transition instant, `Time.ZoneBounds`; 02:30 → 03:00 EDT) — not where `time.Date` puts it, which is an hour early (02:30 → 01:30 EST, measured 2026-11-15); a match inside a repeated hour fires once, at the earlier instant (`time.Date`'s choice, measured: 01:30 → 01:30 EDT). A mapped instant not after the previous firing is skipped | this spec |
 | S-D4 | **Schedules are kept in `<data-dir>/schedules.json`**, rewritten whole and atomically (temp file + rename, mode 0600) after every change, as F6's stores are. The server refuses to start on a file it cannot parse, as `LoadRunnerKeyStore` does. The file has a `version` field (1) | operator (a file of its own, not WAL events), this spec (atomic rewrite, refuse on corrupt) |
 | S-D5 | **One timer on the earliest `next_at` across schedules** (F7), re-armed after each firing and after every create, edit and delete. The timer is armed for at most one hour ahead, so a wall-clock jump or a host suspend delays a firing by at most that long | this spec |
 | S-D6 | **A firing is a background resume of the schedule's task** through the same path `openBackground` uses (F4), with `ResumedByKind = schedule` (GD G45; new `ClientKind` value, F9), the schedule's prompt, profile, selector, extra args, `resume_conversation`, conditions, record, `--oneshot` and PTY choice, and a `GrantUpdate` that writes the schedule's stored authority onto the task (GD G36). `next_at` is then recomputed from the firing time, not from the due time, so one late firing does not cascade | GD G38/G45 (resume), this spec (the rest) |
@@ -238,9 +242,13 @@ bound schedule. Constraints the formats must meet:
   wants fixed clock times; cron also writes intervals as steps, so cron alone
   (S-D1).
 - **Who parses cron** — `robfig/cron/v3`, or a hand-written 5-field parser.
-  The library's `Next` handles the OR rule and month ends (F3); the cost is a
-  dependency last released in 2020 and one panic found by fuzzing (F1),
-  contained by S-D2's guard. Chosen: the library (operator, after the check).
+  The library handles the OR rule and month ends (F3), but it was last
+  released in 2020, panics on one input (F1) and skips the spring-forward
+  day (F11). The library was chosen first (operator, after the F1 check);
+  F11 moved zone handling to our side (S-D3a), which left the library only
+  parsing and UTC matching, so it was dropped for a self-written parser with
+  a grammar stated in full (S-D2) and a matcher checked against a
+  minute-by-minute brute force (operator, 2026-11-15).
 - **Where schedules are persisted** — their own JSON file, or new event types
   in the task WAL. The WAL would keep unbounded history and reuse replay, but
   `WALEvent` is a task record and every WAL reader would meet the new types;
@@ -265,7 +273,8 @@ bound schedule. Constraints the formats must meet:
 ## Testing
 
 - `parseCron`: `TZ=`, `CRON_TZ=UTC 0 0 * * *`, `@every 1h`, `0 0 30 2 *`
-  refused; a fuzz test asserting no panic over arbitrary input.
+  refused; a fuzz test asserting no panic over arbitrary input; the matcher
+  equal to a minute-by-minute brute force over generated expressions.
 - Firing: each outcome of S-D7 from a store in the matching state, including
   two concurrent firings of one schedule producing one run and one
   `skipped_busy`.
