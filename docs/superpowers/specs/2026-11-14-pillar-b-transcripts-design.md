@@ -294,14 +294,33 @@ Plan: `docs/superpowers/plans/2026-11-14-pillar-b-transcripts.md`.
 - **Client time bounds.** The client bounds only the wait for the server's
   `TranscriptResponse`, at 15 s. A timeout is reported as a server older than
   transcripts, which drops the request. The stream body has no fixed bound. It
-  is read under the caller's context, so Ctrl-C or a closed WebUI sheet ends it
-  (`transcriptAnswerWait`, `streamCtxReader`, `cli/transcript.go`).
+  is read under the caller's context (`transcriptAnswerWait`,
+  `streamCtxReader`, `cli/transcript.go`): Ctrl-C ends a CLI fetch. The TUI's
+  `transcript get` and the WebUI's download run under contexts that live as
+  long as the program or page, and neither has a cancel control, so a large
+  fetch there runs to its end.
 - **WebUI download memory.** The wasm bridge returns a download as an array
   of `Uint8Array` parts, one per write (`jsChunks`,
   `cmd/harness-webui-wasm/transcript.go`). `triggerDownload`
   (`webui/static/files.js`) joins them into one `Blob`. So the wasm heap never
   holds a whole transcript, but the browser's `Blob` does: no download API
   that streams to disk exists in every browser.
+- **A store an agent can write is not trusted for names.** A sandboxed
+  agent can write its own store (agy mounts `~/.gemini`, claude its project
+  directory). A session id that is not a single local name (`..`, `../x`,
+  `a/b`) is not a session, and every companion walk and stat goes through
+  `os.Root`, so a directory swapped for a symlink that leaves the store is not
+  followed (`localID`, `walkRegular`, `lstatRegular`,
+  `runner/transcript/open.go`). Found by the final review: before it, a
+  listing could name files and sizes outside the store.
+- **Windows is not verified (Goals, B-D9).** B-D9 asked for each agent's store
+  to be measured on a Windows runner before the code, and for an E2E run
+  there. Neither was done: no Windows task was reachable (B-F11). The
+  Windows-specific paths (`samePath` with case folding, `USERPROFILE` for
+  agy, claude's encoding of a `C:\…` directory, opencode through its `.cmd`
+  shim, the spool that is not unlinked while open) have run only as unit
+  tests on Linux. Closing it: one claude or codex session on a Windows runner,
+  then `transcript ls` / `get` from another host.
 - **Deliberately shown on no surface.** The `transcripts` bit stays on the
   server's `RunnerEntry`. It is not copied to `RunnerInfo`, so `ls` does not
   show it: it only reveals version skew, and `runner_unsupported` names the
