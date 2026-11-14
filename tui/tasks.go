@@ -44,6 +44,11 @@ type TasksModel struct {
 	// mark is the capability the caps audit's `t` asked the tree to mark: its
 	// holders' ID cells carry ◆ and the column title names it. 0 = none.
 	mark protocol.Capability
+	// hasRun is whether some row in rowTasks has a non-empty Run cell. The Run
+	// column exists only then (on top of the width threshold): on interactive
+	// rows it is 15 empty cells taken from Repo. Like width, it decides the
+	// column SET, so a change of it goes through swapColumnsAndRebuild.
+	hasRun bool
 }
 
 // obsColumnMinWidth is the panel width at which the tasks table can afford the
@@ -73,11 +78,13 @@ const runColumnMinWidth = 70
 // three turn_done_* reasons all read "turn_done_…".
 const runColumnWidth = 15
 
-// colsFor is the ONE place the column set is decided, from the two things it
-// depends on: tree mode and how wide the panel is (Obs, then Run). Both
-// callers (SetTree, SetSize) go through it so they cannot drift on what a given
-// (mode, width) looks like — and so the row builder can ask the same question.
-func colsFor(tree bool, width int) []table.Column {
+// colsFor is the ONE place the column set is decided, from the three things it
+// depends on: tree mode, how wide the panel is (Obs, then Run), and whether any
+// row has a Run cell (hasRun — DATA, not layout). Every caller (SetTree,
+// SetSize, SetRows) goes through it so they cannot drift on what a given
+// (mode, width, data) looks like — and so the row builder can ask the same
+// question (showsRun).
+func colsFor(tree bool, width int, hasRun bool) []table.Column {
 	cols := flatCols()
 	if tree {
 		cols = treeCols()
@@ -99,7 +106,7 @@ func colsFor(tree bool, width int) []table.Column {
 				// column width — a narrower column would hide the exec count
 				// exactly when there is one to show.
 				out = append(out, table.Column{Title: "Obs", Width: 10})
-				if width >= runColumnMinWidth {
+				if width >= runColumnMinWidth && hasRun {
 					out = append(out, table.Column{Title: "Run", Width: runColumnWidth})
 				}
 			}
@@ -140,8 +147,9 @@ func fitTaskColumns(base []table.Column, w int) []table.Column {
 // threshold the Act cell carries the lifecycle badge instead (actCell).
 func (m *TasksModel) showsObs() bool { return m.width >= obsColumnMinWidth }
 
-// showsRun is showsObs for the Run column.
-func (m *TasksModel) showsRun() bool { return m.width >= runColumnMinWidth }
+// showsRun is showsObs for the Run column: wide enough AND some row has a Run
+// cell. Must mirror colsFor's condition exactly.
+func (m *TasksModel) showsRun() bool { return m.width >= runColumnMinWidth && m.hasRun }
 
 // flatCols is the default column set. Kept as a function so NewTasks and
 // SetTree cannot drift apart on what "not tree mode" looks like.
@@ -198,7 +206,7 @@ func (m *TasksModel) TreeMode() bool { return m.tree }
 // columns is colsFor plus the one title that depends on state: the ID column
 // names the capability being marked, so a ◆ never has to be guessed at.
 func (m *TasksModel) columns() []table.Column {
-	cols := colsFor(m.tree, m.width)
+	cols := colsFor(m.tree, m.width, m.hasRun)
 	if m.tree && m.mark != 0 {
 		cols[1].Title = "ID (◆ " + m.mark.String() + ")"
 	}
@@ -316,6 +324,21 @@ func (m *TasksModel) SetRows(ts []protocol.TaskInfo, runners []protocol.RunnerIn
 	m.rowTasks = ordered
 	m.gutter = gutter
 	m.runners = runners
+	// The column set depends on the rows' DATA (Run), so it is re-decided here
+	// from the new rows and swapped together with them — never rows first.
+	hadRun := m.showsRun()
+	m.hasRun = false
+	for _, t := range ordered {
+		if runCell(t) != "" {
+			m.hasRun = true
+			break
+		}
+	}
+	if m.showsRun() != hadRun {
+		m.baseCols = m.columns()
+		m.swapColumnsAndRebuild(fitTaskColumns(m.baseCols, m.width))
+		return
+	}
 	m.rebuild()
 }
 

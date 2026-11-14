@@ -54,8 +54,8 @@ const keyColumnMinWidth = 100
 // 129 is where fitColumns first hands the column its 13 cells — measured, the
 // widest value being dial:<8 hex>. Below that it cut the record id, which then
 // could not be typed into `runner dial rm` (seen live at 12). Pinned by
-// TestRunnerTableLinkColumnAtItsThreshold. The panel is half the terminal, so
-// this is a terminal of about 260 cells.
+// TestRunnerTableLinkColumnAtItsThreshold. The panel is the terminal's full
+// width (one table at a time), so this is a terminal of about 131 cells.
 const linkColumnMinWidth = 129
 
 // runnerColsFor is the column set for a panel of the given width. One function
@@ -318,4 +318,26 @@ func runnerRootsCell(r protocol.RunnerInfo) string {
 		return fmt.Sprintf("%s (+%d)", first, len(r.AllowedRoots)-1)
 	}
 	return first
+}
+
+// runnerSummary is the one-line fleet state shown above whichever table is
+// visible: "runners N: X idle Y busy …". The labels are runnerStatusStr's,
+// lowercased, so the vocabulary is the table's. Idle and busy exist on every
+// fleet and keep a zero; other statuses appear only when present.
+func runnerSummary(rs []protocol.RunnerInfo) string {
+	counts := map[string]int{}
+	for _, r := range rs {
+		counts[runnerStatusStr(r.Status)]++
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "runners %d:", len(rs))
+	for _, s := range []protocol.RunnerStatus{protocol.RunnerStatus_Idle, protocol.RunnerStatus_Busy, protocol.RunnerStatus_Offline} {
+		label := runnerStatusStr(s)
+		n := counts[label]
+		if n == 0 && s == protocol.RunnerStatus_Offline {
+			continue
+		}
+		fmt.Fprintf(&b, " %d %s", n, strings.ToLower(label))
+	}
+	return b.String()
 }

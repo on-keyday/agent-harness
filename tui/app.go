@@ -65,9 +65,12 @@ type App struct {
 	// Temp file held across an external-editor handover.
 	fileEditTmpPath string
 
-	focus  focus
-	width  int
-	height int
+	focus focus
+	// lastTable is the table (focusRunners / focusTasks) focus last rested on;
+	// shownTable draws it while focus is on notify / cmdresult / cmdline.
+	lastTable focus
+	width     int
+	height    int
 
 	// connected mirrors the persistent connection's status (set later by main.go via msgs).
 	connected bool
@@ -418,7 +421,9 @@ func New(cfg Config) *App {
 		sessionCaps:       protocol.Capability_None,
 		sessionScope:      protocol.TaskScope{Base: protocol.ScopeBase_Subtree},
 	}
-	a.tasks.Focus()
+	// setFocus, not tasks.Focus(): a.focus must agree with the pane that is
+	// focused, or key scope and the shown table start out as the runners'.
+	a.setFocus(focusTasks)
 	if cfg.WorkspaceName != "" {
 		if ws, ok := cfg.WorkspaceFile.Workspace(cfg.WorkspaceName); ok {
 			a.SetWorkspace(ws)
@@ -1890,6 +1895,9 @@ func (a *App) setFocus(f focus) {
 	a.cmdline.Blur()
 
 	a.focus = f
+	if f == focusRunners || f == focusTasks {
+		a.lastTable = f
+	}
 
 	switch a.focus {
 	case focusRunners:
@@ -1914,10 +1922,12 @@ func (a *App) quit() tea.Cmd {
 	return tea.Quit
 }
 
-// layout computes per-panel sizes from a.width / a.height. Header 1, notify
-// border-inclusive 6, cmdresult border-inclusive 7, cmdline 1, footer 1 = 16
-// fixed rows; the runners + tasks row takes the rest, less its own 2 border
-// rows, so tableHeight = a.height - 18 (6 at the 24-row minimum). The task log
+// layout computes per-panel sizes from a.width / a.height. Header 1, table
+// strip 1, notify border-inclusive 6, cmdresult border-inclusive 7, cmdline 1,
+// footer 1 = 17 fixed rows; ONE table (runners or tasks, see shownTable) takes
+// the rest, less its own 2 border rows, so tableHeight = a.height - 19 (5 at
+// the 24-row minimum). Both tables are sized to the full width: only one is
+// drawn, and the tasks table is the one that needs the room. The task log
 // pane that used to sit under the tables held those rows (A3, A-D30).
 //
 // bubbles' tables scroll with the cursor, so the height is a window onto the
@@ -1927,13 +1937,31 @@ func (a *App) layout() {
 	if a.width < 80 || a.height < 24 {
 		return
 	}
-	half := a.width / 2
-	tableHeight := a.height - 18
-	a.runners.SetSize(half-2, tableHeight)
-	a.tasks.SetSize(a.width-half-2, tableHeight)
+	tableHeight := a.height - 19
+	a.runners.SetSize(a.width-2, tableHeight)
+	a.tasks.SetSize(a.width-2, tableHeight)
 	a.notify.SetSize(a.width-2, 4)
 	a.cmdresult.SetSize(a.width-2, 5)
 	a.cmdline.Width = a.width - 4
+}
+
+// shownTable is which table is drawn: the focused one, or — while focus is on
+// notify / cmdresult / cmdline — the one focused last (tasks at startup).
+func (a *App) shownTable() focus {
+	if a.focus == focusRunners || a.focus == focusTasks {
+		return a.focus
+	}
+	return a.lastTable
+}
+
+// tableStrip is the one line above the table: which table is shown (the other
+// is one Tab away) and the fleet summary.
+func tableStrip(showRunners bool, rs []protocol.RunnerInfo) string {
+	tab := "[Tasks] Runners"
+	if showRunners {
+		tab = "Tasks [Runners]"
+	}
+	return " " + tab + " (Tab switches) · " + runnerSummary(rs)
 }
 
 func (a *App) View() string {
@@ -1947,19 +1975,22 @@ func (a *App) View() string {
 	}
 	header := HeaderStyle.Render(fmt.Sprintf("harness-tui · %s · %s · %s", a.server, connectedTag, a.principal))
 
-	runnersView := a.runners.View()
-	tasksView := a.tasks.View()
-	if a.runners.IsFocused() {
-		runnersView = PanelStyleFocused.Render(runnersView)
+	// One table at a time: the one the focus last rested on. The strip above
+	// it names both and carries the fleet summary, so the hidden one is never
+	// out of sight, out of mind.
+	showRunners := a.shownTable() == focusRunners
+	var top string
+	if showRunners {
+		top = a.runners.View()
 	} else {
-		runnersView = PanelStyle.Render(runnersView)
+		top = a.tasks.View()
 	}
-	if a.tasks.IsFocused() {
-		tasksView = PanelStyleFocused.Render(tasksView)
+	if a.runners.IsFocused() || a.tasks.IsFocused() {
+		top = PanelStyleFocused.Render(top)
 	} else {
-		tasksView = PanelStyle.Render(tasksView)
+		top = PanelStyle.Render(top)
 	}
-	top := lipgloss.JoinHorizontal(lipgloss.Top, runnersView, tasksView)
+	strip := MutedStyle.Render(clipLine(tableStrip(showRunners, a.runnersSnapshot), 0, a.width))
 
 	notifyBorder := PanelStyle
 	if a.notify.IsFocused() {
@@ -1980,6 +2011,7 @@ func (a *App) View() string {
 
 	view := strings.Join([]string{
 		header,
+		strip,
 		top,
 		notifyView,
 		cmdresultView,

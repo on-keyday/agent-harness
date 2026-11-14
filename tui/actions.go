@@ -123,8 +123,7 @@ func (a *App) openCapsAudit(includeEnded, includeEmpty bool, focus protocol.Capa
 // rebuilt.
 func (a *App) setTreeMode(on bool) {
 	a.tasks.SetTree(on)
-	half := a.width / 2
-	a.tasks.SetSize(a.width-half-2, 10)
+	a.layout()
 }
 
 // jumpToTask is the caps audit's enter on a holder: show that task in the
