@@ -242,7 +242,7 @@ func RecordRunRow(r protocol.RecordInfo) string {
 	}
 	expires := "forever"
 	if !r.Forever() {
-		expires = "at run end + ttl"
+		expires = "at run end + " + (time.Duration(r.TtlMs) * time.Millisecond).String()
 		if r.ExpiresNs != 0 {
 			expires = recordTime(r.ExpiresNs)
 		}

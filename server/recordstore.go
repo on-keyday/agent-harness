@@ -916,8 +916,11 @@ func (s *RecordStore) infoLocked(rr *recordRun) protocol.RecordInfo {
 	}
 	info.SetForever(rr.meta.Forever)
 	info.SetRecording(rr.writer != nil)
-	if !rr.meta.Forever && rr.meta.RunEndedNs != 0 {
-		info.ExpiresNs = uint64(rr.meta.RunEndedNs + rr.meta.TTLMs*int64(time.Millisecond))
+	if !rr.meta.Forever {
+		info.TtlMs = uint64(rr.meta.TTLMs)
+		if rr.meta.RunEndedNs != 0 {
+			info.ExpiresNs = uint64(rr.meta.RunEndedNs + rr.meta.TTLMs*int64(time.Millisecond))
+		}
 	}
 	return info
 }

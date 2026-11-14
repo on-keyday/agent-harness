@@ -66,6 +66,7 @@ func recordInfoJS(r protocol.RecordInfo) map[string]any {
 		"forever":         r.Forever(),
 		"recording":       r.Recording(),
 		"expiresMs":       ms(r.ExpiresNs),
+		"ttlMs":           float64(r.TtlMs),
 		"row":             cli.RecordRunRow(r),
 	}
 }

@@ -2982,6 +2982,7 @@ format RecordInfo:
     recording :u1
     reserved :u6
     expires_ns :u64          # 0 when forever or not yet ended
+    ttl_ms :u64              # how long it is kept after the run ends; 0 when forever
 
 # The record list is variable-length, so it travels on a stream (one control
 # message is one datagram).

@@ -170,3 +170,18 @@ func TestParseRecordRetention(t *testing.T) {
 		}
 	}
 }
+
+// A record whose run has not ended yet has no expiry to print, but its period
+// is known: the row says how long, not just that one exists.
+func TestRecordRunRowNamesThePendingPeriod(t *testing.T) {
+	var r protocol.RecordInfo
+	r.Run = 2
+	r.TtlMs = uint64((168 * time.Hour).Milliseconds())
+	if row := RecordRunRow(r); !strings.Contains(row, "expires=at run end + 168h0m0s") {
+		t.Fatalf("row %q does not name the period", row)
+	}
+	r.ExpiresNs = uint64(time.Date(2026, 12, 1, 0, 0, 0, 0, time.Local).UnixNano())
+	if row := RecordRunRow(r); !strings.Contains(row, "expires=2026-12-01 00:00:00") {
+		t.Fatalf("row %q, want the resolved expiry once the run ended", row)
+	}
+}

@@ -180,3 +180,25 @@ func TestOpenSegmentsDoNotEvictClosedRecords(t *testing.T) {
 		t.Fatalf("the closed record was evicted for open segments' bytes: %v", got)
 	}
 }
+
+// A kept period is listed before its run ends, so a surface can say how long
+// a record of a run still going will be kept (expires_ns is 0 until then).
+func TestListCarriesThePeriodBeforeTheRunEnds(t *testing.T) {
+	s := newRecStore(t, 64<<20, 1<<30)
+	now := time.Now()
+	w, _ := s.OpenRun(recTask, 1, now.Add(-time.Minute))
+	_ = w.Append(recEntry(1, "x"))
+	if err := s.SetRetention(recTask, 1, false, 168*time.Hour, now); err != nil {
+		t.Fatal(err)
+	}
+	infos := s.List(recTask)
+	if len(infos) != 1 || infos[0].TtlMs != uint64((168*time.Hour).Milliseconds()) || infos[0].ExpiresNs != 0 {
+		t.Fatalf("list %+v, want ttl 168h and no expiry yet", infos)
+	}
+	if err := s.SetRetention(recTask, 1, true, 0, now); err != nil {
+		t.Fatal(err)
+	}
+	if infos := s.List(recTask); infos[0].TtlMs != 0 || !infos[0].Forever() {
+		t.Fatalf("list %+v, want forever with no period", infos)
+	}
+}
