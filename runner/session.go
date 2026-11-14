@@ -211,10 +211,8 @@ type taskEntry struct {
 	// env at spawn. Kept here because the reconnect report has to carry it: a
 	// restart forgets every ticket (the board's registry is an in-memory map)
 	// while the surviving agent keeps presenting this value, so a freshly
-	// minted one would answer BadTicket. It arrives on BOTH spawn paths —
-	// AssignTaskBody.AuthTicket for a oneshot and OpenExecRunnerRequest for an
-	// interactive session — and the interactive one is the case holds exist
-	// for, so capturing only the first would look like it worked.
+	// minted one would answer BadTicket. It arrives on OpenExecRunnerRequest,
+	// the one spawn path since A3 retired the oneshot kind's AssignTask.
 	ticket [16]byte
 
 	// started / exited bracket the child's life. A registry entry exists from
@@ -254,7 +252,8 @@ func (s *Session) taskRootCtx(connCtx context.Context) context.Context {
 // be the one thing a held task still has to say — and bound to the connection
 // the task STARTED on it went into a dead socket, so the server never learned
 // the task had ended and the row stayed Running forever. Found on a
-// re-adopted oneshot that had actually run to completion.
+// re-adopted oneshot task (a kind A3 retired) that had actually run to
+// completion.
 //
 // It reports its own failures, which is the only reason every call site may
 // discard the return with `_ =`. The send happens on a task's way out, so
@@ -281,7 +280,7 @@ const (
 	cancelledBeforeStart = "cancel: cancelled before it started"
 )
 
-// beginPendingTask marks a task whose AssignTask/OpenExec just arrived as on
+// beginPendingTask marks a task whose OpenExec just arrived as on
 // its way in, and returns the func that clears the mark. The receive loop calls
 // it before handing the task to its own goroutine, which defers the result.
 func (s *Session) beginPendingTask(tid protocol.TaskID) (end func()) {
@@ -342,11 +341,10 @@ type Session struct {
 	// Profiles is the set of agent launch profiles this runner was
 	// configured with: the default profile (from --agent-bin/--agent-args/
 	// --agent-*-argv) plus any extra profiles from --agent-profiles. Each
-	// AssignTask / OpenExec request carries an AgentProfile name (empty ==
-	// default) that handleOpenExec resolves against this set
-	// via resolveExec to pick the bin + argv actually exec'd.
+	// OpenExec request carries an AgentProfile name (empty == default) that
+	// handleOpenExec resolves against this set via resolveExec to pick the
+	// bin + argv actually exec'd.
 	Profiles ProfileSet
-	Timeout  time.Duration
 	Sender   Sender
 	// trsfConns is every connection this runner holds, so its congestion state
 	// can be reported. Nothing else in the runner keeps such a list.
@@ -440,7 +438,7 @@ type Session struct {
 	// AgentSkillsFS, when non-nil, is the skill tree WriteAgentSkills
 	// materialises into each task worktree instead of the embedded copy. Set
 	// from runner.Config.AgentSkillsFS (agent-runner --agentskills-dir). It is
-	// read on every task assign, so editing a SKILL.md on disk reaches the next
+	// read on every task spawn, so editing a SKILL.md on disk reaches the next
 	// task without restarting this runner.
 	AgentSkillsFS fs.FS
 
@@ -475,7 +473,7 @@ type Session struct {
 
 // SetRunnerCanonicalID stores the RunnerID the server reports for this runner
 // connection (via RunnerHelloResponse). Called from dispatchRunnerRequest
-// synchronously before any AssignTask is dispatched.
+// synchronously before any OpenExec is dispatched.
 //
 // The response echoes back what this process minted, so a difference means the
 // server keyed us as something else — every ticket we hand an agent would then
@@ -610,8 +608,8 @@ func (s *Session) DeliverChainedRelayResponse(resp protocol.ChainedRelayResponse
 }
 
 // resolveExec resolves profile against ps (empty name == the default
-// profile) and builds the argv for either a oneshot invocation
-// (oneshot=true — templated with prompt via buildOneshotArgs) or an
+// profile) and builds the argv for either a `session new --oneshot`
+// invocation (oneshot=true — templated with prompt via buildOneshotArgs) or an
 // interactive/PTY invocation (oneshot=false — via buildInteractiveArgs, the
 // prompt filling the template's {prompt}, pillar A spec A-D3). resume selects the resume-conversation argv templates.
 // extra is the caller-supplied per-task extra args; it is merged after the
@@ -1055,9 +1053,12 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 		_ = s.sendTaskMsg(taskIDHex, m.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)}))
 	}
 
-	// Step 6: Conditionally clean up the worktree directory. See handleAssign
-	// for the rationale on why the branch ref is retained and why the dir is
-	// kept when `git status --porcelain` shows non-injected uncommitted work.
+	// Step 6: Conditionally clean up the worktree directory. The branch ref
+	// harness/<id> is retained so any commits the agent made stay reachable.
+	// The directory is removed only when `git status --porcelain` (excluding
+	// harness-injected paths) is empty, so uncommitted work survives to a
+	// resume; the long tail is `harness-cli prune-local`'s. Errors are logged
+	// and never bubble up: TaskFinished is already sent.
 	if !s.NoWorktree {
 		switch r := wm.RemoveIfClean(taskIDHex, HarnessInjectedPaths); {
 		case r.StatusErr != nil:
@@ -1073,9 +1074,9 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 // call from any goroutine, and called from its own: the write can block for as
 // long as the agent leaves its input unread. No-op
 // if the task is unknown, or if its agent never wired a stdin writer — both
-// handleOpenExec paths do (PTY and event-stream); a oneshot task started
-// through handleAssign has none, so a TaskWake aimed at one is a permanent,
-// silent no-op for that task's entire lifetime.
+// handleOpenExec paths do (PTY and event-stream), and since A3 they are the
+// only spawn paths, so the second case is a task registered whose child's
+// stdin is not wired yet (setWake runs once it exists).
 //
 // Coalescing rationale: subsequent agentboard messages within the window
 // are not lost — they are read by the agent's next `agent inbox
@@ -1090,11 +1091,11 @@ func (s *Session) WakeStdin(taskIDHex string) {
 	}
 	if e.wake == nil {
 		s.mu.Unlock()
-		// Permanent for that task, not transient: only handleOpenExec wires a
-		// stdin writer, so a oneshot never has one. Worth a line anyway — from
+		// Registered, but setWake has not run yet: the child's stdin does
+		// not exist. Worth a line anyway — from
 		// the outside this is identical to a wake that was written and ignored,
 		// and telling the two apart is the whole reason these logs exist.
-		s.logger().Info("wake skipped", "task_id", taskIDHex, "reason", "task has no stdin writer (not a session)")
+		s.logger().Info("wake skipped", "task_id", taskIDHex, "reason", "task has no stdin writer (not wired yet)")
 		return
 	}
 	if e.waking {

@@ -51,9 +51,8 @@ func FlattenCandidates(cs []RunnerCandidate) []RunnerCombo {
 	return out
 }
 
-// AmbiguousRunnerError is returned when a spawn — an interactive open or a
-// submit — matched more than one (runner, agent) choice under an unpinned
-// selector. Callers (TUI/CLI/WebUI) use errors.As to pull out Candidates and
+// AmbiguousRunnerError is returned when a spawn (an OpenInteractive) matched
+// more than one (runner, agent) choice under an unpinned selector. Callers (TUI/CLI/WebUI) use errors.As to pull out Candidates and
 // let the user pick one.
 type AmbiguousRunnerError struct {
 	Candidates []RunnerCandidate
@@ -82,7 +81,7 @@ func candidatesFromBody(body *protocol.RunnerCandidatesBody) []RunnerCandidate {
 }
 
 // readCandidates reads the candidate body an ambiguous response names. Every
-// ambiguous answer — interactive and submit, native and wasm — goes through
+// ambiguous answer — native and wasm — goes through
 // here.
 func readCandidates(ctx context.Context, tr trsf.Transport, streamID *uint64) ([]RunnerCandidate, error) {
 	if streamID == nil {

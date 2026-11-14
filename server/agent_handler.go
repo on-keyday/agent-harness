@@ -75,7 +75,7 @@ func (s *Server) establishAgentIdentity(conn ConnHandle, info *protocol.AgentInf
 		// The agent profile is authority-side data: read it from the task
 		// record, never from the agent's own hello. Empty when the store has
 		// no entry for this id — a defined "not attributed", not "runner
-		// default" (submit/open both resolve a concrete name before Create).
+		// default" (an open resolves a concrete name before Create).
 		var profile string
 		if s.tasks != nil {
 			if e, ok := s.tasks.Get(hex.EncodeToString(info.TaskId.Id[:])); ok {

@@ -47,10 +47,9 @@ func FromAgentlog(e agentlog.Event) Event {
 }
 
 // ToAgentlog is FromAgentlog inverted: a wire Event back into agentlog's, so a
-// neutral event renders through the SAME agentlog.Render everywhere — the
-// runner's task-log tap and the CLI's `session stream attach` both call it,
-// and the oneshot kind's log lines are produced by that Render too, so the
-// three surfaces cannot drift into three renderings of one event. The round
+// neutral event renders through the SAME agentlog.Render everywhere (RenderText,
+// which the CLI's `session stream attach` and the chats' DisplayOf both use), so
+// the surfaces cannot drift into separate renderings of one event. The round
 // trip (agentlog → neutral → agentlog) is asserted in render_test.go;
 // if it were lossy, this kind's rendering would quietly say less.
 func (e Event) ToAgentlog() agentlog.Event {
@@ -92,8 +91,8 @@ func (e Event) ToAgentlog() agentlog.Event {
 const ReplayPrefix = "↺ "
 
 // RenderText is the one-line human rendering of an adapter→client message,
-// shared by the runner's task-log tap and the CLI's stream attach so the two
-// cannot drift. ok=false means the kind has no standalone display line here
+// shared by the CLI's stream attach and the chats' DisplayOf (display.go) so
+// they cannot drift. ok=false means the kind has no standalone display line here
 // (hello, exit, and every client→adapter kind) — those are context-dependent
 // and each surface words its own.
 func RenderText(m Msg) (line string, ok bool) {

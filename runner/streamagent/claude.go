@@ -871,7 +871,7 @@ func (a *claudeAdapter) sendInterrupt() error {
 // sendUserTurn feeds a turn to the agent and then puts it on the stream the
 // server keeps. The agent does not echo a turn back under stream-json, so
 // without this line a turn existed only in the chat that sent it: another
-// client, a later reattach and the task log never saw who asked what.
+// client and a later reattach never saw who asked what.
 func (a *claudeAdapter) sendUserTurn(text string) error {
 	if err := a.writeVendor(map[string]any{
 		"type":    "user",

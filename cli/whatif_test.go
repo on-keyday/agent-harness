@@ -200,7 +200,7 @@ func TestWhatIfChangeFromAction(t *testing.T) {
 // The what-if's spawn denial reads as the real open's does.
 func TestWhatIfSpawnDenialIsTheClients(t *testing.T) {
 	_, err := BuildWhatIf(whatIfListing(), authority.Spawn{Creator: reachHex(0x9f), Caps: protocol.Capability_Cancel})
-	want := "caps what-if: " + (&CapabilityDeniedError{RequestedKind: protocol.TaskControlKind_Submit, RequiredCap: protocol.Capability_Spawn}).Error()
+	want := "caps what-if: " + (&CapabilityDeniedError{RequestedKind: protocol.TaskControlKind_OpenInteractive, RequiredCap: protocol.Capability_Spawn}).Error()
 	if err == nil || err.Error() != want {
 		t.Errorf("err = %v, want %q", err, want)
 	}

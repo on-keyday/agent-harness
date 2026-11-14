@@ -47,7 +47,7 @@ const (
 )
 
 // FileEditModel is the text-file editor popup: a name field and a body.
-// The keys follow the submit popup (tui/popup.go), the TUI's other multi-line
+// The keys follow the one-shot popup (tui/popup.go), the TUI's other multi-line
 // input; the body itself is an editBuffer rather than bubbles/textarea,
 // because that widget re-renders the whole document every frame — see the
 // comment on editBuffer for the measurements.
@@ -59,7 +59,7 @@ const (
 // widget — including Tab, which types a tab rather than moving focus.
 //
 // Ctrl+O rather than the mnemonic Ctrl+E, which is line-end here (as it is in
-// every readline-ish editor) and which the submit popup has already taken for
+// every readline-ish editor) and which the one-shot popup has already taken for
 // focus cycling (tui/app.go:960).
 type FileEditModel struct {
 	open   bool

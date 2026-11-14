@@ -37,8 +37,8 @@ one of them, that addition IS legitimate work and may be committed.
 //
 // src is the skill source: nil means the embedded copy (agentskills.FS), which
 // is what a plain runner uses. A non-nil src is the --agentskills-dir override
-// (an os.DirFS), read fresh here — and this function runs per task assign
-// (session.go handleAssign / handleOpenExec), which is what makes an edited
+// (an os.DirFS), read fresh here — and this function runs per task spawn
+// (session.go handleOpenExec), which is what makes an edited
 // SKILL.md reach the NEXT task without restarting the runner. The embedded copy
 // cannot do that: a running process keeps its loaded binary, so its embed FS is
 // frozen at launch even after `make build` replaces bin/agent-runner.

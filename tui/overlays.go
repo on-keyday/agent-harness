@@ -651,7 +651,7 @@ func (a *App) inFilePicker(msg tea.KeyMsg) tea.Cmd {
 	return pcmd
 }
 
-// Submit popup intercepts ALL keys when open.
+// One-shot popup intercepts ALL keys when open.
 func (a *App) inSubmitPopup(msg tea.KeyMsg) tea.Cmd {
 	switch msg.Type {
 	case tea.KeyEsc:

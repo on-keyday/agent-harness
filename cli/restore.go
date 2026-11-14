@@ -165,7 +165,7 @@ func RestoreWith(ctx context.Context, c *Client, taskIDs []string, out io.Writer
 		fmt.Fprintln(out, "restore: an id with no task_created cannot be rebuilt — nothing invents a task the server never wrote")
 	}
 	if res.Restored > 0 {
-		fmt.Fprintln(out, "restore: the RECORD is back; the task log is not (prune removed the file) and the worktree was never touched")
+		fmt.Fprintln(out, "restore: the RECORD is back; the worktree was never touched")
 	}
 	return nil
 }

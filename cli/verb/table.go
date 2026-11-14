@@ -35,8 +35,8 @@ var Verbs = []VerbSpec{
 		Action:          "PruneAction",
 		// The widest form has to be ASKED for. A bare `prune` forgot every
 		// terminal task older than the default, and the server deletes the
-		// TaskEntry and its log -- after which `submit --resume <id>` answers
-		// resume_not_found, because handleSubmitResume's first precondition is
+		// TaskEntry -- after which `session new --resume <id>` answers
+		// resume_not_found, because the resume path's first precondition is
 		// that the entry still exists. Naming neither ids nor a cutoff is the
 		// `board purge --seq` shape one step earlier: there the value was
 		// dropped, here it was never typed.
@@ -499,7 +499,7 @@ var Verbs = []VerbSpec{
 			"stdout and stderr stay separate, and the command's own exit code becomes ours",
 			"works on a FINISHED task too, as long as its worktree is still there \u2014",
 			"a task that ended with uncommitted work keeps one",
-			"dies with this process; for something to leave running, submit a task instead",
+			"dies with this process; for something to leave running, start a detached session (session new -d) instead",
 			"NOT `session exec`, which types into the session's foreground shell",
 		},
 		CmdlineSurfaces: CLI | TUI | WebUI,
@@ -1879,7 +1879,7 @@ var Verbs = []VerbSpec{
 			{Surface: TUI, At: "tui/notify.go:NotifyModel"},
 		},
 		Notes: []string{
-			"send a notification (one short line; detail goes in the task log)",
+			"send a notification (one short line)",
 		},
 		Action:          "NotifyAction",
 		CmdlineSurfaces: CLI | TUI,
@@ -2281,12 +2281,12 @@ var Verbs = []VerbSpec{
 		// them. The asymmetry with prune is deliberate.
 		Path: []string{"restore"}, CmdlineSurfaces: CLI | TUI | WebUI,
 		WebUIDispatch:  WebUIDispatch{Fn: "restore"},
-		SurfaceNotes:   map[Surface][]string{TUI: {"with no ids (or --list): what a prune forgot and could still be put back \u2014 the ids live only in the server's WAL. With ids: put those back (needs `prune` and the same scope; the record returns, the task log does not)"}},
+		SurfaceNotes:   map[Surface][]string{TUI: {"with no ids (or --list): what a prune forgot and could still be put back \u2014 the ids live only in the server's WAL. With ids: put those back (needs `prune` and the same scope; the record returns, the worktree is untouched)"}},
 		NoModalSurface: "the TUI has an action for this (Do…) but dispatch.go is its only caller, so it IS the command line running the verb — already CmdlineSurfaces",
 		Notes: []string{
 			"with no ids (or --list): list what a prune forgot and could still be put back \u2014 ids, when they were pruned, and the repo/prompt that identify them. The ids live only in the server's WAL, so this is the only way to learn them",
 			"with ids: put those back, rebuilt from the WAL. Requires the `prune` capability and the same scope: what you could forget, you can un-forget",
-			"the RECORD returns; the task log does not (prune removed the file) and the worktree was never touched. An id with no task_created cannot be rebuilt",
+			"the RECORD returns; the worktree was never touched. An id with no task_created cannot be rebuilt",
 		},
 		Action: "RestoreAction",
 		Args:   []Arg{{Name: "task-id", Type: ArgTaskID, Variadic: true, Field: "TaskIDs"}},
@@ -2431,7 +2431,7 @@ var Verbs = []VerbSpec{
 				// POINTER, so nil already says the operator named nothing.
 				// SetCapsOpts has no presence bit for it to feed, and a second
 				// way to say one thing is a second thing to keep in step.
-				Help: "new capability set (same syntax as --caps on submit); omitted = keep the task's current caps"},
+				Help: "new capability set (same syntax as --caps on session new); omitted = keep the task's current caps"},
 			{Name: "scope", Type: FlagString, Default: "", Field: "Scope",
 				FieldType: "*protocol.TaskScope", Convert: "parseScopeFlag",
 				Help: "new scope; omitted = keep the task's current scope"},
@@ -2568,7 +2568,7 @@ var Verbs = []VerbSpec{
 			Reason: "there is nothing to change otherwise"}},
 		// A re-grant's --scope-for needs --scope, as on caps set. A spawn's
 		// does not: its base is the spawn's own scope, subtree when omitted,
-		// as on submit.
+		// as on session new.
 		Validate: func(b Bound) error {
 			if b.Set["parent"] && b.Str("parent") == "" {
 				return fmt.Errorf("caps what-if: --parent needs a task id; pass --parent-none for the operator root")
@@ -2590,7 +2590,7 @@ var Verbs = []VerbSpec{
 				Help: "the scope caps set would write, or the spawn would request; omitted = keep it (a spawn: subtree)"},
 			{Name: "scope-for", Type: FlagString, Custom: scopeForValue, Field: "Overrides",
 				FieldType: "[]protocol.ScopeOverride", Convert: "parseScopeForList",
-				Help: "narrow ONE capability below --scope, as on caps set and submit"},
+				Help: "narrow ONE capability below --scope, as on caps set and session new"},
 			{Name: "delegate-caps", Type: FlagString, Default: "", Field: "DelegateCaps",
 				FieldType: "*protocol.Capability", Convert: "parseCapsFlag",
 				Help: "the delegation bound's caps; omitted = keep it (a spawn: none)"},
@@ -2622,8 +2622,8 @@ var Verbs = []VerbSpec{
 		},
 	},
 	{
-		// The session's SPAWN DEFAULTS: what a submit / session
-		// new on this surface carries when its own line names no --caps or
+		// The session's SPAWN DEFAULTS: what a session new on this
+		// surface carries when its own line names no --caps or
 		// --scope. Not a request to the server -- nothing is sent -- which is
 		// why there is no task id and why the CLI does not have it: a CLI
 		// invocation is one command, so there is no later command to default.
@@ -2639,7 +2639,7 @@ var Verbs = []VerbSpec{
 		// not a second value.
 		Path: []string{"caps", "set-defaults"}, CmdlineSurfaces: TUI | WebUI,
 		WebUIDispatch:  WebUIDispatch{Fn: "parseAuthority"},
-		SurfaceNotes:   map[Surface][]string{WebUI: {"the spawn defaults THIS page carries when a submit names neither; no flags opens the compose panel's own controls"}, TUI: {"the defaults a spawn from THIS session carries when its own line names neither; no flags opens the picker. Also spelled `scope`"}},
+		SurfaceNotes:   map[Surface][]string{WebUI: {"the spawn defaults THIS page carries when a spawn names neither; no flags opens the compose panel's own controls"}, TUI: {"the defaults a spawn from THIS session carries when its own line names neither; no flags opens the picker. Also spelled `scope`"}},
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Action:         "SetDefaultsAction",
 		// No AtLeastOne, unlike `caps set`: naming nothing is a question --
@@ -2659,7 +2659,7 @@ var Verbs = []VerbSpec{
 				Help: "narrow ONE capability below --scope in that default (written with --scope)"},
 			{Name: "delegate-caps", Type: FlagString, Default: "", Field: "DelegateCaps",
 				FieldType: "*protocol.Capability", Convert: "parseCapsFlag",
-				Help: "delegation bound (--delegate-caps on submit) future spawns carry by default; omitted = leave it as it is"},
+				Help: "delegation bound (--delegate-caps on session new) future spawns carry by default; omitted = leave it as it is"},
 			{Name: "delegate-scope", Type: FlagString, Default: "", Field: "DelegateScope",
 				FieldType: "*protocol.TaskScope", Convert: "parseScopeFlag",
 				Help: "delegate scope future spawns carry by default; omitted = leave it as it is"},
@@ -2680,7 +2680,7 @@ var Verbs = []VerbSpec{
 		// nothing calls.
 		Path: []string{"scope"}, CmdlineSurfaces: TUI | WebUI,
 		WebUIDispatch: WebUIDispatch{Fn: "parseAuthority"},
-		SurfaceNotes:  map[Surface][]string{WebUI: {"the spawn defaults THIS page carries when a submit names neither; the same verb as `caps set-defaults`"}, TUI: {"the shorter spelling of `caps set-defaults`"}},
+		SurfaceNotes:  map[Surface][]string{WebUI: {"the spawn defaults THIS page carries when a spawn names neither; the same verb as `caps set-defaults`"}, TUI: {"the shorter spelling of `caps set-defaults`"}},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/authoritypicker.go:AuthorityPickerModel"},
 			{Surface: WebUI, At: "webui/index.html#spawn-scope-details"},
@@ -2700,7 +2700,7 @@ var Verbs = []VerbSpec{
 				Help: "narrow ONE capability below --scope in that default (written with --scope)"},
 			{Name: "delegate-caps", Type: FlagString, Default: "", Field: "DelegateCaps",
 				FieldType: "*protocol.Capability", Convert: "parseCapsFlag",
-				Help: "delegation bound (--delegate-caps on submit) future spawns carry by default; omitted = leave it as it is"},
+				Help: "delegation bound (--delegate-caps on session new) future spawns carry by default; omitted = leave it as it is"},
 			{Name: "delegate-scope", Type: FlagString, Default: "", Field: "DelegateScope",
 				FieldType: "*protocol.TaskScope", Convert: "parseScopeFlag",
 				Help: "delegate scope future spawns carry by default; omitted = leave it as it is"},

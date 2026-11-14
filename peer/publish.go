@@ -50,7 +50,7 @@ func (c *Conn) JoinAndGetStream(ctx context.Context, nick, topic string) (trsf.B
 // interface.
 //
 // GetReceiveStream is included for callers that resolve server-initiated
-// send-streams (e.g. AssignTask body fetch) — these are receive-only on
+// send-streams (e.g. a session's prompt body) — these are receive-only on
 // the runner side, not bidi.
 type BidirectionalStreamLookup interface {
 	GetBidirectionalStream(id trsf.StreamID) trsf.BidirectionalStream

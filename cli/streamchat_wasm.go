@@ -106,8 +106,8 @@ func (c *Client) startStreamSlot(ctx context.Context, key, taskIDHex string, rep
 	streamMu.Unlock()
 
 	// The agent's stderr rides its own frame type and is not NDJSON. It is
-	// interleaved into the transcript, as in the TUI chat: this kind writes no
-	// task log, so the chat is where an agent's complaint is seen. Draining it
+	// interleaved into the transcript, as in the TUI chat: there is no task
+	// log (A3), so the chat is where an agent's complaint is seen. Draining it
 	// is also what keeps it from backpressuring the whole stream.
 	go streamStderrPump(slot, sess, gen)
 	go streamPump(slot, sess, gen)

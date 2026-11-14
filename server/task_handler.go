@@ -18,7 +18,7 @@ import (
 
 // TaskHandler decodes inbound TaskControlRequest payloads from the CLI
 // and replies with a TaskControlResponse. It also triggers the scheduler
-// via OnChange after mutating operations (Submit, Cancel).
+// via OnChange after mutating operations (a background open, Cancel, ...).
 type TaskHandler struct {
 	// RunnerKeys is the enrollment store: the runner key verbs act on it, and
 	// the list handler reads a runner's key label from it.
@@ -37,7 +37,7 @@ type TaskHandler struct {
 	KickConn func(cid objproto.ConnectionID)
 	Tasks    *TaskStore
 	Registry *Registry
-	OnChange func() // called after Submit / Cancel mutations
+	OnChange func() // called after mutations that can free or queue work (Cancel, a background open, a run's end, ...)
 
 	// OnSessionActivity fires when a live detachable session's PTY output
 	// crosses the busy/idle edge (SessionHooks.OnActivity, forwarded per
@@ -263,8 +263,8 @@ type TaskHandler struct {
 	OnConnIdentified func(cid objproto.ConnectionID)
 
 	// clientKinds maps connection ID → the kind of client that announced
-	// itself via ClientHello on that connection. Submit / OpenInteractive
-	// look it up to attribute task origin (ClientKind_Cli / Tui / Webui).
+	// itself via ClientHello on that connection. OpenInteractive looks it up
+	// to attribute task origin (ClientKind_Cli / Tui / Webui).
 	// Entries are added on ClientHello and never explicitly removed; for
 	// individual-dogfood scale the leak is acceptable. Tasks created on a
 	// connection that never sent ClientHello get ClientKind_Unspecified
@@ -273,7 +273,7 @@ type TaskHandler struct {
 	clientKinds   map[string]protocol.ClientKind
 	// principals maps connection ID → the TaskID of the agent principal for
 	// kind=agent connections. Populated at ClientHello and used at Create time
-	// to record CreatorTaskID on agent-submitted tasks.
+	// to record CreatorTaskID on agent-created tasks.
 	principals map[string]protocol.TaskID
 }
 
@@ -485,7 +485,8 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			}
 			h.denyTaskControl(conn, req.Header.Kind, req.Header.RequestId, want)
 		}
-		// Same request-dependent gate as Submit.
+		// The request-dependent gate (resumeRequestCap): spawn for a fresh
+		// task, resume / resume_exact for a resume.
 		if want := resumeRequestCap(oi.ResumeTaskId, oi.ResumeExact()); !hasAnyCap(h.callerCaps(cid), want) {
 			deny(want)
 			return
@@ -1240,8 +1241,8 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 	}
 }
 
-// grantRequest is the authority half of a submit or an interactive open,
-// read once so the two paths cannot read it differently. The presence bits
+// grantRequest is the authority half of an interactive open (fresh or
+// resumed), read once so the paths cannot read it differently. The presence bits
 // matter on a resume only; a fresh task writes every half.
 type grantRequest struct {
 	Caps          protocol.Capability
@@ -1268,8 +1269,8 @@ func openGrantRequest(req *protocol.OpenInteractiveRequest) grantRequest {
 
 // grantFor is the authority g writes for r onto the task idHex ("" = a task
 // it is creating), as the halves to write. Every grant site goes through it,
-// so caps, scope and bound are bounded by the granter the same way on submit
-// and open, fresh and resumed.
+// so caps, scope and bound are bounded by the granter the same way on a fresh
+// open and a resumed one.
 //
 // A fresh task writes every half. A resume writes a half only behind its
 // presence bit and keeps the recorded one otherwise; the scope is still
@@ -1672,7 +1673,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 		return resp, body
 	}
 	if exactRec != nil && req.Selector.Kind == protocol.RunnerSelectorKind_Any {
-		// Profile first, as the submit path does: a last runner that no longer
+		// Profile first: a last runner that no longer
 		// offers the recorded profile is not preferred over one that does.
 		pool := cands
 		if exactRec.AgentProfile != "" {

@@ -84,7 +84,7 @@ type Config struct {
 	NotEnrolledOnce *sync.Once
 
 	// NoWorktree disables the per-task git worktree creation. Tasks run with
-	// cwd = AssignTask.RepoPath. Settings/skills injection and worktree
+	// cwd = the request's RepoPath. Settings/skills injection and worktree
 	// cleanup are skipped by default. See spec
 	// docs/superpowers/specs/2026-05-08-runner-no-worktree-mode-design.md.
 	NoWorktree bool
@@ -149,7 +149,7 @@ type RunHandle struct {
 
 	// Control-message handling spans two phases. During the merged handshake
 	// (Connect) the server re-dispatches the embedded RunnerHello and replies
-	// RunnerHelloResponse — and may AssignTask — BEFORE OnConnect installs the
+	// RunnerHelloResponse — and may OpenExec — BEFORE OnConnect installs the
 	// runner-control dispatcher. The persistent handler set in Connect buffers
 	// such non-PSK messages here while ctlDispatch is nil, then OnConnect sets
 	// ctlDispatch and replays the buffer. Dropping these (as the old
@@ -496,7 +496,7 @@ func driveAfterConn(ctx context.Context, cfg Config, pc *peer.Conn) (*RunHandle,
 			return
 		}
 		// Non-PSK (runner-control) may arrive DURING the merged handshake — the
-		// server replies RunnerHelloResponse (and may AssignTask) right after
+		// server replies RunnerHelloResponse (and may OpenExec) right after
 		// PskAuthResponse, before OnConnect installs the dispatcher. Buffer until
 		// then (replayed by OnConnect); never drop, or the canonical RunnerID is
 		// lost.
@@ -668,7 +668,7 @@ func OnConnect(runCtx context.Context, h *RunHandle) error {
 
 	// Activate the runner-control dispatcher and replay any control messages
 	// buffered during the handshake window (RunnerHelloResponse / early
-	// AssignTask). The persistent handler installed in Connect keeps routing
+	// OpenExec). The persistent handler installed in Connect keeps routing
 	// PskAuth and, once ctlDispatch is set, routes runner-control here.
 	h.activateDispatch(func(kind appwire.AppKind, payload []byte) {
 		dispatchRunnerRequest(runCtx, session, cfg.Logger, kind, payload)
@@ -760,7 +760,7 @@ func dispatchRunnerRequest(ctx context.Context, session *Session, log *slog.Logg
 		}()
 	case protocol.RunnerRequestType_RunnerHelloResponse:
 		// Stored synchronously: peer.Conn delivers messages serially, so
-		// by the time the next AssignTask is dispatched, this field is set.
+		// by the time the next OpenExec is dispatched, this field is set.
 		rhr := req.RunnerHelloResponse()
 		if rhr == nil {
 			return
@@ -1052,10 +1052,10 @@ func waitForPromptBody(ctx context.Context, p peer.BidirectionalStreamLookup, id
 }
 
 // waitForStreamBody resolves a server-initiated send-stream, reads it to EOF
-// and returns the bytes. AssignTask and exec both ship their bodies this way
-// (a small envelope over the control channel, the variable-length part on a
-// stream, so neither has to fit one UDP datagram); each caller decodes its own
-// format. what names the body in errors. Mirrors cli/get_log.go's
+// and returns the bytes. A session's prompt and exec both ship their bodies
+// this way (a small envelope over the control channel, the variable-length part
+// on a stream, so neither has to fit one UDP datagram); each caller decodes its
+// own format. what names the body in errors. Mirrors cli/response_body.go's
 // waitForReceiveStream pattern: the trsf stream-creation frame may not have
 // arrived by the time the envelope is dispatched, so we poll
 // Transport.GetReceiveStream briefly before reading.

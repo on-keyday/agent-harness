@@ -34,7 +34,8 @@ func newRegistry() *registry {
 }
 
 // Register stores a ticket keyed by the (protocol.RunnerID, protocol.TaskID) pair.
-// Server-side sendAssign (the scheduler's dispatch) and OpenInteractive use this when issuing a fresh ticket.
+// Board.RegisterTask calls it when the server issues a fresh ticket: a session
+// start (server/session_start.go) or a re-adoption (server/readopt.go).
 func (r *registry) Register(rid protocol.RunnerID, tid protocol.TaskID, ticket [16]byte) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

@@ -520,7 +520,6 @@ def cmd_up(name: str, agent: str, model: str, detach: bool, udp: bool, tls: bool
             "--agent-oneshot-argv", f"{fake} --output-format stream-json --verbose {{args}} -p {{prompt}}",
             "--agent-resume-oneshot-argv", f"{fake} --output-format stream-json --verbose {{args}} --continue -p {{prompt}}",
             "--agent-resume-interactive-argv", f"{fake} {{args}} --continue",
-            "--agent-log-format", "claude-stream-json",
         ]
     runner_args += extra
 

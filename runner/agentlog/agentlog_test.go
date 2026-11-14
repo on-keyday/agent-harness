@@ -14,36 +14,11 @@ func TestPassthroughDecoderEmitsRaw(t *testing.T) {
 }
 
 func TestUnknownFormatResolvesToPassthrough(t *testing.T) {
-	// A misconfigured profile must degrade to today's behaviour, not fail.
+	// An unknown name degrades to raw lines, not an error.
 	d := NewDecoder("no-such-format")
 	evs := d.Decode([]byte(`{"type":"assistant"}`))
 	if len(evs) != 1 || evs[0].Kind != KindRaw {
 		t.Fatalf("got %+v, want a single KindRaw", evs)
-	}
-}
-
-func TestKnownFormatsMatchesNewDecoder(t *testing.T) {
-	// KnownFormats is the list runner.ProfileSet.UnrecognisedLogFormats
-	// validates against; it must name exactly the non-empty strings for
-	// which NewDecoder returns something other than passthrough.
-	want := []string{"claude-stream-json", "codex-jsonl"}
-	got := KnownFormats()
-	if len(got) != len(want) {
-		t.Fatalf("KnownFormats() = %v, want %v", got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("KnownFormats() = %v, want %v", got, want)
-		}
-	}
-
-	for _, name := range got {
-		if _, ok := NewDecoder(name).(passthrough); ok {
-			t.Fatalf("KnownFormats() lists %q, but NewDecoder(%q) resolved to passthrough", name, name)
-		}
-	}
-	if _, ok := NewDecoder("not-a-real-format").(passthrough); !ok {
-		t.Fatal("NewDecoder of a name absent from KnownFormats() must still resolve to passthrough")
 	}
 }
 

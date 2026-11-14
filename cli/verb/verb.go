@@ -331,12 +331,6 @@ type Trailing struct {
 	// and captures it in one call, typing nothing.
 	UnlessFlag string
 
-	// IfFieldEmpty writes Field only when a flag has not already filled it.
-	// `submit --task "do it"` and `submit do it` are the same prompt written
-	// two ways -- the flag wins, and the trailing words are the prompt
-	// otherwise.
-	IfFieldEmpty bool
-
 	// JoinWhen names a bool flag that collapses the tail into ONE word.
 	// `exec --shell` is the case: the operator asked for shell
 	// interpretation, so those words were never an argv to preserve, and

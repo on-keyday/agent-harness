@@ -91,7 +91,7 @@ type Authority struct {
 	MaxDescendantsPresent bool
 }
 
-// sessionRequest is the half of a session or submit request that is NOT the
+// sessionRequest is the half of a session request that is NOT the
 // authority: which runner, what to resume, how the PTY starts. It exists so
 // Authority.opts can be the one place in this package that builds a
 // cli.SessionOpts.
@@ -126,7 +126,7 @@ type sessionRequest struct {
 }
 
 // opts folds an Authority and a sessionRequest into the cli.SessionOpts the
-// client takes. Every session and submit path in this package goes through
+// client takes. Every session path in this package goes through
 // here, and TestSessionOptsIsBuiltInOnePlace fails if a second cli.SessionOpts
 // literal appears in the package.
 //

@@ -193,7 +193,7 @@ type CapsWhatIfAction struct {
 	Caps *protocol.Capability
 	// the scope caps set would write, or the spawn would request; omitted = keep it (a spawn: subtree)
 	Scope *protocol.TaskScope
-	// narrow ONE capability below --scope, as on caps set and submit
+	// narrow ONE capability below --scope, as on caps set and session new
 	Overrides []protocol.ScopeOverride
 	// the delegation bound's caps; omitted = keep it (a spawn: none)
 	DelegateCaps *protocol.Capability
@@ -786,7 +786,7 @@ type SessionExecAction struct {
 // SetCapsAction is built by: caps set.
 type SetCapsAction struct {
 	ActionMarker
-	// new capability set (same syntax as --caps on submit); omitted = keep the task's current caps
+	// new capability set (same syntax as --caps on session new); omitted = keep the task's current caps
 	Caps *protocol.Capability
 	// new scope; omitted = keep the task's current scope
 	Scope *protocol.TaskScope
@@ -816,7 +816,7 @@ type SetDefaultsAction struct {
 	Scope *protocol.TaskScope
 	// narrow ONE capability below --scope in that default (written with --scope)
 	Overrides []protocol.ScopeOverride
-	// delegation bound (--delegate-caps on submit) future spawns carry by default; omitted = leave it as i…
+	// delegation bound (--delegate-caps on session new) future spawns carry by default; omitted = leave it…
 	DelegateCaps *protocol.Capability
 	// delegate scope future spawns carry by default; omitted = leave it as it is
 	DelegateScope *protocol.TaskScope

@@ -119,8 +119,8 @@ const detachDrainTimeout = time.Second
 // frame-encapsulated bytes between the runner and the JS-side xterm.
 //
 // Method form only: the wasm caller (cmd/harness-webui-wasm) holds a single
-// *Client for the lifetime of the page and reuses it across submit/list/
-// cancel/watch/interactive. The session's bidirectional stream lives on top
+// *Client for the lifetime of the page and reuses it across list/cancel/
+// watch/interactive. The session's bidirectional stream lives on top
 // of that connection until DetachInteractive (or page unload) tears it down.
 //
 // The signature mirrors native (`(ctx, repo) (taskIDHex, error)`); the

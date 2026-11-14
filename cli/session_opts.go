@@ -2,8 +2,8 @@ package cli
 
 import "github.com/on-keyday/agent-harness/runner/protocol"
 
-// SessionOpts is the one option bag for creating or resuming a session, shared
-// by the submit (oneshot) and open-interactive paths. It replaces the
+// SessionOpts is the one option bag for creating or resuming a session (the
+// open-interactive path; it was also submit's until A3). It replaces the
 // Submit/Interactive "…WithSelectorArgsAndCaps" ladders, whose 10-11 positional
 // arguments — three of them adjacent strings (repo, resumeTaskID, agentProfile)
 // and two adjacent bools — could be transposed with no compile error. Named

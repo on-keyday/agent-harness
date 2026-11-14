@@ -1,18 +1,17 @@
 // Package agentlog decodes the structured event streams that agent CLIs emit
 // on stdout (claude's --output-format stream-json, codex's --json) into one
-// agent-neutral event type, and renders that type as human-readable log lines.
+// agent-neutral event type, and renders that type as human-readable lines.
 //
-// The runner publishes those lines on a task's log topic, so every operator
-// surface (CLI, TUI, WebUI) shows progress without knowing anything about a
-// particular agent's JSON schema. Decoding here rather than in the UIs is
-// deliberate: it keeps the four display surfaces unchanged.
+// Its consumer is the event-stream kind: runner/streamagent decodes claude's
+// stream (live and on transcript replay) through here, and the stream chats
+// render the neutral events with Render. Until A3 the runner also decoded a
+// oneshot task's stdout into the task log; that path and the log are gone.
 package agentlog
 
 import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"sort"
 	"strings"
 	"unicode/utf8"
 )
@@ -91,39 +90,20 @@ type Decoder interface {
 	Decode(line []byte) []Event
 }
 
-// decodersByFormat is the single source of truth for the non-empty format
-// names this package recognises: every key here is a valid
-// AgentProfile.LogFormat value besides "" (passthrough). NewDecoder and
-// KnownFormats both read this map instead of each carrying their own copy
-// of the name list, so adding a format only requires one edit and the two
-// can never drift apart.
+// decodersByFormat maps the non-empty format names this package recognises to
+// their decoders; "" and any other name are passthrough (NewDecoder).
 var decodersByFormat = map[string]Decoder{
 	"claude-stream-json": claudeStreamJSON{},
 	"codex-jsonl":        codexJSONL{},
 }
 
-// NewDecoder resolves a profile's declared log format. An empty or unrecognised
-// name yields the passthrough decoder, so a misconfigured profile degrades to
-// the pre-existing behaviour (raw lines) instead of failing the task.
+// NewDecoder resolves a format name. An empty or unrecognised name yields the
+// passthrough decoder (raw lines) rather than an error.
 func NewDecoder(format string) Decoder {
 	if d, ok := decodersByFormat[format]; ok {
 		return d
 	}
 	return passthrough{}
-}
-
-// KnownFormats returns the non-empty AgentProfile.LogFormat values NewDecoder
-// resolves to a real decoder, sorted for stable output. Configuration
-// validation (runner.ProfileSet.UnrecognisedLogFormats) reports a profile's
-// LogFormat as unrecognised when it is non-empty and absent from this list,
-// so that check can never diverge from what NewDecoder actually accepts.
-func KnownFormats() []string {
-	out := make([]string, 0, len(decodersByFormat))
-	for name := range decodersByFormat {
-		out = append(out, name)
-	}
-	sort.Strings(out)
-	return out
 }
 
 type passthrough struct{}

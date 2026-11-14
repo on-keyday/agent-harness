@@ -420,7 +420,7 @@ func (c *Client) Close() {
 // DialPeerConn establishes a peer.Conn to the server, transparently routing
 // through a runner proxy when HARNESS_PROXY_VIA_RUNNER is set in the env.
 //
-// All harness-cli subcommands — admin tools (ls, submit, cancel, ...) AND
+// All harness-cli subcommands — admin tools (ls, session new, cancel, ...) AND
 // agent-side helpers (agent send, file push from inside claude, ...) — go
 // through here. Detection is purely env-based:
 //

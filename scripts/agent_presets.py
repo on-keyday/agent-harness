@@ -38,14 +38,14 @@ def bash_bin() -> str:
 
     Never the bare name on Windows. `bash` on PATH there is
     C:\\Windows\\System32\\bash.exe, the WSL launcher, and the runner's
-    exec.LookPath finds it: the profile registers, tasks submit, and each one
+    exec.LookPath finds it: the profile registers, tasks spawn, and each one
     dies with `execvpe(/bin/bash) failed` inside a Linux namespace that has
     never seen this checkout. Observed on a Windows runner, not deduced.
 
     Git for Windows ships a real bash beside the git that a clone of this repo
     already required, so it is derived from there rather than searched for by
     name. POSIX bash on every platform rather than cmd on Windows, because the
-    prompts are written once — in a skill, in a task submitted from Linux — and
+    prompts are written once — in a skill, in a task spawned from Linux — and
     a shell profile is only worth having if the same prompt runs on both.
 
     Shared with scripts/dummy-harness.py, which builds the same profile for its
@@ -184,9 +184,10 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         #
         # No --output-format is requested, unlike claude/codex: agy's
         # stream-json is its own schema ({"event":"init"|"step_update"|
-        # "result"}), NOT claude's, and agentlog has no decoder for it.
-        # Asking for structured output nothing can decode would only make the
-        # task log unreadable, so plain text passes through instead.
+        # "result"}), NOT claude's, and nothing in the harness renders it.
+        # `session new --oneshot` shows the template's output in the PTY
+        # unchanged (A3), so asking for it would only put raw events on the
+        # screen; plain text passes through instead.
         #
         # Verified against agy 1.1.12: `--print` one-shot exits 0 with the
         # response on stdout; `--continue --print` carries context across
@@ -209,8 +210,7 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         #
         # No --format is requested, for agy's reason: opencode's
         # `run --format json` emits its OWN event schema, not claude's, and
-        # agentlog has no decoder for it. Structured output nothing can decode
-        # only makes the task log unreadable, so plain text passes through.
+        # nothing in the harness renders it, so plain text passes through.
         #
         # RESUME SCOPE — the reason this preset could not exist before. The
         # harness gives each task its own linked git worktree, and opencode
@@ -251,9 +251,8 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         # exposure because their CLIs offer no separator; pi does not have to.
         #
         # No --mode json is requested, for agy's reason: pi's json mode emits
-        # its OWN event schema, not claude's, and agentlog has no decoder for
-        # it. Structured output nothing can decode only makes the task log
-        # unreadable, so plain text passes through.
+        # its OWN event schema, not claude's, and nothing in the harness
+        # renders it, so plain text passes through.
         #
         # RESUME SCOPE — the question opencode's entry above had to measure
         # twice. Here it is answered by construction: pi stores sessions

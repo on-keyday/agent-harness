@@ -163,10 +163,10 @@ func TestWhatIfRegrantRefusesBoundOverrides(t *testing.T) {
 }
 
 // A creator without spawn is refused before any grant is computed, as the
-// server's submit gate refuses it, in the words the client prints for it.
+// server's spawn gate refuses it, in the words the client prints for it.
 func TestWhatIfSpawnNeedsSpawn(t *testing.T) {
 	_, err := WhatIf(whatIfTree(), Spawn{Creator: viewG, Caps: cancel})
-	if err == nil || err.Error() != "permission denied: Submit requires capability spawn" {
-		t.Errorf("err = %v, want the submit gate's denial", err)
+	if err == nil || err.Error() != "permission denied: OpenInteractive requires capability spawn" {
+		t.Errorf("err = %v, want the spawn gate's denial", err)
 	}
 }

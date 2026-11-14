@@ -103,7 +103,7 @@ func rejectIfSymlinkInPath(worktreeRoot, fullPath string) error {
 }
 
 // worktreeDirFor returns the on-disk worktree path for taskIDHex, mirroring
-// the logic in handleOpenExec / handleAssign. Returns "" if the task is
+// the logic in handleOpenExec. Returns "" if the task is
 // unknown to this session. The lock is released before returning so callers
 // may safely perform I/O on the result.
 func (s *Session) worktreeDirFor(taskIDHex string) string {

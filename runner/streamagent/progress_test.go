@@ -118,7 +118,7 @@ func TestProgressDisplaysOnTheStatusLineOnly(t *testing.T) {
 		}
 	}
 	if _, ok := RenderText(Msg{Kind: KindProgress, Progress: &Progress{Phase: PhaseText}}); ok {
-		t.Error("a heartbeat renders a log line; the task log is a record, not a pulse")
+		t.Error("a heartbeat renders a transcript line; the transcript is a record, not a pulse")
 	}
 }
 

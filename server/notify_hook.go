@@ -136,7 +136,7 @@ func runNotifyHook(hookCmd string, payload notifyHookPayload) protocol.NotifySta
 	cmd.Stdout = out
 	cmd.Stderr = out
 	// Bound Wait() even if the hook leaves inheriting children holding the
-	// I/O pipes (mirrors runner/process.go). Force-kill I/O after the deadline.
+	// I/O pipes. Force-kill I/O after the deadline.
 	cmd.WaitDelay = notifyHookTimeout
 	if err := cmd.Start(); err != nil {
 		cancel()

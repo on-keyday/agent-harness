@@ -319,7 +319,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // over them; initCaps() is called once after connect (capList needs no conn
   // but the DOM is always ready by then, which is what renderCaps() touches).
   let capDefs = [];          // [{name:string, bit:number}] — populated by initCaps()
-  let spawnCaps = 0;         // bitmask; read by openInteractive / submit on spawn
+  let spawnCaps = 0;         // bitmask; read by openInteractive on spawn
   let applyCapsOnResume = false; // mirrors #caps-on-resume checkbox; default OFF
   let spawnScope = "";       // serialized scope grammar for spawns; "" = the subtree default
   // The delegation bound a FRESH spawn carries: what the new task may hand to
@@ -358,8 +358,8 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // initScope → the spawn checklist reads it before the poller section runs.
   let lastTasks = [];        // latest snapshot; re-render source for filter events
 
-  // sessionReq builds the ONE request object shape the harness.submit /
-  // harness.startInteractive wasm bridges consume. Every session request goes
+  // sessionReq builds the ONE request object shape the
+  // harness.startInteractive wasm bridge consumes. Every session request goes
   // through here so the JS↔Go key names cannot drift and the caps logic is not
   // hand-copied per call site (it was: five sites, and two of them dropped the
   // "override only applies on resume" guard — harmless only because those two
@@ -451,7 +451,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   const agentSelect  = document.getElementById("agent-select");
   const agentArgs    = document.getElementById("agent-args-input");
   // Single unified task-id field, shared by reattach (target a detached
-  // session) and resume (reuse a terminal task's worktree via Submit / Open).
+  // session) and resume (reuse a terminal task's worktree via Open).
   const taskIdInput  = document.getElementById("task-id-input");
   const runnerList   = document.getElementById("runner-list");
   const taskList     = document.getElementById("task-list");
@@ -885,7 +885,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   });
 
   // currentAgentArgs returns the shell-tokenised args from the input box.
-  // Reused by submit (cmdline) and Open buttons so the user only edits one field.
+  // Reused by the cmdline spawn verbs and Open buttons so the user only edits one field.
   const currentAgentArgs = () => {
     if (!agentArgs) return [];
     const raw = agentArgs.value.trim();
@@ -2661,7 +2661,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     }
   });
 
-  // 5. Cmdline submit / cancel / prune.
+  // 5. Cmdline (every verb, e.g. session new / cancel / prune).
   const cmdInput  = document.getElementById("cmd-input");
   const cmdRun    = document.getElementById("cmd-run");
   const cmdOutput = document.getElementById("cmd-output");
@@ -3608,7 +3608,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // the xterm: the tab means "the session I am driving", and which renderer it
   // uses follows the kind. Exactly one of #terminal / #chat is shown.
   //
-  // It reads the STREAM, not the task log. RenderText drops a request's Input
+  // It reads the STREAM, not RenderText's one-liners. RenderText drops a request's Input
   // and agentlog truncates a tool's args at 200 bytes — right for a progress
   // feed, useless for deciding whether to allow a Write whose content is the
   // thing at stake. The Input rides the stream verbatim, so this decodes NDJSON
@@ -5232,7 +5232,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // routeAmbiguous opens the runner-picker modal when e is an ambiguous_runner
   // rejection and returns true (the caller should then `return`); false
   // otherwise. Shared by openInteractive, the resume paths (resumeTaskById /
-  // doResume) and the command input's submit. baseReq is the request that just
+  // doResume) and the command input's session new. baseReq is the request that just
   // failed; reissue sends it again pinned, and defaults to an interactive open.
   function routeAmbiguous(e, baseReq, reissue = reissueInteractive) {
     if (e && e.code === "ambiguous_runner" && Array.isArray(e.candidates)) {
@@ -6665,7 +6665,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     });
 
     // Resume — finished task's worktree, opened as a fresh interactive session.
-    // Reflect the Compose "Extra agent args" box (same as Submit / Open) so a
+    // Reflect the Compose "Extra agent args" box (same as Open) so a
     // resume can carry --permission-mode etc. without going through the cmdline.
     // Assigned variants mirror the TUI's r/R; any-runner variants mirror u/U and
     // intentionally skip t.assignedTo so the ambiguous runner picker can reopen.

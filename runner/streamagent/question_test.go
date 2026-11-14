@@ -204,6 +204,6 @@ func TestQuestionHelpers(t *testing.T) {
 		t.Error("a reply does not stand in for the answers")
 	}
 	if m, ok := RenderText(Msg{Kind: KindRequest, Request: &r}); !ok || !strings.HasPrefix(m, "❓ question: ") {
-		t.Errorf("task log line %q", m)
+		t.Errorf("rendered line %q", m)
 	}
 }

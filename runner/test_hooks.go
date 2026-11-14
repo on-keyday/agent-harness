@@ -10,7 +10,7 @@ import (
 
 // AddFakeTaskForListenServer injects a task entry into the most recently
 // established listen-mode Session. Test-only — used by Phase B integration
-// tests to skip the full Submit+Assign flow (which would spawn claude) and
+// tests to skip the full session-open flow (which would spawn claude) and
 // just register a task_id so the agent-proxy ceremony's HasTask check
 // passes.
 //

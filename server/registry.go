@@ -140,7 +140,7 @@ func (e RunnerEntry) HasProfile(name string) bool {
 	return false
 }
 
-// DefaultProfile returns the profile to use when a submit/resume request
+// DefaultProfile returns the profile to use when an open/resume request
 // doesn't specify one explicitly: the first advertised profile, or AgentBin
 // as the legacy fallback when the runner advertised none.
 func (e RunnerEntry) DefaultProfile() string {
@@ -417,8 +417,8 @@ func (r *Registry) UnbindTask(id objproto.ConnectionID, taskID string) {
 // docs/superpowers/specs/2026-11-12-run-modes-and-records-grand-design.md), so
 // there is no tier of more and less specific roots to rank.
 //
-// This is the one answer to "who may take this task": submit, interactive
-// open and Scheduler.Tick all ask it (G17).
+// This is the one answer to "who may take this task": an interactive open and
+// Scheduler.Tick both ask it (G17).
 //
 // The slice is capacity-agnostic: at-capacity runners are still listed so
 // callers can detect ambiguity even when matching runners are all busy.

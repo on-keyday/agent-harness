@@ -15,8 +15,8 @@ import (
 // ChatModel is the event-stream kind's driving surface: a conversation view
 // over one task's stream, entered with `r` on a live stream task.
 //
-// It reads the STREAM, which is the only place this kind's events are (it
-// writes no task log), and it would have to even if there were a log.
+// It reads the STREAM, which is the only place this kind's events are (A3
+// retired the task log), and it would have to even if there were a log.
 // streamagent.RenderText renders a request as "⏸ approval needed:
 // <tool> (<id>)" and drops Input entirely; agentlog.Render truncates a
 // tool_start's args at 200 bytes. Both are right for a progress feed and wrong
@@ -103,7 +103,7 @@ func (m *ChatModel) Open(ctx context.Context, c *cli.Client, program *tea.Progra
 		// a data race with every keystroke.
 		program.Send(chatAttachedMsg{TaskID: taskID, Sess: sess})
 		// The agent's stderr rides its own frame type and is not NDJSON. It is
-		// interleaved into the transcript: this kind writes no task log, so
+		// interleaved into the transcript: there is no task log (A3), so
 		// the chat is where an agent's complaint is seen. Draining it is also
 		// what keeps it from backpressuring the whole stream.
 		go func() {

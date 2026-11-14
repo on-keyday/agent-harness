@@ -914,12 +914,12 @@ fi
 # runner forwards via --agent-args / session new --agent-arg) arrive in "$@". The
 # container is the confinement boundary; the runner owns claude's arg policy.
 #
-# TTY: the runner runs every session under a real PTY (exec.ExecuteCommand
-# ptyEnabled=true), a `session new --oneshot` one included, so our stdin is a
-# terminal — allocate a TTY inside the container too (-t), else claude's TUI
-# aborts with "stdin is not a TTY". Run under a pipe instead (stdin not a tty),
-# -t would corrupt the captured byte stream — so gate -t on stdin being a
-# terminal.
+# TTY: the runner runs every session in a PTY (exec.ExecuteCommand
+# ptyEnabled=true), `session new --oneshot` included, so under the runner our
+# stdin is a terminal — allocate one inside the container too (-t), else
+# claude's TUI aborts with "stdin is not a TTY". -t stays gated on stdin being
+# a terminal for a direct invocation from a pipe, where -t would corrupt the
+# piped byte stream.
 declare -a TTY=()
 [ -t 0 ] && TTY=( -t )
 

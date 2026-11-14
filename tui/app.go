@@ -240,7 +240,7 @@ type App struct {
 	x11Cancel context.CancelFunc
 
 	// sessionCaps is the default capability mask applied to every spawn
-	// (submit / session new) issued from this TUI session.
+	// (session new, --oneshot included) issued from this TUI session.
 	// Controlled by the `caps` command; defaults to Capability_None.
 	sessionCaps protocol.Capability
 	// sessionScope is the default target scope applied to every spawn, the
@@ -1092,12 +1092,11 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.connected = msg.Connected
 		switch {
 		case msg.Connected:
-			// Nothing to do: a followed task's log is re-followed by the
-			// BindClientMsg handler above. Both messages originate from the
+			// Nothing to do. This and BindClientMsg originate from the
 			// same PersistLoop reconnect, but this one is emitted first —
 			// cli/persist.go calls emit(Connected) synchronously and only
-			// then spawns the goroutine that sends BindClientMsg — so do not
-			// assume the re-follow has already happened here.
+			// then spawns the goroutine that sends BindClientMsg — so
+			// a.client may still be the dead connection's here.
 		case msg.Reconnecting:
 			txt := fmt.Sprintf("reconnecting (attempt %d, next try in %s)",
 				msg.Attempt, msg.NextRetry.Truncate(time.Second))
@@ -2319,7 +2318,7 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 }
 
 // uniqueRepoPaths returns the de-duplicated list of allowed-root paths from a
-// runner snapshot, in stable (sorted) order — used to populate the submit
+// runner snapshot, in stable (sorted) order — used to populate the one-shot
 // popup's repo selector.
 func uniqueRepoPaths(rs []protocol.RunnerInfo) []string {
 	seen := make(map[string]struct{}, len(rs))
@@ -2342,7 +2341,7 @@ func uniqueRepoPaths(rs []protocol.RunnerInfo) []string {
 }
 
 // uniqueHostnames returns the de-duplicated list of runner hostnames from a
-// snapshot, in stable (sorted) order — used to populate the submit popup's
+// snapshot, in stable (sorted) order — used to populate the one-shot popup's
 // optional host-pin selector.
 func uniqueHostnames(rs []protocol.RunnerInfo) []string {
 	seen := make(map[string]struct{}, len(rs))
@@ -2364,7 +2363,7 @@ func uniqueHostnames(rs []protocol.RunnerInfo) []string {
 
 // uniqueAgentProfiles returns the de-duplicated union of agent profiles
 // advertised across a runner snapshot, in stable (sorted) order — used to
-// populate the submit popup's agent selector (§6 TUI compose flow). A
+// populate the one-shot popup's agent selector (§6 TUI compose flow). A
 // runner that advertises no explicit AgentProfiles (legacy runner) falls
 // back to its single implicit AgentBin profile, mirroring the server's
 // RunnerEntry.DefaultProfile/advertisedProfiles fallback (server/registry.go,

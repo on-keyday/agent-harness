@@ -61,7 +61,7 @@ type TaskEntry struct {
 	AuthorityActor  protocol.TaskID
 	AuthorityAt     time.Time
 	// AgentProfile is the resolved agent profile name for this task, chosen
-	// by the submit-path filter/resolution (server/task_handler.go) from the
+	// by the spawn-path filter/resolution (server/task_handler.go) from the
 	// bound runner's advertised RunnerHello.AgentProfiles. Set at Create time;
 	// empty for legacy runners that advertised no profiles (the runner falls
 	// back to its AgentBin at exec time; see RunnerEntry.DefaultProfile).
@@ -100,9 +100,8 @@ type TaskEntry struct {
 	BoundRunnerID string
 	// ExtraArgs are per-task CLI arguments that the runner appends to its
 	// runner-global --agent-args baseline before exec'ing the agent.
-	// Sourced from SubmitRequest.ExtraArgs / OpenInteractiveRequest.ExtraArgs
-	// at task creation time and forwarded verbatim through AssignTask /
-	// OpenExecRunnerRequest to the runner.
+	// Sourced from OpenInteractiveRequest.ExtraArgs at task creation time and
+	// forwarded verbatim through OpenExecRunnerRequest to the runner.
 	ExtraArgs []string
 	// ResumeConversation asks the runner to resume agent-side conversation
 	// state for this run, separate from the harness task/worktree resume.
@@ -250,10 +249,11 @@ func newTaskID() string {
 }
 
 // Create adds a new Queued task for the given repo, prompt, kind, and
-// origin. It returns the new task's ID (32 lowercase hex characters). Use
-// TaskKind_Oneshot for prompt-driven submits and TaskKind_Interactive for
-// PTY claude sessions opened via OpenInteractive. origin records which kind
-// of caller (cli / tui / webui) submitted the task; pass
+// origin. It returns the new task's ID (32 lowercase hex characters). kind is
+// TaskKind_Interactive for a PTY session (a `session new --oneshot` included:
+// that is RunSpec.Oneshot, not a kind) or TaskKind_Stream for an event-stream
+// one; nothing creates TaskKind_Oneshot since A3. origin records which kind
+// of caller (cli / tui / webui) created the task; pass
 // ClientKind_Unspecified when the caller is unknown (e.g. tests, internal
 // scheduler bookkeeping).
 //
@@ -655,7 +655,7 @@ func (s *TaskStore) SwapWithParent(id string) (target, former TaskEntry, err err
 
 // ResumeError is the typed error TaskStore.Resume returns when the resume
 // preconditions fail. The handler maps these to wire-level
-// SubmitStatus_ResumeNotFound / SubmitStatus_ResumeNotTerminal codes.
+// OpenInteractiveStatus_ResumeNotFound / _ResumeNotTerminal codes.
 type ResumeError uint8
 
 const (
@@ -694,8 +694,8 @@ func (e ResumeError) Error() string {
 //
 // newKind and agentProfile make mode (Kind) and profile per-open,
 // latest-recorded attributes (spec §4c / §4b): each resume records which
-// mode it was invoked as (submit → Oneshot, open_interactive → Interactive)
-// and which profile was resolved for this open, independent of the values
+// mode it was invoked as (Interactive or Stream; before A3 a submit resume
+// recorded Oneshot) and which profile was resolved for this open, independent of the values
 // the task was originally Created with.
 func (s *TaskStore) Resume(id, prompt string, extraArgs []string, selector protocol.RunnerSelector, boundRunnerID string, resumerKind protocol.ClientKind, u GrantUpdate, newKind protocol.TaskKind, agentProfile string, resumer protocol.TaskID, resumeConversation bool, run RunSpec) (TaskEntry, error) {
 	s.mu.Lock()
@@ -1262,7 +1262,8 @@ func (s *TaskStore) MarkHold(id, runnerIdentityHex, holdIDHex string, deadlineNs
 // detached picks the status this lands on, and the two are not variants of one
 // transition — they are what re-adoption MEANS for the two kinds. A session
 // (interactive/stream) comes back with a live child and no client, which is
-// Detached; a oneshot has no client to be missing and comes back Running.
+// Detached; a oneshot (only a runner from before A3 can still hold one) has
+// no client to be missing and comes back Running.
 //
 // It lands there in ONE hold of the lock rather than passing through Running
 // and being moved on by SetDetached. The intermediate had no reader — it

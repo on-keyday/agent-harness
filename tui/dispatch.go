@@ -605,7 +605,7 @@ func (h tuiVerbs) SessionStreamAttach(v verb.SessionAction) tea.Cmd {
 		return nil
 	}
 	// The chat IS the TUI's follower for this kind: it reads the stream the
-	// CLI's `session stream attach` reads, and this kind writes no task log.
+	// CLI's `session stream attach` reads; there is no task log (A3).
 	return h.a.openChat(full)
 }
 

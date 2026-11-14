@@ -24,8 +24,8 @@ type ServerDialResultMsg struct {
 // requests the server to relay through the named runner (Phase C).
 //
 // Reuses the long-lived client established by App.BindClient instead of opening
-// a fresh peer.Conn per call — every other TUI action (submit/cancel/interactive
-// /file/session) follows this pattern.
+// a fresh peer.Conn per call — every other TUI action (cancel/file/session)
+// follows this pattern.
 func DoServerDialRunner(c *cli.Client, runnerCIDStr, viaCIDStr string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

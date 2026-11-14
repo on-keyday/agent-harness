@@ -62,10 +62,9 @@ type TaskRegistry struct {
 	// server accepts or refuses each task after the reconnect.
 	hold *armedHold
 
-	// pending holds the ids, by task id hex, of tasks whose AssignTask or
-	// OpenExec has arrived but which are not registered yet: the AssignTask body
-	// and the OpenExec stream are fetched on a goroutine of their own, so a
-	// CancelTask can overtake them. true means one did. The task is then
+	// pending holds the ids, by task id hex, of tasks whose OpenExec has
+	// arrived but which are not registered yet: the OpenExec stream is fetched
+	// on a goroutine of its own, so a CancelTask can overtake it. true means one did. The task is then
 	// refused at registration rather than started, because handleCancelTask has
 	// already told the server it is over.
 	//
@@ -205,7 +204,7 @@ func (r *TaskRegistry) put(taskIDHex string, e *taskEntry) {
 
 // beginPending marks a task as on its way in (see pending). Called from the
 // receive loop, synchronously, before the goroutine that will register it, so
-// a CancelTask delivered after the AssignTask/OpenExec always finds the mark.
+// a CancelTask delivered after the OpenExec always finds the mark.
 func (r *TaskRegistry) beginPending(taskIDHex string) {
 	if r == nil {
 		return

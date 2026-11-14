@@ -8,9 +8,9 @@ import (
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
-// The spawn family -- submit, session new -- shares almost all of its grammar,
-// so it is built from one list rather than two that drift. The differences are
-// real and few, and each is named below.
+// The spawn grammar is built from one list. `submit` shared it with
+// `session new` until A3 retired the oneshot kind; spawnKind is what is left
+// of the per-verb differences.
 type spawnKind int
 
 const (

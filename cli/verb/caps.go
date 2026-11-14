@@ -91,7 +91,7 @@ func CapDescription(c protocol.Capability) string {
 		return "no capabilities; data-plane only (agentboard messaging within the task's base set — " +
 			"self, creator, direct children, chat.operator, whoever messaged it directly — and own task ls)"
 	case protocol.Capability_Spawn:
-		return "create tasks (submit, open sessions); does NOT resume — see resume. " +
+		return "create tasks (session new, --oneshot included); does NOT resume — see resume. " +
 			"Opening a session without -d also needs exec_control"
 	case protocol.Capability_Resume:
 		return "resume a finished task under its own id, free to change prompt, args, agent, kind, caps and scope; " +
@@ -334,8 +334,7 @@ func CapsLabel(c protocol.Capability) string {
 	return strings.Join(names, ",")
 }
 
-// CapsFlagUsage is the --caps help text for submit / session
-// new. It lived as three identical literals, which is exactly the shape that
+// CapsFlagUsage is the --caps help text for session new. It lived as three identical literals, which is exactly the shape that
 // ends up describing two different defaults after one edit.
 //
 // One text on every surface now. The TUI used to carry its own (capsFlagUsage

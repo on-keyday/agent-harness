@@ -546,7 +546,6 @@ def start_harness(st: dict, args, extra: list[str]) -> None:
             "--agent-resume-oneshot-argv",
             "--output-format stream-json --verbose {args} --continue -p {prompt}",
             "--agent-resume-interactive-argv", "{args} --continue",
-            "--agent-log-format", "claude-stream-json",
         ]
     else:
         fake = tmp / "fake-claude.py"
@@ -559,7 +558,6 @@ def start_harness(st: dict, args, extra: list[str]) -> None:
             f"{fake} --output-format stream-json --verbose {{args}} "
             f"--continue -p {{prompt}}",
             "--agent-resume-interactive-argv", f"{fake} {{args}} --continue",
-            "--agent-log-format", "claude-stream-json",
         ]
     runner_args += extra
 

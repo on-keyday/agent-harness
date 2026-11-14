@@ -29,7 +29,7 @@ func TestAgentCLI_E2E_Topics(t *testing.T) {
 
 	// Inject TaskStore entries so agentCallerCaps can resolve Capability_BoardObserve.
 	// In production, every agentboard agent has a TaskStore entry created at task
-	// spawn time (sendAssign). The E2E test bypasses that path, so we replay a
+	// spawn time (a session open). The E2E test bypasses that path, so we replay a
 	// synthetic task_created event here to make the gate work the same way.
 	srv.Tasks().ReplayEvents([]server.WALEvent{
 		{

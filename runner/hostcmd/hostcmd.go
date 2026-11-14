@@ -20,10 +20,10 @@
 // "the agent runs in a PTY the operator attaches to". That is true of the
 // ATTACHABLE agent and it is not that file: the attachable one goes through
 // agentexec.ExecuteCommandWithOption (runner/session.go, exec_run.go,
-// streamtask.go), which carries the flag itself, while runner/process.go is the
-// ONESHOT path whose stdout goes to a LogSink and whose console nobody ever
-// looks at. So every oneshot task on a Windows runner popped a window for its
-// whole life, reported from the desktop it happened on. The exclusion was
+// streamtask.go), which carries the flag itself, while runner/process.go was
+// the ONESHOT path (retired in A3) whose stdout went to a LogSink and whose
+// console nobody ever looked at. So every oneshot task on a Windows runner
+// popped a window for its whole life, reported from the desktop it happened on. The exclusion was
 // written per FILE where it meant per PATH.
 //
 // One host-helper path does NOT come through here and cannot: `exec` runs its

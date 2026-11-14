@@ -630,12 +630,7 @@ func emitBuild(buf *bytes.Buffer, v verb.VerbSpec, key, action string) {
 		}
 		if v.Trailing != nil {
 			if v.Trailing.Field != "" {
-				if v.Trailing.IfFieldEmpty {
-					fmt.Fprintf(buf, "\t\tif a.%s == \"\" {\n\t\t\ta.%s = b.Trail\n\t\t}\n",
-						v.Trailing.Field, v.Trailing.Field)
-				} else {
-					fmt.Fprintf(buf, "\t\ta.%s = b.Trail\n", v.Trailing.Field)
-				}
+				fmt.Fprintf(buf, "\t\ta.%s = b.Trail\n", v.Trailing.Field)
 			}
 			if v.Trailing.FieldArgs != "" {
 				if v.Trailing.JoinWhen != "" {

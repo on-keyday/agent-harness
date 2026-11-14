@@ -11,8 +11,8 @@ import (
 // responds with TaskControlKind_PermissionDenied. It carries the operation
 // kind that was attempted and the capability the server required.
 type CapabilityDeniedError struct {
-	// RequestedKind is the TaskControlKind the client sent (e.g. Submit,
-	// OpenInteractive) that the server rejected.
+	// RequestedKind is the TaskControlKind the client sent (e.g.
+	// OpenInteractive, Cancel) that the server rejected.
 	RequestedKind protocol.TaskControlKind
 	// RequiredCap is the capability the server required for the operation.
 	//

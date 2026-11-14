@@ -20,10 +20,10 @@ type StartFunc func(runnerID objproto.ConnectionID, taskID string) error
 // It is the orchestration glue between Registry and TaskStore.
 //
 // Concurrency: Tick takes an internal mutex so concurrent callers (OnChange
-// fires from per-connection goroutines: submit/cancel/runner-control/
-// disconnect) cannot observe the same Queued task between the assign-send and
-// the subsequent state mutation. Without this serialization a task could be
-// AssignTask'd twice — the runner would then create the same worktree branch
+// fires from per-connection goroutines: open/cancel/runner-control/
+// disconnect) cannot observe the same Queued task between the start and the
+// subsequent state mutation. Without this serialization a task could be
+// started twice — the runner would then create the same worktree branch
 // twice and the second attempt would fail with "branch already exists".
 type Scheduler struct {
 	mu    sync.Mutex

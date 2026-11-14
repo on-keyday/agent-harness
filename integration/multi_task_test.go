@@ -460,9 +460,10 @@ func TestIntegrationCancelKillsClaude(t *testing.T) {
 		t.Fatalf("cancel: %v", err)
 	}
 
-	// The task should transition to Cancelled. The process receives SIGTERM
-	// and has 5s WaitDelay before SIGKILL; then TaskFinished arrives at the
-	// server, but Cancel's idempotency means the state stays Cancelled.
+	// The task should transition to Cancelled. The cancel hangs the PTY's
+	// child up (SIGHUP, then SIGTERM and SIGKILL within 2s; a context cancel
+	// backstops it at 5s); then TaskFinished arrives at the server, but
+	// Cancel's idempotency means the state stays Cancelled.
 	eventually(t, func() bool {
 		ti := getTask(t, c, id)
 		return ti.Status == protocol.TaskStatus_Cancelled && ti.EndedAt != 0

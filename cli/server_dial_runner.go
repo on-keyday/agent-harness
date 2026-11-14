@@ -14,7 +14,7 @@ import (
 //
 // We deliberately reuse the existing RoundTripTaskControl signature rather
 // than introducing a new SendTaskControlRequest wrapper: the existing
-// per-request-id correlator already lives there, and Submit/List/Cancel
+// per-request-id correlator already lives there, and List/Cancel/OpenInteractive
 // all funnel through it. Defining a fresh interface (instead of leaning on
 // a shared one in client.go) keeps the test surface tiny and avoids
 // coupling this helper to the full *Client API.

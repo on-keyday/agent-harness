@@ -10,7 +10,7 @@ import (
 	"github.com/on-keyday/agent-harness/runner/streamagent"
 )
 
-// The follow view and the task log must render one message identically — both
+// The follow view and the chats must render one message identically — both
 // go through streamagent.RenderText, and this pins the contract from the CLI
 // side so a local re-wording here would fail loudly rather than drift.
 func TestRenderStreamLineMatchesTheSharedRenderer(t *testing.T) {

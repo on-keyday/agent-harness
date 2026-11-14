@@ -372,9 +372,10 @@ func (s *Server) captureHeldScreen(taskIDHex string) {
 	}
 	mux := s.taskHandler.Sessions.Get(taskIDHex)
 	if mux == nil {
-		// A oneshot has none, which is ordinary. An INTERACTIVE task with no
-		// mux here is not: it means the session registry was already emptied,
-		// and the rebind that follows will have no screen to replay.
+		// A oneshot (a pre-A3 runner's) has none, which is ordinary. An
+		// INTERACTIVE task with no mux here is not: it means the session
+		// registry was already emptied, and the rebind that follows will have
+		// no screen to replay.
 		s.cfg.Logger.Info("hold: no session mux to capture", "task", taskIDHex)
 		return
 	}

@@ -150,17 +150,15 @@ func (ps ProfileSet) UnresolvableStreamAdapters() []string {
 
 // ResolveBinPaths replaces each profile's Bin with its exec.LookPath +
 // filepath.Abs resolution, in place, and returns a warning line per profile
-// whose Bin could not be resolved (that Bin is kept verbatim, so the spawn
-// fails later exactly as it would today — e.g. a binary installed after
-// runner startup still works for the oneshot path).
+// whose Bin could not be resolved (that Bin is kept verbatim, so the failure
+// surfaces at spawn rather than stopping the runner from starting).
 //
-// This must run once at startup, before any Bin reaches the exec layer: the
-// oneshot path (os/exec.CommandContext) PATH-resolves a bare name itself,
-// but the interactive path hands Bin to go-pty, whose Windows lookExtensions
-// joins a bare name onto cmd.Dir (the task worktree) and never consults
-// PATH — a bare --agent-bin spawns oneshots fine and fails every
-// interactive/PTY session. Resolving to an absolute path here removes that
-// asymmetry on every platform.
+// This must run once at startup, before any Bin reaches the exec layer: every
+// spawn hands Bin to go-pty, whose Windows lookExtensions joins a bare name
+// onto cmd.Dir (the task worktree) and never consults PATH, so a bare
+// --agent-bin failed every PTY session (while the oneshot path A3 retired,
+// which PATH-resolved through os/exec, worked). Resolving to an absolute path
+// here makes a bare name work on every platform.
 func (ps *ProfileSet) ResolveBinPaths() []string {
 	var warns []string
 	for i := range ps.profiles {

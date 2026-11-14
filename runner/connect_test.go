@@ -39,7 +39,6 @@ func TestRunnerHandlesCancelTaskCallsCancelFunc(t *testing.T) {
 	s := &Session{
 		AllowedRoots: []string{"/repo"},
 		Profiles:     singleProfile(t, "/bin/true"),
-		Timeout:      30 * time.Second,
 		Sender:       ms,
 		Now:          time.Now,
 	}

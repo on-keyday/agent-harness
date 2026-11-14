@@ -116,8 +116,8 @@ func (c *mainConfig) bindFlags(fs *flag.FlagSet) {
 	fs.IntVar(&c.MaxTasks, "max-tasks", c.MaxTasks, "maximum number of concurrent tasks (>= 1)")
 	fs.StringVar(&c.AgentBin, "agent-bin", c.AgentBin, "path to the agent binary")
 	fs.StringVar(&c.AgentArgs, "agent-args", c.AgentArgs, "extra args passed to the agent before the task args (whitespace-separated, e.g. \"--dangerously-skip-permissions\")")
-	fs.StringVar(&c.AgentOneshotArgv, "agent-oneshot-argv", c.AgentOneshotArgv, "argv template for oneshot tasks; tokens {args} and {prompt}; default \"{args} -p {prompt}\"")
-	fs.StringVar(&c.AgentResumeOneshotArgv, "agent-resume-oneshot-argv", c.AgentResumeOneshotArgv, "argv template for --resume-conversation oneshot tasks; tokens {args} and {prompt}; default \"{args} --continue -p {prompt}\"")
+	fs.StringVar(&c.AgentOneshotArgv, "agent-oneshot-argv", c.AgentOneshotArgv, "argv template for `session new --oneshot`; tokens {args} and {prompt}; default \"{args} -p {prompt}\"")
+	fs.StringVar(&c.AgentResumeOneshotArgv, "agent-resume-oneshot-argv", c.AgentResumeOneshotArgv, "argv template for a `session new --oneshot` that resumes the conversation; tokens {args} and {prompt}; default \"{args} --continue -p {prompt}\"")
 	fs.StringVar(&c.AgentInteractiveArgv, "agent-interactive-argv", c.AgentInteractiveArgv, "argv template for FRESH interactive opens; tokens {args} and {prompt} (the session's initial prompt; a token holding {prompt}, whole or as in --prompt={prompt}, is dropped when there is none, and a prompt sent to a template without it fails the task prompt_unsupported); default \"{args}\" (the bare binary) — e.g. \"chat {args} {prompt}\"")
 	fs.StringVar(&c.AgentResumeInteractiveArgv, "agent-resume-interactive-argv", c.AgentResumeInteractiveArgv, "argv template for --resume-conversation interactive opens; tokens {args} and {prompt}, as --agent-interactive-argv; default \"{args} --continue\"")
 	fs.StringVar(&c.AgentProfilesJSON, "agent-profiles", c.AgentProfilesJSON, "JSON array of extra agent profiles: [{name,bin,oneshotArgv,resumeOneshotArgv,interactiveArgv,resumeInteractiveArgv,agentArgs,streamAdapter,transcriptStore}]; a logFormat key is ignored since A3, kept so a replayed argv still starts")
@@ -208,7 +208,7 @@ func (c *mainConfig) validate() error {
 //
 // A non-empty dir that yields zero skills is an ERROR rather than a silent
 // fallback. Skill injection is a best-effort step in the task path (its failure
-// is only Warn-logged, see session.go handleAssign), so a typo'd path would
+// is only Warn-logged, see session.go handleOpenExec), so a typo'd path would
 // otherwise produce tasks with no skills at all and nothing louder than one
 // warning per task. Failing at startup puts the mistake where the operator is
 // still looking.

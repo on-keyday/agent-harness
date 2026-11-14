@@ -10,7 +10,7 @@ import (
 	"github.com/google/shlex"
 )
 
-// popupFocus tracks which sub-field of the submit popup currently receives
+// popupFocus tracks which sub-field of the one-shot popup currently receives
 // keystrokes. Cycled by Ctrl+E. The textarea (prompt) is the primary focus;
 // the args field is one shlex-parsed line of per-task --agent-arg values;
 // the resume field holds an optional 32-hex task id to revive.
@@ -87,7 +87,7 @@ func (m *PopupModel) Close() {
 }
 
 // ToggleFocus cycles the active editable field: prompt → args → resume →
-// prompt. Used by app.go on Ctrl+E so the user can edit each per-submit
+// prompt. Used by app.go on Ctrl+E so the user can edit each per-spawn
 // option without leaving the popup.
 func (m *PopupModel) ToggleFocus() {
 	switch m.focus {

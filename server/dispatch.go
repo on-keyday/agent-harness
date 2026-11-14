@@ -147,8 +147,7 @@ func taskIDFromHex(taskIDHex string) protocol.TaskID {
 // all. On the PTY path a cancel hangs the child up (SIGHUP, then SIGTERM and
 // SIGKILL within 2s; a context cancel backstops it at 5s), and a stream
 // session's process group gets SIGTERM and SIGKILL after 2s (pillar A spec,
-// A-D16); a oneshot's SIGTERM has 5s of grace (runner/process.go). So the first
-// resend can precede the answer; a resent CancelTask is harmless (the runner's
+// A-D16). So the first resend can precede the answer; a resent CancelTask is harmless (the runner's
 // second cancel of a session is a no-op).
 var defaultCancelResendDelays = []time.Duration{
 	3 * time.Second, 6 * time.Second, 12 * time.Second, 24 * time.Second,

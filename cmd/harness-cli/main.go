@@ -127,11 +127,33 @@ func main() {
 		return
 	}
 	// A family word with no sub-verb -- `file`, `session`, `board` -- reaches
-	// here, and so does an outright unknown one.
-	if !familyUsageTo(os.Stderr, sub) {
+	// here, and so does an outright unknown one. A retired verb gets the one
+	// line naming its replacement instead of the full usage, which would bury
+	// it.
+	if !retiredVerbHintTo(os.Stderr, sub) && !familyUsageTo(os.Stderr, sub) {
 		usage()
 	}
 	os.Exit(2)
+}
+
+// retiredVerbs maps a verb the table no longer declares to what replaced it.
+// TestRetiredVerbsAreNotDeclared keeps an entry from shadowing a verb that
+// comes back.
+var retiredVerbs = map[string]string{
+	"submit": "`submit` is retired: use `session new --oneshot` " +
+		"(with --background --deadline D --agent A to queue it while every runner is busy)",
+	"logs": "`logs` is retired with the task log: read a run with `session snapshot <id>` " +
+		"or `session attach <id>`, an agent's transcript with `transcript get`",
+}
+
+// retiredVerbHintTo writes head's replacement if head is a retired verb, and
+// reports whether it was one.
+func retiredVerbHintTo(w io.Writer, head string) bool {
+	hint, ok := retiredVerbs[head]
+	if ok {
+		fmt.Fprintf(w, "harness-cli: %s\n", hint)
+	}
+	return ok
 }
 
 // familyUsageTo writes one family's help: its synopses and notes, straight
@@ -309,13 +331,13 @@ func usageTo(w io.Writer) {
 	}
 	printFamilyNotes(w, family)
 
-	// The two flags every spawn verb carries, described ONCE and from the
+	// The two flags the spawn verb carries, described ONCE and from the
 	// declaration: CapsFlagUsage is the same string the --caps flag's own
 	// help is built from, and ScopeGrammar is what ParseScope accepts. The
 	// old text restated both per verb, which is how "default all" survived
 	// the flip to default-none in three places at once.
 	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "Authority (submit / interactive / session new, and `caps set` on a live task):")
+	fmt.Fprintln(w, "Authority (session new, and `caps set` on a live task):")
 	fmt.Fprintf(w, "  --caps   %s\n", verb.CapsFlagUsage)
 	fmt.Fprintf(w, "  --scope  which tasks those caps may target: %s (default subtree)\n", cli.ScopeGrammar)
 	// Four spaces, not two: at two the reverse guard reads the first word as

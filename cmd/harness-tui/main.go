@@ -30,7 +30,7 @@ const (
 
 var (
 	serverCID  = flag.String("server-cid", "", "harness-server ConnectionID (e.g. ws:host:port-id, * for random; env HARNESS_SERVER_CID; default "+defaultServerCID+")")
-	repoFlag   = flag.String("repo", "", "default repo path for submit popup; must match a runner-registered RepoPath verbatim (no client-side normalization, since runner may be on a different OS)")
+	repoFlag   = flag.String("repo", "", "default repo path for spawns (the one-shot popup and command-line verbs); must match a runner-registered RepoPath verbatim (no client-side normalization, since runner may be on a different OS)")
 	wsPath     = flag.String("ws-path", "", "WebSocket URL path (env HARNESS_WS_PATH; default "+defaultWSPath+")")
 	configPath = flag.String("config", "", "workspace config file (env HARNESS_CONFIG; default ./.harness/config)")
 	wsName     = flag.String("workspace", "", "workspace to apply on start and on every reconnect (see `workspace ls`)")

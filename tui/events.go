@@ -204,7 +204,7 @@ func SubscribeNotifications(ctx context.Context, c *cli.Client, program *tea.Pro
 // SubscribedMsg reports a successful JOIN of a pubsub topic. Resubscribed is
 // true when this join replaced an earlier stream that died mid-connection —
 // the App uses that to gap-fill state the dead stream missed (snapshot
-// refresh for status topics, history re-fetch for a followed task log).
+// refresh for the status topics).
 type SubscribedMsg struct {
 	Topic        string
 	Resubscribed bool

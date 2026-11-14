@@ -74,7 +74,7 @@ func TestResolveAgentSkillsDirFlagBeatsEnv(t *testing.T) {
 }
 
 // A path that resolves to no skills must fail at STARTUP. Skill injection
-// itself is Warn-only in the task path (session.go handleAssign), so a typo
+// itself is Warn-only in the task path (session.go handleOpenExec), so a typo
 // would otherwise be invisible except as one warning per task, with every task
 // silently running without skills.
 func TestResolveAgentSkillsDirEmptyIsFatal(t *testing.T) {

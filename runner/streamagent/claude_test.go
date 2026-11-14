@@ -377,8 +377,8 @@ func TestSecondAnswerIsRefused(t *testing.T) {
 	}
 }
 
-// The agent's stderr goes to the task log verbatim, and never onto the neutral
-// stream where it would be parsed as a message.
+// The agent's stderr passes through verbatim on the adapter's stderr, and never
+// onto the neutral stream where it would be parsed as a message.
 func TestAgentStderrStaysVerbatimAndOffTheNeutralStream(t *testing.T) {
 	argvFile := filepath.Join(t.TempDir(), "argv")
 	agent := fakeAgent(t, argvFile,

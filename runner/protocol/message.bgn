@@ -77,9 +77,8 @@ format AgentArg:
     arg :[arg_len]u8
 
 # AgentArgs is a length-prefixed list of per-task extra CLI arguments.
-# Inserted by clients (cli / tui / webui) at submit / open-interactive time;
-# carried through SubmitRequest / OpenInteractiveRequest to AssignTask /
-# OpenExecRunnerRequest so the runner can append them to the runner-global
+# Inserted by clients (cli / tui / webui) at open-interactive time; carried
+# through OpenInteractiveRequest to OpenExecRunnerRequest so the runner can append them to the runner-global
 # --agent-args baseline before exec'ing the agent.
 format AgentArgs:
     args_len :u16
@@ -233,8 +232,8 @@ format HeldTask:
     # in-memory map, so a restart forgets every ticket while the surviving
     # agent keeps presenting its own; re-registering a freshly minted one
     # answers BadTicket. The runner is the right carrier because it already
-    # knows this value -- it received it in AssignTaskBody.AuthTicket (oneshot)
-    # or OpenExecRunnerRequest.AuthTicket (interactive) and wrote the env
+    # knows this value -- it received it in OpenExecRunnerRequest.AuthTicket
+    # (AssignTaskBody.AuthTicket for a oneshot, before A3) and wrote the env
     # itself.
     ticket :[16]u8
 
@@ -277,9 +276,9 @@ format HeldTasksReport:
 
 # Server -> runner, RunnerRequestType.rebind_session. Re-adoption of an
 # INTERACTIVE task: the server has created a fresh bidi stream and the runner
-# must splice the PTY it is already holding onto it. The oneshot path needs no
-# rebind -- its output goes to the log topic, addressed by task id rather than
-# by a stream. A rebind that cannot be honoured (the child died since the
+# must splice the PTY it is already holding onto it. The oneshot path (retired
+# in A3) needed no rebind -- its output went to the log topic, addressed by
+# task id rather than by a stream. A rebind that cannot be honoured (the child died since the
 # report) is answered with the existing
 # TaskFinished{exit_code:-1, error_message:"rebind_failed: ..."}, which the
 # server already handles as Finish + UnbindTask + Revoke.
@@ -287,6 +286,8 @@ format RebindSessionRequest:
     task_id :TaskID
     stream_id :u64   # u64 to match OpenExecRunnerRequest.stream_id
 
+# Retired in A3 with the oneshot kind: a current server never sends it, and a
+# current runner logs one from an older server. Kept so the wire still decodes.
 format AssignTask:
     # Server-initiated send-stream id; runner reads AssignTaskBody bytes
     # from this stream until EOF, then decodes. 0 = no stream available
@@ -984,7 +985,10 @@ enum TaskStatus:
     Held
 
 # TaskKind distinguishes how the task was requested.
-#  - oneshot:     submitted via SubmitRequest, claude runs with -p prompt and exits
+#  - oneshot:     submitted via SubmitRequest, claude ran with -p prompt and
+#                 exited. Retired in A3: nothing creates one, and it stays
+#                 value 0 so a WAL written before A3 replays and displays.
+#                 `session new --oneshot` is an interactive task.
 #  - interactive: opened via OpenInteractiveRequest, claude runs under a PTY
 #                 spliced bytewise to the requesting client. Its prompt, if
 #                 any, is the agent's first turn (OpenInteractiveRequest.prompt_present).
@@ -1327,6 +1331,9 @@ format RunnerSelector:
         RunnerSelectorKind.by_ip        => ip_addr   :IPAddr
         RunnerSelectorKind.by_conn_id   => conn_id   :ConnID
 
+# Retired in A3: a current server answers a submit with an error naming
+# `session new --oneshot`. Kept so an older client's request still decodes;
+# OpenInteractiveRequest's fields still point here for their semantics.
 format SubmitRequest:
     repo_path_len :u16
     repo_path :[repo_path_len]u8
@@ -1508,6 +1515,7 @@ format PruneTasksResponse:
     skipped_active :u32    # id-mode only: tasks not pruned because still active and force=0
     skipped_missing :u32   # id-mode only: ids that were not present in the server's task store
 
+# Retired in A3 with the task log: a current server answers found=0.
 format GetTaskLogRequest:
     task_id :TaskID
 

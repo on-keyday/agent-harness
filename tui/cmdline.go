@@ -21,7 +21,7 @@ import (
 type Action = verb.Action
 
 // ParseCommand tokenizes and parses one input line. defaultRepo is used when
-// `submit` is invoked without --repo (typically the cwd).
+// a spawn verb is invoked without --repo (typically the cwd).
 // Returns (nil, nil) for empty / whitespace-only input.
 func ParseCommand(input, defaultRepo string) (Action, error) {
 	tokens, err := shlex.Split(input)

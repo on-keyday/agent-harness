@@ -2,8 +2,8 @@
 
 // Command harness-webui-wasm is the wasm entry binary for the browser web UI.
 // It exposes a Promise-based JS API on window.harness so the page-side
-// JavaScript can drive the harness CLI flows (connect / submit / list /
-// cancel / watch / prune / interactive*) without bundling a transport-aware
+// JavaScript can drive the harness CLI flows (connect / list / cancel /
+// watch / prune / interactive*) without bundling a transport-aware
 // JS client. See docs/superpowers/specs/2026-04-26-wasm-transport-design.md.
 //
 // The wasm side reuses the same cli.* helpers as the native CLI; the
