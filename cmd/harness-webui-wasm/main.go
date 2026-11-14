@@ -3644,6 +3644,8 @@ func runModeFromOpts(opts js.Value) (cli.RunModeFlags, error) {
 	if f.TurnEnd, err = verb.ParseTurnEnd(optString(opts, "turnEnd")); err != nil {
 		return f, err
 	}
+	// session new --oneshot (A3, A-D29).
+	f.Oneshot = opts.Get("oneshot").Type() == js.TypeBoolean && opts.Get("oneshot").Bool()
 	return f, recordFromOpts(opts, &f)
 }
 

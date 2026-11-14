@@ -137,6 +137,9 @@ func spawnFlags(k spawnKind) []Flag {
 			Help: "record this run's PTY output on the server (`record get` reads it back; needs record_persist)"},
 		Flag{Name: "no-record", Type: FlagBool, Default: false, Field: "NoRecord",
 			Help: "do not record this run's PTY output, whatever the server's default"},
+		// A3 (A-D29): the profile's print-mode argv in the PTY.
+		Flag{Name: "oneshot", Type: FlagBool, Default: false, Field: "Oneshot",
+			Help: "run the agent's one-shot (print-mode) argv in the session, which ends when it answers (needs --prompt; not with --stream)"},
 	)
 }
 
@@ -174,6 +177,8 @@ func spawnRules(k spawnKind) ([]Rule, []Requirement) {
 			Reason: "a background session has no client to host the X tunnel"},
 		Rule{Flags: []string{"record", "no-record"},
 			Reason: "they are the two answers to one question"},
+		Rule{Flags: []string{"oneshot", "stream"},
+			Reason: "a one-shot runs in a PTY; an event-stream session has none"},
 	)
 	// A stream session needs --detach or --background (which implies it):
 	// checked in spawnValidate, since a Requirement names one flag.
@@ -189,6 +194,9 @@ func spawnRequires(k spawnKind) []Requirement { _, q := spawnRules(k); return q 
 func spawnValidate(b Bound) error {
 	if b.Bool("x11") && uintOf(b.Flags["x11-display"]) > 99 {
 		return fmt.Errorf("--x11-display must be 0..99")
+	}
+	if b.Bool("oneshot") && b.Str("prompt") == "" {
+		return fmt.Errorf("--oneshot needs --prompt: it runs the agent's one-shot argv on that prompt")
 	}
 	if b.Bool("stream") && !b.Bool("detach") && !b.Bool("background") {
 		return fmt.Errorf("--stream needs --detach (or --background): an event-stream session has no terminal to attach; follow it with `session stream attach`")

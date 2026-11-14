@@ -45,7 +45,7 @@ type PopupModel struct {
 
 func NewPopup(defaultRepo string) PopupModel {
 	ta := textarea.New()
-	ta.Placeholder = "Type the prompt for claude. Ctrl+J (Ctrl+Enter) to submit, Tab to switch repo, Shift+Tab to cycle host pin, Ctrl+A to cycle agent, Ctrl+E to cycle through args/resume fields, Esc to cancel."
+	ta.Placeholder = "Type the prompt for claude. Ctrl+J (Ctrl+Enter) to run it as a one-shot session, Tab to switch repo, Shift+Tab to cycle host pin, Ctrl+A to cycle agent, Ctrl+E to cycle through args/resume fields, Esc to cancel."
 	ta.SetWidth(60)
 	ta.SetHeight(10)
 	args := textinput.New()
@@ -340,7 +340,7 @@ func (m PopupModel) View() string {
 	case m.resume.Value() == "":
 		resumeLabel = "resume (Ctrl+E to edit; empty = new task):"
 	}
-	footer := FooterStyle.Render("Ctrl+J: submit  ·  Tab: next repo  ·  Shift+Tab: cycle host  ·  Ctrl+A: cycle agent  ·  Ctrl+E: cycle args/resume  ·  Ctrl+R: resume conversation  ·  Esc: cancel")
+	footer := FooterStyle.Render("Ctrl+J: run one-shot  ·  Tab: next repo  ·  Shift+Tab: cycle host  ·  Ctrl+A: cycle agent  ·  Ctrl+E: cycle args/resume  ·  Ctrl+R: resume conversation  ·  Esc: cancel")
 	return box.Render(header + "\n\n" + m.ta.View() +
 		"\n\n" + argsLabel + "\n" + m.args.View() +
 		"\n\n" + resumeLabel + "\n" + m.resume.View() +

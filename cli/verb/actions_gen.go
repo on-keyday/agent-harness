@@ -928,6 +928,8 @@ type SpawnAction struct {
 	Record bool
 	// do not record this run's PTY output, whatever the server's default
 	NoRecord bool
+	// run the agent's one-shot (print-mode) argv in the session, which ends when it answers (needs --promp…
+	Oneshot bool
 }
 
 // TranscriptGetAction is built by: transcript get.
@@ -2681,6 +2683,7 @@ func init() {
 			a.QueueTimeout = durationOf(b.Flags["queue-timeout"])
 			a.Record = b.Bool("record")
 			a.NoRecord = b.Bool("no-record")
+			a.Oneshot = b.Bool("oneshot")
 			return a, nil
 		},
 		"session new\x00tui": func(b Bound) (Action, error) {
@@ -2766,6 +2769,7 @@ func init() {
 			a.QueueTimeout = durationOf(b.Flags["queue-timeout"])
 			a.Record = b.Bool("record")
 			a.NoRecord = b.Bool("no-record")
+			a.Oneshot = b.Bool("oneshot")
 			return a, nil
 		},
 		"session send\x00cli": func(b Bound) (Action, error) {

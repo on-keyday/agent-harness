@@ -112,6 +112,9 @@ type SessionOpts struct {
 	// needs record_persist.
 	RecordSet bool
 	Record    bool
+	// Oneshot: run the profile's one-shot argv in the PTY (A3, A-D29); needs
+	// a prompt. Shares the ext byte with the record switch.
+	Oneshot bool
 }
 
 // buildOpenInteractiveRequest constructs the wire OpenInteractiveRequest from
@@ -151,10 +154,11 @@ func buildOpenInteractiveRequest(repoPath string, opts SessionOpts) protocol.Ope
 		oi.SetConditionsPresent(true) // the discriminator before its block
 		oi.SetConditions(*opts.Conditions)
 	}
-	if opts.RecordSet {
+	if opts.RecordSet || opts.Oneshot {
 		var ext protocol.OpenInteractiveExt
-		ext.SetRecordSet(true)
-		ext.SetRecord(opts.Record)
+		ext.SetRecordSet(opts.RecordSet)
+		ext.SetRecord(opts.RecordSet && opts.Record)
+		ext.SetOneshot(opts.Oneshot)
 		oi.SetExtPresent(true) // the discriminator before its byte
 		oi.SetExt(ext)
 	}

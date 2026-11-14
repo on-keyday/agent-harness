@@ -185,3 +185,21 @@ func TestRecordRunRowNamesThePendingPeriod(t *testing.T) {
 		t.Fatalf("row %q, want the resolved expiry once the run ended", row)
 	}
 }
+
+// A3 (A-D29): --oneshot shares the ext byte with the record switch; either or
+// both put it on the wire, and the run-mode flags carry it to every surface.
+func TestOneshotRidesTheOpenRequest(t *testing.T) {
+	only := buildOpenInteractiveRequest("/r", SessionOpts{Oneshot: true})
+	if ext := only.Ext(); !only.ExtPresent() || ext == nil || !ext.Oneshot() || ext.RecordSet() {
+		t.Fatalf("--oneshot: ext %+v present %v", ext, only.ExtPresent())
+	}
+	both := buildOpenInteractiveRequest("/r", SessionOpts{Oneshot: true, RecordSet: true, Record: true})
+	if ext := both.Ext(); ext == nil || !ext.Oneshot() || !ext.RecordSet() || !ext.Record() {
+		t.Fatalf("--oneshot --record: ext %+v", ext)
+	}
+	var o SessionOpts
+	RunModeFlags{Oneshot: true, Prompt: "p"}.Apply(&o)
+	if !o.Oneshot {
+		t.Fatal("RunModeFlags.Apply dropped Oneshot")
+	}
+}

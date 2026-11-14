@@ -4036,6 +4036,9 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // Background run (pillar A, A-D15): the prompt and the conditions.
   const composePrompt = document.getElementById("compose-prompt");
   const composeBgBox  = document.getElementById("compose-background");
+  // session new --oneshot (A3, A-D29): the profile's print-mode argv in the
+  // session, which ends when it answers.
+  const composeOneshotBox = document.getElementById("compose-oneshot");
   const composeBg     = document.getElementById("compose-bg");
   const bgInput = (id) => document.getElementById(id);
   if (composeBgBox) composeBgBox.addEventListener("change", () => { composeBg.hidden = !composeBgBox.checked; });
@@ -4124,6 +4127,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     eventStream: !!(spawnStreamBox && spawnStreamBox.checked),
     ...composeRunMode(),
     record: composeRecordOption((document.getElementById("compose-record") || {}).value),
+    oneshot: !!(composeOneshotBox && composeOneshotBox.checked),
   });
 
   // --- Cap chips (session-default capability set for new-session spawns) ---

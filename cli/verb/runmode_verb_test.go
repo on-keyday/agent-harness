@@ -54,3 +54,24 @@ func TestSessionModeVerbParses(t *testing.T) {
 		t.Fatal("an undefined mode word accepted")
 	}
 }
+
+// A3 (A-D29): --oneshot needs the prompt it runs, and is a PTY session, not an
+// event stream; it takes either run mode.
+func TestSessionNewOneshotFlag(t *testing.T) {
+	act, _, err := ParseCLICommand(strings.Fields("session new --repo /r -d --oneshot --agent claude --prompt triage"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a, ok := act.(SpawnAction); !ok || !a.Oneshot {
+		t.Fatalf("parsed %+v", act)
+	}
+	if _, _, err := ParseCLICommand(strings.Fields("session new --repo /r --background --oneshot --agent claude --prompt p --deadline 1h"), nil); err != nil {
+		t.Fatalf("background oneshot: %v", err)
+	}
+	if _, _, err := ParseCLICommand(strings.Fields("session new --repo /r -d --oneshot --agent claude"), nil); err == nil || !strings.Contains(err.Error(), "prompt") {
+		t.Fatalf("--oneshot without --prompt: %v", err)
+	}
+	if _, _, err := ParseCLICommand(strings.Fields("session new --repo /r -d --oneshot --stream --agent claude --prompt p"), nil); err == nil {
+		t.Fatal("--oneshot with --stream accepted")
+	}
+}

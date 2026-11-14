@@ -668,16 +668,19 @@ func (a *App) inSubmitPopup(msg tea.KeyMsg) tea.Cmd {
 		resumeConversation := a.popup.ResumeConversation()
 		a.popup.Close()
 		if prompt == "" {
-			a.cmdresult.Append(WarnStyle.Render("submit cancelled (empty prompt)"))
+			a.cmdresult.Append(WarnStyle.Render("one-shot cancelled (empty prompt)"))
 			return nil
 		}
 		// repo is irrelevant on resume — server uses the existing
-		// task's RepoPath. Only require it for fresh submits.
+		// task's RepoPath. Only require it for a fresh one.
 		if repo == "" && resumeID == "" {
-			a.cmdresult.Append(WarnStyle.Render("submit cancelled (no repo — wait for a runner to register, then reopen with `s`)"))
+			a.cmdresult.Append(WarnStyle.Render("one-shot cancelled (no repo — wait for a runner to register, then reopen with `s`)"))
 			return nil
 		}
-		return DoSubmitWithOpts(a.client, repo, prompt, cli.SelectorOpts{Host: host}, extraArgs, resumeID, a.authority(), false, resumeConversation, false, agent)
+		// A detached `session new --oneshot` (A3, A-D31): the agent's
+		// print-mode argv in a session that ends when it answers.
+		return startDetachedSession(a.client, repo, cli.SelectorOpts{Host: host}, extraArgs, resumeID, a.authority(), false, resumeConversation, false, agent,
+			TermSize{Rows: uint16(a.height), Cols: uint16(a.width)}, false, cli.RunModeFlags{Prompt: prompt, Oneshot: true})
 	case tea.KeyTab:
 		a.popup.CycleRepo(+1)
 		return nil

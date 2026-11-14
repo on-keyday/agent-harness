@@ -209,6 +209,9 @@ type RunModeFlags struct {
 	// mode, but carried here because this is the one struct every surface's
 	// open goes through, so no surface can drop it.
 	RecordSet, Record bool
+	// Oneshot: session new --oneshot (A3, A-D29), carried here for the same
+	// reason as the record switch.
+	Oneshot bool
 }
 
 // Conditions is the background conditions block the flags describe, nil when
@@ -241,4 +244,5 @@ func (f RunModeFlags) Apply(o *SessionOpts) {
 		o.Detached = true
 	}
 	o.RecordSet, o.Record = f.RecordSet, f.RecordSet && f.Record
+	o.Oneshot = f.Oneshot
 }

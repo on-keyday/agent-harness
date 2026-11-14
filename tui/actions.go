@@ -42,7 +42,8 @@ func (a *App) dispatchMainKey(msg tea.KeyMsg, logsEditing bool) (tea.Cmd, bool) 
 	return nil, false
 }
 
-// `s` opens the submit popup when not in cmdline focus / filter edit.
+// `s` opens the one-shot popup (a detached `session new --oneshot`, A3)
+// when not in cmdline focus / filter edit.
 func (a *App) onSubmit(msg tea.KeyMsg) (tea.Cmd, bool) {
 	a.popup.SetRepoChoices(uniqueRepoPaths(a.runnersSnapshot), a.defaultRepo)
 	a.popup.SetHostChoices(uniqueHostnames(a.runnersSnapshot))
