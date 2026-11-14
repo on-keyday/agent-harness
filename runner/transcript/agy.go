@@ -86,7 +86,7 @@ func (s *agyStore) rows(dir string) ([]agyRow, error) {
 	}
 	var mine []agyRow
 	for _, r := range all {
-		if r.ID == "" || !agyWorkspaceIs(r.Workspace, dir) {
+		if !localID(r.ID) || !agyWorkspaceIs(r.Workspace, dir) {
 			continue
 		}
 		r.updated, _ = time.Parse("2006-01-02 15:04:05.999999999-07:00", r.Modified)
@@ -135,18 +135,11 @@ func (s *agyStore) files(id string) []File {
 	for _, suffix := range []string{".db", ".db-wal", ".db-shm"} {
 		rel = append(rel, "conversations/"+id+suffix)
 	}
-	_ = filepath.WalkDir(filepath.Join(s.root, "brain", id), func(p string, d fs.DirEntry, err error) error {
-		if err == nil && d.Type().IsRegular() {
-			if r, rerr := filepath.Rel(s.root, p); rerr == nil {
-				rel = append(rel, filepath.ToSlash(r))
-			}
-		}
-		return nil
-	})
+	rel = append(rel, walkRegular(s.root, "brain/"+id)...)
 	var out []File
 	for _, r := range rel {
-		fi, err := os.Lstat(filepath.Join(s.root, filepath.FromSlash(r)))
-		if err != nil || !fi.Mode().IsRegular() {
+		fi, ok := lstatRegular(s.root, r)
+		if !ok {
 			continue
 		}
 		out = append(out, File{Name: r, Size: fi.Size(), SizeKnown: true})
@@ -167,7 +160,7 @@ func (s *agyStore) Sessions(dir string) ([]Session, error) {
 		var newest time.Time
 		for _, f := range s.files(r.ID) {
 			row.Size += f.Size
-			if fi, err := os.Lstat(filepath.Join(s.root, filepath.FromSlash(f.Name))); err == nil && fi.ModTime().After(newest) {
+			if fi, ok := lstatRegular(s.root, f.Name); ok && fi.ModTime().After(newest) {
 				newest = fi.ModTime()
 			}
 		}

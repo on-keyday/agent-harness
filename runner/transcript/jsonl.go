@@ -46,7 +46,7 @@ func (s *lineStore) matches(dir string) ([]match, error) {
 	var out []match
 	for _, p := range paths {
 		h, ok := s.header(p)
-		if ok && SamePath(h.cwd, dir) {
+		if ok && localID(h.id) && SamePath(h.cwd, dir) {
 			out = append(out, match{p, h})
 		}
 	}
@@ -71,8 +71,8 @@ func (s *lineStore) files(m match) (string, []File) {
 	base, rel := s.companions(m.path, m.h.id)
 	var out []File
 	for _, r := range rel {
-		fi, err := os.Lstat(filepath.Join(base, filepath.FromSlash(r)))
-		if err != nil || !fi.Mode().IsRegular() {
+		fi, ok := lstatRegular(base, r)
+		if !ok {
 			continue
 		}
 		out = append(out, File{Name: r, Size: fi.Size(), SizeKnown: true})
@@ -92,7 +92,7 @@ func (s *lineStore) Sessions(dir string) ([]Session, error) {
 		row := Session{Agent: s.agent, ID: m.h.id, Created: m.h.created, SizeKnown: true}
 		for _, f := range fs {
 			row.Size += f.Size
-			if fi, err := os.Lstat(filepath.Join(base, filepath.FromSlash(f.Name))); err == nil && fi.ModTime().After(row.Updated) {
+			if fi, ok := lstatRegular(base, f.Name); ok && fi.ModTime().After(row.Updated) {
 				row.Updated = fi.ModTime()
 			}
 		}
@@ -271,15 +271,7 @@ func newClaude(getenv func(string) string) (Store, error) {
 		},
 		companions: func(main, id string) (string, []string) {
 			base := filepath.Dir(main)
-			rel := []string{filepath.Base(main)}
-			_ = filepath.WalkDir(filepath.Join(base, id), func(p string, d fs.DirEntry, err error) error {
-				if err == nil && d.Type().IsRegular() {
-					if r, rerr := filepath.Rel(base, p); rerr == nil {
-						rel = append(rel, filepath.ToSlash(r))
-					}
-				}
-				return nil
-			})
+			rel := append([]string{filepath.Base(main)}, walkRegular(base, id)...)
 			return base, rel
 		},
 	}, nil

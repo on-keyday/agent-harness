@@ -78,7 +78,7 @@ func (s *opencodeStore) list(dir string) ([]opencodeRow, error) {
 	}
 	var mine []opencodeRow
 	for _, r := range rows {
-		if r.ID != "" && SamePath(r.Directory, dir) {
+		if localID(r.ID) && !strings.HasPrefix(r.ID, "-") && SamePath(r.Directory, dir) {
 			mine = append(mine, r)
 		}
 	}
