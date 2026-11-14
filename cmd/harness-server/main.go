@@ -130,6 +130,18 @@ const serverKeyFileName = "server-key"
 
 const runnerKeysFileName = "runner-keys.json"
 
+const schedulesFileName = "schedules.json"
+
+// loadSchedules reads <data-dir>/schedules.json. A file that does not parse
+// is a startup error. With no data dir the set lives in memory only.
+func loadSchedules(dataDir string) (*server.ScheduleStore, error) {
+	if dataDir == "" {
+		slog.Warn("no --data-dir: schedules will not survive a restart")
+		return server.LoadScheduleStore("")
+	}
+	return server.LoadScheduleStore(filepath.Join(dataDir, schedulesFileName))
+}
+
 // loadRunnerKeys reads <data-dir>/runner-keys.json. A file that does not parse
 // is a startup error. With no data dir the set lives in memory only.
 func loadRunnerKeys(dataDir string) (*server.RunnerKeyStore, error) {
@@ -299,6 +311,11 @@ func main() {
 		fmt.Fprintf(os.Stderr, "harness-server: %v\n", err)
 		os.Exit(1)
 	}
+	schedules, err := loadSchedules(*dataDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "harness-server: %v\n", err)
+		os.Exit(1)
+	}
 	runnerDials, err := loadRunnerDials(*dataDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "harness-server: %v\n", err)
@@ -354,6 +371,7 @@ func main() {
 		OperatorPSK:          operatorPSKBytes,
 		ServerKey:            serverKey,
 		RunnerKeys:           runnerKeys,
+		Schedules:            schedules,
 		RunnerDials:          runnerDials,
 		WebUIFS:              webUIFS,
 		WebUINoCache:         webUINoCache,

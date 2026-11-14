@@ -75,6 +75,10 @@ type Config struct {
 	// nil → New starts an empty in-memory set.
 	RunnerKeys *RunnerKeyStore
 
+	// Schedules is the set of cron schedules (harness-server loads
+	// <data-dir>/schedules.json). nil → New starts an empty in-memory set.
+	Schedules *ScheduleStore
+
 	// RunnerDials is the set of runners this server keeps dialing
 	// (harness-server loads <data-dir>/runner-dials.json). nil → New starts an
 	// empty in-memory set.
@@ -248,6 +252,9 @@ func New(cfg Config) *Server {
 	}
 	if cfg.RunnerKeys == nil {
 		cfg.RunnerKeys, _ = LoadRunnerKeyStore("", nil)
+	}
+	if cfg.Schedules == nil {
+		cfg.Schedules, _ = LoadScheduleStore("")
 	}
 	if cfg.RunnerDials == nil {
 		cfg.RunnerDials, _ = LoadRunnerDialStore("")
