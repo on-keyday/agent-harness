@@ -59,6 +59,23 @@ func TestAmbiguousResultOpensPickerOnlyWithRetry(t *testing.T) {
 	if !a.runnerPicker.IsOpen() {
 		t.Fatal("retry present: picker must open")
 	}
+	a.runnerPicker.Close()
+
+	// A detached start without a retry (the background form, a workspace
+	// resume) stays the flat error too.
+	m, _ = a.Update(SessionStartedMsg{Err: are})
+	a = m.(*App)
+	if a.runnerPicker.IsOpen() {
+		t.Fatal("detached start, no retry: picker must not open")
+	}
+	if last := a.cmdresult.lines[len(a.cmdresult.lines)-1]; !strings.Contains(last, "session start failed") {
+		t.Fatalf("detached start, no retry: last line %q, want the flat 'session start failed'", last)
+	}
+	m, _ = a.Update(SessionStartedMsg{Err: are, Retry: r.retry})
+	a = m.(*App)
+	if !a.runnerPicker.IsOpen() {
+		t.Fatal("detached start with a retry: picker must open")
+	}
 }
 
 // A pick re-issues over the client the TUI holds WHEN THE PICK HAPPENS. A
@@ -86,6 +103,11 @@ func TestWithRetryStampsTheResult(t *testing.T) {
 	msg, ok := cmd().(InteractiveReadyMsg)
 	if !ok || msg.Retry == nil || msg.TaskID != "t" {
 		t.Fatalf("msg=%+v", msg)
+	}
+	cmd = withRetry(func() tea.Msg { return SessionStartedMsg{TaskID: "t"} }, r.retry)
+	started, ok := cmd().(SessionStartedMsg)
+	if !ok || started.Retry == nil || started.TaskID != "t" {
+		t.Fatalf("started=%+v", started)
 	}
 }
 

@@ -221,7 +221,8 @@ type App struct {
 	authorityPicker AuthorityPickerModel
 
 	// runnerPicker shows the candidates of an ambiguous spawn; a pick runs the
-	// Retry the ambiguous result carried (InteractiveReadyMsg).
+	// Retry the ambiguous result carried (InteractiveReadyMsg /
+	// SessionStartedMsg).
 	runnerPicker RunnerPickerModel
 
 	client  *cli.Client
@@ -1540,6 +1541,12 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.bgform.Answered(msg.Err)
 		}
 		if msg.Err != nil {
+			// Only the starts that offer a picker (the `s` popup and `session
+			// new -d`) stamp a Retry, as for InteractiveReadyMsg.
+			var are *cli.AmbiguousRunnerError
+			if msg.Retry != nil && errors.As(msg.Err, &are) {
+				return a, a.runnerPicker.Open(are.Candidates, msg.Retry, a.client)
+			}
 			a.cmdresult.Append(ErrorStyle.Render("session start failed: " + msg.Err.Error()))
 			// A workspace resume that failed is very often the reconnect after a
 			// server restart racing the RUNNER's own reconnect: the client is

@@ -36,16 +36,21 @@ type InteractiveReadyMsg struct {
 	Retry pickerRetry
 }
 
-// withRetry stamps retry onto the InteractiveReadyMsg cmd produces, so an
-// ambiguous answer to THIS request can be re-issued from the picker.
+// withRetry stamps retry onto the InteractiveReadyMsg or SessionStartedMsg cmd
+// produces, so an ambiguous answer to THIS request can be re-issued from the
+// picker.
 func withRetry(cmd tea.Cmd, retry pickerRetry) tea.Cmd {
 	return func() tea.Msg {
-		msg := cmd()
-		if m, ok := msg.(InteractiveReadyMsg); ok {
+		switch m := cmd().(type) {
+		case InteractiveReadyMsg:
 			m.Retry = retry
 			return m
+		case SessionStartedMsg:
+			m.Retry = retry
+			return m
+		default:
+			return m
 		}
-		return msg
 	}
 }
 
@@ -268,6 +273,12 @@ func DoAttachSession(c *cli.Client, taskIDHex string, mode protocol.AttachMode) 
 type SessionStartedMsg struct {
 	TaskID string
 	Err    error
+	// Retry re-issues this start pinned to a picked runner and agent. Set
+	// (by startDetachedWithRetry) only on the starts that offer a picker — the
+	// `s` popup and the command line's `session new -d`; nil elsewhere (the
+	// background form, a workspace resume), which keeps an ambiguous answer a
+	// flat error.
+	Retry pickerRetry
 }
 
 // DoStartDetachedSession opens a detachable interactive session without
@@ -292,6 +303,16 @@ type TermSize struct{ Rows, Cols uint16 }
 // startDetachedSession is DoStartDetachedSession, a variable so a test can
 // see what the `s` popup opens without a server.
 var startDetachedSession = DoStartDetachedSession
+
+// startDetachedWithRetry is startDetachedSession whose result carries a Retry
+// re-issuing the same start — run mode (--oneshot, the prompt) included —
+// pinned to the runner and agent picked from an ambiguous answer.
+func startDetachedWithRetry(c *cli.Client, repo string, selOpts cli.SelectorOpts, extraArgs []string, resumeTaskID string, auth Authority, resumeCapsOverride bool, resumeConversation bool, exact bool, agentProfile string, size TermSize, eventStream bool, runMode cli.RunModeFlags) tea.Cmd {
+	return withRetry(startDetachedSession(c, repo, selOpts, extraArgs, resumeTaskID, auth, resumeCapsOverride, resumeConversation, exact, agentProfile, size, eventStream, runMode),
+		func(c *cli.Client, sel cli.SelectorOpts, agent string) tea.Cmd {
+			return startDetachedSession(c, repo, sel, extraArgs, resumeTaskID, auth, resumeCapsOverride, resumeConversation, exact, agent, size, eventStream, runMode)
+		})
+}
 
 func DoStartDetachedSession(c *cli.Client, repo string, selOpts cli.SelectorOpts, extraArgs []string, resumeTaskID string, auth Authority, resumeCapsOverride bool, resumeConversation bool, exact bool, agentProfile string, size TermSize, eventStream bool, runMode cli.RunModeFlags) tea.Cmd {
 	return func() tea.Msg {

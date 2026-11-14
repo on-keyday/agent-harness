@@ -679,7 +679,7 @@ func (a *App) inSubmitPopup(msg tea.KeyMsg) tea.Cmd {
 		}
 		// A detached `session new --oneshot` (A3, A-D31): the agent's
 		// print-mode argv in a session that ends when it answers.
-		return startDetachedSession(a.client, repo, cli.SelectorOpts{Host: host}, extraArgs, resumeID, a.authority(), false, resumeConversation, false, agent,
+		return startDetachedWithRetry(a.client, repo, cli.SelectorOpts{Host: host}, extraArgs, resumeID, a.authority(), false, resumeConversation, false, agent,
 			TermSize{Rows: uint16(a.height), Cols: uint16(a.width)}, false, cli.RunModeFlags{Prompt: prompt, Oneshot: true})
 	case tea.KeyTab:
 		a.popup.CycleRepo(+1)

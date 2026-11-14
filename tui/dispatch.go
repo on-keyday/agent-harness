@@ -532,7 +532,7 @@ func (h tuiVerbs) SessionNew(v verb.SpawnAction) tea.Cmd {
 		return openX11Session(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, int(v.X11Display), a.program, auth, capsOverride, v.ResumeConversation, v.Exact, v.Agent, spawnRunMode(v))
 	}
 	if v.Detach || v.Background {
-		return DoStartDetachedSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Exact, v.Agent, TermSize{Rows: uint16(a.height), Cols: uint16(a.width)}, v.Stream, spawnRunMode(v))
+		return startDetachedWithRetry(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Exact, v.Agent, TermSize{Rows: uint16(a.height), Cols: uint16(a.width)}, v.Stream, spawnRunMode(v))
 	}
 	// Stream without Detach cannot reach here: the declaration refuses it.
 	return openAttachedSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Exact, v.Agent, spawnRunMode(v))
