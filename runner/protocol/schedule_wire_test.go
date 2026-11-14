@@ -98,7 +98,9 @@ func TestTaskInfoScheduleID(t *testing.T) {
 		}
 	}
 	var got TaskInfo
-	_ = got.DecodeExact(with.MustAppend(nil))
+	if err := got.DecodeExact(with.MustAppend(nil)); err != nil {
+		t.Fatal(err)
+	}
 	if got.ScheduleId() == nil || *got.ScheduleId() != schedID(0x42) {
 		t.Fatalf("schedule id = %v", got.ScheduleId())
 	}
@@ -145,71 +147,107 @@ func TestScheduleKindsRoundTrip(t *testing.T) {
 	}
 }
 
-// A create with every field at its bound is one datagram (the brief's
-// worst case): cron and zone at their maxima, the agent and selector at the
-// widest the wire lets them be, the authority block fully present.
-func worstScheduleCreate(extraArgBytes, repo int) *TaskControlRequest {
+// The size guard for a schedule request is the client's CheckControlMessage,
+// as for OpenInteractiveRequest (cli/client.go sendChecked): there is no
+// per-field bound beyond cron and zone. A realistic create and edit fit; one
+// with many scope ids does not and is refused by that check.
+func realisticSpec(scopeIDs int) ScheduleSpec {
 	var s ScheduleSpec
 	s.SetCronPresent(true)
-	s.SetCron(bytes.Repeat([]byte("c"), ScheduleCronMax))
+	s.SetCron([]byte("*/15 9-17 * * 1-5"))
 	s.SetTzPresent(true)
-	s.SetTz(bytes.Repeat([]byte("z"), ScheduleZoneMax))
+	s.SetTz([]byte("Asia/Tokyo"))
 	s.SetRepoPresent(true)
-	s.SetRepoPath(bytes.Repeat([]byte("r"), repo))
-	s.SetTaskPresent(true)
-	s.SetTaskId(TaskID{})
+	s.SetRepoPath(bytes.Repeat([]byte("r"), 400))
 	s.SetAgentPresent(true)
-	s.SetAgentProfile(bytes.Repeat([]byte("a"), 255))
-	var sel RunnerSelector
-	sel.Kind = RunnerSelectorKind_ByConnId
-	var cid ConnID
-	cid.SetTransport(bytes.Repeat([]byte("t"), 255)) // the widest a selector can be on the wire
-	cid.SetIpAddr(make([]byte, 16))
-	sel.SetConnId(cid)
+	s.SetAgentProfile([]byte("sandbox-claude"))
 	s.SetSelectorPresent(true)
+	var sel RunnerSelector
+	sel.Kind = RunnerSelectorKind_ByHostname
+	var h Hostname
+	h.SetName([]byte("build-host-01"))
+	sel.SetHostname(h)
 	s.SetSelector(sel)
 	s.SetExtraArgsPresent(true)
-	s.SetExtraArgs(AgentArgsFromStrings([]string{string(bytes.Repeat([]byte("x"), extraArgBytes))}))
+	s.SetExtraArgs(AgentArgsFromStrings([]string{"--model", "opus", "--add-dir", "/srv/data"}))
 	s.SetRequestedCapsPresent(true)
 	s.SetRequestedCaps(Capability_All)
-	s.SetResumeConversationSet(true)
-	s.SetResumeConversation(true)
-	s.SetOneshotSet(true)
-	s.SetOneshot(true)
-	s.SetRecordSet(true)
-	s.SetRecord(true)
-	s.SetPtySet(true)
-	s.SetPty(true)
 	s.SetScopePresent(true)
-	s.SetScope(TaskScope{})
-	s.SetDelegateCapsPresent(true)
-	s.SetDelegateCaps(Capability_All)
-	s.SetDelegateScopePresent(true)
-	s.SetDelegateScope(TaskScope{})
-	s.SetSpawnDepthPresent(true)
-	s.SetSpawnDepth(SpawnLimit{})
-	s.SetMaxDescendantsPresent(true)
-	s.SetMaxDescendants(SpawnLimit{})
+	var sc TaskScope
+	ids := make([]TaskID, scopeIDs)
+	for i := range ids {
+		ids[i].Id[0], ids[i].Id[1] = byte(i), byte(i>>8)
+	}
+	sc.SetIds(ids)
+	s.SetScope(sc)
 	s.SetConditionsPresent(true)
 	s.SetConditions(BackgroundConditions{})
 	s.SetPromptPresent(true)
 	s.SetPromptStreamId(^uint64(0))
-	req := &TaskControlRequest{Header: TaskControlRequestHeader{Kind: TaskControlKind_ScheduleCreate, RequestId: ^uint32(0)}}
-	req.SetScheduleCreate(ScheduleCreateRequest{Spec: s})
-	return req
+	s.SetSizePresent(true)
+	s.SetInitialRows(24)
+	s.SetInitialCols(80)
+	return s
 }
 
-func TestScheduleCreateAtItsBoundsFitsOneDatagram(t *testing.T) {
-	n := encodedLen(t, worstScheduleCreate(ScheduleExtraArgsMax, ScheduleRepoMax))
-	t.Logf("worst schedule_create: %d bytes (budget %d)", n, controlDatagramBudget)
-	if n > controlDatagramBudget {
-		t.Errorf("worst schedule_create is %d bytes, budget %d", n, controlDatagramBudget)
+func scheduleRequests(spec ScheduleSpec) (create, edit *TaskControlRequest) {
+	create = &TaskControlRequest{Header: TaskControlRequestHeader{Kind: TaskControlKind_ScheduleCreate, RequestId: ^uint32(0)}}
+	create.SetScheduleCreate(ScheduleCreateRequest{Spec: spec})
+	edit = &TaskControlRequest{Header: TaskControlRequestHeader{Kind: TaskControlKind_ScheduleEdit, RequestId: ^uint32(0)}}
+	edit.SetScheduleEdit(ScheduleEditRequest{Id: schedID(9), Spec: spec})
+	return
+}
+
+func TestRealisticScheduleRequestsFitOneDatagram(t *testing.T) {
+	create, edit := scheduleRequests(realisticSpec(2))
+	for name, r := range map[string]*TaskControlRequest{"create": create, "edit": edit} {
+		n := encodedLen(t, r)
+		if n > controlDatagramBudget {
+			t.Errorf("realistic schedule %s is %d bytes, budget %d: %d over", name, n, controlDatagramBudget, n-controlDatagramBudget)
+		} else {
+			t.Logf("realistic schedule %s: %d bytes, %d bytes of margin", name, n, controlDatagramBudget-n)
+		}
 	}
 }
 
-// Negative control: unbounded repo and args do not fit, so the test above can fail.
-func TestScheduleCreateWithoutBoundsWouldNotFit(t *testing.T) {
-	if n := encodedLen(t, worstScheduleCreate(1024, 1024)); n <= controlDatagramBudget {
-		t.Errorf("1024/1024 encode to %d bytes; expected over %d", n, controlDatagramBudget)
+func TestOversizedScheduleRequestIsRefusedByTheClientCheck(t *testing.T) {
+	create, _ := scheduleRequests(realisticSpec(60))
+	n := encodedLen(t, create)
+	if n <= controlDatagramBudget {
+		t.Fatalf("60 scope ids encode to %d bytes; expected over %d", n, controlDatagramBudget)
+	}
+	// The check cli.sendChecked applies before a send.
+	if err := CheckControlMessage("udp", controlDatagramBudget, n); err == nil {
+		t.Fatalf("CheckControlMessage accepted a %d-byte udp request over %d", n, controlDatagramBudget)
+	}
+	if err := CheckControlMessage("ws", controlDatagramBudget, n); err != nil {
+		t.Fatalf("ws is not datagram-bound: %v", err)
+	}
+}
+
+func TestScheduleSpecInitialSizeAndDetailRecordSet(t *testing.T) {
+	var got ScheduleSpec
+	if err := got.DecodeExact(func() []byte { s := realisticSpec(0); return s.MustAppend(nil) }()); err != nil {
+		t.Fatal(err)
+	}
+	if !got.SizePresent() || got.InitialRows() == nil || *got.InitialRows() != 24 || *got.InitialCols() != 80 {
+		t.Fatalf("initial size lost: %+v", got)
+	}
+	var none ScheduleSpec
+	var back ScheduleSpec
+	if err := back.DecodeExact(none.MustAppend(nil)); err != nil || back.SizePresent() {
+		t.Fatalf("absent size: %v present=%v", err, back.SizePresent())
+	}
+	// record_set separates "server default" from "off".
+	var def, off ScheduleDetail
+	off.SetRecordSet(true)
+	for name, d := range map[string]ScheduleDetail{"default": def, "off": off} {
+		var g ScheduleDetail
+		if err := g.DecodeExact(d.MustAppend(nil)); err != nil {
+			t.Fatal(err)
+		}
+		if g.RecordSet() != (name == "off") || g.Record() {
+			t.Fatalf("%s: record_set=%v record=%v", name, g.RecordSet(), g.Record())
+		}
 	}
 }

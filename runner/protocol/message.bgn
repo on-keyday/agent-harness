@@ -6067,7 +6067,8 @@ format ExecTapRecord:
 # ---------------------------------------------------------------------------
 # Server-kept cron schedules (pillar S, docs/superpowers/specs/2026-11-15-pillar-s-schedules-design.md).
 # Every control message is one datagram: cron <= ScheduleCronMax, tz <=
-# ScheduleZoneMax (schedule_bounds.go); the prompt travels on a send stream
+# ScheduleZoneMax (schedule_bounds.go); the rest is guarded by the client's
+# CheckControlMessage, as OpenInteractiveRequest is; the prompt travels on a send stream
 # (prompt_stream_id) as an open's does; list and show answer on a stream.
 
 format ScheduleID:
@@ -6101,7 +6102,7 @@ format ScheduleSpec:
     max_descendants_present :u1
     conditions_present :u1
     prompt_present :u1          # 1 = a PromptBody follows on prompt_stream_id
-    reserved :u1
+    size_present :u1            # 1 = initial_rows / initial_cols below (0 in either = none)
     if cron_present == 1:
         cron_len :u16
         cron :[cron_len]u8
@@ -6138,6 +6139,9 @@ format ScheduleSpec:
         conditions :BackgroundConditions
     if prompt_present == 1:
         prompt_stream_id :u64
+    if size_present == 1:
+        initial_rows :u16
+        initial_cols :u16
 
 format ScheduleCreateRequest:
     spec :ScheduleSpec
@@ -6251,10 +6255,11 @@ format ScheduleDetail:
     row :ScheduleRow
     resume_conversation :u1
     oneshot :u1
+    record_set :u1
     record :u1
     pty_set :u1
     pty :u1
-    reserved :u3
+    reserved :u2
     prompt_len :u32
     prompt :[prompt_len]u8
     extra_args :AgentArgs

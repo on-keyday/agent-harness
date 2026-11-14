@@ -8,10 +8,9 @@ import (
 	"strings"
 	"time"
 	_ "time/tzdata" // zone names load on hosts without a zone database (S-D3)
-)
 
-// maxCronExpr bounds the cron field (control messages are one datagram).
-const maxCronExpr = 256
+	"github.com/on-keyday/agent-harness/runner/protocol"
+)
 
 // cronExpr is a parsed 5-field cron expression as bitsets (bit n = value n).
 // dow bit 7 is folded into bit 0. domStar/dowStar record that the field's text
@@ -43,8 +42,8 @@ var (
 // expression with no match within five years from now.
 func parseCron(expr string) (cronExpr, error) {
 	expr = strings.TrimSpace(expr)
-	if len(expr) > maxCronExpr {
-		return cronExpr{}, fmt.Errorf("cron expression longer than %d bytes", maxCronExpr)
+	if len(expr) > protocol.ScheduleCronMax {
+		return cronExpr{}, fmt.Errorf("cron expression longer than %d bytes", protocol.ScheduleCronMax)
 	}
 	if strings.HasPrefix(expr, "@") {
 		d, ok := cronDescriptors[strings.ToLower(expr)]
