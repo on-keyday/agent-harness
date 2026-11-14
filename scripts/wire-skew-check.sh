@@ -304,8 +304,11 @@ if ! git merge-base --is-ancestor d4f7a5a "$OLD_REF" 2>/dev/null; then
 else
   kill "$RPID" 2>/dev/null; wait "$RPID" 2>/dev/null
   : >"$TMP/runner.log"
-  # The NEW server is already the one running from phase 2.
-  "$TMP/old-runner" --server-cid "$CID" --roots "$TMP/repo" --no-worktree \
+  # The NEW server is already the one running from phase 2. The OLD runner
+  # uses the enrolled key, as a deployed runner does: without it the server
+  # answers NotEnrolled whatever the wire, and the phase never reaches the case
+  # that matters — a runner not yet restarted reconnecting to an upgraded server.
+  "$TMP/old-runner" --server-cid "$CID" --runner-key-file "$TMP/runner-key" --roots "$TMP/repo" --no-worktree \
     --agent-bin /bin/true >"$TMP/runner.log" 2>&1 &
   RPID=$!
   for _ in $(seq 1 40); do
