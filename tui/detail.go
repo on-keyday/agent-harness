@@ -50,6 +50,11 @@ type DetailPopup struct {
 	base       string
 	// records is what the block lists, for the keep form (t).
 	records []protocol.RecordInfo
+	// recordsBlock and transcriptsBlock are the two sections under base. They
+	// arrive separately and in either order, so each replaces only its own.
+	recordsBlock, transcriptsBlock string
+	// transcriptsFor is the task whose agent transcripts the popup waits for.
+	transcriptsFor string
 }
 
 func NewDetailPopup() DetailPopup {
@@ -63,6 +68,7 @@ func (d *DetailPopup) Open(title, body string) {
 	d.title = title
 	d.body = body
 	d.base, d.recordsFor, d.records = body, "", nil
+	d.recordsBlock, d.transcriptsBlock, d.transcriptsFor = "", "", ""
 	d.vp.SetContent(body)
 	d.vp.GotoTop()
 }
@@ -93,8 +99,59 @@ func (d *DetailPopup) Records() (taskID string, rs []protocol.RecordInfo) {
 }
 
 func (d *DetailPopup) setRecords(block string) {
-	d.body = strings.TrimRight(d.base, "\n") + "\n" + block
+	d.recordsBlock = block
+	d.render()
+}
+
+// WatchTranscripts marks the open popup as waiting for the task's agent
+// transcripts (pillar B) and shows block until they arrive.
+func (d *DetailPopup) WatchTranscripts(taskID, block string) {
+	d.transcriptsFor = taskID
+	d.transcriptsBlock = block
+	d.render()
+}
+
+// SetTranscriptList shows a task's agent sessions (or why they could not be
+// listed) when the popup still shows taskID.
+func (d *DetailPopup) SetTranscriptList(taskID string, ss []protocol.TranscriptSession, note string, err error) {
+	if !d.open || d.transcriptsFor != taskID {
+		return
+	}
+	d.transcriptsBlock = formatTranscriptsBlock(ss, note, err)
+	d.render()
+}
+
+func (d *DetailPopup) render() {
+	body := strings.TrimRight(d.base, "\n")
+	for _, b := range []string{d.recordsBlock, d.transcriptsBlock} {
+		if b != "" {
+			body += "\n" + b
+		}
+	}
+	d.body = body
 	d.vp.SetContent(d.body)
+}
+
+// formatTranscriptsBlock is the popup's agent-transcripts section: one line
+// per session, as `transcript ls` prints it, then the note naming any store
+// that could not be read.
+func formatTranscriptsBlock(ss []protocol.TranscriptSession, note string, err error) string {
+	var sb strings.Builder
+	switch {
+	case err != nil:
+		return "transcripts:   (" + err.Error() + ")"
+	case len(ss) == 0:
+		sb.WriteString("transcripts:   none")
+	default:
+		sb.WriteString("transcripts:")
+		for _, s := range ss {
+			sb.WriteString("\n  " + cli.TranscriptSessionRow(s))
+		}
+	}
+	if note != "" {
+		sb.WriteString("\n  note: " + note)
+	}
+	return sb.String()
 }
 
 // formatRecordsBlock is the popup's records section: one line per run's

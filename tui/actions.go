@@ -402,10 +402,13 @@ func (a *App) onDetail(msg tea.KeyMsg) (tea.Cmd, bool) {
 			id := a.tasks.SelectedID()
 			if a.client == nil {
 				a.detail.WatchRecords(id, "records:       (not connected)")
+				a.detail.WatchTranscripts(id, "transcripts:   (not connected)")
 				return nil, true
 			}
 			a.detail.WatchRecords(id, "records:       loading…")
-			return DoRecordList(a.client, id), true
+			// The agents' transcripts are read from the task's runner (pillar B).
+			a.detail.WatchTranscripts(id, "transcripts:   loading…")
+			return tea.Batch(DoRecordList(a.client, id), DoTranscriptList(a.client, id)), true
 		}
 		a.cmdresult.Append(WarnStyle.Render("no task selected"))
 		return nil, true

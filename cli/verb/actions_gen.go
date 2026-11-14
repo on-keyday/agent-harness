@@ -933,7 +933,7 @@ type SpawnAction struct {
 // TranscriptGetAction is built by: transcript get.
 type TranscriptGetAction struct {
 	ActionMarker
-	// write to this file instead of stdout; created only once the first byte arrives
+	// write to this file instead of stdout (required on the TUI command line); created only once the first…
 	Output  string
 	TaskID  string
 	Session string
@@ -4123,7 +4123,31 @@ func init() {
 			}
 			return a, nil
 		},
+		"transcript ls\x00tui": func(b Bound) (Action, error) {
+			a := TranscriptLsAction{}
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.Session = b.Args[1]
+			}
+			return a, nil
+		},
 		"transcript get\x00cli": func(b Bound) (Action, error) {
+			a := TranscriptGetAction{}
+			a.Output = b.Str("o")
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.Session = b.Args[1]
+			}
+			if len(b.Args) > 2 {
+				a.File = b.Args[2]
+			}
+			return a, nil
+		},
+		"transcript get\x00tui": func(b Bound) (Action, error) {
 			a := TranscriptGetAction{}
 			a.Output = b.Str("o")
 			if len(b.Args) > 0 {
@@ -9930,6 +9954,10 @@ type TUIDispatch[R any] interface {
 	RecordOn(RecordSwitchAction) R
 	// record off
 	RecordOff(RecordSwitchAction) R
+	// transcript ls
+	TranscriptLs(TranscriptLsAction) R
+	// transcript get
+	TranscriptGet(TranscriptGetAction) R
 	// session stream attach
 	SessionStreamAttach(SessionAction) R
 	// session stream interrupt
@@ -10443,6 +10471,18 @@ func DispatchTUI[R any](h TUIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.RecordOff(a), true, nil
+	case CmdTranscriptLs:
+		a, perr := ParseCmdTranscriptLs(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.TranscriptLs(a), true, nil
+	case CmdTranscriptGet:
+		a, perr := ParseCmdTranscriptGet(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.TranscriptGet(a), true, nil
 	case CmdSessionStreamAttach:
 		a, perr := ParseCmdSessionStreamAttach(TUI, args, ctx)
 		if perr != nil {
@@ -10699,6 +10739,10 @@ func DispatchTUIAction[R any](h TUIDispatch[R], act Action) (r R, handled bool) 
 		case "off":
 			return h.RecordOff(a), true
 		}
+	case TranscriptLsAction:
+		return h.TranscriptLs(a), true
+	case TranscriptGetAction:
+		return h.TranscriptGet(a), true
 	}
 	// A surface-local action (the TUI's clear / quit / grid), which the
 	// declaration does not describe.
@@ -11209,6 +11253,18 @@ func ParseTUICommand(tokens []string, ctx map[string]string) (act Action, handle
 			return a, true, nil
 		case CmdRecordOff:
 			a, perr := ParseCmdRecordOff(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdTranscriptLs:
+			a, perr := ParseCmdTranscriptLs(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdTranscriptGet:
+			a, perr := ParseCmdTranscriptGet(TUI, tokens[n:], ctx)
 			if perr != nil {
 				return nil, true, perr
 			}

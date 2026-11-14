@@ -1190,6 +1190,9 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case RecordListMsg:
 		a.detail.SetRecordList(msg.TaskID, msg.Records, msg.Err)
 		return a, nil
+	case TranscriptListMsg:
+		a.detail.SetTranscriptList(msg.TaskID, msg.Sessions, msg.Note, msg.Err)
+		return a, nil
 	case RecordKeepResultMsg:
 		if a.recordKeep.IsOpen() && a.recordKeep.Ref() == msg.Ref {
 			if msg.Err != nil {

@@ -661,6 +661,27 @@ func DoRecordList(c *cli.Client, taskID string) tea.Cmd {
 	}
 }
 
+// DoTranscriptList fetches a task's agent sessions for the detail popup. The
+// runner may take seconds (opencode answers through its own CLI), so the
+// bound is wider than a record list's.
+func DoTranscriptList(c *cli.Client, taskID string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		ss, note, err := c.TranscriptSessions(ctx, taskID)
+		return TranscriptListMsg{TaskID: taskID, Sessions: ss, Note: note, Err: err}
+	}
+}
+
+// TranscriptListMsg carries a task's agent sessions to the detail popup; Note
+// names the stores that could not be read.
+type TranscriptListMsg struct {
+	TaskID   string
+	Sessions []protocol.TranscriptSession
+	Note     string
+	Err      error
+}
+
 // RecordListMsg carries a task's records to the detail popup.
 type RecordListMsg struct {
 	TaskID  string

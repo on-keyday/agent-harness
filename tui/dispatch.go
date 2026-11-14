@@ -1169,6 +1169,54 @@ func (h tuiVerbs) RecordKeep(v verb.RecordKeepAction) tea.Cmd {
 	})
 }
 
+// --- Agent transcripts (pillar B) ---------------------------------------------
+
+func (h tuiVerbs) TranscriptLs(v verb.TranscriptLsAction) tea.Cmd {
+	full, errStr := h.a.resolveTaskIDPrefix(v.TaskID)
+	if errStr != "" {
+		h.a.cmdresult.Append(ErrorStyle.Render(errStr))
+		return nil
+	}
+	return h.recordCmd("transcript ls", func(ctx context.Context, c *cli.Client, out io.Writer) error {
+		return cli.TranscriptLsWith(ctx, c, full, v.Session, out)
+	})
+}
+
+// TranscriptGet needs -o here: a transcript's bytes (or a tar) written into
+// the results pane would draw into the TUI itself. The file is created on the
+// first byte, so a refusal leaves none behind.
+func (h tuiVerbs) TranscriptGet(v verb.TranscriptGetAction) tea.Cmd {
+	if v.Output == "" {
+		h.a.cmdresult.Append(ErrorStyle.Render("transcript get: give -o <file> — a transcript's bytes would draw over the TUI"))
+		return nil
+	}
+	full, errStr := h.a.resolveTaskIDPrefix(v.TaskID)
+	if errStr != "" {
+		h.a.cmdresult.Append(ErrorStyle.Render(errStr))
+		return nil
+	}
+	a := h.a
+	if a.client == nil {
+		a.cmdresult.Append(ErrorStyle.Render("transcript get: not connected to server"))
+		return nil
+	}
+	c := a.client
+	return func() tea.Msg {
+		// No overall bound: a whole session's tar may take long to come, and
+		// the answer itself is bounded inside the client.
+		f := cli.NewLazyFile(v.Output)
+		err := cli.TranscriptGetWith(context.Background(), c, full, v.Session, v.File, f)
+		if cerr := f.Close(); err == nil {
+			err = cerr
+		}
+		what := v.Session
+		if v.File != "" {
+			what += "/" + v.File
+		}
+		return RecordResultMsg{Verb: "transcript get", Text: "transcript get: " + what + " written to " + v.Output, Err: err}
+	}
+}
+
 func (h tuiVerbs) RecordOn(v verb.RecordSwitchAction) tea.Cmd  { return h.recordSwitch(v, true) }
 func (h tuiVerbs) RecordOff(v verb.RecordSwitchAction) tea.Cmd { return h.recordSwitch(v, false) }
 
