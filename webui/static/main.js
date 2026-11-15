@@ -5348,6 +5348,39 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // the old 👁 View route that view-attached the MAIN xterm was removed: a
   // viewer has no size authority, so it mis-rendered whenever the grids
   // differed, and it cost the browser its own control attach to boot.
+  // resumeDirect is a one-click resume of t (taskResumeActionsModel's a). A
+  // background task resumes in background, and the server reuses nothing of
+  // its last run (A-D7): it goes to the resume form instead of an open the
+  // server would refuse prompt_required. The args are Compose's box, as the
+  // sheet's buttons have always taken them.
+  // Function declarations, not consts: the sheets are built by the first
+  // snapshot's render, which runs before this point in the file.
+  async function resumeDirect(t, agent, a) {
+    if (t.runMode === "background") {
+      prefillComposeFromTask(t, a.conversation, a.runner);
+      return;
+    }
+    const req = sessionReq({ agent, agentArgs: currentAgentArgs(), resumeTaskId: t.id, resumeConversation: a.conversation, runner: a.runner });
+    try {
+      const id = await window.harness.startInteractive(req);
+      showTerminalView();
+      attachedTask.textContent = `attached: ${id} (${a.note})`;
+      currentSessionTaskId = id;
+    } catch (err) {
+      attachedTask.textContent = "";
+      currentSessionTaskId = "";
+      if (routeAmbiguous(err, req)) return;
+      alert(`resume: ${err.message}`);
+    }
+    try { fit.fit(); } catch (_) {}
+    window.harness.resizeInteractive({ cols: term.cols, rows: term.rows });
+  }
+  // taskResumeActions is t's one-click resumes as {label, run}, for the sheet
+  // and the id dialog alike; agentOf names the agent at click time.
+  function taskResumeActions(t, agentOf) {
+    return taskResumeActionsModel(t).map((a) => ({ label: a.label, run: () => resumeDirect(t, agentOf(), a) }));
+  }
+
   const reattachTo = async (id) => {
     if (!id) { attachedTask.textContent = "(session id required)"; return; }
     attachEpoch++;            // invalidate any in-flight close handler
@@ -5617,6 +5650,69 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   const WATCH_LAST_KEY = "harness.watchChoice";
   const watchModal = document.getElementById("watch-modal");
   document.getElementById("watch-modal-cancel").addEventListener("click", () => watchModal.close());
+  // The id field's dialog: the id-driven actions of one task, stationary while
+  // the list re-sorts (the sheet's own buttons move with their row).
+  const taskActionsModal = document.getElementById("task-actions-modal");
+  const taskActionsList = document.getElementById("task-actions-list");
+  document.getElementById("task-actions-close").addEventListener("click", () => taskActionsModal.close());
+  const taskActionButton = (label, fn) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "task-action";
+    b.textContent = label;
+    b.addEventListener("click", () => { taskActionsModal.close(); fn(); });
+    return b;
+  };
+  const taskOneLine = (t) => {
+    const about = paneAboutText(t);
+    return `${t.id.slice(0, 8)} ${repoTail(t.repoPath || "")} ${t.status}${about ? " " + about : ""}`;
+  };
+  function openTaskActionsDialog(t) {
+    document.getElementById("task-actions-title").textContent = taskOneLine(t);
+    taskActionsList.innerHTML = "";
+    if (taskSessionAlive(t)) {
+      taskActionsList.appendChild(taskActionButton("↪ Reattach", () => reattachTo(t.id)));
+    } else if (TERMINAL_STATES.has(t.status)) {
+      const agentSel = document.createElement("select");
+      agentSel.className = "task-agent-select";
+      populateAgentSelect(agentSel, knownAgentProfiles, t.agentProfile || "", t.agentProfile);
+      const row = document.createElement("div");
+      row.className = "task-agent-row";
+      row.append("Agent: ", agentSel);
+      taskActionsList.appendChild(row);
+      for (const a of taskResumeActions(t, () => agentSel.value || "")) taskActionsList.appendChild(taskActionButton(a.label, a.run));
+    } else {
+      const note = document.createElement("div");
+      note.className = "notify-meta";
+      note.textContent = `${t.status}: reattach も resume もできない状態です`;
+      taskActionsList.appendChild(note);
+    }
+    if (!taskActionsModal.open) taskActionsModal.showModal();
+  }
+  // openTaskByIdInput resolves the id field against the listed tasks.
+  const taskIdOpen = document.getElementById("task-id-open");
+  const taskIdOpenNote = document.getElementById("task-id-open-note");
+  const openTaskByIdInput = () => {
+    const r = resolveTaskIdInput(taskIdOpen.value, lastTasks);
+    taskIdOpenNote.textContent = "";
+    if (r.kind === "one") { openTaskActionsDialog(r.task); return; }
+    if (r.kind === "none") { taskIdOpenNote.textContent = `一覧に ${taskIdOpen.value.trim()} のタスクはありません`; return; }
+    if (r.kind !== "many") return;
+    document.getElementById("task-actions-title").textContent = `${r.tasks.length} 件が一致: どれ?`;
+    taskActionsList.innerHTML = "";
+    for (const t of r.tasks) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "task-action";
+      b.textContent = taskOneLine(t);
+      b.addEventListener("click", () => openTaskActionsDialog(t));
+      taskActionsList.appendChild(b);
+    }
+    if (!taskActionsModal.open) taskActionsModal.showModal();
+  };
+  document.getElementById("task-id-open-btn").addEventListener("click", openTaskByIdInput);
+  taskIdOpen.addEventListener("keydown", (e) => { if (e.key === "Enter") openTaskByIdInput(); });
+
   const openWatchMenu = (t) => {
     const choices = watchChoices(t);
     if (!choices.length) {
@@ -7030,7 +7126,6 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       // `!startsWith(":")` because an absent ADDRESS-shaped id rendered as
       // ":0:0-0"; an absent identity rendered as 32 zeros instead, which that
       // guard passes — a pinned resume would then ask for runner 000…0.
-      const assignedRunner = typeof t.assignedTo === "string" ? t.assignedTo : "";
 
       // Agent dropdown — defaults to this task's own last-run profile (§4b:
       // pinned resume resolves to the resumed task's own agent_profile unless
@@ -7049,29 +7144,6 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       agentRow.append(agentLabel, agentSel);
       sheet.appendChild(agentRow);
 
-      const doResume = async (agentArgs, note, resumeConversation = false, runner = "") => {
-        // A background task resumes in background, and the server reuses
-        // nothing of its last run (A-D7): fill Compose from it rather than
-        // send an open the server would refuse prompt_required.
-        if (t.runMode === "background") {
-          prefillComposeFromTask(t, resumeConversation, runner);
-          return;
-        }
-        const req = sessionReq({ agent: agentSel.value || "", agentArgs, resumeTaskId: t.id, resumeConversation, runner });
-        try {
-          const id = await window.harness.startInteractive(req);
-          showTerminalView();
-          attachedTask.textContent = `attached: ${id} (${note})`;
-          currentSessionTaskId = id;
-        } catch (err) {
-          attachedTask.textContent = "";
-          currentSessionTaskId = "";
-          if (routeAmbiguous(err, req)) return;
-          alert(`resume: ${err.message}`);
-        }
-        try { fit.fit(); } catch (_) {}
-        window.harness.resizeInteractive({ cols: term.cols, rows: term.rows });
-      };
       // A resume reuses nothing of the last run (A-D29): a foreground resume
       // of a one-shot opens the interactive argv. Said here, where the
       // buttons are, since the row's interactive+oneshot would suggest
@@ -7082,12 +7154,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
         note.textContent = "one-shot の run: Resume は対話セッションとして開く (--oneshot は引き継がない)";
         sheet.appendChild(note);
       }
-      if (assignedRunner) {
-        addItem("▶ Resume assigned", "", () => doResume(currentAgentArgs(), "resumed assigned", false, assignedRunner));
-        addItem("▶ Resume conversation assigned", "", () => doResume(currentAgentArgs(), "resumed conversation assigned", true, assignedRunner));
-      }
-      addItem("▶ Resume any runner", "", () => doResume(currentAgentArgs(), "resumed any runner"));
-      addItem("▶ Resume conversation any runner", "", () => doResume(currentAgentArgs(), "resumed conversation any runner", true));
+      for (const a of taskResumeActions(t, () => agentSel.value || "")) addItem(a.label, "", a.run);
     }
 
     // Files — always available.

@@ -1040,3 +1040,17 @@ test("resolveTaskIdInput: a full id or a unique prefix names one task", () => {
   eq(page.resolveTaskIdInput("ef", ts), { kind: "none" });
   eq(page.resolveTaskIdInput("  ", ts), { kind: "empty" });
 });
+
+// The direct (one-click) resumes, shared by the task sheet and the id dialog:
+// assigned first when the task has a runner, then any runner.
+test("taskResumeActionsModel: assigned pair only with a runner, then any runner", () => {
+  const r = "f".repeat(32);
+  eq(page.taskResumeActionsModel({ id: ID, assignedTo: r }).map((a) => [a.label, a.conversation, a.runner]), [
+    ["▶ Resume assigned", false, r],
+    ["▶ Resume conversation assigned", true, r],
+    ["▶ Resume any runner", false, ""],
+    ["▶ Resume conversation any runner", true, ""],
+  ]);
+  eq(page.taskResumeActionsModel({ id: ID, assignedTo: "" }).map((a) => a.label),
+    ["▶ Resume any runner", "▶ Resume conversation any runner"]);
+});

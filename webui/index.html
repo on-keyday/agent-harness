@@ -70,6 +70,13 @@
              the task's exercised capabilities, then view and delegate. -->
         <select id="task-tree-reach-sel" hidden title="caps reach"></select>
         <input id="task-filter-input" type="search" placeholder="filter: repo / id / status (space = AND)">
+        <!-- Act on a task by pasted id (the sheet's Copy id): a stationary
+             dialog, so a re-sorting list never moves the target. -->
+        <span class="task-id-open">
+          <input id="task-id-open" type="search" size="16" placeholder="id で開く (先頭だけでも可)">
+          <button type="button" id="task-id-open-btn" class="task-chip">開く</button>
+          <span id="task-id-open-note" class="hint"></span>
+        </span>
       </div>
       <div class="grid-control-bar">
         <button type="button" id="grid-show-btn" class="task-chip grid-show">🔲 グリッド表示</button>
@@ -741,6 +748,15 @@
     <div id="watch-modal-list" class="watch-choices"></div>
     <menu class="picker-actions">
       <button type="button" id="watch-modal-cancel">Cancel</button>
+    </menu>
+  </form>
+</dialog>
+<dialog id="task-actions-modal" class="picker-modal">
+  <form method="dialog" class="picker-form">
+    <h3 class="picker-title" id="task-actions-title"></h3>
+    <div id="task-actions-list" class="watch-choices"></div>
+    <menu class="picker-actions">
+      <button type="button" id="task-actions-close">閉じる</button>
     </menu>
   </form>
 </dialog>

@@ -629,6 +629,21 @@ function resolveTaskIdInput(input, tasks) {
   return { kind: "none" };
 }
 
+// taskResumeActionsModel is a finished task's one-click resumes: where it last
+// ran (assignedTo, when it has one) then any runner, each without and with the
+// agent's conversation. Assigned mirrors the TUI's r/R, any runner u/U.
+function taskResumeActionsModel(t) {
+  const runner = typeof t.assignedTo === "string" ? t.assignedTo : "";
+  const out = [];
+  if (runner) {
+    out.push({ label: "▶ Resume assigned", note: "resumed assigned", conversation: false, runner });
+    out.push({ label: "▶ Resume conversation assigned", note: "resumed conversation assigned", conversation: true, runner });
+  }
+  out.push({ label: "▶ Resume any runner", note: "resumed any runner", conversation: false, runner: "" });
+  out.push({ label: "▶ Resume conversation any runner", note: "resumed conversation any runner", conversation: true, runner: "" });
+  return out;
+}
+
 // latestLoad lets only the newest of overlapping async loads render.
 function latestLoad() {
   let n = 0;
