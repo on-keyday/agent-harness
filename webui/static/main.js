@@ -607,12 +607,8 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
           copy.textContent = "📋";
           copy.title = "コピー（送信はしない）";
           copy.addEventListener("click", async () => {
-            try {
-              await navigator.clipboard.writeText(result.command);
-              copy.textContent = "✓";
-            } catch (e) {
-              appendCmdOutput("copy failed: " + (e && e.message ? e.message : e));
-            }
+            if (await writeClipboardText(result.command)) copy.textContent = "✓";
+            else appendCmdOutput("copy failed");
           });
           row.append(label, code, copy);
           parts.push(row);
@@ -6737,31 +6733,6 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     }
   }
 
-  // copyText copies s to the clipboard. The WebUI is commonly served over plain
-  // http on a LAN, where navigator.clipboard is unavailable (it needs a secure
-  // context), so fall back to a hidden-textarea + execCommand("copy"). Returns
-  // whether the copy succeeded.
-  async function copyText(s) {
-    try {
-      if (navigator.clipboard && window.isSecureContext) {
-        await navigator.clipboard.writeText(s);
-        return true;
-      }
-    } catch (_) { /* fall through to legacy path */ }
-    try {
-      const ta = document.createElement("textarea");
-      ta.value = s;
-      ta.style.position = "fixed";
-      ta.style.opacity = "0";
-      document.body.appendChild(ta);
-      ta.focus();
-      ta.select();
-      const ok = document.execCommand("copy");
-      document.body.removeChild(ta);
-      return ok;
-    } catch (_) { return false; }
-  }
-
   // buildTaskSheet fills one task's action sheet, gating items by status/kind.
   // Each item runs its harness call and switches tabs where relevant.
   function buildTaskSheet(sheet, t) {
@@ -6790,7 +6761,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     copyBtn.textContent = "⧉ Copy id";
     copyBtn.addEventListener("click", async (e) => {
       e.stopPropagation();
-      const ok = await copyText(t.id);
+      const ok = await writeClipboardText(t.id);
       copyBtn.textContent = ok ? "✓ copied" : "copy failed";
       setTimeout(() => { copyBtn.textContent = "⧉ Copy id"; }, 1200);
     });
