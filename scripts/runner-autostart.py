@@ -233,6 +233,19 @@ def _systemd_unit_name(tag: str) -> str:
     return f"{_slot_name(tag)}.service"
 
 
+def _systemctl_user(*args: str, timeout: float = 30) -> subprocess.CompletedProcess | None:
+    """`systemctl --user ...` with a timeout; None when it hung or could not run.
+
+    A broken user bus ("Transport endpoint is not connected") makes systemctl
+    hang rather than fail, so every call here is bounded.
+    """
+    try:
+        return subprocess.run(["systemctl", "--user", *args], capture_output=True,
+                              text=True, timeout=timeout)
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
 def _register_linux(tag: str, args: list[str], start_now: bool) -> int:
     """Write a systemd user service and enable it.
 
@@ -248,6 +261,17 @@ def _register_linux(tag: str, args: list[str], start_now: bool) -> int:
     command rather than running it (root + system state change).
     """
     unit_name = _systemd_unit_name(tag)
+    # Reach the user manager BEFORE writing anything. Writing first and then
+    # failing to enable left a unit that was never enabled, so it did not start
+    # at the next boot either, with nothing saying so.
+    probe = _systemctl_user("show", "-p", "Version", "--value", timeout=10)
+    if probe is None or probe.returncode != 0:
+        why = "timed out" if probe is None else (probe.stderr.strip() or f"exit {probe.returncode}")
+        sys.stderr.write(
+            f"the systemd user manager is not reachable ({why}); nothing was written.\n"
+            "  For a runner now, without systemd: scripts/runner.sh up (same flags; it does\n"
+            "  not survive a reboot). Register once `systemctl --user show` answers.\n")
+        return 1
     unit_path = _systemd_unit_dir() / unit_name
     up_args = ["up", *_runner_tag_flags(tag), *args]
     down_args = ["down", *_runner_tag_flags(tag)]
@@ -300,16 +324,23 @@ def _register_linux(tag: str, args: list[str], start_now: bool) -> int:
     unit_path.write_text(body)
     print(f"wrote {unit_path}")
 
-    rc = subprocess.run(["systemctl", "--user", "daemon-reload"]).returncode
-    if rc != 0:
-        return rc
-    enable_cmd = ["systemctl", "--user", "enable"]
-    if start_now:
-        enable_cmd.append("--now")
-    enable_cmd.append(unit_name)
-    rc = subprocess.run(enable_cmd).returncode
-    if rc != 0:
-        return rc
+    reload = _systemctl_user("daemon-reload")
+    if reload is None or reload.returncode != 0:
+        sys.stderr.write(f"systemctl --user daemon-reload failed: "
+                         f"{'timed out' if reload is None else reload.stderr.strip()}\n")
+        return 1
+    enable = _systemctl_user("enable", *(["--now"] if start_now else []), unit_name, timeout=120)
+    if enable is None or enable.returncode != 0:
+        sys.stderr.write(f"systemctl --user enable {unit_name} failed: "
+                         f"{'timed out' if enable is None else enable.stderr.strip()}\n")
+    # What matters at the next boot is the unit file state, whatever enable said.
+    state = _systemctl_user("is-enabled", unit_name, timeout=10)
+    enabled = state.stdout.strip() if state is not None else "unknown (timed out)"
+    if enabled != "enabled":
+        sys.stderr.write(
+            f"{unit_name} is {enabled}, so it will NOT start at the next boot.\n"
+            f"  Once the user manager answers: systemctl --user enable --now {unit_name}\n")
+        return 1
 
     state = "registered + started" if start_now else "registered (not started)"
     print(f"{state}: {unit_name}")

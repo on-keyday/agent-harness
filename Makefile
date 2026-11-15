@@ -109,6 +109,7 @@ scripts-test:
 	python3 scripts/test_cgroup_adopt.py
 	python3 scripts/test_dummy_harness.py
 	python3 scripts/test_land.py
+	python3 scripts/test_runner_autostart.py
 	python3 -m unittest discover -s scripts/sandbox -p 'test_*.py'
 	python3 scripts/kvm-runner/test_kvm_runner.py
 
