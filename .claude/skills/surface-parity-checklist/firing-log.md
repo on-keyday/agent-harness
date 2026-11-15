@@ -4285,3 +4285,59 @@ the marker's syntax error. Unit tests passed (they checked a wake was
 installed). Removed for pipe sessions, with the measurement in A-D33. Second
 instance of "a field every surface fills and nothing safely consumes", one
 layer over from the 2026-09-30 suggestion entry.
+
+### 2026-11-15 (pre-landing) — pillar S: the `schedule` verb family, the `schedule` bit, a task's `schedule_id` / `task_schedule`
+
+Walk at the end of the feature (Task 8), over the verbs `schedule new/edit/run/rm/ls/show`,
+`Capability_Schedule`, `TaskInfo.schedule_id` and the `task_schedule` event kind.
+Evidence is the code at HEAD and a dummy-harness run (`--agent bash` schedules;
+CLI, TUI in tmux at 120x40 and 80x24, WebUI in Playwright).
+
+done:    1 (six rows `schedule new|edit|run|rm|ls|show` in `cli/verb/table.go`, CLI|TUI|WebUI),
+         2 (cross-flag rules in the builder: `repo_conflict`, `--task` vs `--repo`, `--stream` not offered,
+         `--runner any` / `--no-agent-args` edit-only), 4 (`tui/keys.go`: `n` run now, `x` delete with
+         confirm, `d` detail, on the Schedules scope; pressed for real, both widths), 5 (the `d` popup,
+         the `x` y/any-other-key confirm line; the N form needs nothing: a schedule is created from the
+         command line), 6 (Schedules button + dialog, Compose cron + zone, `Create schedule` relabel,
+         Run now / Delete buttons; seen in Playwright), 7 (six `WebUIDispatch{Fn: schedule…}` declarations),
+         8 (the bridge functions `scheduleCreate/Edit/Delete/Run/List/Show` in
+         `cmd/harness-webui-wasm/main.go`; one builder `cli.ScheduleSpecOptsFromAction`), 11 (`ls` row:
+         `schedule=<id8>`; seen live), 12 (`ls --json` `schedule_id`, omitempty on absence of a binding),
+         14 (`session ls` rows share the `ls --json` vocabulary and carried `schedule_id` live),
+         15 (`CapDescription` + `TierStrong` entry for `Capability_Schedule` in `cli/verb/caps.go`),
+         17 (`schedule:` line in the task detail popup, `tui/detail.go`), 18a (the Schedules table
+         `tui/schedules.go` is a NEW width-conditional table: About / Agent / Repo appear with width;
+         seen at 120 and 80 cols), 20 (WebUI task row `schedule=<id8>`; seen), 21 (task sheet button to the
+         schedule, `main.js` `schedBtn`), 22 (the dialog edits nothing by prefill: edit is the command
+         line; Compose's cron/zone/caps feed only a create), 23 (wasm snapshot `scheduleId`, raw 32 hex),
+         24 (per path: `new` needs the five condition fields; `edit` overlays only present ones, with
+         present-zero meanings per R17; `--runner any` edit-only; `--task` rebind edit-only; `--repo` refused
+         on a bound edit), 25 (per-field presence for the five conditions, R17), 26 (Compose caps chips feed
+         a schedule create only through the create request; the Compose `apply caps/scope on
+         resume` checkbox is disabled while a schedule is being created), 27 + 28a (one builder
+         `ScheduleSpecOptsFromAction`, pinned by `TestScheduleSpecOptsHasOneBuilder`; CLI, TUI and wasm all
+         call it), 28 (`schedules.json` with a version field, atomic rewrite; the task's binding is not
+         a WAL field — TaskInfo is client↔server only; replay meaning of a pre-existing store: absent file =
+         no schedules), 29 (every result line names the schedule: `schedule run <id32>: fired now`,
+         `schedule rm <id8>: delete it?`), 30 (results to `a.cmdresult` in the TUI and `appendCmdOutput`
+         in the WebUI; seen), 31 (zero printed: `queue-timeout=none`, `last=none`;
+         an absent next firing is the one word `none` in text and JSON), 32 (one serializer: the WebUI
+         dialog words are rendered in Go, `cli.Schedule*`), 33 (a typed option takes effect or errors:
+         `--queue-timeout 0` clears, `--deadline 0` refused; negative durations are NOT yet refused, see
+         missed), 34 (the Schedules table's column set varies by width and rebuilds rows with its columns;
+         seen at both widths), 34a (Compose cron is a text box beside the existing prompt box, the zone is a
+         select over the IANA names, the caps are the existing chips), 35 (README "Schedules" section,
+         capability paragraph, TUI section already carried the table), 36 (supervising-workers: the verbs,
+         the bit, S-D20, granular names; mirrored to `.claude/skills` and `.agents/skills`,
+         `TestMirrorsMatchEmbeddedSkills` green), 37 (spec amended during execution: S-D2, S-D3a, R14–R19
+         readings), 39 (spec's Surfaces: CLI `ls`/task detail naming the schedule and `from=schedule`; TUI
+         third table in the focus cycle with `d`, run-now, delete+confirm, task popup line; WebUI dialog with
+         history + waits + Run now + Delete, Compose cron+zone, task row and sheet; each seen live)
+omitted: 16 (the TUI task table has no schedule column: the spec names only the detail popup (17); the
+         From cell reads `schedule` — truncated `sch…` at 120 cols), 9 (no session-default state feeds a
+         schedule from the TUI: `schedule new` is typed whole on the command line, so nothing can go stale)
+n/a:     3, 10, 13 (`whoami` lists the new bit by name through the shared capability names; no new field),
+         18, 19 (picker rows show no schedule), 38 (no screen model involved)
+S1–S6:   n/a — no agent, preset, bin, argv template, credential mode or launch env changed
+missed:  33 (negative durations on `schedule edit` — `--queue-timeout -5m`, `--quiet -1m` — silently mean
+         none / default instead of erroring; found in the Task 5 review, still open at this walk)

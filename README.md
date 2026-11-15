@@ -1127,7 +1127,8 @@ enrolling runner keys (`runner_enroll`), global info, publishing to the board be
 board as the operator, keeping a board topic past its TTL (`board_persist`), putting another task on a board topic (`board_member`),
 keeping a session's PTY record — switching recording on or keeping a record longer (`record_persist`) — and
 deleting one, switching recording off or shortening its retention (`record_delete`),
-reading the agents' own transcripts of a task's working directory (`transcript_read`)) — and a **target scope** bounding WHICH tasks those
+reading the agents' own transcripts of a task's working directory (`transcript_read`),
+creating, editing, running and deleting a server-kept cron schedule and unbinding a task from one (`schedule`, see **Schedules**)) — and a **target scope** bounding WHICH tasks those
 capabilities may be pointed at.
 
 Attaching to a session is three capabilities, not one, because the three
@@ -1751,6 +1752,155 @@ podman sandbox (see **Sandboxing** below) as a server-layer
 confinement: `--caps none` closes the control-plane escape path (an
 agent spawning an unsandboxed child) regardless of what is inside the
 container.
+
+## Schedules
+
+A **schedule** is a server-kept cron entry that starts a background run of one
+task at the times its cron expression names, in a stated time zone. It is for
+work a machine starts and that ends itself (a watcher that triages new issues,
+a nightly report). The definitions live in `<data-dir>/schedules.json`
+(rewritten whole and atomically; the server refuses to start on a file it
+cannot parse) and survive a server restart. Spec:
+`docs/superpowers/specs/2026-11-15-pillar-s-schedules-design.md`.
+
+A firing is a background resume of the schedule's task — the same open
+`session new --background` makes, with `--deadline` and the run conditions of
+5c above — so it queues for a free runner rather than being refused. The first
+firing CREATES the task (a task that has never run cannot be resumed); every
+later firing resumes it. At most one run per schedule is queued or running.
+
+```bash
+# new: --cron, --prompt, --deadline, --agent, and --repo (or --task T to bind
+# an existing task instead of creating one at the first firing). The run flags
+# are session new --background's (--turn-end, --quiet, --blocked,
+# --queue-timeout, --record, --oneshot, --pty/--no-pty, --resume-conversation,
+# --agent-arg, --runner/--host/--ip, --rows/--cols), and the authority flags
+# are session new's (--caps, --scope, --scope-for, --delegate-*).
+# Needs the schedule capability and at least one candidate runner for the repo
+# now. --stream is not offered: a firing opens an interactive session.
+harness-cli schedule new --cron '0 9 * * mon-fri' --tz Asia/Tokyo \
+  --repo /abs/path/to/repo --agent claude --deadline 30m \
+  --prompt 'Triage the new issues and report on chat.<short-id>'
+# ls / show need no capability, only reach. show prints the definition, the
+# stored authority, the last 50 firings and the wait statistics.
+harness-cli schedule ls [--json]
+harness-cli schedule show [--json] <schedule-id>
+# edit changes FUTURE firings only; naming a flag changes that field and
+# nothing else. --cron or --tz recomputes the next firing.
+harness-cli schedule edit --cron '*/30 * * * *' <schedule-id>
+# run fires it now, outside its times (recorded run_now); the next firing is
+# unchanged. It exists so a schedule set for 09:00 can be tried at once.
+harness-cli schedule run <schedule-id>
+# rm deletes the schedule. Its task stays as an ordinary background task, and
+# a run in progress is not cancelled (cancel it to stop it).
+harness-cli schedule rm <schedule-id>
+```
+
+**The expression** is matched against the schedule's local wall clock. It is
+five fields — minute 0-59, hour 0-23, day-of-month 1-31, month 1-12 or
+`jan`…`dec`, day-of-week 0-7 (0 and 7 are Sunday) or `sun`…`sat`, names
+case-insensitive — or one of `@yearly` / `@annually`, `@monthly`, `@weekly`,
+`@daily` / `@midnight`, `@hourly`. A field is a comma list of `*`, `N` or `N-M`,
+each optionally `/S` (`N/S` runs from N to the field's maximum). An interval is
+therefore a step (`*/30 * * * *`); `@every`, `@reboot`, `?`, `L`, `W`, `#`, a
+sixth field and a `TZ=` prefix are refused, as is an expression of more than
+256 bytes or one that matches nothing within five years (`0 0 30 2 *`). As in
+Vixie cron, when the day-of-month or the day-of-week field starts with `*` a
+day must match both, otherwise either. The parser is the harness's own
+(`server/schedule_cron.go`), not a library.
+
+**Zones.** `--tz` takes an IANA name; without it the schedule uses the server's
+local zone, stored BY NAME. A local zone with no IANA name the server can
+determine is not stored as `Local` (which would follow the host later): the
+create is refused and asks for `--tz`. The zone database is embedded in the
+server, the CLI, the TUI and the WebUI, so a host without one (Windows) works.
+Every surface shows the next firing in its zone. Around a clock change each
+matching day fires exactly once and never early: a time inside a spring-forward
+gap fires at the end of the gap (`30 2 * * *` in New York: 03:00 EDT), a time
+in a repeated hour fires once, at the earlier instant.
+
+**Outcomes.** Every due firing leaves a history entry — a schedule never
+silently stops — and `schedule show` / the TUI detail / the WebUI dialog list
+the last 50:
+
+| outcome | meaning |
+| --- | --- |
+| `fired` | a run was started (the first firing created the task) |
+| `run_now` | `schedule run` started one |
+| `skipped_busy` | the task was still queued or running |
+| `skipped_no_task` | the schedule has no task (it was unbound); `schedule edit --task` binds one |
+| `skipped_task_gone` | the task was pruned; `restore` brings it back and the next firing runs |
+| `skipped_refused` | the resume or the creation was refused (spawn limit, …); the message is kept, and a refused first creation is tried again at the next firing |
+| `resumed_by` | the task was resumed by someone other than the schedule (the resumer's client kind is kept) |
+| `unbound` | a foreground resume / `session mode … foreground` took the task away; who and when |
+| `pending` / `lost` | see below |
+
+A `fired` / `run_now` entry also carries the run's `queued`, `started`,
+`ended` and end reason (`end=deadline`, `turn_done_*`, …), filled in as the
+task's events arrive, and `schedule show` summarises the wait
+(`started − queued`) as count, median and maximum over the runs the schedule
+started. A schedule's `ls` row reads `last=<outcome> <age> ago`.
+
+**A firing runs at most once.** Before it resumes or creates the task the
+firing writes a `pending` intent to `schedules.json` and advances the next
+time; then it acts; then it records the outcome. After a crash the server
+settles each `pending` entry from the task store — the run is there → `fired`,
+and the run ends however replay ended it (`Failed`, `server_restart`);
+otherwise `lost`. A crash never repeats a firing and never loses one silently.
+
+**A firing missed while the server was down runs once.** On start, a schedule
+whose next time is in the past fires once (subject to the one-run rule), its
+history entry carrying the old due time, and the next time is computed from
+now. However many occurrences were missed, at most one runs. The server arms
+its timer at most an hour ahead, so a host suspend or wall-clock jump delays a
+firing by at most that.
+
+**The task, binding and unbinding.** `schedule new --task T` binds an existing
+task instead (within your reach, and not running in foreground: end it or
+`session mode` it first); `--repo` with `--task` is refused. A task bound to a
+schedule shows `schedule=<id8>` in `ls` (the first 8 hex only: the verbs take
+the full 32-hex id, which `schedule ls`, `schedule_id` in `ls --json` and the
+task detail views print; the TUI command line also takes a unique prefix of a
+schedule it lists). A run it started reads `from=schedule`, and a
+`task_schedule` event on `watch` says its binding changed. Taking the task
+away — a resume asking for foreground, or `session mode … foreground` —
+needs the `schedule` bit as well as what it needs today, unbinds the task and
+appends `unbound` to the history. A schedule with no task shows as such, and
+its firings are `skipped_no_task`.
+
+**The `schedule` capability** gates `new`, `edit`, `run`, `rm` and that
+unbinding. Acting on a particular schedule also needs reach to its task (while
+it has none, to the task that created it); `--task T` needs T in reach. `ls`
+and `show` need no bit, only the same reach, and the operator reaches all; a
+schedule's prompt is shown only where the caller could read its task's prompt
+in `ls`. The stored authority is computed as `session new` does it, bounded by
+the creator, and `schedule edit` recomputes it with the EDITOR as granter
+whether or not an authority flag is named — otherwise someone able to edit
+another principal's schedule could change its prompt and have it run with the
+original creator's grant. Each firing writes the stored grant onto the task.
+A schedule's own task can never act on its schedule — `edit`, `run`, `rm`, a
+`--task` rebind and the unbinding are refused whatever its grant holds — since
+the run reads untrusted text (issues, pull requests) and an injected
+instruction must not outlive it by rewriting the prompt, the times or the
+binding. Deleting a schedule leaves its task.
+
+**Per-field edits.** The five run-condition fields (`--deadline`, `--turn-end`,
+`--quiet`, `--blocked`, `--queue-timeout`) are edited one by one: naming one
+leaves the others as they are, and a zero that is present means something
+(`--queue-timeout 0` = none, `--quiet 0` / `--blocked 0` = the default again,
+`--turn-end default` = any; `--deadline 0` is refused, as a background run
+needs one). `--agent-arg` and `--runner` / `--host` / `--ip` replace the
+stored value when named; on an edit `--runner any` sets the selector back to
+any runner and `--no-agent-args` clears the argument list.
+
+Surfaces. CLI: the verbs above. TUI: the **Schedules** table (see **TUI**).
+WebUI: the **Schedules** button opens a dialog listing the rows, with a detail
+view (history and wait statistics) and **Run now** / **Delete** (confirmed)
+buttons; Compose gains a cron + zone pair, and with a cron filled its button
+reads **Create schedule** and creates a schedule from the form's background
+fields instead of opening a session (the cron is cleared after a create); the
+task row and sheet name the bound schedule; `schedule …` works on the command
+line.
 
 ## Sandboxing (rootless podman)
 

@@ -638,8 +638,10 @@ Granular names: `spawn`, `resume_exact`, `resume`, `cancel`, `exec_view`, `exec_
 `exec_control`, `exec_resize`, `exec_run`, `exec_tap`, `file_read`, `file_write`,
 `forward_local`, `forward_remote`, `forward_link`, `forward_tap`, `notify`, `prune`,
 `runner_admin`, `board_observe`, `board_purge`, `board_send`, `board_peer`, `board_persist`, `board_member`,
-`record_persist`, `record_delete`, `transcript_read` — plus the aliases `none` / `all`. `harness-cli caps`
+`record_persist`, `record_delete`, `transcript_read`, `schedule` — plus the aliases `none` / `all`. `harness-cli caps`
 prints the authoritative list with a line each; this one can fall behind it.
+`schedule` creates, edits, runs and deletes a server-kept cron schedule and
+unbinds a task from one (next section).
 `record_persist` keeps a session's PTY record (switches recording on, opens a
 session with `--record`, keeps a record longer) and `record_delete` removes one
 (`record rm`, `record off`, a shorter retention); reading a record is
@@ -673,6 +675,58 @@ WATCH `exec_view`; grant one you need to DRIVE `exec_cowrite`. `exec_control`
 is for taking a terminal away from someone, which is rarely what you want. When you spawn a worker you
 intend to keep driving, grant the narrowest set that lets it finish, and widen
 only if it hits a capability-denied error.
+
+## Recurring runs — `harness-cli schedule`
+
+A schedule is a server-kept cron entry: at the times its expression names, in a
+stated zone, the server starts a background run of the schedule's task (the
+first firing creates the task, every later one resumes it). Use it for work
+that should start by itself and end by itself, not for a worker you will drive.
+
+```bash
+harness-cli schedule new --cron '0 9 * * mon-fri' --tz Asia/Tokyo \
+  --repo /path/to/repo --agent claude --deadline 30m \
+  --prompt "Triage the new issues and report on chat.<your-short-id>"
+harness-cli schedule ls [--json]                 # needs no bit, only reach
+harness-cli schedule show <schedule-id>          # definition, history, wait statistics
+harness-cli schedule edit --cron '*/30 * * * *' <schedule-id>
+harness-cli schedule run <schedule-id>           # fire now (history: run_now)
+harness-cli schedule rm <schedule-id>            # the task stays; a run is not cancelled
+```
+
+- **`new`, `edit`, `run`, `rm` need the `schedule` bit**, and `edit` / `run` /
+  `rm` also need the schedule's task in your scope (while it has none, its
+  creator task). `ls` / `show` need no bit. `new` takes `--prompt`,
+  `--deadline`, `--agent` and `--repo` (or `--task T` to bind an existing
+  task, not running in foreground), with `session new --background`'s run
+  flags and `session new`'s `--caps` / `--scope` / `--scope-for` /
+  `--delegate-*`. The stored authority is bounded by yours; an edit recomputes
+  it with the editor as granter, so editing a schedule never leaves it wider
+  than you. Check `whoami` before promising to create one.
+- **The expression is five cron fields in the schedule's zone**, or `@hourly`
+  / `@daily` / `@weekly` / `@monthly` / `@yearly`; an interval is a step
+  (`*/30 * * * *`). `@every`, `?`, `L`, `W`, `#` and a `TZ=` prefix are
+  refused (`invalid_cron`), as is an expression that matches nothing within five
+  years. Without `--tz` the server's zone is used, and a server that cannot
+  name it refuses the create and asks for `--tz`.
+- **A schedule's own task cannot act on its schedule.** `edit`, `run`, `rm`, a
+  `--task` rebind and unbinding it are refused for the bound task whatever it
+  holds, because a scheduled run reads untrusted text (issues, pull requests)
+  and an instruction injected into it must not outlive the run by rewriting
+  the prompt, the times or the binding. Do not read the refusal (`self_refused`)
+  as a missing bit; the operator or another task changes it.
+- **Every due firing leaves a history entry** (`schedule show`, last 50):
+  `fired`, `run_now`, `skipped_busy` (the previous run is still queued or
+  running), `skipped_no_task`, `skipped_task_gone`, `skipped_refused` (with the
+  reason), `resumed_by`, `unbound`, and `pending` / `lost` for a firing a
+  server crash interrupted. A firing runs at most once, and one missed while
+  the server was down runs once when it comes back.
+- **Taking a scheduled task away needs the bit too.** A resume that asks for
+  `--foreground`, or `session mode <id> foreground`, on a task bound to a
+  schedule needs `schedule` as well as what it needs today; it unbinds the task,
+  and its firings are `skipped_no_task` until `schedule edit --task <id>` binds
+  one. `ls` shows the binding as `schedule=<id8>`, and a run a schedule started
+  reads `from=schedule`.
 
 ## One-shot sessions & monitoring (`session new --oneshot`, `watch`)
 
