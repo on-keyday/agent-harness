@@ -11,6 +11,12 @@ Usage::
 
     python scripts/restart.py <slot> [override flags...]
 
+A slot registered as a systemd user unit (``runner-autostart.py register``)
+is restarted through that unit instead: ``systemctl --user restart``, or a
+``systemd-run`` timer when it is the caller's own slot. Its flags come from
+the unit file, so overrides are refused for it (re-register to change them).
+Everything below describes the other slots.
+
 ``<slot>`` is the ``bin/.run/<slot>.pid`` name — i.e. the binary name for
 primary instances (``agent-runner``, ``harness-server``) or
 ``<binary>-<tag>`` for additional instances. Flags, CWD, and the
@@ -57,6 +63,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -68,6 +75,7 @@ ensure_venv()
 
 import psutil
 
+import cgroup_adopt as _cgroup
 import daemon as _daemon
 
 _DETACHED_FLAG = "--__detached"
@@ -310,6 +318,59 @@ def _resolve_state(slot: str) -> tuple[str, list[str], str] | None:
     return bin_name, flags, cwd
 
 
+# How long a slot restarting ITSELF waits before the unit restart fires, so the
+# caller (usually an agent session inside that slot) can finish its report.
+_SELF_RESTART_DELAY_S = 60
+
+
+def _registered_unit(slot: str) -> str | None:
+    """The systemd user unit that owns *slot*, when one is registered (Linux)."""
+    if not sys.platform.startswith("linux"):
+        return None
+    unit = _cgroup.systemd_unit_name(slot)
+    try:
+        out = subprocess.run(["systemctl", "--user", "show", unit, "-p", "LoadState", "--value"],
+                             capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return unit if out.returncode == 0 and out.stdout.strip() == "loaded" else None
+
+
+def _runs_inside_unit(unit: str) -> bool:
+    """Whether this process is in *unit*'s cgroup: restarting it kills us."""
+    return _cgroup.current_cgroup(os.getpid()) == unit
+
+
+def _restart_unit(slot: str, unit: str, overrides: list[str], unset: list[str]) -> int:
+    """Restart a registered slot through its unit, never by replaying argv.
+
+    The unit's ExecStart re-expands --agents from scripts/agent_presets.py when
+    it starts; replaying the running argv re-launches the old expansion, so a
+    preset change never arrived (fleet-wide, 2026-07-28 and 2026-11-14). For the
+    same reason a registered slot's flags live in its unit file: overrides are
+    refused rather than applied to one run and lost on the next boot.
+    """
+    if overrides or unset:
+        sys.stderr.write(
+            f"[{slot}] is registered as {unit}; its flags come from the unit file. "
+            "Change them with `scripts/runner-autostart.py register` (same tag, new "
+            "flags), then restart.\n")
+        return 2
+    restart = ["systemctl", "--user", "restart", unit]
+    if _runs_inside_unit(unit):
+        # A direct restart from inside the unit kills this process mid-command.
+        # A transient timer belongs to the user manager and outlives the unit.
+        subprocess.run(["systemd-run", "--user", f"--on-active={_SELF_RESTART_DELAY_S}",
+                        shutil.which("systemctl") or "/usr/bin/systemctl", "--user", "restart", unit],
+                       check=True)
+        print(f"[{slot}] {unit} is this process's own unit: restart scheduled in "
+              f"{_SELF_RESTART_DELAY_S}s (systemd-run timer); this session ends then")
+        return 0
+    subprocess.run(restart, check=True)
+    print(f"[{slot}] restarted {unit}")
+    return 0
+
+
 def _usage_and_exit() -> None:
     sys.stderr.write(
         "usage: restart.py <slot> [override flags...] [--unset NAME ...]   "
@@ -341,6 +402,10 @@ def main(argv: list[str]) -> int:
     except ValueError as e:
         sys.stderr.write(f"[{slot}] {e}\n")
         return 2
+
+    unit = _registered_unit(slot)
+    if unit is not None:
+        return _restart_unit(slot, unit, overrides, unset)
 
     state = _resolve_state(slot)
     if state is None:

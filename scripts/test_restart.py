@@ -15,6 +15,7 @@ import stat
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
@@ -127,6 +128,79 @@ class MergeFlagsTest(unittest.TestCase):
         for bad in (["--unset"], ["--unset", "--x"], ["--unset="]):
             with self.assertRaises(ValueError, msg=bad):
                 restart._split_unset(bad)
+
+
+class RegisteredUnitTest(unittest.TestCase):
+    """A slot registered as a systemd user unit is restarted THROUGH the unit.
+
+    Replaying the running argv (the path for unregistered slots) re-launches
+    the flags the slot was started with, so a change to scripts/agent_presets.py
+    never reached it: the unit's ExecStart re-expands --agents at start time.
+    That froze a preset change fleet-wide twice (2026-07-28, 2026-11-14).
+    """
+
+    UNIT = "harness-agent-runner-x.service"
+
+    def _main(self, argv, *, own: bool = False):
+        calls = []
+
+        def fake_run(cmd, **kw):
+            calls.append(cmd)
+            return mock.Mock(returncode=0, stdout="", stderr="")
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(restart, "_registered_unit", return_value=self.UNIT), \
+             mock.patch.object(restart, "_runs_inside_unit", return_value=own), \
+             mock.patch.object(restart.subprocess, "run", side_effect=fake_run), \
+             mock.patch.object(restart, "_spawn_detached_child") as replay, \
+             redirect_stdout(out), redirect_stderr(err):
+            rc = restart.main(argv)
+        return rc, calls, replay, out.getvalue() + err.getvalue()
+
+    def test_another_slot_is_restarted_by_systemctl(self) -> None:
+        rc, calls, replay, _ = self._main(["agent-runner-x"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(calls, [["systemctl", "--user", "restart", self.UNIT]])
+        replay.assert_not_called()
+
+    def test_the_callers_own_slot_is_restarted_by_a_timer(self) -> None:
+        # A direct restart from inside the unit kills the caller mid-command;
+        # a transient timer belongs to the user manager and survives it.
+        rc, calls, replay, out = self._main(["agent-runner-x"], own=True)
+        self.assertEqual(rc, 0)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][:3], ["systemd-run", "--user", f"--on-active={restart._SELF_RESTART_DELAY_S}"])
+        self.assertEqual(calls[0][-3:], ["--user", "restart", self.UNIT])
+        replay.assert_not_called()
+        self.assertIn(str(restart._SELF_RESTART_DELAY_S), out)
+
+    def test_overrides_are_refused_for_a_registered_slot(self) -> None:
+        rc, calls, replay, out = self._main(["agent-runner-x", "--max-tasks", "8"])
+        self.assertEqual(rc, 2)
+        self.assertEqual(calls, [])
+        replay.assert_not_called()
+        self.assertIn("runner-autostart.py register", out)
+
+    def test_an_unregistered_slot_still_replays_its_argv(self) -> None:
+        with mock.patch.object(restart, "_registered_unit", return_value=None), \
+             mock.patch.object(restart, "_resolve_state", return_value=("agent-runner", ["--max-tasks", "4"], "/w")), \
+             mock.patch.object(restart, "_spawn_detached_child", return_value=99) as replay, \
+             redirect_stdout(io.StringIO()):
+            rc = restart.main(["agent-runner-y"])
+        self.assertEqual(rc, 0)
+        replay.assert_called_once()
+
+
+class RegisteredUnitLookupTest(unittest.TestCase):
+    def _show(self, state: str):
+        return mock.patch.object(restart.subprocess, "run",
+                                 return_value=mock.Mock(returncode=0, stdout=state + "\n"))
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "systemd units are Linux-only")
+    def test_loaded_unit_is_registered_and_not_found_is_not(self) -> None:
+        with self._show("loaded"):
+            self.assertEqual(restart._registered_unit("agent-runner-x"), "harness-agent-runner-x.service")
+        with self._show("not-found"):
+            self.assertIsNone(restart._registered_unit("agent-runner-x"))
 
 
 if __name__ == "__main__":
