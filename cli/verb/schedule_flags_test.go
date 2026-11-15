@@ -44,6 +44,12 @@ func TestScheduleFlagsAreSpawnFlags(t *testing.T) {
 		"oneshot":             "PresenceField: an edit must tell --oneshot=false from not naming it",
 		"rows":                "PresenceField: an edit must tell an explicit 40 from the default",
 		"cols":                "PresenceField: an edit must tell an explicit 120 from the default",
+		"deadline":            "PresenceField (R17)",
+		"quiet":               "PresenceField (R17): a present 0 is back to the default",
+		"blocked":             "PresenceField (R17): a present 0 is back to the default",
+		"queue-timeout":       "PresenceField (R17): a present 0 is no queue timeout",
+		"turn-end":            "PresenceField (R17) and `default` in the help",
+		"runner":              "help: `any` on an edit sets the selector back to any",
 	}
 	norm := func(f Flag) Flag {
 		f.Help, f.Resolve, f.PresenceField = "", nil, ""
@@ -91,8 +97,14 @@ func TestScheduleFlagsAreSpawnFlags(t *testing.T) {
 		// Nothing a schedule takes is a flag nobody (not session new, not the
 		// schedule's own three) declares.
 		var extra []string
+		own := []string{"cron", "tz", "task"}
+		if path[1] == "edit" {
+			own = append(own, "no-agent-args") // R19: edit-only
+		} else if _, has := got["no-agent-args"]; has {
+			t.Errorf("%v takes --no-agent-args, which only an edit has", path)
+		}
 		for name := range got {
-			if _, ok := spawn[name]; !ok && !contains([]string{"cron", "tz", "task"}, name) {
+			if _, ok := spawn[name]; !ok && !contains(own, name) {
 				extra = append(extra, name)
 			}
 		}

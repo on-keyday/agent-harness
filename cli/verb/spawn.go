@@ -182,6 +182,13 @@ var schedulePresence = map[string]string{
 	"oneshot":             "OneshotPresent",
 	"rows":                "RowsPresent",
 	"cols":                "ColsPresent",
+	// The conditions travel as one presence bit each (R17): a present zero
+	// is an answer (--queue-timeout 0 = none; --quiet 0 = the default).
+	"deadline":      "DeadlinePresent",
+	"quiet":         "QuietPresent",
+	"blocked":       "BlockedPresent",
+	"queue-timeout": "QueueTimeoutPresent",
+	"turn-end":      "TurnEndPresent",
 }
 
 // scheduleFlags is spawnFlags minus scheduleOff, the same Flag rows with the
@@ -207,6 +214,10 @@ func scheduleFlags(all []Flag) []Flag {
 			f.Help = "the repo the first firing creates the task in; must match a runner-registered RepoPath verbatim (needs this or --task; no HARNESS_REPO_PATH fallback)"
 		case "resume-conversation":
 			f.Help = "resume the agent's own conversation state at every firing after the first"
+		case "turn-end":
+			f.Help = "background: which signal ends the run at a turn's end: off|quiet|lifecycle|program|any|default (default = any; on an edit, naming it alone leaves the other conditions as they are)"
+		case "runner":
+			f.Help = "pin to a specific runner by ConnectionID (the id= value from `ls`); `any` (on an edit) sets the schedule back to any runner"
 		}
 		out = append(out, f)
 	}
@@ -226,15 +237,17 @@ func scheduleExclusive() []Rule {
 			Reason: "they are the two answers to one question"},
 		{Flags: []string{"repo", "task"},
 			Reason: "a bound task brings its own repo"},
+		{Flags: []string{"agent-arg", "no-agent-args"},
+			Reason: "one adds to the stored list and the other empties it"},
 	}
 }
 
 // scheduleValidate is spawnValidate's residue for a schedule. isNew: a create
 // states its prompt; an edit names only what changes.
 func scheduleValidate(b Bound, isNew bool) error {
-	if te := b.Str("turn-end"); te != "" {
+	if te := b.Str("turn-end"); te != "" && te != TurnEndDefault {
 		if _, err := ParseTurnEnd(te); err != nil {
-			return err
+			return fmt.Errorf("%w (or %s)", err, TurnEndDefault)
 		}
 	}
 	if b.Bool("oneshot") && isNew && b.Str("prompt") == "" {
@@ -259,6 +272,12 @@ func scheduleVerbFlags(isNew bool) []Flag {
 			Help: "IANA time zone the expression is read in (default: the server's local zone, stored by name)"},
 		{Name: "task", Type: FlagString, Default: "", Field: "TaskID",
 			Help: "bind this existing task (32 hex) instead of creating one at the first firing; it must not be running in foreground"},
+	}
+	if !isNew {
+		// Edit-only spellings (R19): the wire can say "empty list" and "any
+		// runner", the shared rows have no word for them.
+		own = append(own, Flag{Name: "no-agent-args", Type: FlagBool, Default: false, Field: "NoAgentArgs",
+			Help: "empty the stored agent args (--agent-arg replaces them; naming neither keeps them)"})
 	}
 	return append(own, spawnFlags(spawnSchedule)...)
 }
@@ -333,6 +352,10 @@ func spawnValidate(b Bound) error {
 	}
 	return nil
 }
+
+// TurnEndDefault is the schedule's spelling of "back to the server's default
+// signal" (any): a present turn_end with the unset value.
+const TurnEndDefault = "default"
 
 // ParseTurnEnd reads --turn-end. "" is the server's default.
 func ParseTurnEnd(s string) (protocol.TurnEndSignal, error) {

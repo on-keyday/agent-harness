@@ -515,10 +515,39 @@ func (h *TaskHandler) applySpec(cid string, base Schedule, spec *protocol.Schedu
 	case create:
 		sc.Run.Record = h.RecordDefault
 	}
-	if spec.ConditionsPresent() && spec.Conditions() != nil {
-		rows, cols := sc.Run.Cond.Rows, sc.Run.Cond.Cols
-		sc.Run.Cond = ConditionsFromWire(spec.Conditions()).WithDefaults(protocol.TaskKind_Interactive)
-		sc.Run.Cond.Rows, sc.Run.Cond.Cols = rows, cols
+	// The conditions (R17): each has its own presence bit, and only the present
+	// ones overlay the stored block, here under the schedule's firing mutex (an
+	// edit holds it) so two edits of different fields both survive. A present
+	// zero is an answer: queue_timeout 0 = none; quiet / blocked 0 and an unset
+	// turn_end = the defaults (WithDefaults); deadline 0 is refused below
+	// (G41). Size lives beside them and is untouched.
+	if spec.DeadlinePresent() || spec.QuietPresent() || spec.BlockedPresent() || spec.QueueTimeoutPresent() || spec.TurnEndPresent() {
+		cond := sc.Run.Cond
+		ms := func(p *uint64) time.Duration {
+			if p == nil {
+				return 0
+			}
+			return time.Duration(*p) * time.Millisecond
+		}
+		if spec.DeadlinePresent() {
+			cond.Deadline = ms(spec.DeadlineMs())
+		}
+		if spec.QuietPresent() {
+			cond.Quiet = ms(spec.QuietMs())
+		}
+		if spec.BlockedPresent() {
+			cond.Blocked = ms(spec.BlockedMs())
+		}
+		if spec.QueueTimeoutPresent() {
+			cond.QueueTimeout = ms(spec.QueueTimeoutMs())
+		}
+		if spec.TurnEndPresent() {
+			cond.TurnEnd = protocol.TurnEndSignal_Unset
+			if v := spec.TurnEnd(); v != nil {
+				cond.TurnEnd = *v
+			}
+		}
+		sc.Run.Cond = cond.WithDefaults(protocol.TaskKind_Interactive)
 	}
 	if spec.SizePresent() && spec.InitialRows() != nil && spec.InitialCols() != nil {
 		r, c := *spec.InitialRows(), *spec.InitialCols()

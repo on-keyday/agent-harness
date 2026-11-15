@@ -703,7 +703,7 @@ type ScheduleSpecAction struct {
 	MaxDescendants *protocol.SpawnLimit
 	// extra CLI arg to forward to the agent (repeatable; appended after the runner-global --agent-args)
 	ExtraArgs []string
-	// pin to a specific runner by ConnectionID (the id= value from `ls`)
+	// pin to a specific runner by ConnectionID (the id= value from `ls`); `any` (on an edit) sets the sche…
 	Runner string
 	// pin to a runner by hostname
 	Host string
@@ -719,14 +719,24 @@ type ScheduleSpecAction struct {
 	Cols uint
 	// the agent's first turn, in either run mode (at most 16384 bytes)
 	Prompt string
+	// whether --deadline was typed, which its zero value cannot say
+	DeadlinePresent bool
 	// background: the run is cancelled this long after it starts (required; no default)
 	Deadline time.Duration
-	// background: which signal ends the run at a turn's end: off|quiet|lifecycle|program|any (default any;…
+	// whether --turn-end was typed, which its zero value cannot say
+	TurnEndPresent bool
+	// background: which signal ends the run at a turn's end: off|quiet|lifecycle|program|any|default (defa…
 	TurnEnd string
+	// whether --quiet was typed, which its zero value cannot say
+	QuietPresent bool
 	// background: output silence that counts as a finished turn (default 5m)
 	QuietFor time.Duration
+	// whether --blocked was typed, which its zero value cannot say
+	BlockedPresent bool
 	// background: how long the agent may wait on a human before the run ends (default 5m)
 	BlockedFor time.Duration
+	// whether --queue-timeout was typed, which its zero value cannot say
+	QueueTimeoutPresent bool
 	// background: cancel the task if it is still queued this long after it was queued (default none)
 	QueueTimeout time.Duration
 	// record this run's PTY output on the server (`record get` reads it back; needs record_persist)
@@ -742,7 +752,9 @@ type ScheduleSpecAction struct {
 	// run the child on pipes, no PTY (a --oneshot's default: stdin /dev/null, output byte for byte; intera…
 	NoPty bool
 	Sub   string
-	ID    string
+	// empty the stored agent args (--agent-arg replaces them; naming neither keeps them)
+	NoAgentArgs bool
+	ID          string
 }
 
 // ScreenAction is built by: clear, diag, exit, help, quit, reconnect, refresh, repo, sync, trsf.
@@ -4205,10 +4217,15 @@ func init() {
 			a.ColsPresent = b.Set["cols"]
 			a.Cols = uintOf(b.Flags["cols"])
 			a.Prompt = b.Str("prompt")
+			a.DeadlinePresent = b.Set["deadline"]
 			a.Deadline = durationOf(b.Flags["deadline"])
+			a.TurnEndPresent = b.Set["turn-end"]
 			a.TurnEnd = b.Str("turn-end")
+			a.QuietPresent = b.Set["quiet"]
 			a.QuietFor = durationOf(b.Flags["quiet"])
+			a.BlockedPresent = b.Set["blocked"]
 			a.BlockedFor = durationOf(b.Flags["blocked"])
+			a.QueueTimeoutPresent = b.Set["queue-timeout"]
 			a.QueueTimeout = durationOf(b.Flags["queue-timeout"])
 			a.Record = b.Bool("record")
 			a.NoRecord = b.Bool("no-record")
@@ -4292,10 +4309,15 @@ func init() {
 			a.ColsPresent = b.Set["cols"]
 			a.Cols = uintOf(b.Flags["cols"])
 			a.Prompt = b.Str("prompt")
+			a.DeadlinePresent = b.Set["deadline"]
 			a.Deadline = durationOf(b.Flags["deadline"])
+			a.TurnEndPresent = b.Set["turn-end"]
 			a.TurnEnd = b.Str("turn-end")
+			a.QuietPresent = b.Set["quiet"]
 			a.QuietFor = durationOf(b.Flags["quiet"])
+			a.BlockedPresent = b.Set["blocked"]
 			a.BlockedFor = durationOf(b.Flags["blocked"])
+			a.QueueTimeoutPresent = b.Set["queue-timeout"]
 			a.QueueTimeout = durationOf(b.Flags["queue-timeout"])
 			a.Record = b.Bool("record")
 			a.NoRecord = b.Bool("no-record")
@@ -4311,6 +4333,7 @@ func init() {
 			a.Cron = b.Str("cron")
 			a.Tz = b.Str("tz")
 			a.TaskID = b.Str("task")
+			a.NoAgentArgs = b.Bool("no-agent-args")
 			a.Repo = b.Str("repo")
 			a.ResumeConversationPresent = b.Set["resume-conversation"]
 			a.ResumeConversation = b.Bool("resume-conversation")
@@ -4379,10 +4402,15 @@ func init() {
 			a.ColsPresent = b.Set["cols"]
 			a.Cols = uintOf(b.Flags["cols"])
 			a.Prompt = b.Str("prompt")
+			a.DeadlinePresent = b.Set["deadline"]
 			a.Deadline = durationOf(b.Flags["deadline"])
+			a.TurnEndPresent = b.Set["turn-end"]
 			a.TurnEnd = b.Str("turn-end")
+			a.QuietPresent = b.Set["quiet"]
 			a.QuietFor = durationOf(b.Flags["quiet"])
+			a.BlockedPresent = b.Set["blocked"]
 			a.BlockedFor = durationOf(b.Flags["blocked"])
+			a.QueueTimeoutPresent = b.Set["queue-timeout"]
 			a.QueueTimeout = durationOf(b.Flags["queue-timeout"])
 			a.Record = b.Bool("record")
 			a.NoRecord = b.Bool("no-record")
@@ -4401,6 +4429,7 @@ func init() {
 			a.Cron = b.Str("cron")
 			a.Tz = b.Str("tz")
 			a.TaskID = b.Str("task")
+			a.NoAgentArgs = b.Bool("no-agent-args")
 			a.Repo = b.Str("repo")
 			a.ResumeConversationPresent = b.Set["resume-conversation"]
 			a.ResumeConversation = b.Bool("resume-conversation")
@@ -4469,10 +4498,15 @@ func init() {
 			a.ColsPresent = b.Set["cols"]
 			a.Cols = uintOf(b.Flags["cols"])
 			a.Prompt = b.Str("prompt")
+			a.DeadlinePresent = b.Set["deadline"]
 			a.Deadline = durationOf(b.Flags["deadline"])
+			a.TurnEndPresent = b.Set["turn-end"]
 			a.TurnEnd = b.Str("turn-end")
+			a.QuietPresent = b.Set["quiet"]
 			a.QuietFor = durationOf(b.Flags["quiet"])
+			a.BlockedPresent = b.Set["blocked"]
 			a.BlockedFor = durationOf(b.Flags["blocked"])
+			a.QueueTimeoutPresent = b.Set["queue-timeout"]
 			a.QueueTimeout = durationOf(b.Flags["queue-timeout"])
 			a.Record = b.Bool("record")
 			a.NoRecord = b.Bool("no-record")

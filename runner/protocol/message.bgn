@@ -6103,9 +6103,17 @@ format ScheduleSpec:
     delegate_scope_present :u1
     spawn_depth_present :u1
     max_descendants_present :u1
-    conditions_present :u1
+    # The run's conditions, one presence bit each so an edit overlays only what
+    # it names (a present zero is an answer: queue_timeout 0 = none; quiet or
+    # blocked 0 = the default; turn_end unset = any; deadline 0 is refused).
+    deadline_present :u1
+    quiet_present :u1
+    blocked_present :u1
+    queue_timeout_present :u1
+    turn_end_present :u1
     prompt_present :u1          # 1 = a PromptBody follows on prompt_stream_id
     size_present :u1            # 1 = initial_rows / initial_cols below (0 in either = none)
+    reserved :u4
     if cron_present == 1:
         cron_len :u16
         cron :[cron_len]u8
@@ -6138,8 +6146,16 @@ format ScheduleSpec:
         spawn_depth :SpawnLimit
     if max_descendants_present == 1:
         max_descendants :SpawnLimit
-    if conditions_present == 1:
-        conditions :BackgroundConditions
+    if deadline_present == 1:
+        deadline_ms :u64
+    if quiet_present == 1:
+        quiet_ms :u64
+    if blocked_present == 1:
+        blocked_ms :u64
+    if queue_timeout_present == 1:
+        queue_timeout_ms :u64
+    if turn_end_present == 1:
+        turn_end :TurnEndSignal
     if prompt_present == 1:
         prompt_stream_id :u64
     if size_present == 1:

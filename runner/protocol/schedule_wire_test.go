@@ -75,7 +75,8 @@ func TestScheduleSpecPresenceBits(t *testing.T) {
 		"oneshot": got.OneshotSet(), "record": got.RecordSet(), "pty": got.PtySet(),
 		"scope": got.ScopePresent(), "delegate_caps": got.DelegateCapsPresent(),
 		"delegate_scope": got.DelegateScopePresent(), "spawn_depth": got.SpawnDepthPresent(),
-		"max_descendants": got.MaxDescendantsPresent(), "conditions": got.ConditionsPresent(),
+		"max_descendants": got.MaxDescendantsPresent(), "deadline": got.DeadlinePresent(), "quiet": got.QuietPresent(), "blocked": got.BlockedPresent(),
+		"queue_timeout": got.QueueTimeoutPresent(), "turn_end": got.TurnEndPresent(),
 		"prompt": got.PromptPresent(),
 	} {
 		if v {
@@ -180,8 +181,16 @@ func realisticSpec(scopeIDs int) ScheduleSpec {
 	}
 	sc.SetIds(ids)
 	s.SetScope(sc)
-	s.SetConditionsPresent(true)
-	s.SetConditions(BackgroundConditions{})
+	s.SetDeadlinePresent(true)
+	s.SetDeadlineMs(^uint64(0))
+	s.SetQuietPresent(true)
+	s.SetQuietMs(0)
+	s.SetBlockedPresent(true)
+	s.SetBlockedMs(0)
+	s.SetQueueTimeoutPresent(true)
+	s.SetQueueTimeoutMs(0)
+	s.SetTurnEndPresent(true)
+	s.SetTurnEnd(TurnEndSignal_Any)
 	s.SetPromptPresent(true)
 	s.SetPromptStreamId(^uint64(0))
 	s.SetSizePresent(true)
@@ -249,5 +258,23 @@ func TestScheduleSpecInitialSizeAndDetailRecordSet(t *testing.T) {
 		if g.RecordSet() != (name == "off") || g.Record() {
 			t.Fatalf("%s: record_set=%v record=%v", name, g.RecordSet(), g.Record())
 		}
+	}
+}
+
+// Each condition field has its own presence bit and a present zero survives the
+// wire (an edit's `--queue-timeout 0`), while a field not named stays absent.
+func TestScheduleSpecConditionBitsAreIndependent(t *testing.T) {
+	var s ScheduleSpec
+	s.SetQueueTimeoutPresent(true)
+	s.SetQueueTimeoutMs(0)
+	var got ScheduleSpec
+	if err := got.DecodeExact(s.MustAppend(nil)); err != nil {
+		t.Fatal(err)
+	}
+	if !got.QueueTimeoutPresent() || got.QueueTimeoutMs() == nil || *got.QueueTimeoutMs() != 0 {
+		t.Fatalf("a present zero queue_timeout was lost: %+v", got)
+	}
+	if got.DeadlinePresent() || got.QuietPresent() || got.BlockedPresent() || got.TurnEndPresent() {
+		t.Fatalf("naming queue_timeout set another condition bit: %+v", got)
 	}
 }

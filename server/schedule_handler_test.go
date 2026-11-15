@@ -105,8 +105,8 @@ func createSpec() *protocol.ScheduleSpec {
 	sp.SetRepoPath([]byte("/r"))
 	sp.SetAgentPresent(true)
 	sp.SetAgentProfile([]byte("claude"))
-	sp.SetConditionsPresent(true)
-	sp.SetConditions(protocol.BackgroundConditions{DeadlineMs: 3600000})
+	sp.SetDeadlinePresent(true)
+	sp.SetDeadlineMs(3600000)
 	sp.SetRequestedCapsPresent(true)
 	sp.SetRequestedCaps(protocol.Capability_FileRead)
 	return sp
@@ -617,8 +617,8 @@ func TestCreateSharesBackgroundChecks(t *testing.T) {
 		want  protocol.ScheduleStatus
 	}{
 		{"no candidate", nil, nil, "go", protocol.ScheduleStatus_NoCandidate},
-		{"no deadline", e.addCandidateOnce, func(sp *protocol.ScheduleSpec) { sp.SetConditions(protocol.BackgroundConditions{}) }, "go", protocol.ScheduleStatus_DeadlineRequired},
-		{"no conditions", nil, func(sp *protocol.ScheduleSpec) { sp.SetConditionsPresent(false) }, "go", protocol.ScheduleStatus_DeadlineRequired},
+		{"no deadline", e.addCandidateOnce, func(sp *protocol.ScheduleSpec) { sp.SetDeadlineMs(0) }, "go", protocol.ScheduleStatus_DeadlineRequired},
+		{"no conditions", nil, func(sp *protocol.ScheduleSpec) { sp.SetDeadlinePresent(false) }, "go", protocol.ScheduleStatus_DeadlineRequired},
 		{"no prompt", nil, nil, "", protocol.ScheduleStatus_PromptRequired},
 		{"no agent", nil, func(sp *protocol.ScheduleSpec) { sp.SetAgentPresent(false) }, "go", protocol.ScheduleStatus_ProfileRequired},
 		{"profile no candidate offers", nil, func(sp *protocol.ScheduleSpec) { sp.SetAgentProfile([]byte("codex")) }, "go", protocol.ScheduleStatus_ProfileUnavailable},
@@ -1237,7 +1237,8 @@ func TestScheduleRefusalStatuses(t *testing.T) {
 	want("record without the bit", e.create(t, e.connIDOf(conn), rsp, "go"), protocol.ScheduleStatus_RecordNotPermitted)
 	// turn_end_unsupported
 	tsp := createSpec()
-	tsp.SetConditions(protocol.BackgroundConditions{DeadlineMs: 3600000, TurnEnd: protocol.TurnEndSignal(99)})
+	tsp.SetTurnEndPresent(true)
+	tsp.SetTurnEnd(protocol.TurnEndSignal(99))
 	want("turn end", e.create(t, "", tsp, "go"), protocol.ScheduleStatus_TurnEndUnsupported)
 	// task_already_bound
 	want("second binding", e.create(t, "", bindSpec(t, createSpec(), task), "go"), protocol.ScheduleStatus_TaskAlreadyBound)
@@ -1384,5 +1385,103 @@ func TestOpenGateChecksTheBitItself(t *testing.T) {
 	}
 	if got := e.stored(t, sc.ID); got.State != protocol.ScheduleTaskState_Bound {
 		t.Fatal("still must be bound")
+	}
+}
+
+// R17: an edit overlays ONLY the condition fields it names, in the server
+// under the firing mutex; a present zero is an answer.
+func TestEditOverlaysOnlyNamedConditions(t *testing.T) {
+	e := newSchedEnv(t)
+	e.addCandidate("claude")
+	sc := e.seed(t, 1, protocol.ScheduleTaskState_PendingCreate, "", "")
+	sc.Run.Cond = RunConditions{Deadline: time.Hour, Quiet: 7 * time.Minute, Blocked: 9 * time.Minute, QueueTimeout: 10 * time.Minute, TurnEnd: protocol.TurnEndSignal_Quiet, Rows: 30, Cols: 100}
+	if err := e.store.Put(sc); err != nil {
+		t.Fatal(err)
+	}
+	edit := func(f func(*protocol.ScheduleSpec)) protocol.ScheduleResponse {
+		sp := &protocol.ScheduleSpec{}
+		f(sp)
+		return e.edit(t, "", sc.ID, sp, "")
+	}
+	want := func(name string, c RunConditions) {
+		t.Helper()
+		if got := e.stored(t, sc.ID).Run.Cond; got != c {
+			t.Errorf("%s: conditions %+v, want %+v", name, got, c)
+		}
+	}
+	base := sc.Run.Cond
+
+	if r := edit(func(sp *protocol.ScheduleSpec) { sp.SetQuietPresent(true); sp.SetQuietMs(3 * 60000) }); r.Status != protocol.ScheduleStatus_Ok {
+		t.Fatalf("%v %s", r.Status, r.Message)
+	}
+	c := base
+	c.Quiet = 3 * time.Minute
+	want("only --quiet", c)
+
+	// A present zero: queue_timeout 0 is "no queue timeout".
+	if r := edit(func(sp *protocol.ScheduleSpec) { sp.SetQueueTimeoutPresent(true); sp.SetQueueTimeoutMs(0) }); r.Status != protocol.ScheduleStatus_Ok {
+		t.Fatalf("%v %s", r.Status, r.Message)
+	}
+	c.QueueTimeout = 0
+	want("--queue-timeout 0", c)
+
+	// deadline and queue_timeout together: the deadline changes and the zero stays a zero.
+	if r := edit(func(sp *protocol.ScheduleSpec) {
+		sp.SetDeadlinePresent(true)
+		sp.SetDeadlineMs(2 * 3600000)
+		sp.SetQueueTimeoutPresent(true)
+		sp.SetQueueTimeoutMs(0)
+	}); r.Status != protocol.ScheduleStatus_Ok {
+		t.Fatalf("%v %s", r.Status, r.Message)
+	}
+	c.Deadline = 2 * time.Hour
+	want("--deadline 2h --queue-timeout 0", c)
+
+	// quiet / blocked 0 = back to the default; turn_end unset = any.
+	if r := edit(func(sp *protocol.ScheduleSpec) {
+		sp.SetQuietPresent(true)
+		sp.SetQuietMs(0)
+		sp.SetBlockedPresent(true)
+		sp.SetBlockedMs(0)
+		sp.SetTurnEndPresent(true)
+		sp.SetTurnEnd(protocol.TurnEndSignal_Unset)
+	}); r.Status != protocol.ScheduleStatus_Ok {
+		t.Fatalf("%v %s", r.Status, r.Message)
+	}
+	c.Quiet, c.Blocked, c.TurnEnd = defaultQuiet, defaultBlocked, protocol.TurnEndSignal_Any
+	want("zeros back to defaults", c)
+
+	// deadline 0 is refused (G41) and changes nothing.
+	r := edit(func(sp *protocol.ScheduleSpec) { sp.SetDeadlinePresent(true); sp.SetDeadlineMs(0) })
+	if r.Status != protocol.ScheduleStatus_DeadlineRequired {
+		t.Errorf("--deadline 0: %v", r.Status)
+	}
+	want("refused --deadline 0", c)
+	// The size (kept beside the conditions) is untouched by all of it.
+	if got := e.stored(t, sc.ID).Run.Cond; got.Rows != 30 || got.Cols != 100 {
+		t.Errorf("size changed: %dx%d", got.Rows, got.Cols)
+	}
+}
+
+// Two edits naming different condition fields both survive (no client-side
+// read-modify-write to lose one).
+func TestTwoEditsOfDifferentConditionsBothSurvive(t *testing.T) {
+	e := newSchedEnv(t)
+	e.addCandidate("claude")
+	sc := e.seed(t, 1, protocol.ScheduleTaskState_PendingCreate, "", "")
+	a := &protocol.ScheduleSpec{}
+	a.SetBlockedPresent(true)
+	a.SetBlockedMs(11 * 60000)
+	b := &protocol.ScheduleSpec{}
+	b.SetTurnEndPresent(true)
+	b.SetTurnEnd(protocol.TurnEndSignal_Lifecycle)
+	for _, sp := range []*protocol.ScheduleSpec{a, b} {
+		if r := e.edit(t, "", sc.ID, sp, ""); r.Status != protocol.ScheduleStatus_Ok {
+			t.Fatalf("%v %s", r.Status, r.Message)
+		}
+	}
+	got := e.stored(t, sc.ID).Run.Cond
+	if got.Blocked != 11*time.Minute || got.TurnEnd != protocol.TurnEndSignal_Lifecycle || got.Deadline != sc.Run.Cond.Deadline {
+		t.Errorf("after two edits: %+v", got)
 	}
 }

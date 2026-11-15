@@ -402,9 +402,11 @@ func TestScheduleNewSpec(t *testing.T) {
 	if !s.ScopePresent() || s.Overrides() == nil || len(*s.Overrides()) != 1 {
 		t.Errorf("--scope-for must reach the spec with the scope presence bit")
 	}
-	c := s.Conditions()
-	if !s.ConditionsPresent() || c == nil || c.DeadlineMs != 30*60*1000 || c.TurnEnd != protocol.TurnEndSignal_Quiet {
-		t.Errorf("conditions: %+v", c)
+	if !s.DeadlinePresent() || *s.DeadlineMs() != 30*60*1000 || !s.TurnEndPresent() || *s.TurnEnd() != protocol.TurnEndSignal_Quiet {
+		t.Errorf("conditions: deadline/turn_end")
+	}
+	if s.QuietPresent() || s.BlockedPresent() || s.QueueTimeoutPresent() {
+		t.Errorf("unnamed conditions are present")
 	}
 	if !s.OneshotSet() || !s.Oneshot() || !s.PtySet() || s.Pty() || !s.RecordSet() || !s.Record() {
 		t.Errorf("run flags")
@@ -635,5 +637,152 @@ func TestWatchLineNamesTheSchedule(t *testing.T) {
 	ev.SetScheduleId(schedID(0xab))
 	if got := taskEventLine(ev); !strings.Contains(got, "schedule=abababab") || !strings.Contains(got, "kind=TaskSchedule") {
 		t.Errorf("bound event line %q", got)
+	}
+}
+
+// --- R17: conditions are per-field presence, a present zero is an answer ---
+
+func editSpec(t *testing.T, args string) protocol.ScheduleSpec {
+	t.Helper()
+	o, err := ScheduleSpecOptsFromAction(parseScheduleLine(t, "edit "+schedHexID+" "+args))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return buildScheduleSpec(o, 0)
+}
+
+// The probe cases of the review: `--queue-timeout 0` used to be dropped (a zero
+// duration read as "not named"), and with --deadline it kept the stored value.
+func TestScheduleEditExplicitZeroConditions(t *testing.T) {
+	var want protocol.ScheduleSpec
+	want.SetQueueTimeoutPresent(true)
+	want.SetQueueTimeoutMs(0)
+	if got := editSpec(t, "--queue-timeout 0"); !bytes.Equal(specBytes(t, got), specBytes(t, want)) {
+		t.Fatalf("--queue-timeout 0: %x, want only queue_timeout_present=0: %x", specBytes(t, got), specBytes(t, want))
+	}
+	want = protocol.ScheduleSpec{}
+	want.SetDeadlinePresent(true)
+	want.SetDeadlineMs(3600000)
+	want.SetQueueTimeoutPresent(true)
+	want.SetQueueTimeoutMs(0)
+	if got := editSpec(t, "--deadline 1h --queue-timeout 0"); !bytes.Equal(specBytes(t, got), specBytes(t, want)) {
+		t.Fatalf("--deadline 1h --queue-timeout 0: %x, want %x", specBytes(t, got), specBytes(t, want))
+	}
+	want = protocol.ScheduleSpec{}
+	want.SetQuietPresent(true)
+	want.SetQuietMs(0)
+	want.SetBlockedPresent(true)
+	want.SetBlockedMs(0)
+	if got := editSpec(t, "--quiet 0 --blocked 0"); !bytes.Equal(specBytes(t, got), specBytes(t, want)) {
+		t.Fatalf("--quiet 0 --blocked 0: %x, want %x", specBytes(t, got), specBytes(t, want))
+	}
+	// Naming only --quiet names only quiet.
+	want = protocol.ScheduleSpec{}
+	want.SetQuietPresent(true)
+	want.SetQuietMs(180000)
+	if got := editSpec(t, "--quiet 3m"); !bytes.Equal(specBytes(t, got), specBytes(t, want)) {
+		t.Fatalf("--quiet 3m: %x, want %x", specBytes(t, got), specBytes(t, want))
+	}
+}
+
+func TestScheduleEditTurnEndDefault(t *testing.T) {
+	for _, arg := range []string{"--turn-end default", "--turn-end="} {
+		var want protocol.ScheduleSpec
+		want.SetTurnEndPresent(true)
+		want.SetTurnEnd(protocol.TurnEndSignal_Unset)
+		if got := editSpec(t, arg); !bytes.Equal(specBytes(t, got), specBytes(t, want)) {
+			t.Errorf("%s: %x, want turn_end present unset: %x", arg, specBytes(t, got), specBytes(t, want))
+		}
+	}
+	if _, err := verb.ParseCmdScheduleEdit(verb.CLI, []string{schedHexID, "--turn-end", "sometimes"}, nil); err == nil {
+		t.Error("a bad --turn-end was accepted")
+	}
+}
+
+// --- R19: edit-only spellings ---
+
+func TestScheduleEditRunnerAnyAndNoAgentArgs(t *testing.T) {
+	s := editSpec(t, "--runner any")
+	if !s.SelectorPresent() || s.Selector().Kind != protocol.RunnerSelectorKind_Any {
+		t.Fatalf("--runner any: %+v", s)
+	}
+	s = editSpec(t, "--no-agent-args")
+	if !s.ExtraArgsPresent() || len(s.ExtraArgs().AsStrings()) != 0 {
+		t.Fatalf("--no-agent-args must be present and empty: %+v", s)
+	}
+	// Not named: absent (the stored list and selector stay).
+	s = editSpec(t, "--cron @daily")
+	if s.ExtraArgsPresent() || s.SelectorPresent() {
+		t.Fatalf("unnamed extra args / selector are present: %+v", s)
+	}
+	if _, err := verb.ParseCmdScheduleEdit(verb.CLI, []string{schedHexID, "--no-agent-args", "--agent-arg=--x"}, nil); err == nil {
+		t.Error("--no-agent-args with --agent-arg accepted")
+	}
+	if _, err := verb.ParseCmdScheduleNew(verb.CLI, []string{"--cron", "@daily", "--repo", "/r", "--no-agent-args"}, nil); err == nil {
+		t.Error("schedule new accepted the edit-only --no-agent-args")
+	}
+}
+
+// --- R18: one embedded zone source ---
+
+func TestScheduleLocationLoadsWithoutAHostDatabase(t *testing.T) {
+	// The package embeds the zone database (time/tzdata), so a name loads on a
+	// host with none. On Linux Go tries ZONEINFO and the system directories
+	// before the embedded copy, so pointing ZONEINFO at an empty directory
+	// cannot by itself prove the embedded one is used: the import is asserted
+	// separately below, and this load must succeed either way.
+	t.Setenv("ZONEINFO", t.TempDir())
+	loc := scheduleLocation("Asia/Tokyo")
+	if loc.String() != "Asia/Tokyo" {
+		t.Fatalf("Asia/Tokyo loaded as %q (UTC fallback?)", loc)
+	}
+}
+
+func TestCliEmbedsTheZoneDatabase(t *testing.T) {
+	f, err := parser.ParseFile(token.NewFileSet(), "schedule.go", nil, parser.ImportsOnly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, im := range f.Imports {
+		if im.Path.Value == `"time/tzdata"` {
+			return
+		}
+	}
+	t.Fatal(`cli/schedule.go no longer imports "time/tzdata": a client host without a zone database would render schedules in UTC`)
+}
+
+// --- history instants, JSON spelling of an absent next ---
+
+func TestScheduleHistoryCarriesAbsoluteInstants(t *testing.T) {
+	got := ScheduleDetailText(schedDetail(), schedNow)
+	for _, want := range []string{
+		"queued=2026-11-14 21:00:00 JST (2026-11-14T12:00:00Z)",
+		"started=2026-11-14 21:00:42 JST (2026-11-14T12:00:42Z)",
+		"ended=2026-11-14 21:20:00 JST (2026-11-14T12:20:00Z)",
+		"due=2026-11-14 21:00:00 JST (2026-11-14T12:00:00Z)",
+		"  2026-11-14 21:00:00 JST (2026-11-14T12:00:00Z)  fired", // the entry's own time
+		"queued=-",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("history lacks %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestScheduleJSONAbsentNextSpelledLikeTheRow(t *testing.T) {
+	r := schedRow(protocol.ScheduleTaskState_Unbound)
+	r.NextAt = 0
+	var buf bytes.Buffer
+	if err := writeScheduleListJSON(&buf, []protocol.ScheduleRow{r}, schedNow); err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Schedules []map[string]any `json:"schedules"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if got := doc.Schedules[0]["next_local"]; got != "none" {
+		t.Errorf("next_local = %v, want \"none\" as in the text row", got)
 	}
 }

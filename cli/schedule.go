@@ -15,6 +15,10 @@ import (
 	"github.com/on-keyday/agent-harness/cli/verb"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
+
+	// The zone database, embedded: CLI, TUI and wasm render a schedule's zone
+	// from one source whatever the host has (R18; the server embeds it too, S-D3).
+	_ "time/tzdata"
 )
 
 // Server-kept cron schedules (pillar S,
@@ -60,10 +64,12 @@ type ScheduleSpecOpts struct {
 	SpawnDepth     *protocol.SpawnLimit
 	MaxDescendants *protocol.SpawnLimit
 
-	// Conditions holds only what was named: a zero field is not named. The
-	// wire block replaces ALL of a schedule's conditions, so an edit merges it
-	// over the stored ones first (ScheduleEdit).
-	Conditions *protocol.BackgroundConditions
+	// The run's conditions, each present only when named, so a zero is an
+	// answer the server reads (R17): QueueTimeout 0 = none, Quiet / Blocked 0 =
+	// the default, TurnEnd unset = any, Deadline 0 refused. The server overlays
+	// only the present ones.
+	Deadline, Quiet, Blocked, QueueTimeout *time.Duration
+	TurnEnd                                *protocol.TurnEndSignal
 
 	Prompt string // "" = not named
 
@@ -98,12 +104,19 @@ func ScheduleSpecOptsFromAction(a verb.ScheduleSpecAction) (ScheduleSpecOpts, er
 	if len(a.Tz) > protocol.ScheduleZoneMax {
 		return ScheduleSpecOpts{}, fmt.Errorf("--tz is %d bytes, at most %d", len(a.Tz), protocol.ScheduleZoneMax)
 	}
-	if a.Runner != "" || a.Host != "" || a.IP != "" {
+	switch {
+	case a.Runner == "any":
+		// R19: the edit-only spelling for "back to any runner".
+		o.Selector = &protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}
+	case a.Runner != "" || a.Host != "" || a.IP != "":
 		sel, err := BuildSelector(SelectorOpts{Runner: a.Runner, Host: a.Host, IP: a.IP})
 		if err != nil {
 			return ScheduleSpecOpts{}, err
 		}
 		o.Selector = &sel
+	}
+	if a.NoAgentArgs {
+		o.ExtraArgs = []string{} // present and empty: clears the stored list
 	}
 	if a.ResumeConversationPresent {
 		v := a.ResumeConversation
@@ -136,16 +149,32 @@ func ScheduleSpecOptsFromAction(a verb.ScheduleSpecAction) (ScheduleSpecOpts, er
 		}
 		o.Overrides = a.Overrides
 	}
-	var te protocol.TurnEndSignal
-	if a.TurnEnd != "" {
-		var err error
-		if te, err = verb.ParseTurnEnd(a.TurnEnd); err != nil {
-			return ScheduleSpecOpts{}, err
-		}
+	if a.DeadlinePresent {
+		d := a.Deadline
+		o.Deadline = &d
 	}
-	o.Conditions = RunModeFlags{
-		Deadline: a.Deadline, Quiet: a.QuietFor, Blocked: a.BlockedFor, QueueTimeout: a.QueueTimeout, TurnEnd: te,
-	}.Conditions()
+	if a.QuietPresent {
+		d := a.QuietFor
+		o.Quiet = &d
+	}
+	if a.BlockedPresent {
+		d := a.BlockedFor
+		o.Blocked = &d
+	}
+	if a.QueueTimeoutPresent {
+		d := a.QueueTimeout
+		o.QueueTimeout = &d
+	}
+	if a.TurnEndPresent {
+		var te protocol.TurnEndSignal // "default" and "" are the unset value: any
+		if a.TurnEnd != "" && a.TurnEnd != verb.TurnEndDefault {
+			var err error
+			if te, err = verb.ParseTurnEnd(a.TurnEnd); err != nil {
+				return ScheduleSpecOpts{}, err
+			}
+		}
+		o.TurnEnd = &te
+	}
 	if isNew || (a.RowsPresent && a.ColsPresent) {
 		if a.Rows > 0xffff || a.Cols > 0xffff {
 			return ScheduleSpecOpts{}, fmt.Errorf("--rows / --cols: at most 65535")
@@ -238,9 +267,31 @@ func buildScheduleSpec(o ScheduleSpecOpts, promptStreamID uint64) protocol.Sched
 		s.SetMaxDescendantsPresent(true)
 		s.SetMaxDescendants(*o.MaxDescendants)
 	}
-	if o.Conditions != nil {
-		s.SetConditionsPresent(true)
-		s.SetConditions(*o.Conditions)
+	ms := func(d time.Duration) uint64 {
+		if d < 0 {
+			return 0
+		}
+		return uint64(d / time.Millisecond)
+	}
+	if o.Deadline != nil {
+		s.SetDeadlinePresent(true)
+		s.SetDeadlineMs(ms(*o.Deadline))
+	}
+	if o.Quiet != nil {
+		s.SetQuietPresent(true)
+		s.SetQuietMs(ms(*o.Quiet))
+	}
+	if o.Blocked != nil {
+		s.SetBlockedPresent(true)
+		s.SetBlockedMs(ms(*o.Blocked))
+	}
+	if o.QueueTimeout != nil {
+		s.SetQueueTimeoutPresent(true)
+		s.SetQueueTimeoutMs(ms(*o.QueueTimeout))
+	}
+	if o.TurnEnd != nil {
+		s.SetTurnEndPresent(true)
+		s.SetTurnEnd(*o.TurnEnd)
 	}
 	if o.Prompt != "" {
 		s.SetPromptPresent(true)
@@ -396,48 +447,19 @@ func (c *Client) ScheduleCreate(ctx context.Context, spec ScheduleSpecOpts) (str
 	return hex.EncodeToString(r.Id.Id[:]), nil
 }
 
-// ScheduleEdit changes the future firings of a schedule: only what spec names.
-// The wire replaces a schedule's conditions as one block, so an edit that
-// names some of them reads the stored ones first and sends them merged —
-// naming --deadline must not reset --quiet to its default (checklist 33).
+// ScheduleEdit changes the future firings of a schedule: only what spec names
+// (every field, the conditions included, has its own presence bit, so the
+// server overlays just those under the schedule's firing mutex).
 func (c *Client) ScheduleEdit(ctx context.Context, id string, spec ScheduleSpecOpts) error {
 	sid, err := parseScheduleID(id)
 	if err != nil {
 		return err
-	}
-	if spec.Conditions != nil {
-		d, err := c.ScheduleShow(ctx, id)
-		if err != nil {
-			return err
-		}
-		merged := mergeConditions(d.Conditions, *spec.Conditions)
-		spec.Conditions = &merged
 	}
 	r, err := c.scheduleWithPrompt(ctx, "edit", spec, func(s uint64) *protocol.TaskControlRequest { return scheduleEditRequest(sid, spec, s) })
 	if err != nil {
 		return err
 	}
 	return scheduleStatusError("edit", r.Status, r.Message)
-}
-
-// mergeConditions overlays the named (non-zero) fields of named onto stored.
-func mergeConditions(stored, named protocol.BackgroundConditions) protocol.BackgroundConditions {
-	if named.DeadlineMs != 0 {
-		stored.DeadlineMs = named.DeadlineMs
-	}
-	if named.QuietMs != 0 {
-		stored.QuietMs = named.QuietMs
-	}
-	if named.BlockedMs != 0 {
-		stored.BlockedMs = named.BlockedMs
-	}
-	if named.QueueTimeoutMs != 0 {
-		stored.QueueTimeoutMs = named.QueueTimeoutMs
-	}
-	if named.TurnEnd != protocol.TurnEndSignal_Unset {
-		stored.TurnEnd = named.TurnEnd
-	}
-	return stored
 }
 
 func parseScheduleID(s string) (protocol.ScheduleID, error) {
@@ -573,7 +595,11 @@ func scheduleChangeList(o ScheduleSpecOpts) string {
 	add(o.Record != nil, "record")
 	add(o.Pty != nil, "pty")
 	add(o.Prompt != "", "prompt")
-	add(o.Conditions != nil, "conditions")
+	add(o.Deadline != nil, "deadline")
+	add(o.Quiet != nil, "quiet")
+	add(o.Blocked != nil, "blocked")
+	add(o.QueueTimeout != nil, "queue-timeout")
+	add(o.TurnEnd != nil, "turn-end")
 	add(o.SizeSet, "size")
 	add(o.Caps != nil, "caps")
 	add(o.ScopePresent, "scope")
@@ -713,11 +739,29 @@ func schedTime(ns uint64, loc *time.Location, layout string) string {
 	return time.Unix(0, int64(ns)).In(loc).Format(layout)
 }
 
+// schedBoth is a time in the schedule's zone with the absolute instant beside
+// it, `-` when absent.
+func schedBoth(ns uint64, loc *time.Location, layout string) string {
+	if ns == 0 {
+		return "-"
+	}
+	return schedTime(ns, loc, layout) + " (" + schedInstant(ns) + ")"
+}
+
 func schedInstant(ns uint64) string {
 	if ns == 0 {
 		return "-"
 	}
 	return time.Unix(0, int64(ns)).UTC().Format(time.RFC3339)
+}
+
+// schedNextLocal is the next firing in the schedule's zone, "none" when there
+// is none: the one spelling the text row and the JSON share.
+func schedNextLocal(ns uint64, loc *time.Location) string {
+	if ns == 0 {
+		return "none"
+	}
+	return schedTime(ns, loc, schedMinute)
 }
 
 func schedOutcomeWord(o protocol.ScheduleOutcome) string { return EnumWireName(o.String()) }
@@ -760,10 +804,7 @@ func schedPromptField(r protocol.ScheduleRow) string {
 // it cannot split the row, and a prompt the caller may not read says so.
 func ScheduleRowLine(r protocol.ScheduleRow, now time.Time) string {
 	loc := scheduleLocation(string(r.Tz))
-	next := "none"
-	if r.NextAt != 0 {
-		next = schedTime(r.NextAt, loc, schedMinute)
-	}
+	next := schedNextLocal(r.NextAt, loc)
 	last := "none"
 	if r.LastPresent() {
 		if l := r.Last(); l != nil {
@@ -924,9 +965,9 @@ func scheduleHistoryLine(e protocol.ScheduleHistoryEntry, loc *time.Location) st
 		}
 	}
 	s := fmt.Sprintf("%s  %s  due=%s  queued=%s  started=%s  ended=%s  end=%s",
-		schedTime(e.At, loc, schedSecond), schedOutcomeWord(e.Outcome),
-		schedTime(e.DueAt, loc, schedSecond), schedTime(e.QueuedAt, loc, schedSecond),
-		schedTime(e.StartedAt, loc, schedSecond), schedTime(e.EndedAt, loc, schedSecond), end)
+		schedBoth(e.At, loc, schedSecond), schedOutcomeWord(e.Outcome),
+		schedBoth(e.DueAt, loc, schedSecond), schedBoth(e.QueuedAt, loc, schedSecond),
+		schedBoth(e.StartedAt, loc, schedSecond), schedBoth(e.EndedAt, loc, schedSecond), end)
 	if e.Outcome == protocol.ScheduleOutcome_ResumedBy || e.Outcome == protocol.ScheduleOutcome_Unbound {
 		by := originStr(e.ByKind)
 		if e.By.Id != ([16]byte{}) {
@@ -984,7 +1025,7 @@ func newScheduleRowJSON(r protocol.ScheduleRow) scheduleRowJSON {
 	j := scheduleRowJSON{
 		ID: hex.EncodeToString(r.Id.Id[:]), Cron: string(r.Cron), Tz: string(r.Tz),
 		TaskState: schedTaskStateWord(r.TaskState), NextAt: r.NextAt,
-		NextLocal: schedTime(r.NextAt, scheduleLocation(string(r.Tz)), schedMinute),
+		NextLocal: schedNextLocal(r.NextAt, scheduleLocation(string(r.Tz))),
 		Agent:     string(r.Agent), Repo: string(r.Repo),
 		PromptHead: string(r.PromptHead), PromptHidden: r.PromptHidden(),
 	}
