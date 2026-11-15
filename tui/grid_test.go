@@ -103,3 +103,46 @@ func TestGridModel_DismissFocusedPane(t *testing.T) {
 		t.Fatalf("after dismissing pane 1, focus should land on pane 2, got %q", m2.FocusedTaskID())
 	}
 }
+
+// A pane's header names the task's repo, not only its id: with several
+// sessions tiled, eight hex digits say nothing about which checkout each one
+// is working in. The repo is shown by its last path element; the task table
+// already carries the full path.
+func TestGridModel_PaneHeaderNamesTheRepo(t *testing.T) {
+	m := NewGridModel()
+	m.panes = []gridPane{
+		NewPaneStreamer("aaaaaaaa11", 24, 80),
+		NewPaneStreamer("bbbbbbbb22", 24, 80),
+	}
+	m.repos = map[string]string{
+		"aaaaaaaa11": "/home/u/workspace/alpha-service",
+		"bbbbbbbb22": "C:/Users/u/src/beta-tool",
+	}
+	m.open = true
+	m.SetSize(120, 40)
+	view := m.View()
+	for _, want := range []string{"aaaaaaaa alpha-service", "bbbbbbbb beta-tool"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("pane header lacks %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "/home/u/workspace") {
+		t.Errorf("pane header carries the full path, not the repo name:\n%s", view)
+	}
+}
+
+// In a narrow cell the repo name gives way before the id does: the id is what
+// the grid's keys and the other surfaces refer to.
+func TestGridModel_NarrowPaneKeepsTheIDAndCutsTheRepo(t *testing.T) {
+	m := NewGridModel()
+	m.panes = []gridPane{NewPaneStreamer("aaaaaaaa11", 24, 80)}
+	m.repos = map[string]string{"aaaaaaaa11": "/w/a-very-long-repository-name-indeed"}
+	m.open = true
+	head := strings.SplitN(m.renderPane(0, 20, 5), "\n", 3)[1]
+	if !strings.Contains(head, "aaaaaaaa") {
+		t.Errorf("narrow header lost the id: %q", head)
+	}
+	if !strings.Contains(head, "…") {
+		t.Errorf("narrow header should cut the repo name with an ellipsis: %q", head)
+	}
+}

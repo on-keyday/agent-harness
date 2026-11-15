@@ -6298,15 +6298,17 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     const capped = [...new Set(ids)].slice(0, 9); // dedupe (same id twice must not orphan a cell), then pane cap (v1)
     for (const id of capped) {
       const key = "grid:" + id;
-      const stream = isStreamKind((lastTasks || []).find((t) => t.id === id));
+      const row = (lastTasks || []).find((t) => t.id === id);
+      const stream = isStreamKind(row);
       const cell = document.createElement("div");
       cell.className = "grid-cell";
       const head = document.createElement("div");
       head.className = "grid-cell-head";
       const label = document.createElement("span");
       label.className = "grid-cell-label";
-      label.textContent = id.slice(0, 8);
-      label.title = id;
+      const cellLabel = gridCellLabel(id, row);
+      label.textContent = cellLabel.text;
+      label.title = cellLabel.title;
       const attach = document.createElement("button");
       attach.type = "button";
       attach.className = "grid-cell-btn";

@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path"
 	"sort"
 	"strings"
 	"time"
@@ -82,6 +83,8 @@ type GridModel struct {
 	// four of twelve sessions with no word about why is indistinguishable from
 	// eight dead ones.
 	scope string
+	// repos is each pane's task repo, by task id, for the pane header.
+	repos map[string]string
 }
 
 func NewGridModel() GridModel { return GridModel{} }
@@ -167,6 +170,10 @@ func (m *GridModel) Open(ctx context.Context, c *cli.Client, tasks []protocol.Ta
 		live = live[:gridMaxPanes]
 	}
 	m.panes = m.panes[:0]
+	m.repos = make(map[string]string, len(live))
+	for _, t := range live {
+		m.repos[FormatTaskID(t.Id)] = string(t.RepoPath)
+	}
 	for i, t := range live {
 		// Stagger first attaches: firing all N at once storms the shared client and
 		// starves some panes' attach responses (they hang at rx=0 = permanent
@@ -571,13 +578,13 @@ func (m GridModel) View() string {
 
 func (m GridModel) renderPane(idx, w, h int) string {
 	p := m.panes[idx]
-	head := p.TaskID()
-	if len(head) > 8 {
-		head = head[:8]
+	id := p.TaskID()
+	if len(id) > 8 {
+		id = id[:8]
 	}
-	head += p.Badge()
+	tail := p.Badge()
 	if err := p.Err(); err != nil {
-		head += " (ended)"
+		tail += " (ended)"
 	}
 	// Render FIRST: it clamps-and-stores the scroll offsets against the live
 	// content, so the markers below show the offset actually IN EFFECT (↑N up,
@@ -586,11 +593,21 @@ func (m GridModel) renderPane(idx, w, h int) string {
 	// from reading as stuck; `0` clears both axes.
 	body := p.Render(w, h)
 	if off := p.ScrollOffset(); off > 0 {
-		head += fmt.Sprintf(" ↑%d", off)
+		tail += fmt.Sprintf(" ↑%d", off)
 	}
 	if off := p.ColOffset(); off > 0 {
-		head += fmt.Sprintf(" →%d", off)
+		tail += fmt.Sprintf(" →%d", off)
 	}
+	// The repo's last path element sits between the id and the markers and is
+	// the part that gives way in a narrow cell: the id is what keys and the other
+	// surfaces refer to, and the markers describe this pane's state.
+	head := id
+	if repo := path.Base(m.repos[p.TaskID()]); repo != "." && repo != "/" {
+		if room := w - runewidth.StringWidth(id) - runewidth.StringWidth(tail) - 1; room >= 2 {
+			head += " " + runewidth.Truncate(repo, room, "…")
+		}
+	}
+	head += tail
 	// Truncate the header to the cell width so a long id + markers can never wrap
 	// onto a second line (which would push the pane past its budgeted height and
 	// overflow the grid).

@@ -434,6 +434,16 @@ function cropDefault(narrow, choice) {
   return choice === null || choice === undefined ? !!narrow : !!choice;
 }
 
+// gridCellLabel is a grid cell's header: the id's first 8 hex and the repo's
+// last path element, as tui/grid.go renderPane shows them; the full id and
+// path go in the tooltip. task is the snapshot row, or undefined.
+function gridCellLabel(id, task) {
+  const repo = (task && task.repoPath) || "";
+  const base = repo.replace(/\/+$/, "").split("/").pop();
+  if (!base) return { text: id.slice(0, 8), title: id };
+  return { text: `${id.slice(0, 8)} ${base}`, title: `${id} ${repo}` };
+}
+
 function parsePinnedTarget(text) {
   const s = String(text || "").trim();
   if (!s) return null;

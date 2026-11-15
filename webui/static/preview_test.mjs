@@ -127,3 +127,17 @@ test("cropDefault follows the width until the operator chooses", () => {
   assert.equal(page.cropDefault(true, false), false);
   assert.equal(page.cropDefault(false, true), true);
 });
+
+// A grid cell names the task's repo next to its id (tui/grid.go renderPane
+// does the same): with several sessions tiled, eight hex digits say nothing
+// about which checkout each one is in. The full id and path go in the tooltip.
+test("gridCellLabel adds the repo's last path element to the id", () => {
+  const id = "aaaaaaaa1111";
+  assert.deepEqual({ ...page.gridCellLabel(id, { repoPath: "/home/u/workspace/alpha-service" }) },
+    { text: "aaaaaaaa alpha-service", title: "aaaaaaaa1111 /home/u/workspace/alpha-service" });
+  assert.deepEqual({ ...page.gridCellLabel(id, { repoPath: "C:/Users/u/src/beta-tool/" }) },
+    { text: "aaaaaaaa beta-tool", title: "aaaaaaaa1111 C:/Users/u/src/beta-tool/" });
+  // a task not in the snapshot (or with no repo) keeps the bare id
+  assert.deepEqual({ ...page.gridCellLabel(id, undefined) }, { text: "aaaaaaaa", title: id });
+  assert.deepEqual({ ...page.gridCellLabel(id, { repoPath: "" }) }, { text: "aaaaaaaa", title: id });
+});
