@@ -190,20 +190,14 @@ def _spawn_detached_child(args: list[str], log_path: Path) -> int:
         # run in a conversation) doesn't leak them into the runner and suppress
         # spawned agents' local transcripts. Shares daemon._clean_child_env so the
         # `up` and `restart` paths strip the same set. See daemon.py for rationale.
-        popen_kwargs: dict = dict(
+        p = _daemon.popen_detached(
+            args,
             stdin=subprocess.DEVNULL,
             stdout=log_fh,
             stderr=subprocess.STDOUT,
             close_fds=True,
             env=_daemon._clean_child_env(),
         )
-        if os.name == "nt":
-            popen_kwargs["creationflags"] = (
-                subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
-            )
-        else:
-            popen_kwargs["start_new_session"] = True
-        p = subprocess.Popen(args, **popen_kwargs)
     finally:
         log_fh.close()
     return p.pid

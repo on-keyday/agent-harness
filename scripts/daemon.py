@@ -179,19 +179,55 @@ def _clean_child_env(drop: frozenset[str] = frozenset()) -> dict[str, str]:
     }
 
 
+# Windows creation flags, by value so the module (and its tests) load on any OS.
+_DETACHED_PROCESS = getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+_CREATE_NEW_PROCESS_GROUP = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+_CREATE_BREAKAWAY_FROM_JOB = getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0x01000000)
+
+
+def popen_detached(args: list[str], *, windows: bool | None = None, **kwargs) -> subprocess.Popen:
+    """Popen *args* detached from the caller, so stopping the caller (or the
+    runner it runs under) does not take the child with it. Every detached
+    spawn in these scripts goes through here.
+
+    - Unix: a new session (setsid).
+    - Windows: no console, a new process group, and out of the caller's job
+      object. A task run through the runner's non-PTY exec sits in a
+      KILL_ON_JOB_CLOSE job; without CREATE_BREAKAWAY_FROM_JOB a restart
+      started from there printed "kicked off" and died with the exec. A job
+      that forbids breakaway refuses the flag, and the spawn is retried
+      without it.
+    - CREATE_NEW_PROCESS_GROUP is what _graceful_terminate's CTRL_BREAK_EVENT
+      needs. It also disables CTRL+C for the child AND every descendant it
+      ever spawns, which silently made every PTY session on a runner
+      uninterruptible. The runner undoes the Ctrl-C half at startup
+      (runner/ctrlc_windows.go:clearInheritedCtrlCIgnore); anything else
+      spawned through here inherits the same ignore.
+    """
+    if windows is None:
+        windows = os.name == "nt"
+    if not windows:
+        return subprocess.Popen(args, start_new_session=True, **kwargs)
+    base = _DETACHED_PROCESS | _CREATE_NEW_PROCESS_GROUP
+    try:
+        return subprocess.Popen(args, creationflags=base | _CREATE_BREAKAWAY_FROM_JOB, **kwargs)
+    except OSError:
+        return subprocess.Popen(args, creationflags=base, **kwargs)
+
+
 def _spawn_detached(args: list[str], log_path: Path, drop: frozenset[str] = frozenset()) -> int:
     """Start *args* as a detached background process; return its pid.
 
     - stdout / stderr appended to *log_path*; stdin /dev/null.
-    - Detached from controlling terminal: setsid on Unix, DETACHED_PROCESS
-      | CREATE_NEW_PROCESS_GROUP on Windows.
+    - Detached from the caller (popen_detached).
     - Env scrubbed of claude-code session markers plus *drop* (see
       _clean_child_env).
     """
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_fh = open(log_path, "ab")
     try:
-        popen_kwargs: dict = dict(
+        p = popen_detached(
+            args,
             stdin=subprocess.DEVNULL,
             stdout=log_fh,
             stderr=subprocess.STDOUT,
@@ -199,23 +235,6 @@ def _spawn_detached(args: list[str], log_path: Path, drop: frozenset[str] = froz
             cwd=str(_ROOT),
             env=_clean_child_env(drop),
         )
-        if os.name == "nt":
-            # CREATE_NEW_PROCESS_GROUP is what _graceful_terminate's
-            # CTRL_BREAK_EVENT needs. It also disables CTRL+C for the child AND
-            # every descendant it ever spawns — which silently made every PTY
-            # session on this runner uninterruptible (injecting 0x03 did
-            # nothing; cmd.exe still reacted because its line editor reads the
-            # byte, and ssh still worked because it forwards it). The runner
-            # undoes the Ctrl-C half at startup: see
-            # runner/ctrlc_windows.go:clearInheritedCtrlCIgnore. Do not assume
-            # this flag is free here — anything else spawned through this
-            # function inherits the same ignore.
-            popen_kwargs["creationflags"] = (
-                subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
-            )
-        else:
-            popen_kwargs["start_new_session"] = True  # setsid()
-        p = subprocess.Popen(args, **popen_kwargs)
     finally:
         log_fh.close()
     return p.pid

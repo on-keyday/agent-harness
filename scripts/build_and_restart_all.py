@@ -149,34 +149,21 @@ def _capture_slots(pid_to_slot: dict[int, str], order: list[str]) -> list[_sbs.S
 def _spawn_stop_build_start() -> int:
     """Start the detached process that runs the sequence; return its pid.
 
-    Detached the way restart.py's child is (setsid / DETACHED_PROCESS +
-    new process group), so stopping the caller's runner does not reach it.
-    On Windows it also asks to leave the caller's job object: a task run
-    through the runner's non-PTY exec sits in a KILL_ON_JOB_CLOSE job, which
-    would take this process with it. A job that does not allow breakaway
-    refuses the flag, and the spawn is retried without it.
+    Detached (daemon.popen_detached), so stopping the caller's runner does not
+    reach it.
     """
     args = [sys.executable, os.path.abspath(__file__), _DETACHED_FLAG, str(_PLAN)]
     _LOG.parent.mkdir(parents=True, exist_ok=True)
     with open(_LOG, "ab") as log_fh:
-        kwargs: dict = dict(
+        return _daemon.popen_detached(
+            args,
             stdin=subprocess.DEVNULL,
             stdout=log_fh,
             stderr=subprocess.STDOUT,
             close_fds=True,
             cwd=str(_ROOT),
             env=_daemon._clean_child_env(),
-        )
-        if os.name != "nt":
-            kwargs["start_new_session"] = True
-            return subprocess.Popen(args, **kwargs).pid
-        base = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
-        try:
-            return subprocess.Popen(
-                args, creationflags=base | subprocess.CREATE_BREAKAWAY_FROM_JOB, **kwargs
-            ).pid
-        except OSError:
-            return subprocess.Popen(args, creationflags=base, **kwargs).pid
+        ).pid
 
 
 def _run_stop_build_start(plan_path: Path) -> int:
