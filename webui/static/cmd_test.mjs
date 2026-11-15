@@ -1059,7 +1059,7 @@ test("taskResumeActionsModel: assigned pair only with a runner, then any runner"
 test("resumeDialogDefaults: the task's last run, conversation on", () => {
   const bg = { id: ID, runMode: "background", oneshot: true, kind: "Interactive", assignedTo: "f".repeat(32), agentProfile: "claude",
     conditions: { deadlineMs: 1800000, turnEnd: "quiet", quietMs: 120000, blockedMs: 0, queueTimeoutMs: 0 } };
-  eq(page.resumeDialogDefaults(bg), { mode: "background", stream: false, oneshot: true, runner: "assigned", conversation: true,
+  eq(page.resumeDialogDefaults(bg, ["f".repeat(32)]), { mode: "background", stream: false, oneshot: true, runner: "assigned", conversation: true,
     agent: "claude", cond: { deadline: "30m", turnEnd: "quiet", quiet: "2m", blocked: "", queueTimeout: "" } });
   const st = page.resumeDialogDefaults({ id: ID, runMode: "foreground", kind: "Stream", assignedTo: "" });
   eq([st.mode, st.stream, st.runner, st.cond.deadline], ["interactive", true, "any", "1h"]);
@@ -1083,4 +1083,56 @@ test("resumeDialogRequest: the override decides the re-grant; the mode decides t
   assert.throws(() => page.resumeDialogRequest(form({ mode: "background" }), t), /prompt/);
   r = page.resumeDialogRequest(form({ mode: "oneshot", stream: true, oneshot: false }), t);
   eq([r.oneshot, r.eventStream, r.runMode], [true, false, ""]);
+});
+
+// Final review #1: the server writes a scope and its per-cap overrides under
+// one presence bit, so on a resume the half not given must not be filled from
+// the 新規作成 panel -- that silently widened a task's scope-for.
+test("sessionScopeFields: a resume never takes the panel's scope half", () => {
+  const panel = { scope: "global", scopeFor: ["exec_view=none"] };
+  eq(page.sessionScopeFields({ resumeTaskId: "", scope: null, scopeFor: null }, panel), { scope: "global", scopeFor: ["exec_view=none"] });
+  eq(page.sessionScopeFields({ resumeTaskId: ID, scope: "none", scopeFor: null }, panel), { scope: "none", scopeFor: [] });
+  eq(page.sessionScopeFields({ resumeTaskId: ID, scope: null, scopeFor: ["cancel=none"] }, panel), { scope: "", scopeFor: ["cancel=none"] });
+  eq(page.sessionScopeFields({ resumeTaskId: ID, scope: null, scopeFor: null }, panel), { scope: "", scopeFor: [] });
+});
+
+// Final review #1, dialog half: an open override keeps the task's own
+// per-cap overrides (the dialog does not edit them).
+test("resumeDialogRequest: an open override carries the task's scope-for", () => {
+  const t = { id: ID, scopeForSpecs: ["exec_view=none"] };
+  const f = { mode: "interactive", runner: "any", conversation: true, agent: "", args: [], prompt: "", cond: {},
+    override: true, caps: "exec_view", scope: "subtree" };
+  eq(page.resumeDialogRequest(f, t).scopeFor, ["exec_view=none"]);
+  eq(page.resumeDialogRequest({ ...f, override: false }, t).scopeFor, null);
+});
+
+// Final review #2: the id dialog gates its actions as the sheet and the feed
+// do -- a live stream gets the chat, not a terminal reattach.
+test("taskIdDialogModel: reattach for a live PTY session, chat for a live stream, resume when ended", () => {
+  eq(page.taskIdDialogModel({ kind: "Interactive", status: "Detached" }), { reattach: true, chat: false, resume: false });
+  eq(page.taskIdDialogModel({ kind: "Stream", status: "Running" }), { reattach: false, chat: true, resume: false });
+  eq(page.taskIdDialogModel({ kind: "Stream", status: "Succeeded" }), { reattach: false, chat: false, resume: true });
+  eq(page.taskIdDialogModel({ kind: "Interactive", status: "Queued" }), { reattach: false, chat: false, resume: false });
+});
+
+// Final review #3: "assigned" is the default only while that runner is
+// connected -- a background open is never refused for no runner, so a pin to
+// a gone one would queue forever.
+test("resumeDialogDefaults: assigned only while its runner is connected", () => {
+  const r = "f".repeat(32);
+  const t = { id: ID, runMode: "background", kind: "Interactive", assignedTo: r };
+  eq(page.resumeDialogDefaults(t, [r]).runner, "assigned");
+  eq(page.resumeDialogDefaults(t, []).runner, "any");
+});
+
+// Final review #4: a picked target that drops out of the list is kept as a
+// pasted id (and said so), never silently turned into 新規に作る.
+test("composeTargetPick: a vanished target stays the operator's pick", () => {
+  const opts = [{ value: "" }, { value: "a".repeat(32) }, { value: "#id" }];
+  eq(page.composeTargetPick("a".repeat(32), opts), { value: "a".repeat(32), idText: null, note: "" });
+  eq(page.composeTargetPick("", opts), { value: "", idText: null, note: "" });
+  eq(page.composeTargetPick("#id", opts), { value: "#id", idText: null, note: "" });
+  const gone = page.composeTargetPick("b".repeat(32), opts);
+  eq([gone.value, gone.idText], ["#id", "b".repeat(32)]);
+  assert.match(gone.note, /bbbbbbbb/);
 });

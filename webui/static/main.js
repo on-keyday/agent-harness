@@ -409,8 +409,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       // and this surface had no parameter for them at all, so the three
       // parsed and were dropped while the chips decided the authority.
       caps: caps !== null ? caps : spawnCaps,
-      scope: scope !== null ? scope : spawnScope,
-      scopeFor: scopeFor !== null ? scopeFor : overrideSpecsFrom("spawn"),
+      ...sessionScopeFields({ resumeTaskId, scope, scopeFor }, { scope: spawnScope, scopeFor: overrideSpecsFrom("spawn") }),
       // A resume re-grants only what the caller gave: silently applying the
       // Compose panel's leftover state to a resumed task would be the exact
       // invisible rewrite scope_present exists to prevent.
@@ -4293,10 +4292,16 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       opt.textContent = o.label;
       composeTarget.appendChild(opt);
     }
-    if ([...composeTarget.options].some((o) => o.value === keep)) composeTarget.value = keep;
+    const pick = composeTargetPick(keep, [...composeTarget.options].map((o) => ({ value: o.value })));
+    composeTarget.value = pick.value;
+    const idInput = document.getElementById("compose-target-id");
+    if (pick.idText !== null) idInput.value = pick.idText;
+    idInput.hidden = pick.value !== "#id";
+    if (pick.note) document.getElementById("compose-target-note").textContent = pick.note;
   }
   if (composeTarget) composeTarget.addEventListener("change", () => {
     composeTargetId.hidden = composeTarget.value !== "#id";
+    composeTargetNote.textContent = "";
     setComposeTab(composeTab);
   });
   // composeTargetTask is the target's task id: "" for a new task, else the
@@ -5338,7 +5343,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   function openResumeDialog(t) {
     const modal = document.getElementById("resume-modal");
     const $ = (id) => document.getElementById(id);
-    const d = resumeDialogDefaults(t);
+    const d = resumeDialogDefaults(t, lastRunnerRows.map((r) => r.id));
     $("resume-title").textContent = `▶ Resume ${t.id.slice(0, 8)} ${repoTail(t.repoPath || "")}`;
     const radio = (name, v) => { for (const r of modal.querySelectorAll(`input[name="${name}"]`)) r.checked = r.value === v; };
     radio("resume-mode", d.mode);
@@ -5694,9 +5699,10 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   function openTaskActionsDialog(t) {
     document.getElementById("task-actions-title").textContent = taskOneLine(t);
     taskActionsList.innerHTML = "";
-    if (taskSessionAlive(t)) {
-      taskActionsList.appendChild(taskActionButton("↪ Reattach", () => reattachTo(t.id)));
-    } else if (TERMINAL_STATES.has(t.status)) {
+    const can = taskIdDialogModel(t);
+    if (can.reattach) taskActionsList.appendChild(taskActionButton("↪ Reattach", () => reattachTo(t.id)));
+    if (can.chat) taskActionsList.appendChild(taskActionButton("💬 チャット", () => openChatFor(t.id)));
+    if (can.resume) {
       const agentSel = document.createElement("select");
       agentSel.className = "task-agent-select";
       populateAgentSelect(agentSel, knownAgentProfiles, t.agentProfile || "", t.agentProfile);
@@ -5705,7 +5711,8 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       row.append("Agent: ", agentSel);
       taskActionsList.appendChild(row);
       for (const a of taskResumeActions(t, () => agentSel.value || "")) taskActionsList.appendChild(taskActionButton(a.label, a.run));
-    } else {
+    }
+    if (!can.reattach && !can.chat && !can.resume) {
       const note = document.createElement("div");
       note.className = "notify-meta";
       note.textContent = `${t.status}: reattach も resume もできない状態です`;

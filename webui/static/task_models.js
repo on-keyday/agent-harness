@@ -115,6 +115,21 @@ function resumeRegrantFlags({ resumeTaskId, resumeExact, caps, scope, scopeFor }
   };
 }
 
+// sessionScopeFields fills the scope and scope-for a request carries. A fresh
+// spawn takes the half not given from the 新規作成 panel. A resume never does:
+// the server writes the scope and its overrides together (one presence bit),
+// so a panel value filled into the other half would rewrite the task's own --
+// the half not given is the default ("" = subtree, no overrides), as on the CLI.
+function sessionScopeFields({ resumeTaskId, scope, scopeFor }, panel) {
+  if (resumeTaskId) {
+    return { scope: scope !== null && scope !== undefined ? scope : "", scopeFor: scopeFor !== null && scopeFor !== undefined ? scopeFor : [] };
+  }
+  return {
+    scope: scope !== null && scope !== undefined ? scope : panel.scope,
+    scopeFor: scopeFor !== null && scopeFor !== undefined ? scopeFor : panel.scopeFor,
+  };
+}
+
 // orderedRowsModel lays the task list out from harness.orderTasks' groups
 // ([{group, ids}], ordered by Go's cli.OrderTasks): a {head} row before each
 // labelled group, counting the rows under it, then a {task} row per task.
@@ -618,6 +633,17 @@ function composeTargetOptions(tasks) {
   return out;
 }
 
+// composeTargetPick keeps the target across a rebuilt option list. A picked
+// task no longer listed (pruned, or now unbindable) stays the pick as a
+// pasted id with a note, so the create binds it or fails loudly -- never a
+// silent switch to 新規に作る.
+function composeTargetPick(keep, options) {
+  if (!keep || keep === "#id" || (options || []).some((o) => o.value === keep)) {
+    return { value: keep || "", idText: null, note: "" };
+  }
+  return { value: "#id", idText: keep, note: `対象 ${keep.slice(0, 8)} は一覧から外れました (id で指定に切り替え)` };
+}
+
 // resolveTaskIdInput reads a pasted task id: a full id or a unique prefix
 // (any case, spaces trimmed) names one task.
 function resolveTaskIdInput(input, tasks) {
@@ -670,16 +696,18 @@ function msDurationStr(ms) {
 
 // resumeDialogDefaults is the Resume… dialog's starting values: the task's
 // last run (its mode, one-shot / stream, and a background run's conditions),
-// where it last ran when it has a runner, its own agent, and the agent's
-// conversation on. A resume reuses nothing of the last run (A-D7), so these
-// are only what the form starts from.
-function resumeDialogDefaults(t) {
+// where it last ran when that runner is connected (connectedRunnerIds: a
+// background open is never refused for no runner, so a pin to a gone one
+// would queue it forever), its own agent, and the agent's conversation on. A
+// resume reuses nothing of the last run (A-D7), so these are only what the
+// form starts from.
+function resumeDialogDefaults(t, connectedRunnerIds) {
   const boxes = composeBoxesFromTask(t);
   const c = t.conditions || {};
   const mode = t.runMode === "background" ? "background" : boxes.oneshot ? "oneshot" : "interactive";
   return {
     mode, stream: boxes.stream, oneshot: mode === "background" && boxes.oneshot,
-    runner: typeof t.assignedTo === "string" && t.assignedTo ? "assigned" : "any",
+    runner: typeof t.assignedTo === "string" && t.assignedTo && (connectedRunnerIds || []).includes(t.assignedTo) ? "assigned" : "any",
     conversation: true,
     agent: t.agentProfile || "",
     cond: {
@@ -707,7 +735,9 @@ function resumeDialogRequest(f, t) {
     runMode: bg ? "background" : "",
     caps: f.override ? f.caps : null,
     scope: f.override ? f.scope : null,
-    scopeFor: null,
+    // The dialog does not edit per-cap overrides; an open override keeps the
+    // task's own, since they travel with the scope.
+    scopeFor: f.override ? (t.scopeForSpecs || []) : null,
   };
   if (bg) {
     const c = f.cond || {};
@@ -718,6 +748,18 @@ function resumeDialogRequest(f, t) {
     r.turnEnd = c.turnEnd || "";
   }
   return r;
+}
+
+// taskIdDialogModel is which actions the id dialog offers, gated as the task
+// sheet and the notification feed gate them: a terminal reattach only for a
+// live PTY session, the chat for a live event stream, resume once it ended.
+function taskIdDialogModel(t) {
+  const alive = t.status === "Running" || t.status === "Detached";
+  return {
+    reattach: alive && t.kind === "Interactive",
+    chat: alive && t.kind === "Stream",
+    resume: ["Succeeded", "Failed", "Cancelled"].includes(t.status),
+  };
 }
 
 // latestLoad lets only the newest of overlapping async loads render.
