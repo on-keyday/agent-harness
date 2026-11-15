@@ -515,6 +515,19 @@ The flag is consumed by the wrapper and never reaches the agent binary.
 Missing/empty values, a missing directory/index, repeated flags and paths
 containing a colon or newline exit 2 before creating any auth/history root.
 
+**Which directories qualify.** The flag arrives through a task's `--agent-arg`,
+which the server forwards verbatim, so whoever creates the task chooses the
+path. The wrapper therefore accepts only a directory inside the task's own
+worktree (already mounted) or under a root listed in
+`HARNESS_SANDBOX_MEMORY_ROOTS` in the runner's environment (colon-separated,
+like `PATH`; a task cannot set it). Both sides are resolved with `readlink -f`
+first, so a symlink in the worktree pointing elsewhere is judged by its target,
+and a root matches whole path components only (`/a/mem` does not admit
+`/a/mem-other`). Anything else exits 2 naming the variable. To seed from a
+memory store outside the repository, list its directory there, e.g.
+`HARNESS_SANDBOX_MEMORY_ROOTS=$HOME/.local/share/harness-seeds` in the slot's
+unit, and copy the selected notes under it.
+
 This works for all wrapper agents and with `--history-window`, without mounting
 additional host configuration. The selected notes are an explicit input to the
 task. Auto-memory in an ephemeral config root is still discarded; report new

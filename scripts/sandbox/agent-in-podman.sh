@@ -95,6 +95,9 @@ HOME_DIR="${HOME:-/home/$(id -un)}"
 #                       /run/harness-memory, named by HARNESS_MEMORY_DIR. Its
 #                       MEMORY.md or _index.md is the entry point. Independent
 #                       of auth/history mode; no host config is added by it.
+#                       DIR must lie in the task's worktree or under a root
+#                       listed (colon-separated) in HARNESS_SANDBOX_MEMORY_ROOTS
+#                       in the runner's env; anything else exits 2.
 #   --image-agent      run the image's own copy of the agent instead of bridging
 #                       the host binary in (see "Host binary bridge" below). Only
 #                       claude has an image copy. --image-claude is accepted as a
@@ -197,6 +200,18 @@ if [ -n "$memory_seed" ]; then
   case "$memory_seed" in
     *:*|*$'\n'*) memory_refuse "directory path contains a colon or newline" ;;
   esac
+  # The path comes from a task's --agent-arg, so whoever creates the task picks
+  # it. The task's own worktree is mounted anyway; any other host directory
+  # must lie under a root the slot's own environment names.
+  memory_allowed=0
+  IFS=: read -r -a memory_roots <<<"$(readlink -f -- "$PWD"):${HARNESS_SANDBOX_MEMORY_ROOTS:-}"
+  for r in "${memory_roots[@]}"; do
+    [ -n "$r" ] && [ -d "$r" ] || continue
+    r=$(readlink -f -- "$r")
+    case "$memory_seed" in "$r"|"${r%/}"/*) memory_allowed=1; break ;; esac
+  done
+  [ "$memory_allowed" = 1 ] ||
+    memory_refuse "$memory_seed is outside this task's worktree and every root in HARNESS_SANDBOX_MEMORY_ROOTS (the runner slot's environment)"
   [ -f "$memory_seed/MEMORY.md" ] || [ -f "$memory_seed/_index.md" ] ||
     memory_refuse "directory needs MEMORY.md or _index.md: $memory_seed"
   MEMORY=( -v "$memory_seed:/run/harness-memory:ro" --env HARNESS_MEMORY_DIR=/run/harness-memory )

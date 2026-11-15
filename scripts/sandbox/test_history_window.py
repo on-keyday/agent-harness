@@ -336,6 +336,7 @@ class WrapperTests(unittest.TestCase):
         seed.mkdir()
         (seed / "MEMORY.md").write_text("- [Rule](rule.md)\n")
         (seed / "rule.md").write_text("Verified rule\n")
+        self.env["HARNESS_SANDBOX_MEMORY_ROOTS"] = str(self.tmp)
         for agent in ("claude", "pi"):
             for flags in ((), ("--history-window",)):
                 with self.subTest(agent=agent, flags=flags):
@@ -355,6 +356,40 @@ class WrapperTests(unittest.TestCase):
         (seed / "_index.md").write_text("[[rule]] — When relevant\n")
         _, argv = self.ok("pi", "--mount-auth", "--memory-seed=wiki")
         self.assertIn(f"{seed}:/run/harness-memory:ro", argv)
+
+    def memory_dir(self, path, index="MEMORY.md"):
+        path.mkdir(parents=True)
+        (path / index).write_text("# Index\n")
+        return path
+
+    def test_memory_seed_outside_the_worktree_needs_a_slot_root(self):
+        # The seed reaches the wrapper through a task's --agent-arg, so the
+        # task creator picks it; a host path outside the worktree is mounted
+        # only under a root the runner slot's own environment allows.
+        seed = self.memory_dir(self.tmp / "other-project" / "memory")
+        rc, err, argv = self.wrap("pi", f"--memory-seed={seed}")
+        self.assertEqual(rc, 2, err)
+        self.assertIn("HARNESS_SANDBOX_MEMORY_ROOTS", err)
+        self.assertIsNone(argv)
+        self.env["HARNESS_SANDBOX_MEMORY_ROOTS"] = os.pathsep.join(["/nonexistent-root", str(self.tmp / "other-project")])
+        _, argv = self.ok("pi", f"--memory-seed={seed}")
+        self.assertIn(f"{seed}:/run/harness-memory:ro", argv)
+
+    def test_memory_seed_root_is_a_path_prefix_not_a_string_prefix(self):
+        self.memory_dir(self.tmp / "mem")
+        sibling = self.memory_dir(self.tmp / "mem-other")
+        self.env["HARNESS_SANDBOX_MEMORY_ROOTS"] = str(self.tmp / "mem")
+        rc, err, argv = self.wrap("pi", f"--memory-seed={sibling}")
+        self.assertEqual(rc, 2, err)
+        self.assertIsNone(argv)
+
+    def test_memory_seed_symlink_out_of_the_worktree_is_refused(self):
+        outside = self.memory_dir(self.tmp / "outside")
+        (self.wt / "link").symlink_to(outside)
+        rc, err, argv = self.wrap("pi", "--memory-seed=link")
+        self.assertEqual(rc, 2, err)
+        self.assertIn("HARNESS_SANDBOX_MEMORY_ROOTS", err)
+        self.assertIsNone(argv)
 
     def test_no_memory_seed_adds_no_memory_mount_or_environment(self):
         # A stale host value must not advertise a path we did not mount.
