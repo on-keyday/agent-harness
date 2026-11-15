@@ -7,7 +7,9 @@ Run it from the worktree (or checkout) whose HEAD is the work to land. In order:
 
 1. `git fetch origin`; refuse unless origin/main is an ancestor of HEAD (a
    fast-forward). Rebase onto origin/main first otherwise — never force.
-2. `scripts/wire-skew-check.sh <origin/main>`: a wire (.bgn) change must
+2. `scripts/check_local_identifiers.py <origin/main>..HEAD`: no added line may
+   carry this machine's user / host / addresses or a private LAN address (the
+   repository is public). Then `scripts/wire-skew-check.sh <origin/main>`: a wire (.bgn) change must
    degrade recoverably against the revision being replaced. It exits 0 at
    once when no wire file changed.
 3. `git push origin HEAD:main`.
@@ -19,7 +21,7 @@ Run it from the worktree (or checkout) whose HEAD is the work to land. In order:
    since only those need a restart.
 
 Each step that fails stops the run with nothing after it done, and says which
-step and why. LAND_SKEW_CMD / LAND_BUILD_CMD replace steps 2 and 5 (tests).
+step and why. LAND_IDENT_CMD / LAND_SKEW_CMD / LAND_BUILD_CMD replace those steps (tests).
 """
 from __future__ import annotations
 
@@ -110,12 +112,15 @@ def land(cwd: Path, *, dry_run: bool = False) -> int:
     print(f"land: {count} commit(s), {base[:12]}..{head[:12]}, {len(paths)} path(s)")
 
     skew = shlex.split(os.environ.get("LAND_SKEW_CMD", "")) or [str(root / "scripts" / "wire-skew-check.sh"), base]
+    ident = shlex.split(os.environ.get("LAND_IDENT_CMD", "")) or [
+        sys.executable, str(root / "scripts" / "check_local_identifiers.py"), f"{base}..{head}"]
     build = shlex.split(os.environ.get("LAND_BUILD_CMD", "")) or ["make", "build"]
     if dry_run:
-        print("land: --dry-run: would run the skew check, push, fast-forward "
+        print("land: --dry-run: would run the identifier and skew checks, push, fast-forward "
               f"{main} and build there")
         return 0
     if base != head:
+        run_step("local identifier check", ident, root)
         run_step("wire skew check", skew, root)
         run_step("push", ["git", "push", "origin", f"{head}:refs/heads/main"], root)
     else:
