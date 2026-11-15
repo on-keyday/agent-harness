@@ -36,7 +36,8 @@ Pick by what actually changed:
 
 `make build` rebuilds all binaries + the webui wasm but **restarts nothing**.
 Ask "what changed — CLI, runner, or server?" before reaching for `/restart-all`;
-don't run it reflexively after every land.
+don't run it reflexively after every land. `scripts/land.py` answers it at the
+end of a landing, from which daemon builds each changed package (`go list -deps`).
 
 **Do NOT investigate topology, env vars, or self-termination risk first.** The
 script already handles all of it: self-last ordering, detached self-restart that
@@ -74,10 +75,15 @@ them tears down the slot running this session before the others are back.
    confirm from; a failed build still brings every slot back, on the binaries
    already in `bin/`. The debounce below applies the same way.
 
-   Expect this to eventually restart the runner serving this very session
-   (`$HARNESS_RUNNER_ID`) **last**, detached — so the build + restart of all
-   other slots completes first, then this claude process is torn down with the
-   old runner. The session does **not** come back on its own (`/restart-all`
+   A slot registered as a systemd user unit is restarted **through its unit**
+   (`systemctl --user restart`), so a change to `scripts/agent_presets.py`
+   reaches it; an unregistered slot (and every slot under `--stop-first` or on
+   Windows) is relaunched from its running command line, which does not pick up
+   a preset change. Expect this to eventually restart the runner serving this
+   very session (`$HARNESS_RUNNER_ID`) **last** — for a registered unit through
+   a `systemd-run` timer 60 s later, otherwise detached at once — so the build +
+   restart of all other slots completes first, then this claude process is torn
+   down with the old runner. The session does **not** come back on its own (`/restart-all`
    cycles **runners, not sessions**; the new runner registers IDLE) — a **human**
    resumes it later through a client. Being killed with no automatic comeback is
    normal here, not an error.
@@ -132,7 +138,8 @@ them tears down the slot running this session before the others are back.
    T+0s     /restart-all → you launch:  python …/build_and_restart_all.py
    T+1–8s   every OTHER slot rebuilds + reconnects
             → fresh connection IDs start appearing in `harness-cli ls`
-   T+~9s    the SELF slot (this session's runner) is torn down LAST, detached
+   T+~9s    the SELF slot (this session's runner) is restarted LAST (registered
+            unit: a systemd-run timer fires ~60 s later; otherwise detached now)
             → your claude child is killed with the old runner
             → SIGHUP severs the launch Bash mid-flight; its tool-call/result
               record MAY or MAY NOT have reached the transcript
