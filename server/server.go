@@ -327,10 +327,14 @@ func New(cfg Config) *Server {
 			}
 			return false
 		},
-		Tasks:          s.tasks,
-		Registry:       s.registry,
-		Sessions:       s.sessions,
-		OnChange:       s.scheduler.Tick,
+		Tasks:    s.tasks,
+		Registry: s.registry,
+		Sessions: s.sessions,
+		OnChange: s.scheduler.Tick,
+		Sched: &ScheduleOps{
+			Store: cfg.Schedules, Fire: s.fireSchedule, Poke: s.pokeSchedules,
+			Lock: s.sched.firingMutex, Ready: s.sched.started.Load, Now: s.sched.now,
+		},
 		RingBufferSize: int(cfg.DetachRingBufferSize),
 		Records:        records,
 		RecordDefault:  cfg.Record.Default,
@@ -566,6 +570,13 @@ func New(cfg Config) *Server {
 		raw, err := hex.DecodeString(taskID)
 		if err == nil {
 			copy(ev.TaskId.Id[:], raw)
+		}
+		// The schedule the task is bound to, as TaskInfo carries it. Read here
+		// with no TaskStore lock held (the store lock order: schedule store is
+		// never taken under the task store's).
+		if sid, ok := s.cfg.Schedules.BoundTo(taskID); ok {
+			ev.SetSchedulePresent(true)
+			ev.SetScheduleId(scheduleIDFromHex(sid))
 		}
 		// Schedule history (S-D7): outside the TaskStore's lock, which every
 		// caller of this closure has released.

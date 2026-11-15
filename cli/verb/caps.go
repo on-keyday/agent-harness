@@ -482,11 +482,9 @@ var capAuditTable = map[protocol.Capability]capAuditEntry{
 	// Strong: a transcript carries the full text of every file the agent read.
 	protocol.Capability_TranscriptRead: {tier: TierStrong},
 	// Strong: a schedule starts an agent unattended, over and over, with a
-	// stored grant (pillar S, S-D16/S-D17).
-	// scope ScopeNone only until the handler (pillar S Task 4) resolves the
-	// schedule's task through the bit; it then becomes a scoped bit, together
-	// with its capTargetClasses entry (TestAuditScopeKindAgreesWithTargetClasses).
-	protocol.Capability_Schedule:    {tier: TierStrong, scope: ScopeNone},
+	// stored grant (pillar S, S-D16/S-D17). Scoped: the handler resolves the
+	// schedule's task (or its creator) through the bit.
+	protocol.Capability_Schedule:    {tier: TierStrong},
 	protocol.Capability_ResumeExact: {tier: TierMid, impliedBy: []protocol.Capability{protocol.Capability_Resume}},
 	protocol.Capability_ExecView:    {tier: TierWeak, impliedBy: []protocol.Capability{protocol.Capability_ExecCowrite, protocol.Capability_ExecControl}},
 	protocol.Capability_ExecResize:  {tier: TierWeak},

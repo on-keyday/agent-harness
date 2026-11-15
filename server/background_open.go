@@ -87,33 +87,12 @@ func (h *TaskHandler) openBackground(b backgroundOpen) protocol.OpenInteractiveR
 			profile = t.AgentProfile // which agent's conversation the task holds (A-D5)
 		}
 	}
-	if profile == "" {
-		return refuse(protocol.OpenInteractiveStatus_ProfileRequired, "a background open must name its agent")
-	}
 	wc := req.Conditions()
-	if !req.ConditionsPresent() || wc == nil || wc.DeadlineMs == 0 {
-		return refuse(protocol.OpenInteractiveStatus_DeadlineRequired, "a background open must state its deadline")
+	if !req.ConditionsPresent() {
+		wc = nil
 	}
-	if b.prompt == "" {
-		return refuse(protocol.OpenInteractiveStatus_PromptRequired, "a background open must carry a prompt")
-	}
-	switch p, msg := checkConditions(wc, kind); p {
-	case condBadDuration:
-		return refuse(protocol.OpenInteractiveStatus_DeadlineRequired, msg)
-	case condBadTurnEnd:
-		return refuse(protocol.OpenInteractiveStatus_TurnEndUnsupported, msg)
-	}
-	if cands := h.Registry.Candidates(b.repo, req.Selector); len(cands) > 0 {
-		offered := false
-		for _, c := range cands {
-			if c.HasProfile(profile) {
-				offered = true
-				break
-			}
-		}
-		if !offered {
-			return refuse(protocol.OpenInteractiveStatus_ProfileUnavailable, "")
-		}
+	if st, msg := h.checkBackgroundRun(kind, profile, wc, b.prompt, b.repo, req.Selector); st != protocol.OpenInteractiveStatus_Ok {
+		return refuse(st, msg)
 	}
 
 	cond := ConditionsFromWire(wc).WithDefaults(kind)
@@ -155,6 +134,45 @@ func (h *TaskHandler) openBackground(b backgroundOpen) protocol.OpenInteractiveR
 	copy(resp.TaskId.Id[:], raw)
 	resp.SetQueued(true)
 	return resp
+}
+
+// checkBackgroundRun is what a background run cannot start without, in the
+// order openBackground has always answered them: an agent profile, a deadline
+// (wc nil = no conditions block), a prompt, conditions the server can honour
+// for the kind, and — only when candidate runners exist to say so — a profile
+// none of them offers. `schedule new` and `schedule edit` call it too (S-D12),
+// so a schedule is refused for what a background open would be. It reads the
+// registry once, for the candidate set; a schedule's own "a candidate must
+// exist now" is its caller's check.
+func (h *TaskHandler) checkBackgroundRun(kind protocol.TaskKind, profile string, wc *protocol.BackgroundConditions, prompt, repo string, sel protocol.RunnerSelector) (protocol.OpenInteractiveStatus, string) {
+	if profile == "" {
+		return protocol.OpenInteractiveStatus_ProfileRequired, "a background open must name its agent"
+	}
+	if wc == nil || wc.DeadlineMs == 0 {
+		return protocol.OpenInteractiveStatus_DeadlineRequired, "a background open must state its deadline"
+	}
+	if prompt == "" {
+		return protocol.OpenInteractiveStatus_PromptRequired, "a background open must carry a prompt"
+	}
+	switch p, msg := checkConditions(wc, kind); p {
+	case condBadDuration:
+		return protocol.OpenInteractiveStatus_DeadlineRequired, msg
+	case condBadTurnEnd:
+		return protocol.OpenInteractiveStatus_TurnEndUnsupported, msg
+	}
+	if cands := h.Registry.Candidates(repo, sel); len(cands) > 0 {
+		offered := false
+		for _, c := range cands {
+			if c.HasProfile(profile) {
+				offered = true
+				break
+			}
+		}
+		if !offered {
+			return protocol.OpenInteractiveStatus_ProfileUnavailable, ""
+		}
+	}
+	return protocol.OpenInteractiveStatus_Ok, ""
 }
 
 // readOpenPrompt reads an open's prompt from the client's payload stream

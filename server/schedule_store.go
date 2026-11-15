@@ -41,7 +41,8 @@ type Schedule struct {
 	Grant               authority.Grant
 	Creator             string // task hex, "" = operator
 	CreatedAt, EditedAt time.Time
-	EditedBy            string
+	EditedBy            string // task hex, "" = the operator
+	EditedByKind        protocol.ClientKind
 	NextAt              time.Time
 	History             []HistoryEntry // oldest first, len <= historyMax
 }
@@ -276,6 +277,33 @@ func (s *Schedule) settlePending(task func(id string) (run uint32, exists bool))
 		}
 	}
 	return changed
+}
+
+// BoundTo is the id of the schedule bound to task (S-D21 state bound), if any.
+// At most one schedule is bound to a task: the verbs refuse a second binding,
+// and UpdateForTask relies on it.
+func (st *ScheduleStore) BoundTo(taskID string) (string, bool) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	for id, s := range st.m {
+		if s.State == protocol.ScheduleTaskState_Bound && s.TaskID == taskID {
+			return id, true
+		}
+	}
+	return "", false
+}
+
+// BoundIDs maps every bound task to its schedule, for the list handler.
+func (st *ScheduleStore) BoundIDs() map[string]string {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	out := map[string]string{}
+	for id, s := range st.m {
+		if s.State == protocol.ScheduleTaskState_Bound {
+			out[s.TaskID] = id
+		}
+	}
+	return out
 }
 
 // UpdateForTask runs f on the schedule that task id belongs to: bound to it,
@@ -521,6 +549,7 @@ type scheduleJSON struct {
 	CreatedAt          time.Time                  `json:"created_at"`
 	EditedAt           time.Time                  `json:"edited_at"`
 	EditedBy           string                     `json:"edited_by"`
+	EditedByKind       protocol.ClientKind        `json:"edited_by_kind"`
 	NextAt             time.Time                  `json:"next_at"`
 	History            []historyEntryJSON         `json:"history"`
 }
@@ -576,7 +605,7 @@ func (s Schedule) toJSON() (scheduleJSON, error) {
 			SpawnDepth: limitToJSON(s.Grant.SpawnDepth), MaxDescendants: limitToJSON(s.Grant.MaxDescendants),
 		},
 		Creator: s.Creator, CreatedAt: utc(s.CreatedAt), EditedAt: utc(s.EditedAt),
-		EditedBy: s.EditedBy, NextAt: utc(s.NextAt),
+		EditedBy: s.EditedBy, EditedByKind: s.EditedByKind, NextAt: utc(s.NextAt),
 	}
 	for _, e := range s.History {
 		j.History = append(j.History, historyEntryJSON{
@@ -615,7 +644,7 @@ func (j scheduleJSON) schedule() (Schedule, error) {
 			SpawnDepth: limitFromJSON(j.Grant.SpawnDepth), MaxDescendants: limitFromJSON(j.Grant.MaxDescendants),
 		},
 		Creator: j.Creator, CreatedAt: j.CreatedAt, EditedAt: j.EditedAt,
-		EditedBy: j.EditedBy, NextAt: j.NextAt,
+		EditedBy: j.EditedBy, EditedByKind: j.EditedByKind, NextAt: j.NextAt,
 	}
 	for _, e := range j.History {
 		s.History = append(s.History, HistoryEntry{

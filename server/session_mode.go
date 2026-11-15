@@ -47,6 +47,21 @@ func (h *TaskHandler) handleSessionMode(cid string, conn ConnHandle, req *protoc
 		return
 	}
 
+	// S-D15: switching a bound task to foreground unbinds it, which needs the
+	// schedule bit as well as cancel, and the task within the schedule bit's
+	// reach. (A task switching itself is refused above.)
+	unbinds := !sm.Background() && h.boundScheduleOf(taskID) != ""
+	if unbinds {
+		if !hasCap(h.callerCaps(cid), protocol.Capability_Schedule) {
+			h.denyTaskControl(conn, req.Header.Kind, req.Header.RequestId, protocol.Capability_Schedule)
+			return
+		}
+		if reach, _ := h.unbindRefusal(cid, taskID); !reach {
+			respond(protocol.SessionModeStatus_NotFound, "")
+			return
+		}
+	}
+
 	mode := protocol.RunMode_Foreground
 	var cond RunConditions
 	if sm.Background() {
@@ -94,6 +109,9 @@ func (h *TaskHandler) handleSessionMode(cid string, conn ConnHandle, req *protoc
 		}
 	} else {
 		h.disarmRunWatcher(taskID)
+	}
+	if unbinds {
+		h.unbindSchedule(taskID, h.lookupClientKind(cid), h.lookupPrincipal(cid))
 	}
 	respond(protocol.SessionModeStatus_Ok, "")
 	if h.OnChange != nil {

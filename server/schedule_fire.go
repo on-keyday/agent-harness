@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -54,6 +55,10 @@ type scheduleRuntime struct {
 
 	wakeOnce sync.Once
 	wake     chan struct{}
+
+	// started is set when startSchedules has finished. `schedule run` answers
+	// only after it: the start-up Settle holds no firing mutex.
+	started atomic.Bool
 }
 
 func (r *scheduleRuntime) now() time.Time {
@@ -338,6 +343,7 @@ func (s *Server) runSchedules(ctx context.Context) {
 // pending entry from the task store (S-D22), complete the entries of runs that
 // ended while the server was down, then fire what was missed, once (S-D9).
 func (s *Server) startSchedules() {
+	defer s.sched.started.Store(true)
 	st := s.cfg.Schedules
 	if err := st.Settle(func(id string) (uint32, bool) {
 		t, ok := s.tasks.Get(id)

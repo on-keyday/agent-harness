@@ -53,6 +53,11 @@ type TaskHandler struct {
 	// before the response is sent.
 	OnTaskLifecycle func(taskHex string)
 
+	// Sched is the schedule verbs' reach into the server (pillar S, S-D12..S-D20);
+	// nil on a handler built without a Server, whose schedule verbs answer
+	// internal_error.
+	Sched *ScheduleOps
+
 	// runWatchSet holds the background run watchers (run_watch.go).
 	runWatchOnce sync.Once
 	runWatchSet  *runWatchers
@@ -494,6 +499,12 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		// task, resume / resume_exact for a resume.
 		if want := resumeRequestCap(oi.ResumeTaskId, oi.ResumeExact()); !hasAnyCap(h.callerCaps(cid), want) {
 			deny(want)
+			return
+		}
+		// S-D15: a foreground resume of a task bound to a schedule unbinds it,
+		// which needs the schedule bit as well as the resume bit.
+		if _, unbinds := h.openUnbinds(oi); unbinds && !hasCap(h.callerCaps(cid), protocol.Capability_Schedule) {
+			deny(protocol.Capability_Schedule)
 			return
 		}
 		// An attached open hands the opener the control seat, so it needs what
@@ -1205,6 +1216,11 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 	case protocol.TaskControlKind_SessionMode:
 		h.handleSessionMode(cid, conn, &req)
 
+	case protocol.TaskControlKind_ScheduleCreate, protocol.TaskControlKind_ScheduleEdit,
+		protocol.TaskControlKind_ScheduleDelete, protocol.TaskControlKind_ScheduleRun,
+		protocol.TaskControlKind_ScheduleList, protocol.TaskControlKind_ScheduleShow:
+		h.handleSchedule(cid, conn, &req)
+
 	case protocol.TaskControlKind_RecordList, protocol.TaskControlKind_RecordGet,
 		protocol.TaskControlKind_RecordDelete, protocol.TaskControlKind_RecordKeep,
 		protocol.TaskControlKind_RecordSwitch:
@@ -1565,6 +1581,19 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 		// task's previously recorded Kind; the invoked path (open ⇒
 		// Interactive) is what Tasks.Resume records below. Existence is the
 		// only precondition here.
+		// S-D15 / S-D20: unbinding is within the schedule bit's reach, and a
+		// schedule's own task cannot do it to itself.
+		if h.resolveRunMode(req, idHex) == protocol.RunMode_Foreground && h.boundScheduleOf(idHex) != "" {
+			reach, self := h.unbindRefusal(cid, idHex)
+			switch {
+			case !reach:
+				return errResp(protocol.OpenInteractiveStatus_ResumeNotFound)
+			case self:
+				resp, body := errResp(protocol.OpenInteractiveStatus_ScopeNotPermitted)
+				resp.SetErrorMsg([]byte("a schedule's own task cannot unbind itself"))
+				return resp, body
+			}
+		}
 		var ok bool
 		repo, _, ok = h.Tasks.PeekRepo(idHex)
 		if !ok {
@@ -1788,6 +1817,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 			}
 		}
 		taskIDHex = existingTaskIDHex
+		h.unbindSchedule(taskIDHex, origin, h.lookupPrincipal(cid))
 	} else {
 		// The TaskKind_Interactive value is the authoritative marker — empty
 		// prompt is incidental.
@@ -2122,8 +2152,16 @@ func (h *TaskHandler) handleList(conn ConnHandle, requestID uint32, connID strin
 	}
 	taskInfos := make([]protocol.TaskInfo, len(filteredTasks))
 	descendants := h.Tasks.DescendantCounts()
+	var scheduleOf map[string]string
+	if h.Sched != nil && h.Sched.Store != nil {
+		scheduleOf = h.Sched.Store.BoundIDs()
+	}
 	for i, t := range filteredTasks {
 		taskInfos[i] = toTaskInfo(t)
+		if sid, ok := scheduleOf[t.ID]; ok {
+			taskInfos[i].SetSchedulePresent(true)
+			taskInfos[i].SetScheduleId(scheduleIDFromHex(sid))
+		}
 		taskInfos[i].Descendants = descendants[t.ID]
 		// Before the live-session enrichment below, never after: the parent row
 		// keeps its live signals — busy/idle AND the observer counts, which the

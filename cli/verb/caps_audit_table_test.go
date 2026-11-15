@@ -54,9 +54,7 @@ func TestTierTableMatchesTheSpec(t *testing.T) {
 			}
 		}
 	}
-	none := []protocol.Capability{protocol.Capability_Spawn, protocol.Capability_Notify, protocol.Capability_RunnerAdmin, protocol.Capability_RunnerEnroll, protocol.Capability_BoardObserve, protocol.Capability_BoardSend, protocol.Capability_BoardPersist,
-		// schedule: interim, until pillar S Task 4 resolves the schedule's task through the bit and drops it from here.
-		protocol.Capability_Schedule}
+	none := []protocol.Capability{protocol.Capability_Spawn, protocol.Capability_Notify, protocol.Capability_RunnerAdmin, protocol.Capability_RunnerEnroll, protocol.Capability_BoardObserve, protocol.Capability_BoardSend, protocol.Capability_BoardPersist}
 	for _, c := range granularCaps() {
 		isNone := false
 		for _, n := range none {

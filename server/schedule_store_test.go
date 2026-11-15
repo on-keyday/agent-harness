@@ -45,7 +45,7 @@ func fullSchedule(t *testing.T, id string, n int) Schedule {
 			SpawnDepth:     authority.LimitOf(3),
 			MaxDescendants: authority.LimitOf(7),
 		},
-		Creator: strings.Repeat("45", 16), CreatedAt: base, EditedAt: base.Add(time.Minute), EditedBy: "operator",
+		Creator: strings.Repeat("45", 16), CreatedAt: base, EditedAt: base.Add(time.Minute), EditedBy: "operator", EditedByKind: protocol.ClientKind_Tui,
 		NextAt: base.Add(2 * time.Minute),
 		History: []HistoryEntry{{
 			Outcome: protocol.ScheduleOutcome_ResumedBy, DueAt: base, At: base.Add(time.Second), ExpectRun: 4,
@@ -427,6 +427,7 @@ const schedulesFixtureV1 = `{
       "created_at": "2026-11-15T09:30:00Z",
       "edited_at": "2026-11-15T09:31:00Z",
       "edited_by": "operator",
+      "edited_by_kind": 2,
       "next_at": "2026-11-15T09:32:00Z",
       "history": [
         {
@@ -493,7 +494,7 @@ func TestScheduleFileFixtureV1(t *testing.T) {
 				Overrides: []authority.ScopeOverride{{Caps: 16, Base: protocol.ScopeBase_Global, ExcludeSelf: true, IDs: []string{cid("89")}}}},
 			SpawnDepth: authority.LimitOf(3), MaxDescendants: authority.LimitOf(7),
 		},
-		Creator: cid("45"), CreatedAt: base, EditedAt: base.Add(time.Minute), EditedBy: "operator", NextAt: base.Add(2 * time.Minute),
+		Creator: cid("45"), CreatedAt: base, EditedAt: base.Add(time.Minute), EditedBy: "operator", EditedByKind: protocol.ClientKind_Tui, NextAt: base.Add(2 * time.Minute),
 		History: []HistoryEntry{{
 			Outcome: protocol.ScheduleOutcome_ResumedBy, DueAt: base, At: base.Add(time.Second), ExpectRun: 4,
 			TaskID: cid("ab"), QueuedAt: base.Add(2 * time.Second), StartedAt: base.Add(3 * time.Second),

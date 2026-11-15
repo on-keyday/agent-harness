@@ -133,14 +133,10 @@ var capTargetClasses = map[protocol.Capability]capTargetClass{
 	// transcript_read names the task whose transcripts are read; the handler
 	// checks that task against the bit's own scope (pillar B).
 	protocol.Capability_TranscriptRead: {kind: capResolvedLiteral},
-	// schedule: no verb resolves a target through it yet (the handler lands in
-	// pillar S Task 4). That task passes Capability_Schedule to inScope for the
-	// schedule's task, and this entry then goes stale: this test fails, and it
-	// becomes capResolvedLiteral.
-	protocol.Capability_Schedule: {
-		kind:   capNoTargetResolution,
-		reason: "no schedule handler resolves a target yet; Task 4 does, and reclassifies this",
-	},
+	// schedule names the task whose reach decides who may act on a schedule —
+	// its bound task, else its creator — and the task a verb binds; the handler
+	// checks both against this bit's own scope (pillar S, S-D17).
+	protocol.Capability_Schedule: {kind: capResolvedLiteral},
 }
 
 // serverSources concatenates the package's non-test sources, which is what the
