@@ -156,7 +156,10 @@ func loadZone(name string) (*time.Location, string, error)
   - `ScheduleSpec` — what create and edit carry, every field with a presence
     bit so an edit changes only what it names (checklist item 25): cron, tz,
     repo, task (bind), agent, selector, extra args, resume_conversation, the
-    run spec fields (`BackgroundConditions`, record, oneshot, pty choice),
+    run spec fields (record, oneshot, pty choice, and — as built after the
+    Task 5 review, Ruling R17 — the five conditions deadline / quiet /
+    blocked / queue_timeout / turn_end each with its own presence bit,
+    replacing a whole `BackgroundConditions` block),
     the authority request block `OpenInteractiveRequest` uses, and
     `prompt_stream_id :u64` (0 = no prompt in this request).
   - `ScheduleCreateRequest { spec :ScheduleSpec }`,
