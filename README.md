@@ -340,7 +340,7 @@ bin/harness-cli session new -d --repo /abs/path/to/repo --rows 40 --cols 150
 # TERMs its process group and KILLs it 2 s later. An exact resume keeps the last
 # run's choice unless it states one; a plain resume takes the mode's default.
 # TUI: the flags on the command line and the N form's pty field
-# (default|on|off); WebUI: Compose's PTY select and the command line.
+# (default|on|off); WebUI: the 新規作成 form's PTY select and the command line.
 bin/harness-cli session new -d --no-pty --agent bash --repo /abs/path/to/repo
 bin/harness-cli session resize --size 40x150 <task-id>   # size a live session
                                                  # without taking it over
@@ -415,7 +415,7 @@ bin/harness-cli session new --background --repo /abs/path/to/repo --agent claude
 # Switch a RUNNING session (needs cancel over it; a task may not switch its
 # own run mode, in either direction). Foreground drops the deadline and conditions; background starts
 # a deadline from now. TUI: `E` on the task row or a grid pane, `N` opens a
-# background form; WebUI: Compose's background section, ⇄ on the task sheet.
+# background form; WebUI: the 新規作成 form's background tab, ⇄ on the task sheet.
 bin/harness-cli session mode <task-id> foreground
 bin/harness-cli session mode --deadline 30m <task-id> background
 bin/harness-cli session stream attach <task-id>  # follow events (read-only,
@@ -487,8 +487,8 @@ bin/harness-cli record rm <task-id>#1            # or <task-id> --all-runs
 bin/harness-cli record on|off <task-id>
 # TUI: the N form's record field (default|on|off), the records in `d` (`t`
 # there changes a record's retention: forever or a duration), the verbs on the
-# command line (`record get` there needs -o). WebUI: Compose's "PTY 記録"
-# select; the task sheet lists, downloads (raw / .cast), changes the retention
+# command line (`record get` there needs -o). WebUI: the 新規作成 form's
+# "PTY 記録" select (under 録画など); the task sheet lists, downloads (raw / .cast), changes the retention
 # (⏲ 期限), deletes and switches.
 
 # 5e. Agent transcripts: the conversation as the agent itself stored it — tool
@@ -1921,14 +1921,15 @@ needs one). `--agent-arg` and `--runner` / `--host` / `--ip` replace the
 stored value when named; on an edit `--runner any` sets the selector back to
 any runner and `--no-agent-args` clears the argument list.
 
-Surfaces. CLI: the verbs above. TUI: the **Schedules** table (see **TUI**).
-WebUI: the **Schedules** button opens a dialog listing the rows, with a detail
-view (history and wait statistics) and **Run now** / **Delete** (confirmed)
-buttons; Compose gains a cron + zone pair, and with a cron filled its button
-reads **Create schedule** and creates a schedule from the form's background
-fields instead of opening a session (the cron is cleared after a create); the
-task row and sheet name the bound schedule; `schedule …` works on the command
-line.
+Surfaces. CLI: the verbs above. TUI: the **Schedules** table, where `N`
+opens a "new schedule" form (see **TUI**). WebUI: the **Schedules** button
+opens a dialog listing the rows, with a detail view (history and wait
+statistics) and **Run now** / **Delete** (confirmed) buttons; the 新規作成
+form's **schedule** tab creates one — cron, zone, the background fields, and
+the task: 新規に作る (the first firing creates it), a listed task it can bind,
+or a pasted id — and its button reads **schedule を作る** (no other field
+turns a button into a schedule); the task row and sheet name the bound
+schedule; `schedule …` works on the command line.
 
 ## Sandboxing (rootless podman)
 
@@ -2043,9 +2044,13 @@ rows, refreshed with the snapshot): `ID` (first 8 hex; `d` shows all 32),
 and, on a wide terminal, `About` (the prompt head), `Agent` and `Repo`. With
 the cursor on a schedule, `d` opens its detail — history and wait
 statistics — in the popup, `n` fires it now (`schedule run`), and `x` deletes
-it after a `y` (any other key keeps it; its task stays). Create and edit are
-the command line's `schedule new` / `schedule edit`. The task detail popup
-names the schedule a task is bound to.
+it after a `y` (any other key keeps it; its task stays). `N` there opens a
+"new schedule" form (the Tasks table's `N` is a background session): cron,
+zone, repo, the task to bind (empty for a new one, or an id or its prefix),
+the prompt and the background fields, one-shot and conversation; `Ctrl+J`
+sends it as `schedule new` would be typed, and a refusal keeps the form open
+with the reason. Edit is the command line's `schedule edit`. The task detail
+popup names the schedule a task is bound to.
 
 Keys for orientation — `Tab` cycles focus, `s` the one-shot popup (a
 detached `session new --oneshot`), `S` opens
@@ -2310,20 +2315,35 @@ The page is organised into tabs (端末 / タスク / ファイル / 通知):
   Active / Finished / All chips: 最近の動き, the default, 作成順,
   動いているもの優先, 状態ごと or リポジトリごと — the last three under group
   headers, by the same rules as `ls --order`; the choice is kept in this
-  browser), the creator tree (🌳) with the
-  capability audit folded under it (権限の棚卸し), the compose form
-  (with a `--caps` selector and effective-set readout, a
-  「one-shot で開く」 checkbox for `--oneshot`, and a PTY select —
-  server 既定 / on / off — for `--pty` / `--no-pty`), and a command line. The
-  command line spawns with `session new`, the CLI's flags except `--x11` /
-  `--x11-display` (a browser has no local X server). A flag not typed takes
-  Compose's value: the repo, host and agent dropdowns, the agent args, the
-  Resume task id, and the caps / scope / delegation / limit panel. Compose's
-  prompt, background, record, PTY, one-shot and stream fields are not taken. The
-  open goes the way Compose's button opens: without `-d` it attaches the
-  terminal (`--stream` opens the chat), `-d` starts it detached at 40x120
-  unless `--rows` / `--cols` say otherwise, `--background` queues it, and an
-  ambiguous runner opens the runner picker.
+  browser), an **id で開く** field beside the filter (a full id or a unique
+  prefix, e.g. pasted from a sheet's Copy id, opens a dialog with that task's
+  Reattach / resumes, which stays put while the list re-sorts), the creator
+  tree (🌳) with the capability audit folded under it (権限の棚卸し), the
+  **新規作成** form, and a command line.
+  - 新規作成 has one tab per action — **interactive**, **one-shot**,
+    **background**, **schedule** — and its button names the tab's action
+    (session を開く / one-shot を実行 / background で投入 / schedule を作る);
+    a tab shows only the fields it reads, and fields of other tabs are never
+    sent. The authority (`--caps` chips, scope, delegation, spawn limits)
+    folds under a one-line 権限 summary, the PTY record under 録画など. It
+    creates only: a resume is the task sheet's.
+  - A finished task's sheet keeps its one-click Resume buttons (assigned /
+    any runner, with or without the conversation) and adds **▶ Resume…**: a
+    dialog with the mode, runner, conversation, agent, args, a prompt, a
+    background run's conditions, and an authority override that re-grants
+    caps and scope only while it is open. A background task offers only
+    Resume… (its resume needs a prompt and a deadline).
+  - The command line spawns with `session new`, the CLI's flags except
+    `--x11` / `--x11-display` (a browser has no local X server). A flag not
+    typed takes 新規作成's value: the repo, host and agent dropdowns, the
+    agent args, and the caps / scope / delegation / limit panel; its prompt,
+    background, record, PTY, one-shot and stream fields are not taken. Only a
+    typed `--resume` resumes, and a typed `--caps` / `--scope` /
+    `--scope-for` on a resume re-grants exactly that (nothing untyped is
+    re-granted). The open goes the way 新規作成's button opens: without `-d`
+    it attaches the terminal (`--stream` opens the chat), `-d` starts it
+    detached at 40x120 unless `--rows` / `--cols` say otherwise,
+    `--background` queues it, and an ambiguous runner opens the runner picker.
 - **Files** — a per-task worktree browser: navigate directories, push
   (upload a local file), pull (download), delete, and **Preview** a
   selected file in a modal. `.html` files render in a **sandboxed

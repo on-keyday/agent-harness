@@ -316,3 +316,19 @@ prompt, the mode, the modifiers and the conditions.
 - Markup details, CSS, and the exact Japanese labels beyond those above.
 - Which tasks the target picker lists when many qualify (order and filter).
 - How the TUI target picker is drawn (an inline list or a sub-picker).
+
+## Amendment (as built, 2026-11-16)
+
+- **The heading.** The section is titled 新規作成, not Compose (operator,
+  2026-11-16). The element id stays `#compose`.
+- **The TUI target.** It is a typed field only: empty means a new task; an id
+  or a unique prefix binds a listed task. The list to pick from was not built.
+  Every value on that form is a typed field, and a cycling picker inside a
+  textinput form would fight its key handling.
+- **The id dialog's actions.** "The same set of actions the sheet offers" is
+  narrowed to the id-driven ones:
+  - Reattach, for a live session.
+  - The one-click resumes and Resume…, for an ended task.
+  - A note, for a Queued or Held task (it can do neither).
+
+  Files, re-grant and the other sheet actions stay on the sheet.
