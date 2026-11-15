@@ -269,6 +269,22 @@ func (a *App) onTree(msg tea.KeyMsg) (tea.Cmd, bool) {
 	return nil, true
 }
 
+// onOrder is `o`: the next flat order (cli.TaskOrders' cycle), applied from
+// the last snapshot like T. The tree is its own order, so there it only says
+// so.
+func (a *App) onOrder(msg tea.KeyMsg) (tea.Cmd, bool) {
+	if a.tasks.TreeMode() {
+		a.cmdresult.Append("order: not with the tree view (" + mainKeys.Tree + ")")
+		return nil, true
+	}
+	sel := a.tasks.SelectedID()
+	o := a.tasks.SetOrder(a.tasks.Order().Next())
+	a.refreshTasksTable()
+	a.tasks.SelectID(sel)
+	a.cmdresult.Append("order: " + string(o))
+	return nil, true
+}
+
 // `S` (capital) opens a new detachable interactive PTY session in the
 // default repo (equivalent to `harness-cli session new`).
 func (a *App) onSession(msg tea.KeyMsg) (tea.Cmd, bool) {

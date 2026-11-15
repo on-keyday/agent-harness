@@ -34,6 +34,7 @@ type mainKeyMap struct {
 	Conns           string
 	Board           string
 	Tree            string
+	Order           string
 	Forwards        string
 	Execs           string
 	IdleWatchers    string
@@ -79,6 +80,7 @@ var mainKeys = mainKeyMap{
 	Conns:           "C",
 	Board:           "O",
 	Tree:            "T",
+	Order:           "o",
 	Forwards:        "f",
 	Execs:           "e",
 	IdleWatchers:    "I",
@@ -365,6 +367,7 @@ var mainKeyBindings = []keyBinding{
 	{Keys: []string{mainKeys.Conns}, Scope: scopeGlobal, Do: (*App).onConns, Short: "C conns", Long: "connections view"},
 	{Keys: []string{mainKeys.Board}, Scope: scopeGlobal, Do: (*App).onBoard, Short: "O board", Long: "agentboard topics view"},
 	{Keys: []string{mainKeys.Tree}, Scope: scopeGlobal, Do: (*App).onTree, Short: "T tree", Long: "toggle the task list between flat and creator-tree order"},
+	{Keys: []string{mainKeys.Order}, Scope: scopeGlobal, Do: (*App).onOrder, Short: "o order", Long: "cycle the flat task list's order: created → activity → live → state → repo (the last three grouped under headers; not in the tree view)"},
 	{Keys: []string{mainKeys.Forwards}, Scope: scopeGlobal, Do: (*App).onForwards, Short: "f forwards", Long: "port-forward list (t taps the selected row's traffic, r refreshes, x kills)"},
 	{Keys: []string{mainKeys.Execs}, Scope: scopeGlobal, Do: (*App).onExecs, Short: "e execs", Long: "running-exec list (t taps the selected row's stdin/stdout/stderr, x kills)"},
 	{Keys: []string{mainKeys.IdleWatchers}, Scope: scopeGlobal, Do: (*App).onIdleWatchers, Short: "I watchers", Long: "armed await-idle watchers (x kills the selected row)"},

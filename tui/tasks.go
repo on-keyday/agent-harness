@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -50,6 +51,13 @@ type TasksModel struct {
 	// rows it is 15 empty cells taken from Repo. Like width, it decides the
 	// column SET, so a change of it goes through swapColumnsAndRebuild.
 	hasRun bool
+	// order is how the flat (non-tree) listing is ordered and grouped
+	// (cli.OrderTasks). The grouped modes put a header row before each group:
+	// rowHeader[i] is that row's text ("" for a task row), its rowTasks[i] a
+	// zero TaskInfo and its rowIDs[i] "". The cursor never rests on one
+	// (skipHeader), so SelectedID / SelectedTask only ever see a task.
+	order     cli.TaskOrder
+	rowHeader []string
 }
 
 // obsColumnMinWidth is the panel width at which the tasks table can afford the
@@ -169,8 +177,18 @@ func flatCols() []table.Column {
 func NewTasks() TasksModel {
 	cols := flatCols()
 	t := table.New(table.WithColumns(cols), table.WithFocused(false))
-	return TasksModel{table: t, baseCols: cols}
+	return TasksModel{table: t, baseCols: cols, order: cli.OrderCreated}
 }
+
+// SetOrder chooses the flat listing's order; the next SetRows applies it.
+// Returns the new mode so the caller can report it.
+func (m *TasksModel) SetOrder(o cli.TaskOrder) cli.TaskOrder {
+	m.order = o
+	return o
+}
+
+// Order is the flat listing's order (the tree view has its own).
+func (m *TasksModel) Order() cli.TaskOrder { return m.order }
 
 // treeCols is the column set for tree mode. ID is wider because the gutter
 // shares the cell with the id: three columns per level, plus the ◆ mark and
@@ -224,7 +242,7 @@ func (m *TasksModel) SetMark(c protocol.Capability) {
 // SelectID puts the cursor on the task's row, reporting whether it is listed.
 func (m *TasksModel) SelectID(id string) bool {
 	for i, rid := range m.rowIDs {
-		if rid == id {
+		if rid == id && id != "" {
 			// MoveDown, not SetCursor: it is the path that keeps the row on
 			// screen (see swapColumnsAndRebuild).
 			m.table.SetCursor(0)
@@ -302,6 +320,7 @@ func (m *TasksModel) swapColumnsAndRebuild(cols []table.Column) {
 		m.table.SetCursor(0)
 		m.table.MoveDown(cursor)
 	}
+	m.skipHeader(+1)
 }
 
 // SetRows takes a fresh snapshot: it decides the ORDER (which depends on tree
@@ -314,6 +333,11 @@ func (m *TasksModel) SetRows(ts []protocol.TaskInfo, runners []protocol.RunnerIn
 	// different task than the cursor is on.
 	ordered := ts
 	gutter := make([]string, len(ts))
+	var header []string
+	if !m.tree {
+		ordered, header = orderedRows(ts, m.order)
+		gutter = make([]string, len(ordered))
+	}
 	if m.tree {
 		treeRows := cli.BuildTaskTree(ts)
 		ordered = make([]protocol.TaskInfo, len(treeRows))
@@ -326,7 +350,14 @@ func (m *TasksModel) SetRows(ts []protocol.TaskInfo, runners []protocol.RunnerIn
 			}
 		}
 	}
+	// In a mode that reorders on every poll, the cursor follows its task, or
+	// an action on the selection would hit whichever task moved under it.
+	follow := ""
+	if !m.tree && m.order != cli.OrderCreated {
+		follow = m.SelectedID()
+	}
 	m.rowTasks = ordered
+	m.rowHeader = header
 	m.gutter = gutter
 	m.runners = runners
 	// The column set depends on the rows' DATA (Run), so it is re-decided here
@@ -342,9 +373,60 @@ func (m *TasksModel) SetRows(ts []protocol.TaskInfo, runners []protocol.RunnerIn
 	if m.showsRun() != hadRun {
 		m.baseCols = m.columns()
 		m.swapColumnsAndRebuild(fitTaskColumns(m.baseCols, m.width))
+	} else {
+		m.rebuild()
+	}
+	if follow != "" && m.SelectedID() != follow {
+		m.SelectID(follow)
+	}
+	m.skipHeader(+1)
+}
+
+// orderedRows is ts in the order o, with a header row (a zero TaskInfo)
+// before each labelled group; header[i] is row i's header text, "" for a task.
+func orderedRows(ts []protocol.TaskInfo, o cli.TaskOrder) ([]protocol.TaskInfo, []string) {
+	var rows []protocol.TaskInfo
+	var header []string
+	for _, g := range cli.OrderTasks(ts, o, time.Now()) {
+		if g.Label != "" {
+			rows = append(rows, protocol.TaskInfo{})
+			header = append(header, fmt.Sprintf("── %s (%d) ──", g.Label, len(g.Tasks)))
+		}
+		for _, t := range g.Tasks {
+			rows = append(rows, t)
+			header = append(header, "")
+		}
+	}
+	return rows, header
+}
+
+// isHeader reports whether row i is a group header.
+func (m *TasksModel) isHeader(i int) bool {
+	return i >= 0 && i < len(m.rowHeader) && m.rowHeader[i] != ""
+}
+
+// skipHeader moves the cursor off a header row: to the nearest task in the
+// direction dir (+1 down, -1 up), or the other way when there is none that
+// way (the top header). The one place this is decided; called after every
+// key the table moves the cursor on and after every rebuild.
+func (m *TasksModel) skipHeader(dir int) {
+	c := m.table.Cursor()
+	if !m.isHeader(c) {
 		return
 	}
-	m.rebuild()
+	for _, d := range []int{dir, -dir} {
+		for j := c + d; j >= 0 && j < len(m.rowHeader); j += d {
+			if m.isHeader(j) {
+				continue
+			}
+			if j > c {
+				m.table.MoveDown(j - c)
+			} else {
+				m.table.MoveUp(c - j)
+			}
+			return
+		}
+	}
 }
 
 // rebuild renders m.rowTasks into table rows for the CURRENT column set. It is
@@ -406,6 +488,16 @@ func (m *TasksModel) rebuild() {
 			truncateLeft(string(t.RepoPath), m.repoCellWidth()),
 			aboutCell(t),
 		)
+		if m.isHeader(i) {
+			// Every cell blank but a marker the view swaps for the header
+			// text (headerLines): a cell is cut to its column, and the ID
+			// column is too narrow for "── needs you (3) ──".
+			for j := range row {
+				row[j] = ""
+			}
+			row[0] = headerMarker + strconv.Itoa(i)
+			idHex = ""
+		}
 		rows = append(rows, row)
 		ids = append(ids, idHex)
 	}
@@ -502,8 +594,12 @@ func (m *TasksModel) repoCellWidth() int {
 // Rows returns a copy of the current task rows in table order, for callers
 // that need the full snapshot (the authority picker's id checklist).
 func (m *TasksModel) Rows() []protocol.TaskInfo {
-	out := make([]protocol.TaskInfo, len(m.rowTasks))
-	copy(out, m.rowTasks)
+	out := make([]protocol.TaskInfo, 0, len(m.rowTasks))
+	for i, t := range m.rowTasks {
+		if !m.isHeader(i) {
+			out = append(out, t)
+		}
+	}
 	return out
 }
 
@@ -525,7 +621,7 @@ func (m *TasksModel) SelectedTask() *protocol.TaskInfo {
 		return nil
 	}
 	idx := m.table.Cursor()
-	if idx < 0 || idx >= len(m.rowTasks) {
+	if idx < 0 || idx >= len(m.rowTasks) || m.isHeader(idx) {
 		return nil
 	}
 	return &m.rowTasks[idx]
@@ -536,12 +632,50 @@ func (m TasksModel) Update(msg tea.Msg) (TasksModel, tea.Cmd) {
 		return m, nil
 	}
 	var cmd tea.Cmd
+	before := m.table.Cursor()
 	m.table, cmd = m.table.Update(msg)
+	dir := +1
+	if m.table.Cursor() < before {
+		dir = -1
+	}
+	m.skipHeader(dir)
 	return m, cmd
 }
 
 func (m TasksModel) View() string {
-	return colorStateBadgesWithin(m.table.View(), selectedRowOpen)
+	return colorStateBadgesWithin(m.headerLines(m.table.View()), selectedRowOpen)
+}
+
+// headerMarker opens a header row's Status cell, followed by the row index.
+// No task row can start with it: that cell is always a status word.
+const headerMarker = "#"
+
+// headerLines replaces each rendered header row (its Status cell holds the
+// marker) with the header text across the whole line. Header rows are never
+// selected, so the line is plain text and its width is the table's.
+func (m *TasksModel) headerLines(v string) string {
+	if len(m.rowHeader) == 0 {
+		return v
+	}
+	lines := strings.Split(v, "\n")
+	for k, l := range lines {
+		rest, ok := strings.CutPrefix(strings.TrimLeft(l, " "), headerMarker)
+		if !ok {
+			continue
+		}
+		n := 0
+		for n < len(rest) && rest[n] >= '0' && rest[n] <= '9' {
+			n++
+		}
+		i, err := strconv.Atoi(rest[:n])
+		if err != nil || !m.isHeader(i) {
+			continue
+		}
+		w := runewidth.StringWidth(l)
+		h := runewidth.Truncate(" "+m.rowHeader[i], w, "…")
+		lines[k] = h + strings.Repeat(" ", max(0, w-runewidth.StringWidth(h)))
+	}
+	return strings.Join(lines, "\n")
 }
 
 // originCell renders the From column as lowercase "cli" / "tui" / "webui",
