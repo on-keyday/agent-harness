@@ -82,6 +82,18 @@ function stateBadgeColor(b) {
   return b.attention ? "#f14c4c" : b.quiet ? "#e5c07b" : "#98c379";
 }
 
+// paneAboutText is a session pane header's About text, mirroring the TUI's
+// (tui aboutCell): the progress line with its age, else the live window title
+// marked "(title)" (a title comes from the first prompt and drifts from the
+// work, so it is labelled), else "" -- a pane is already a session, and a
+// placeholder like <interactive> would add nothing.
+function paneAboutText(t) {
+  const now = taskNowModel(t || {});
+  if (now.progress) return `${now.progress} (${now.age})`;
+  if (now.title) return `(title) ${now.title}`;
+  return "";
+}
+
 // paneStateBadge is a session pane header's badge: the lifecycle badge, or for
 // an agent with no hooks its program's report (the TUI's Life cell rule).
 function paneStateBadge(t) {

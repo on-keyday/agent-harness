@@ -533,7 +533,9 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// unconditionally (v1 has no dirty-flag gating — 10Hz over ≤9 small
 		// crops is cheap) and re-arm only while the grid stays open.
 		if a.grid.IsOpen() {
-			a.grid.SetLifecycle(gridLifecycleBadges(a.gridPaneTasks()))
+			paneTasks := a.gridPaneTasks()
+			a.grid.SetLifecycle(gridLifecycleBadges(paneTasks))
+			a.grid.SetAbout(gridPaneAbouts(paneTasks))
 			var cmd tea.Cmd
 			a.grid, cmd = a.grid.Update(msg)
 			return a, cmd

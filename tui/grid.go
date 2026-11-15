@@ -88,10 +88,30 @@ type GridModel struct {
 	// life is each pane's lifecycle badge (cli.LifecycleBadge), by task id,
 	// refreshed by the App on every grid tick (SetLifecycle).
 	life map[string]string
+	// about is each pane's About text (gridPaneAbouts), by task id, refreshed
+	// with life.
+	about map[string]string
 }
 
 // SetLifecycle replaces the panes' lifecycle badges (gridLifecycleBadges).
 func (m *GridModel) SetLifecycle(badges map[string]string) { m.life = badges }
+
+// SetAbout replaces the panes' About texts (gridPaneAbouts).
+func (m *GridModel) SetAbout(about map[string]string) { m.about = about }
+
+// gridPaneAbouts is each task's About text for its pane header, by task id:
+// the task table's About cell (aboutCell: the progress line, else the window
+// title), skipping the <interactive> / <stream> placeholders, which say
+// nothing a pane does not.
+func gridPaneAbouts(tasks []protocol.TaskInfo) map[string]string {
+	out := make(map[string]string, len(tasks))
+	for i := range tasks {
+		if a := aboutCell(tasks[i]); a != "" && !strings.HasPrefix(a, "<") {
+			out[FormatTaskID(tasks[i].Id)] = a
+		}
+	}
+	return out
+}
 
 // gridLifecycleBadges is each task's state badge, by task id: its lifecycle
 // badge, or for an agent with no hooks its program's report (lifeCell, the task
@@ -640,6 +660,13 @@ func (m GridModel) renderPane(idx, w, h int) string {
 		}
 	}
 	head += tail
+	// The About text takes what is left, cut with an ellipsis; it is the first
+	// thing to go in a narrow cell.
+	if a := m.about[p.TaskID()]; a != "" {
+		if room := w - runewidth.StringWidth(head) - 1; room >= 4 {
+			head += " " + runewidth.Truncate(a, room, "…")
+		}
+	}
 	// Truncate the header to the cell width so a long id + markers can never wrap
 	// onto a second line (which would push the pane past its budgeted height and
 	// overflow the grid).

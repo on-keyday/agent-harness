@@ -5669,6 +5669,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   const sessionPreviewModal    = document.getElementById("session-preview-modal");
   const sessionPreviewTitle    = document.getElementById("session-preview-title");
   const sessionPreviewLife     = document.getElementById("session-preview-life");
+  const sessionPreviewAbout    = document.getElementById("session-preview-about");
   const sessionPreviewBody     = document.getElementById("session-preview-body");
   const sessionPreviewPause    = document.getElementById("session-preview-pause");
   const sessionPreviewReattach = document.getElementById("session-preview-reattach");
@@ -6112,7 +6113,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     const label = gridCellLabel(id, (lastTasks || []).find((t) => t.id === id));
     sessionPreviewTitle.textContent = `🔍 ${label.text} · クリックで入力`;
     sessionPreviewTitle.title = label.title;
-    paneLife.set(key, { id, el: sessionPreviewLife });
+    paneLife.set(key, { id, el: sessionPreviewLife, aboutEl: sessionPreviewAbout });
     paintPaneLifecycle();
     const p = {
       taskId: id, live: false, epoch: 0, term: null,
@@ -6217,10 +6218,15 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // paintPaneLifecycle repaints each session pane's state badge from the latest
   // snapshot (paneStateBadge), in the task row's colours.
   function paintPaneLifecycle() {
-    for (const { id, el } of paneLife.values()) {
-      const b = paneStateBadge((lastTasks || []).find((t) => t.id === id) || {});
+    for (const { id, el, aboutEl } of paneLife.values()) {
+      const t = (lastTasks || []).find((x) => x.id === id) || {};
+      const b = paneStateBadge(t);
       el.textContent = b ? b.text : "";
       el.style.color = stateBadgeColor(b);
+      if (aboutEl) {
+        aboutEl.textContent = paneAboutText(t);
+        aboutEl.title = aboutEl.textContent;
+      }
     }
   }
 
@@ -6335,7 +6341,11 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       // repaints it from every task snapshot.
       const life = document.createElement("span");
       life.className = "grid-cell-life";
-      paneLife.set(key, { id, el: life });
+      // The About text (progress line, else window title) takes what room is
+      // left, cut with an ellipsis.
+      const about = document.createElement("span");
+      about.className = "grid-cell-about";
+      paneLife.set(key, { id, el: life, aboutEl: about });
       const attach = document.createElement("button");
       attach.type = "button";
       attach.className = "grid-cell-btn";
@@ -6359,7 +6369,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       dismiss.textContent = "✕";
       dismiss.title = "閉じる";
       dismiss.addEventListener("click", () => dismissPane(key, cell));
-      head.append(label, life, attach, notify, dismiss);
+      head.append(label, life, about, attach, notify, dismiss);
       const body = document.createElement("div");
       body.className = "grid-cell-body";
       cell.append(head, body);

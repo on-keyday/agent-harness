@@ -206,3 +206,35 @@ func TestGridModel_PaneHeaderFallsBackToProgramAndIsColoured(t *testing.T) {
 		t.Errorf("header badge not coloured: %q", head)
 	}
 }
+
+// After the id, repo and state badge, the header carries the task table's About
+// text (the progress line, else the window title), cut to what is left of the
+// cell. A placeholder like <interactive> says nothing a pane does not, so none.
+func TestGridModel_PaneHeaderCarriesAboutCutToFit(t *testing.T) {
+	titled := mkGridTask(4, protocol.TaskKind_Interactive, protocol.TaskStatus_Running, 1)
+	titled.SetLiveTerminal(true)
+	titled.Title = []byte("Fix the reconnect after phone sleep")
+	plain := mkGridTask(5, protocol.TaskKind_Interactive, protocol.TaskStatus_Running, 1)
+	about := gridPaneAbouts([]protocol.TaskInfo{titled, plain})
+	if got := about[FormatTaskID(titled.Id)]; got != "(title) Fix the reconnect after phone sleep" {
+		t.Errorf("titled pane about = %q", got)
+	}
+	if _, ok := about[FormatTaskID(plain.Id)]; ok {
+		t.Errorf("a placeholder made it into the header: %q", about[FormatTaskID(plain.Id)])
+	}
+
+	m := NewGridModel()
+	m.panes = []gridPane{NewPaneStreamer("aaaaaaaa11", 24, 80)}
+	m.repos = map[string]string{"aaaaaaaa11": "/w/alpha"}
+	m.SetLifecycle(map[string]string{"aaaaaaaa11": "ready:3m"})
+	m.SetAbout(map[string]string{"aaaaaaaa11": "(title) Fix the reconnect after phone sleep"})
+	m.open = true
+	wide := stripANSI(strings.SplitN(m.renderPane(0, 80, 5), "\n", 3)[1])
+	if !strings.Contains(wide, "aaaaaaaa alpha ready:3m (title) Fix the reconnect after phone sleep") {
+		t.Errorf("wide header = %q", wide)
+	}
+	mid := stripANSI(strings.SplitN(m.renderPane(0, 40, 5), "\n", 3)[1])
+	if !strings.Contains(mid, "ready:3m (title) Fix") || !strings.Contains(mid, "…") {
+		t.Errorf("about should be cut with an ellipsis, badge kept: %q", mid)
+	}
+}

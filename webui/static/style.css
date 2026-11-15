@@ -1214,12 +1214,29 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
   flex: 0 0 auto;
 }
 .grid-cell-label {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: monospace;
+}
+/* In the session preview the About text, not the title, absorbs the free space
+ * (and so still pushes the buttons right as one group). */
+#session-preview-title {
+  flex: 0 1 auto;
+}
+/* The About text: what is left of the header after id, repo and badge. */
+.grid-cell-about,
+.preview-about {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-left: 6px;
+  color: #9da5b4;
+  font-size: 0.85em;
 }
 .grid-cell-life,
 .preview-life {

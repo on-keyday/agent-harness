@@ -789,6 +789,17 @@ test("paneStateBadge: lifecycle first, program when there is none", () => {
   eq(page.paneStateBadge({ status: "Running", lifecycleAt: "0" }), null);
 });
 
+// A pane header's About text, mirroring the TUI's (aboutCell): the progress
+// line with its age, else the live window title marked "(title)", else nothing
+// (a pane is already a session; "<interactive>" would add nothing).
+test("paneAboutText: progress, else title, else empty", () => {
+  eq(page.paneAboutText({ progressAt: "5", progress: "step 2/3", progressAgeMs: 120000, liveTerminal: true, title: "t" }),
+    "step 2/3 (2m ago)");
+  eq(page.paneAboutText({ progressAt: "0", liveTerminal: true, title: "Fix the reconnect" }), "(title) Fix the reconnect");
+  eq(page.paneAboutText({ progressAt: "0", liveTerminal: false, title: "stale" }), "");
+  eq(page.paneAboutText({}), "");
+});
+
 // await-progress needs no live session (a oneshot writes progress too), so
 // the sheet offers it on every task that can still write: any non-terminal one.
 test("task sheet: await-progress offered on any live task, oneshot included", () => {
