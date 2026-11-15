@@ -96,6 +96,11 @@ func scheduleIDFromHex(idHex string) protocol.ScheduleID {
 // checked centrally (requiredCap).
 func (h *TaskHandler) handleSchedule(cid string, conn ConnHandle, req *protocol.TaskControlRequest) {
 	kind := req.Header.Kind
+	// deny answers a missing bit as the task-control permission denial (S-D17a),
+	// the shape requiredCap's own denial has.
+	deny := func(c protocol.Capability) {
+		h.denyTaskControl(conn, kind, req.Header.RequestId, c)
+	}
 	send := func(r protocol.ScheduleResponse) {
 		resp := protocol.TaskControlResponse{Kind: kind, RequestId: req.Header.RequestId}
 		switch kind {
@@ -129,7 +134,12 @@ func (h *TaskHandler) handleSchedule(cid string, conn ConnHandle, req *protocol.
 			return
 		}
 		h.withSpecPrompt(conn, &cr.Spec, send, func(spec *protocol.ScheduleSpec, prompt string) {
-			send(h.scheduleCreate(cid, spec, prompt))
+			r, c := h.scheduleCreate(cid, spec, prompt)
+			if c != 0 {
+				deny(c)
+				return
+			}
+			send(r)
 		})
 	case protocol.TaskControlKind_ScheduleEdit:
 		er := req.ScheduleEdit()
@@ -139,7 +149,12 @@ func (h *TaskHandler) handleSchedule(cid string, conn ConnHandle, req *protocol.
 		}
 		id := er.Id
 		h.withSpecPrompt(conn, &er.Spec, send, func(spec *protocol.ScheduleSpec, prompt string) {
-			send(h.scheduleEdit(cid, id, spec, prompt))
+			r, c := h.scheduleEdit(cid, id, spec, prompt)
+			if c != 0 {
+				deny(c)
+				return
+			}
+			send(r)
 		})
 	case protocol.TaskControlKind_ScheduleDelete:
 		r := req.ScheduleDelete()
@@ -154,7 +169,12 @@ func (h *TaskHandler) handleSchedule(cid string, conn ConnHandle, req *protocol.
 			send(scheduleRefusal(protocol.ScheduleStatus_InternalError, "empty request"))
 			return
 		}
-		send(h.scheduleRun(cid, r.Id))
+		resp, c := h.scheduleRun(cid, r.Id)
+		if c != 0 {
+			deny(c)
+			return
+		}
+		send(resp)
 	case protocol.TaskControlKind_ScheduleList:
 		body := h.scheduleListBody(cid)
 		respondWithBody(conn, "schedule list", &body, func(streamID uint64) {
@@ -571,7 +591,71 @@ func (h *TaskHandler) applySpec(cid string, base Schedule, spec *protocol.Schedu
 	return d, nil
 }
 
-func (h *TaskHandler) scheduleCreate(cid string, spec *protocol.ScheduleSpec, prompt string) protocol.ScheduleResponse {
+// scheduleSpecTask is the task a spec binds, "" when it names none.
+func scheduleSpecTask(spec *protocol.ScheduleSpec) string {
+	if spec.TaskPresent() && spec.TaskId() != nil {
+		return hex.EncodeToString(spec.TaskId().Id[:])
+	}
+	return ""
+}
+
+// schedulePower is S-D17a: besides the schedule bit, a verb needs the power it
+// exercises. Each need is a bit (a missing one is returned as the capability
+// to deny with) and, for resume, a target inside that bit's scope (a target
+// outside answers task_not_reachable; the resume_exact bit is not enough,
+// since a firing passes its own prompt). It runs after reach and self (S-D20),
+// so a missing bit never tells a caller anything about a schedule it cannot
+// see.
+//
+//   - spawn: the schedule is to create its task (no --task on a create, or a
+//     stored pending_create schedule).
+//   - resume over T: a bind of T, or a stored schedule bound to T.
+//
+// An unbound schedule needs neither: an edit that binds nothing changes
+// nothing that runs until a later bind (which is itself checked here), and a
+// run of it only records skipped_no_task.
+func (h *TaskHandler) schedulePower(cid string, cur *Schedule, bindTask string) (protocol.Capability, *protocol.ScheduleResponse) {
+	callerCaps := h.callerCaps(cid)
+	needSpawn := cur != nil && cur.State == protocol.ScheduleTaskState_PendingCreate
+	if cur == nil && bindTask == "" {
+		needSpawn = true
+	}
+	if needSpawn && !hasCap(callerCaps, protocol.Capability_Spawn) {
+		return protocol.Capability_Spawn, nil
+	}
+	var over []string
+	if cur != nil && cur.State == protocol.ScheduleTaskState_Bound {
+		over = append(over, cur.TaskID)
+	}
+	if bindTask != "" {
+		over = append(over, bindTask)
+	}
+	if len(over) == 0 {
+		return 0, nil
+	}
+	if !hasCap(callerCaps, protocol.Capability_Resume) {
+		return protocol.Capability_Resume, nil
+	}
+	for _, t := range over {
+		if !h.inScope(cid, protocol.Capability_Resume, t) {
+			r := scheduleRefusal(protocol.ScheduleStatus_TaskNotReachable, "no task %s within your reach", short(t))
+			return 0, &r
+		}
+	}
+	return 0, nil
+}
+
+func (h *TaskHandler) scheduleCreate(cid string, spec *protocol.ScheduleSpec, prompt string) (protocol.ScheduleResponse, protocol.Capability) {
+	if c, refusal := h.schedulePower(cid, nil, scheduleSpecTask(spec)); c != 0 || refusal != nil {
+		if refusal != nil {
+			return *refusal, 0
+		}
+		return protocol.ScheduleResponse{}, c
+	}
+	return h.scheduleCreateChecked(cid, spec, prompt), 0
+}
+
+func (h *TaskHandler) scheduleCreateChecked(cid string, spec *protocol.ScheduleSpec, prompt string) protocol.ScheduleResponse {
 	ops := h.Sched
 	now := ops.now()
 	d, refusal := h.applySpec(cid, Schedule{}, spec, prompt, true, now)
@@ -674,28 +758,38 @@ func (o *ScheduleOps) boundChanged(taskHex string) {
 	}
 }
 
-func (h *TaskHandler) scheduleEdit(cid string, id protocol.ScheduleID, spec *protocol.ScheduleSpec, prompt string) (resp protocol.ScheduleResponse) {
+func (h *TaskHandler) scheduleEdit(cid string, id protocol.ScheduleID, spec *protocol.ScheduleSpec, prompt string) (resp protocol.ScheduleResponse, deny protocol.Capability) {
 	ops := h.Sched
 	idHex := hex.EncodeToString(id.Id[:])
 	ops.withFiringMutex(idHex, func() {
-		resp = h.scheduleEditLocked(cid, id, idHex, spec, prompt)
+		resp, deny = h.scheduleEditLocked(cid, id, idHex, spec, prompt)
 	})
-	if resp.Status == protocol.ScheduleStatus_Ok {
+	if deny == 0 && resp.Status == protocol.ScheduleStatus_Ok {
 		ops.poke()
 	}
-	return resp
+	return resp, deny
 }
 
-func (h *TaskHandler) scheduleEditLocked(cid string, id protocol.ScheduleID, idHex string, spec *protocol.ScheduleSpec, prompt string) protocol.ScheduleResponse {
-	ops := h.Sched
-	now := ops.now()
+func (h *TaskHandler) scheduleEditLocked(cid string, id protocol.ScheduleID, idHex string, spec *protocol.ScheduleSpec, prompt string) (protocol.ScheduleResponse, protocol.Capability) {
 	cur, refusal := h.scheduleFor(cid, id)
 	if refusal != nil {
-		return *refusal
+		return *refusal, 0
 	}
 	if h.scheduleOwnTask(cid, cur) {
-		return scheduleRefusal(protocol.ScheduleStatus_SelfRefused, "a schedule's own task cannot edit it")
+		return scheduleRefusal(protocol.ScheduleStatus_SelfRefused, "a schedule's own task cannot edit it"), 0
 	}
+	if c, refusal := h.schedulePower(cid, &cur, scheduleSpecTask(spec)); c != 0 || refusal != nil {
+		if refusal != nil {
+			return *refusal, 0
+		}
+		return protocol.ScheduleResponse{}, c
+	}
+	return h.scheduleEditChecked(cid, id, idHex, spec, prompt, cur), 0
+}
+
+func (h *TaskHandler) scheduleEditChecked(cid string, id protocol.ScheduleID, idHex string, spec *protocol.ScheduleSpec, prompt string, cur Schedule) protocol.ScheduleResponse {
+	ops := h.Sched
+	now := ops.now()
 	d, refusal := h.applySpec(cid, cur, spec, prompt, false, now)
 	if refusal != nil {
 		return *refusal
@@ -807,16 +901,26 @@ func (h *TaskHandler) scheduleDelete(cid string, id protocol.ScheduleID) (resp p
 // schedule that vanished or whose intent could not be saved; the first is
 // answered no_such_schedule before it is called, so the zero outcome means
 // the second.
-func (h *TaskHandler) scheduleRun(cid string, id protocol.ScheduleID) protocol.ScheduleResponse {
-	ops := h.Sched
-	idHex := hex.EncodeToString(id.Id[:])
+func (h *TaskHandler) scheduleRun(cid string, id protocol.ScheduleID) (protocol.ScheduleResponse, protocol.Capability) {
 	sc, refusal := h.scheduleFor(cid, id)
 	if refusal != nil {
-		return *refusal
+		return *refusal, 0
 	}
 	if h.scheduleOwnTask(cid, sc) {
-		return scheduleRefusal(protocol.ScheduleStatus_SelfRefused, "a schedule's own task cannot run it")
+		return scheduleRefusal(protocol.ScheduleStatus_SelfRefused, "a schedule's own task cannot run it"), 0
 	}
+	if c, refusal := h.schedulePower(cid, &sc, ""); c != 0 || refusal != nil {
+		if refusal != nil {
+			return *refusal, 0
+		}
+		return protocol.ScheduleResponse{}, c
+	}
+	return h.scheduleRunChecked(id, sc), 0
+}
+
+func (h *TaskHandler) scheduleRunChecked(id protocol.ScheduleID, sc Schedule) protocol.ScheduleResponse {
+	ops := h.Sched
+	idHex := hex.EncodeToString(id.Id[:])
 	if ops.Fire == nil || ops.Ready == nil || !ops.Ready() {
 		return scheduleRefusal(protocol.ScheduleStatus_NotReady, "the server is still starting its schedules; try again")
 	}

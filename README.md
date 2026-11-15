@@ -1887,9 +1887,22 @@ the run reads untrusted text (issues, pull requests) and an injected
 instruction must not outlive it by rewriting the prompt, the times or the
 binding. Deleting a schedule leaves its task.
 
+**A schedule verb also needs the power it exercises** (S-D17a), for every
+caller alike: `schedule new` without `--task` needs `spawn` (the first firing
+creates a task); `schedule new --task T` and an edit that binds T need `resume`
+with T inside that bit's scope (`resume_exact` is not enough: a firing passes
+its own prompt); an `edit` or `run` of an existing schedule needs what creating
+it would need now — `spawn` while its task is still to be created, `resume`
+over its bound task. An unbound schedule needs neither (nothing runs until a
+bind, which is checked then). A missing bit answers the same permission denial
+as any other bit (`permission denied: ScheduleCreate requires capability
+spawn`); T outside `resume`'s scope answers `task_not_reachable`. Reach and the
+own-task refusal are answered first. `rm`, `ls` and `show` are unchanged, and a
+firing checks nothing: the check was made when the schedule was written.
+
 **Do not grant `schedule` in a scheduled task's authority** (the grant a
 schedule stores). The rule above compares the caller with the bound task only:
-a bound task that holds `schedule` can still create a NEW schedule, and a child
+a bound task that holds `schedule` and `spawn` (or `resume`) can still create a NEW schedule, and a child
 it spawns with `schedule` and reach to its parent can edit the parent's
 schedule — so an instruction injected into a run could outlive it.
 

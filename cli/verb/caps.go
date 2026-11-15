@@ -95,10 +95,12 @@ func CapDescription(c protocol.Capability) string {
 			"self, creator, direct children, chat.operator, whoever messaged it directly — and own task ls)"
 	case protocol.Capability_Spawn:
 		return "create tasks (session new, --oneshot included); does NOT resume — see resume. " +
-			"Opening a session without -d also needs exec_control"
+			"Opening a session without -d also needs exec_control. " +
+			"A schedule that is to create its task also needs it: schedule new without --task, and schedule edit / run of a schedule whose task is not yet created"
 	case protocol.Capability_Resume:
 		return "resume a finished task under its own id, free to change prompt, args, agent, kind, caps and scope; " +
-			"creates no new task; keeps the task's recorded caps unless --caps re-grants them; implies resume_exact"
+			"creates no new task; keeps the task's recorded caps unless --caps re-grants them; implies resume_exact. " +
+			"A schedule verb that resumes a task also needs it, with the task in this bit's scope: schedule new --task T, an edit binding T, schedule edit / run of a schedule bound to T"
 	case protocol.Capability_ResumeExact:
 		return "resume a finished task exactly as recorded (--resume <id> --exact): " +
 			"only the runner, --resume-conversation, x11, -d and the initial size may be chosen"
@@ -185,7 +187,10 @@ func CapDescription(c protocol.Capability) string {
 	case protocol.Capability_Schedule:
 		return "create, edit, delete or run server-kept cron schedules (schedule new / edit / rm / run), " +
 			"and unbind a task from one with a foreground resume or `session mode … foreground` of a task bound to a schedule; " +
-			"each target must be within reach. Reading schedules (schedule ls / show) needs no bit. " +
+			"each target must be within reach. Besides this bit, schedule new without --task needs spawn, " +
+			"schedule new --task T and an edit binding T need resume over T, and schedule edit / run need spawn " +
+			"(task still to be created) or resume over the bound task; schedule rm needs neither. " +
+			"Reading schedules (schedule ls / show) needs no bit. " +
 			"Strong: a schedule fires on its own, with the authority stored when it was created or edited"
 	case protocol.Capability_All:
 		return "full capability set (operator-equivalent)"

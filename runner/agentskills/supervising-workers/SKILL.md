@@ -703,6 +703,13 @@ harness-cli schedule rm <schedule-id>            # the task stays; a run is not 
   `--delegate-*`. The stored authority is bounded by yours; an edit recomputes
   it with the editor as granter, so editing a schedule never leaves it wider
   than you. Check `whoami` before promising to create one.
+- **A schedule verb also needs the power it exercises.** `new` without
+  `--task` needs `spawn`; `new --task T` and an edit that binds T need `resume`
+  with T in its scope (`resume_exact` is not enough); `edit` / `run` of an
+  existing schedule need `spawn` while its task is still to be created and
+  `resume` over its bound task (an unbound schedule needs neither). A missing
+  bit is a permission denial naming it; T outside `resume`'s scope is
+  `task_not_reachable`. Firings check nothing.
 - **The expression is five cron fields in the schedule's zone**, or `@hourly`
   / `@daily` / `@weekly` / `@monthly` / `@yearly`; an interval is a step
   (`*/30 * * * *`). `@every`, `?`, `L`, `W`, `#` and a `TZ=` prefix are
@@ -717,7 +724,7 @@ harness-cli schedule rm <schedule-id>            # the task stays; a run is not 
   as a missing bit; the operator or another task changes it.
 - **Do not grant `schedule` in a scheduled task's authority** (the grant a
   schedule stores). That refusal compares the caller with the bound task only:
-  a bound task holding `schedule` can still create a NEW schedule, and a child
+  a bound task holding `schedule` and `spawn` (or `resume`) can still create a NEW schedule, and a child
   it spawns with `schedule` and reach to its parent can edit the parent's
   schedule — so an injected instruction could outlive the run.
 - **Every due firing leaves a history entry** (`schedule show`, last 50):

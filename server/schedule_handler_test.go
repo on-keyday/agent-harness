@@ -89,7 +89,7 @@ func schedOpConn() *fakeConn {
 }
 
 var schedAgentGrant = authority.Grant{
-	Caps:  protocol.Capability_Schedule | protocol.Capability_FileRead | protocol.Capability_Cancel,
+	Caps:  protocol.Capability_Schedule | protocol.Capability_Spawn | protocol.Capability_Resume | protocol.Capability_FileRead | protocol.Capability_Cancel,
 	Scope: authority.Scope{Base: protocol.ScopeBase_Subtree}, DelegateCaps: protocol.Capability_All,
 	DelegateScope: authority.Scope{Base: protocol.ScopeBase_Subtree},
 }
@@ -174,11 +174,28 @@ func (e *schedEnv) send(t *testing.T, conn *fakeConn, kind protocol.TaskControlK
 // separately, as the dispatch does after reading the stream).
 func (e *schedEnv) create(t *testing.T, cid string, sp *protocol.ScheduleSpec, prompt string) protocol.ScheduleResponse {
 	t.Helper()
+	r, c := e.h.scheduleCreate(cid, sp, prompt)
+	if c != 0 {
+		t.Fatalf("create denied for %v; the caller needs more bits", c)
+	}
+	return r
+}
+
+// createDeny is create that also reports the capability a denial names.
+func (e *schedEnv) createDeny(cid string, sp *protocol.ScheduleSpec, prompt string) (protocol.ScheduleResponse, protocol.Capability) {
 	return e.h.scheduleCreate(cid, sp, prompt)
 }
 
 func (e *schedEnv) edit(t *testing.T, cid string, id string, sp *protocol.ScheduleSpec, prompt string) protocol.ScheduleResponse {
 	t.Helper()
+	r, c := e.h.scheduleEdit(cid, schedHexID(t, id), sp, prompt)
+	if c != 0 {
+		t.Fatalf("edit denied for %v; the caller needs more bits", c)
+	}
+	return r
+}
+
+func (e *schedEnv) editDeny(t *testing.T, cid string, id string, sp *protocol.ScheduleSpec, prompt string) (protocol.ScheduleResponse, protocol.Capability) {
 	return e.h.scheduleEdit(cid, schedHexID(t, id), sp, prompt)
 }
 
@@ -286,7 +303,7 @@ func TestScheduleOutOfReachIsNoSuch(t *testing.T) {
 	task := e.terminal(t, protocol.RunMode_Background, "")
 	sc := e.seed(t, 1, protocol.ScheduleTaskState_Bound, task, "")
 	// A caller that reaches only itself.
-	conn, _ := e.agent(t, authority.Grant{Caps: protocol.Capability_Schedule, Scope: authority.Scope{Base: protocol.ScopeBase_None}})
+	conn, _ := e.agent(t, authority.Grant{Caps: protocol.Capability_Schedule | protocol.Capability_Spawn | protocol.Capability_Resume, Scope: authority.Scope{Base: protocol.ScopeBase_None}})
 	for _, k := range []protocol.TaskControlKind{
 		protocol.TaskControlKind_ScheduleDelete, protocol.TaskControlKind_ScheduleRun, protocol.TaskControlKind_ScheduleShow,
 	} {
@@ -402,7 +419,7 @@ func TestEditRecomputesGrantWithoutFlags(t *testing.T) {
 	e.addCandidate("claude")
 	// An editor narrower than the creator: fewer caps, subtree scope.
 	conn, editor := e.agent(t, authority.Grant{
-		Caps:  protocol.Capability_Schedule | protocol.Capability_FileRead,
+		Caps:  protocol.Capability_Schedule | protocol.Capability_Spawn | protocol.Capability_Resume | protocol.Capability_FileRead,
 		Scope: authority.Scope{Base: protocol.ScopeBase_Subtree}, DelegateCaps: protocol.Capability_FileRead,
 		DelegateScope: authority.Scope{Base: protocol.ScopeBase_Subtree},
 	})
@@ -424,7 +441,7 @@ func TestEditRecomputesGrantWithoutFlags(t *testing.T) {
 	if got.Prompt != "a new prompt" {
 		t.Fatalf("prompt %q", got.Prompt)
 	}
-	if got.Grant.Caps&^(protocol.Capability_Schedule|protocol.Capability_FileRead) != 0 || got.Grant.Caps&protocol.Capability_FileRead == 0 {
+	if got.Grant.Caps&^(protocol.Capability_Schedule|protocol.Capability_FileRead|protocol.Capability_Spawn|protocol.Capability_Resume) != 0 || got.Grant.Caps&protocol.Capability_FileRead == 0 {
 		t.Errorf("stored caps %v exceed the editor's", got.Grant.Caps)
 	}
 	if got.Grant.Scope.Base == protocol.ScopeBase_Global || got.Grant.DelegateScope.Base == protocol.ScopeBase_Global {
@@ -1141,7 +1158,7 @@ func TestCreateWithTaskGrantBoundedByCreator(t *testing.T) {
 	e := newSchedEnv(t)
 	e.addCandidate("claude")
 	conn, creator := e.agent(t, authority.Grant{
-		Caps:  protocol.Capability_Schedule | protocol.Capability_FileRead,
+		Caps:  protocol.Capability_Schedule | protocol.Capability_Spawn | protocol.Capability_Resume | protocol.Capability_FileRead,
 		Scope: authority.Scope{Base: protocol.ScopeBase_Subtree}, DelegateCaps: protocol.Capability_FileRead,
 		DelegateScope: authority.Scope{Base: protocol.ScopeBase_Subtree},
 	})
@@ -1219,7 +1236,7 @@ func TestScheduleRefusalStatuses(t *testing.T) {
 	esp.SetRepoPath([]byte("/r"))
 	want("repo on bound edit", e.edit(t, "", bsc.ID, esp, ""), protocol.ScheduleStatus_RepoConflict)
 	// scope_not_permitted: a scope id outside the creator's reach.
-	conn, _ := e.agent(t, authority.Grant{Caps: protocol.Capability_Schedule | protocol.Capability_FileRead,
+	conn, _ := e.agent(t, authority.Grant{Caps: protocol.Capability_Schedule | protocol.Capability_Spawn | protocol.Capability_FileRead,
 		Scope: authority.Scope{Base: protocol.ScopeBase_Subtree}, DelegateCaps: protocol.Capability_All,
 		DelegateScope: authority.Scope{Base: protocol.ScopeBase_Subtree}})
 	sp = createSpec()
@@ -1271,7 +1288,7 @@ func TestEditChecksRecordOnlyWhenNamed(t *testing.T) {
 	e := newSchedEnv(t)
 	task := e.terminal(t, protocol.RunMode_Background, "")
 	sc := e.seed(t, 1, protocol.ScheduleTaskState_Bound, task, "")
-	conn, creator := e.agent(t, authority.Grant{Caps: protocol.Capability_Schedule | protocol.Capability_RecordPersist,
+	conn, creator := e.agent(t, authority.Grant{Caps: protocol.Capability_Schedule | protocol.Capability_Spawn | protocol.Capability_Resume | protocol.Capability_RecordPersist,
 		Scope:        authority.Scope{Base: protocol.ScopeBase_Global, Overrides: []authority.ScopeOverride{{Caps: protocol.Capability_RecordPersist, Base: protocol.ScopeBase_None}}},
 		DelegateCaps: protocol.Capability_All, DelegateScope: authority.Scope{Base: protocol.ScopeBase_Global}})
 	_ = creator
@@ -1338,7 +1355,7 @@ func TestBindingChangesPublishATaskEvent(t *testing.T) {
 	// bind of a task already in background: no mode write, still an event.
 	a := mk()
 	before := len(getEvents())
-	r := h.scheduleCreate("", bindSpec(t, createSpec(), a), "go")
+	r, _ := h.scheduleCreate("", bindSpec(t, createSpec(), a), "go")
 	if r.Status != protocol.ScheduleStatus_Ok {
 		t.Fatalf("%v %s", r.Status, r.Message)
 	}
@@ -1356,7 +1373,7 @@ func TestBindingChangesPublishATaskEvent(t *testing.T) {
 	}
 	// delete.
 	b := mk()
-	r = h.scheduleCreate("", bindSpec(t, createSpec(), b), "go")
+	r, _ = h.scheduleCreate("", bindSpec(t, createSpec(), b), "go")
 	if r.Status != protocol.ScheduleStatus_Ok || !last(b).SchedulePresent() {
 		t.Fatalf("bind b: %v", r.Status)
 	}
