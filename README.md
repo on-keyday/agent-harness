@@ -2338,9 +2338,10 @@ The page is organised into tabs (端末 / タスク / ファイル / 通知):
     typed takes 新規作成's value: the repo, host and agent dropdowns, the
     agent args, and the caps / scope / delegation / limit panel; its prompt,
     background, record, PTY, one-shot and stream fields are not taken. Only a
-    typed `--resume` resumes, and a typed `--caps` / `--scope` /
-    `--scope-for` on a resume re-grants exactly that (nothing untyped is
-    re-granted). The open goes the way 新規作成's button opens: without `-d`
+    typed `--resume` resumes, and on a resume a typed `--caps` re-grants the
+    caps, and a typed `--scope` and/or `--scope-for` re-grants the scope with
+    exactly the overrides typed (the two travel together, as on the CLI);
+    nothing is filled in from the panel, and nothing untyped is re-granted. The open goes the way 新規作成's button opens: without `-d`
     it attaches the terminal (`--stream` opens the chat), `-d` starts it
     detached at 40x120 unless `--rows` / `--cols` say otherwise,
     `--background` queues it, and an ambiguous runner opens the runner picker.
