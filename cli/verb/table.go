@@ -2046,7 +2046,9 @@ var Verbs = []VerbSpec{
 		// --json already carries created_by on every row, so a consumer
 		// builds the tree itself; nesting the JSON to match would give the
 		// same data two shapes.
-		Exclusive: []Rule{{Flags: []string{"tree", "json"}}},
+		// --tree is its own order (by creator link), so it and --order
+		// cannot both decide the rows.
+		Exclusive: []Rule{{Flags: []string{"tree", "json"}}, {Flags: []string{"tree", "order"}}},
 		Flags: []Flag{
 			{Name: "json", Type: FlagBool, Default: false, Field: "JSON",
 				Help: `emit a single JSON object {"runners":[...],"tasks":[...]} instead of the table`},
@@ -2057,8 +2059,13 @@ var Verbs = []VerbSpec{
 				SurfaceReason: "only the WebUI has a task-list filter pane; neither the CLI nor the TUI has a filter to honour",
 				Help:          "list only the rows the task-list filter currently admits",
 			},
+			{
+				Name: "order", Type: FlagString, Default: "", CmdlineSurfaces: CLI, Field: "Order",
+				SurfaceReason: "the WebUI orders its task list with the select beside the filter chips, and the TUI with its o key",
+				Help:          "order and group the tasks: created|activity|live|state|repo (default: the server's order)",
+			},
 		},
-		Examples: []string{"ls", "ls --json", "ls --tree"},
+		Examples: []string{"ls", "ls --json", "ls --tree", "ls --order state"},
 	},
 	{
 		Path: []string{"conns"}, CmdlineSurfaces: CLI | TUI | WebUI,

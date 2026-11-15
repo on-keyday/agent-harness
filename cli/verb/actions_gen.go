@@ -469,6 +469,8 @@ type ListAction struct {
 	Tree bool
 	// list only the rows the task-list filter currently admits
 	Filtered bool
+	// order and group the tasks: created|activity|live|state|repo (default: the server's order)
+	Order string
 }
 
 // NotifyAction is built by: notify.
@@ -2938,6 +2940,7 @@ func init() {
 			a := ListAction{}
 			a.JSON = b.Bool("json")
 			a.Tree = b.Bool("tree")
+			a.Order = b.Str("order")
 			return a, nil
 		},
 		"ls\x00webui": func(b Bound) (Action, error) {

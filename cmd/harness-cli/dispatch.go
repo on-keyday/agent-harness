@@ -173,6 +173,13 @@ func requireRepo(name string, a verb.SpawnAction) error {
 }
 
 func (h cliVerbs) Ls(a verb.ListAction) error {
+	if a.Order != "" {
+		o, err := cli.ParseTaskOrder(a.Order)
+		if err != nil {
+			return err
+		}
+		return cli.ListOrdered(h.ctx, h.cid(), os.Stdout, o, a.JSON)
+	}
 	switch {
 	case a.Tree:
 		return cli.ListTree(h.ctx, h.cid(), os.Stdout)

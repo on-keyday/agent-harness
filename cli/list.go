@@ -159,6 +159,21 @@ func (c *Client) ListJSON(ctx context.Context, out io.Writer) error {
 	return nil
 }
 
+// ListOrdered snapshots the server and writes `ls --order o` (asJSON: the
+// --json form, each row carrying its group).
+func (c *Client) ListOrdered(ctx context.Context, out io.Writer, o TaskOrder, asJSON bool) error {
+	lr, err := c.Snapshot(ctx)
+	if err != nil {
+		return err
+	}
+	if asJSON {
+		renderListJSONOrdered(lr, out, o, time.Now())
+	} else {
+		renderListOrdered(lr, out, o, time.Now())
+	}
+	return nil
+}
+
 // SessionListJSON snapshots the server and writes one JSON object per line
 // (JSON Lines) for each interactive session — the `session ls` output. Each
 // row shares `ls --json`'s task vocabulary plus is_attached/ring_buffer_bytes.
@@ -175,6 +190,19 @@ func (c *Client) SessionListJSON(ctx context.Context, out io.Writer) error {
 // Extracted for testability: tests can construct a ListResult directly without
 // a live server and call renderList to verify the rendered columns.
 func renderList(lr *protocol.ListResultBody, out io.Writer) {
+	runnerByID := renderListRunners(lr, out)
+	fmt.Fprintln(out, "TASKS")
+	if len(lr.Tasks) == 0 {
+		fmt.Fprintln(out, "  (none)")
+	}
+	for _, t := range lr.Tasks {
+		fmt.Fprintf(out, "  %s\n", taskLine(t, runnerByID))
+	}
+}
+
+// renderListRunners writes the RUNNERS section and returns the runners by id,
+// which the task rows use to show each task's runner.
+func renderListRunners(lr *protocol.ListResultBody, out io.Writer) map[string]protocol.RunnerInfo {
 	fmt.Fprintln(out, "RUNNERS")
 	if len(lr.Runners) == 0 {
 		fmt.Fprintln(out, "  (none)")
@@ -204,13 +232,42 @@ func renderList(lr *protocol.ListResultBody, out io.Writer) {
 	for _, r := range lr.Runners {
 		runnerByID[r.Id.Hex()] = r
 	}
+	return runnerByID
+}
+
+// renderListOrdered is `ls --order MODE`: renderList with the task rows
+// ordered by OrderTasks and a `== label (n) ==` header before each labelled
+// group.
+func renderListOrdered(lr *protocol.ListResultBody, out io.Writer, o TaskOrder, now time.Time) {
+	runnerByID := renderListRunners(lr, out)
 	fmt.Fprintln(out, "TASKS")
 	if len(lr.Tasks) == 0 {
 		fmt.Fprintln(out, "  (none)")
 	}
-	for _, t := range lr.Tasks {
-		fmt.Fprintf(out, "  %s\n", taskLine(t, runnerByID))
+	for _, g := range OrderTasks(lr.Tasks, o, now) {
+		if g.Label != "" {
+			fmt.Fprintf(out, "  == %s (%d) ==\n", g.Label, len(g.Tasks))
+		}
+		for _, t := range g.Tasks {
+			fmt.Fprintf(out, "  %s\n", taskLine(t, runnerByID))
+		}
 	}
+}
+
+// renderListJSONOrdered is `ls --json --order MODE`: the tasks in OrderTasks'
+// order, each with its group label (empty for the unlabelled modes).
+func renderListJSONOrdered(lr *protocol.ListResultBody, out io.Writer, o TaskOrder, now time.Time) {
+	var tasks []protocol.TaskInfo
+	var groups []string
+	for _, g := range OrderTasks(lr.Tasks, o, now) {
+		for _, t := range g.Tasks {
+			tasks = append(tasks, t)
+			groups = append(groups, g.Label)
+		}
+	}
+	ordered := *lr
+	ordered.Tasks = tasks
+	renderListJSONGroups(&ordered, out, groups)
 }
 
 // taskLine renders one task row without its leading indent. Extracted from
@@ -595,6 +652,9 @@ type taskJSON struct {
 	// Whether the current run is a `session new --oneshot` (A3, A-D29); kind
 	// stays "interactive" for one.
 	Oneshot bool `json:"oneshot"`
+	// The task's group under `ls --json --order MODE` ("" for the unlabelled
+	// modes); absent without --order.
+	Group *string `json:"group,omitempty"`
 	// Whether the current run's child has a PTY (A-D33), on every row:
 	// TaskHasPTY.
 	Pty bool `json:"pty"`
@@ -623,6 +683,12 @@ type listJSON struct {
 // renderList so the two views can never disagree. Extracted (like renderList)
 // so tests can drive it without a live server.
 func renderListJSON(lr *protocol.ListResultBody, out io.Writer) {
+	renderListJSONGroups(lr, out, nil)
+}
+
+// renderListJSONGroups is renderListJSON with groups[i] set as task i's group
+// (nil: no group key on any row).
+func renderListJSONGroups(lr *protocol.ListResultBody, out io.Writer, groups []string) {
 	// Non-nil zero-length slices so empty sections encode as [] not null.
 	doc := listJSON{Runners: []runnerJSON{}, Tasks: []taskJSON{}}
 
@@ -653,7 +719,11 @@ func renderListJSON(lr *protocol.ListResultBody, out io.Writer) {
 	}
 
 	for i := range lr.Tasks {
-		doc.Tasks = append(doc.Tasks, newTaskJSON(&lr.Tasks[i], runnerByID))
+		tj := newTaskJSON(&lr.Tasks[i], runnerByID)
+		if groups != nil {
+			tj.Group = &groups[i]
+		}
+		doc.Tasks = append(doc.Tasks, tj)
 	}
 
 	enc := json.NewEncoder(out)
@@ -968,6 +1038,15 @@ func ListJSON(ctx context.Context, peerCID objproto.ConnectionID, out io.Writer)
 	}
 	defer c.Close()
 	return c.ListJSON(ctx, out)
+}
+
+func ListOrdered(ctx context.Context, peerCID objproto.ConnectionID, out io.Writer, o TaskOrder, asJSON bool) error {
+	c, err := Dial(ctx, peerCID, protocol.ClientKind_Cli)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	return c.ListOrdered(ctx, out, o, asJSON)
 }
 
 // SessionListJSON is the package-level wrapper for `session ls`: opens a fresh
