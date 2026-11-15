@@ -26,7 +26,7 @@ green result there says nothing about your code.
 ## The script
 
 ```
-scripts/dummy-harness.sh up [--agent claude|fake] [--model NAME] [--detach] [--name N] [--tls]
+scripts/dummy-harness.sh up [--agent claude|fake] [--model NAME] [--detach] [--name N] [--tls] [--known-psk]
 scripts/dummy-harness.sh env  [--name N]     # eval this
 scripts/dummy-harness.sh down [--name N]
 ```
@@ -35,6 +35,14 @@ scripts/dummy-harness.sh down [--name N]
 certificate for 127.0.0.1 (needs `openssl`); the instance's `CID` is then
 `wss:`. Chromium's certificate interstitial takes `thisisunsafe` typed on the
 page.
+
+**For a browser check, start it with `--known-psk`.** The instance then uses
+the operator PSK written in the script (`dummy-not-a-secret`), and `up` prints
+the WebUI URL (`env` exports it as `WEBUI_URL`); hand that URL to Playwright
+as it is. Without the flag the PSK is random, and building the URL means
+reading a credential, which an agent's permission check refuses — it cannot
+tell a dummy's secret from the live one. The known PSK costs nothing real: the
+instance listens on loopback only and is gone on `down`.
 
 Loopback only, ephemeral port, fresh operator secret, a fresh runner key
 enrolled in the temp data dir before the server starts; `down` removes all of

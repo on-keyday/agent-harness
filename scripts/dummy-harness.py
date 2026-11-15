@@ -27,7 +27,7 @@ then the page looks like the change did not work.
 
 Usage:
   scripts/dummy-harness.py up [--agent claude|fake] [--model NAME] [--detach] [--name N] [--udp]
-                              [--tls] [--server-arg=--flag ...] [-- <extra agent-runner flags>]
+                              [--tls] [--known-psk] [--server-arg=--flag ...] [-- <extra agent-runner flags>]
   scripts/dummy-harness.py env  [--name N]   # print `export` lines for an instance
   scripts/dummy-harness.py down [--name N]
 
@@ -37,6 +37,11 @@ defaults to --no-worktree, which switches skill/settings injection OFF; add
 
 --tls serves wss:// and an https:// WebUI with a throwaway self-signed
 certificate for 127.0.0.1 (needs openssl); the instance's CID is then wss:.
+
+--known-psk uses the operator PSK written in this script (KNOWN_PSK) instead of
+a fresh random one, and `up` / `env` print the WebUI URL with it (WEBUI_URL).
+The URL then carries no secret, so a browser check can be driven without
+reading one.
 
 --name lets independent instances coexist. That is not a nicety: checking
 what a client does when its server restarts needs the window you are
@@ -355,6 +360,8 @@ def cmd_env(name: str) -> int:
     for key in ("HARNESS_OPERATOR_PSK", "CID", "UDP_CID", "RUNNER_CID", "TMP", "BIN", "REPO",
                 "SERVER_PID", "RUNNER_PID", "SERVER_PORT"):
         print(f"export {key}='{st[key]}'")
+    if st.get("WEBUI_URL"):  # only a --known-psk instance has one
+        print(f"export WEBUI_URL='{st['WEBUI_URL']}'")
     return 0
 
 
@@ -410,8 +417,32 @@ def make_loopback_cert(tmp: Path) -> tuple[Path, Path]:
     return cert, key
 
 
+# --known-psk: an operator PSK written here, so it is not a secret. With it a
+# WebUI URL for the instance can be built (and handed to a browser) without
+# reading a credential, which an agent's permission check rightly refuses to do
+# for a real one and cannot tell apart from a dummy's. The instance still
+# listens on loopback only and is gone on `down`; the cost is that another
+# local user could log in to it while it runs.
+KNOWN_PSK = "dummy-not-a-secret"
+
+
+def operator_psk(known: bool) -> str:
+    """The instance's operator secret: KNOWN_PSK, or a fresh random one."""
+    if known:
+        return KNOWN_PSK
+    return "dummy-" + secrets.token_urlsafe(12).replace("-", "").replace("_", "")
+
+
+def webui_url(port: int, tls: bool, psk: str) -> str | None:
+    """The WebUI URL with the PSK in its fragment — only for KNOWN_PSK, so a
+    random secret is never printed."""
+    if psk != KNOWN_PSK:
+        return None
+    return f"{'https' if tls else 'http'}://127.0.0.1:{port}/#psk={psk}"
+
+
 def cmd_up(name: str, agent: str, model: str, detach: bool, udp: bool, tls: bool,
-           extra: list[str], server_args: list[str]) -> int:
+           extra: list[str], server_args: list[str], known_psk: bool = False) -> int:
     if agent not in ("claude", "fake"):
         die(f"unknown --agent: {agent} (want claude or fake)")
 
@@ -426,7 +457,7 @@ def cmd_up(name: str, agent: str, model: str, detach: bool, udp: bool, tls: bool
     port = pick_port()
     udp_port = pick_port()
     # The operator secret: what this instance's harness-cli proves.
-    psk = "dummy-" + secrets.token_urlsafe(12).replace("-", "").replace("_", "")
+    psk = operator_psk(known_psk)
     cid = f"{'wss' if tls else 'ws'}:127.0.0.1:{port}-*"
     # --udp points the RUNNER at the UDP leg while the client keeps the ws one,
     # which is the mixed-transport pair the live fleet actually has: a udp TUI
@@ -562,11 +593,14 @@ def cmd_up(name: str, agent: str, model: str, detach: bool, udp: bool, tls: bool
         "SERVER_PORT": port,
         "UDP_CID": f"udp:127.0.0.1:{udp_port}-*",
         "RUNNER_CID": runner_cid,
+        "WEBUI_URL": webui_url(port, tls, psk) or "",
     }, indent=2), encoding="utf-8")
 
     me = Path(__file__).name
     print(f"dummy-harness: up  name={name}  agent={agent}  port={port}  tls={tls}  repo={repo}")
     print(f"dummy-harness: eval \"$(scripts/{me} env)\" to drive it; 'scripts/{me} down' to stop")
+    if url := webui_url(port, tls, psk):
+        print(f"dummy-harness: webui {url}")
 
     if detach:
         return 0
@@ -598,6 +632,8 @@ def main(argv: list[str]) -> int:
                         "so the pair is mixed-transport (the server is dualstack either way)")
     p.add_argument("--tls", action="store_true",
                    help="serve wss:// + https:// with a throwaway self-signed cert (needs openssl)")
+    p.add_argument("--known-psk", action="store_true",
+                   help=f"use the published operator PSK {KNOWN_PSK!r} and print the WebUI URL")
     # Everything after a literal `--` goes to agent-runner verbatim, appended
     # last so it overrides the defaults built above. Needed for runner flags this
     # script has no opinion about — e.g. --agentskills-dir, or
@@ -614,7 +650,7 @@ def main(argv: list[str]) -> int:
 
     if args.sub == "up":
         return cmd_up(args.name, args.agent, args.model, args.detach, args.udp, args.tls, extra,
-                      args.server_arg)
+                      args.server_arg, known_psk=args.known_psk)
     if args.sub == "env":
         return cmd_env(args.name)
     if args.sub == "down":

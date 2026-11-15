@@ -124,5 +124,27 @@ class ConsumerUnsetTest(unittest.TestCase):
             self.assertIn(name, names)
 
 
+class KnownPskTest(unittest.TestCase):
+    """--known-psk starts the instance with a PSK written in this script, so a
+    WebUI URL for it (`webui_url`) carries no secret and can be built and
+    handed to a browser without reading one. Loopback only, gone on `down`."""
+
+    def test_known_psk_is_the_published_constant(self):
+        self.assertEqual(dummy_harness.operator_psk(known=True), dummy_harness.KNOWN_PSK)
+
+    def test_default_psk_is_fresh_per_instance(self):
+        a, b = dummy_harness.operator_psk(known=False), dummy_harness.operator_psk(known=False)
+        self.assertTrue(a.startswith("dummy-"))
+        self.assertNotEqual(a, b)
+        self.assertNotEqual(a, dummy_harness.KNOWN_PSK)
+
+    def test_webui_url_only_for_a_known_psk(self):
+        self.assertEqual(dummy_harness.webui_url(41234, tls=False, psk=dummy_harness.KNOWN_PSK),
+                         f"http://127.0.0.1:41234/#psk={dummy_harness.KNOWN_PSK}")
+        self.assertEqual(dummy_harness.webui_url(41234, tls=True, psk=dummy_harness.KNOWN_PSK),
+                         f"https://127.0.0.1:41234/#psk={dummy_harness.KNOWN_PSK}")
+        self.assertIsNone(dummy_harness.webui_url(41234, tls=False, psk="dummy-random123"))
+
+
 if __name__ == "__main__":
     unittest.main()
