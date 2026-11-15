@@ -636,6 +636,115 @@ type SSHGatewayAction struct {
 	Sub            string
 }
 
+// ScheduleIDAction is built by: schedule rm, schedule run.
+type ScheduleIDAction struct {
+	ActionMarker
+	ID  string
+	Sub string
+}
+
+// ScheduleLsAction is built by: schedule ls.
+type ScheduleLsAction struct {
+	ActionMarker
+	// one JSON document with every field, none elided
+	JSON bool
+}
+
+// ScheduleShowAction is built by: schedule show.
+type ScheduleShowAction struct {
+	ActionMarker
+	// one JSON document with every field, none elided
+	JSON bool
+	ID   string
+}
+
+// ScheduleSpecAction is built by: schedule edit, schedule new.
+type ScheduleSpecAction struct {
+	ActionMarker
+	// five-field cron expression or @hourly/@daily/@weekly/@monthly/@yearly, matched against the schedule'…
+	Cron string
+	// IANA time zone the expression is read in (default: the server's local zone, stored by name)
+	Tz string
+	// bind this existing task (32 hex) instead of creating one at the first firing; it must not be running…
+	TaskID string
+	// the repo the first firing creates the task in; must match a runner-registered RepoPath verbatim (nee…
+	Repo string
+	// whether --resume-conversation was typed, which its zero value cannot say
+	ResumeConversationPresent bool
+	// resume the agent's own conversation state at every firing after the first
+	ResumeConversation bool
+	// whether --caps was typed, which its zero value cannot say
+	CapsPresent bool
+	// comma-separated capability names to grant (e.g. spawn,file_read / all / none)
+	Caps *protocol.Capability
+	// whether --scope was typed, which its zero value cannot say
+	ScopePresent bool
+	// which tasks those capabilities may target; default subtree (self + descendants)
+	Scope *protocol.TaskScope
+	// agent profile name (empty = runner default; not to be confused with --agent-arg)
+	Agent string
+	// narrow ONE capability (or a comma-separated list of them) to a tighter scope than --scope
+	Overrides []protocol.ScopeOverride
+	// whether --delegate-caps was typed, which its zero value cannot say
+	DelegateCapsPresent bool
+	// capabilities the new task may put into the tasks IT creates (default none)
+	DelegateCaps *protocol.Capability
+	// whether --delegate-scope was typed, which its zero value cannot say
+	DelegateScopePresent bool
+	// the most scope it may give them, in --scope's grammar (default subtree)
+	DelegateScope *protocol.TaskScope
+	// whether --spawn-depth was typed, which its zero value cannot say
+	SpawnDepthPresent bool
+	// generations that may still be created below the new task: N or unbounded (default: one less than you…
+	SpawnDepth *protocol.SpawnLimit
+	// whether --max-descendants was typed, which its zero value cannot say
+	MaxDescendantsPresent bool
+	// tasks the new task's subtree may hold, ended ones included until pruned: N or unbounded (default unb…
+	MaxDescendants *protocol.SpawnLimit
+	// extra CLI arg to forward to the agent (repeatable; appended after the runner-global --agent-args)
+	ExtraArgs []string
+	// pin to a specific runner by ConnectionID (the id= value from `ls`)
+	Runner string
+	// pin to a runner by hostname
+	Host string
+	// pin to a runner by IP address
+	IP string
+	// whether --rows was typed, which its zero value cannot say
+	RowsPresent bool
+	// initial PTY rows of a detached/background open; --rows 0 --cols 0 sends no size (PTY 0x0)
+	Rows uint
+	// whether --cols was typed, which its zero value cannot say
+	ColsPresent bool
+	// initial PTY columns of a detached/background open; --rows 0 --cols 0 sends no size (PTY 0x0)
+	Cols uint
+	// the agent's first turn, in either run mode (at most 16384 bytes)
+	Prompt string
+	// background: the run is cancelled this long after it starts (required; no default)
+	Deadline time.Duration
+	// background: which signal ends the run at a turn's end: off|quiet|lifecycle|program|any (default any;…
+	TurnEnd string
+	// background: output silence that counts as a finished turn (default 5m)
+	QuietFor time.Duration
+	// background: how long the agent may wait on a human before the run ends (default 5m)
+	BlockedFor time.Duration
+	// background: cancel the task if it is still queued this long after it was queued (default none)
+	QueueTimeout time.Duration
+	// record this run's PTY output on the server (`record get` reads it back; needs record_persist)
+	Record bool
+	// do not record this run's PTY output, whatever the server's default
+	NoRecord bool
+	// whether --oneshot was typed, which its zero value cannot say
+	OneshotPresent bool
+	// run the agent's one-shot (print-mode) argv in the session, which ends when it answers (needs --promp…
+	Oneshot bool
+	// run the child in a PTY (an interactive open's default; with --oneshot, where the default is pipes: a…
+	Pty bool
+	// run the child on pipes, no PTY (a --oneshot's default: stdin /dev/null, output byte for byte; intera…
+	NoPty bool
+	Sub   string
+	ID    string
+}
+
 // ScreenAction is built by: clear, diag, exit, help, quit, reconnect, refresh, repo, sync, trsf.
 type ScreenAction struct {
 	ActionMarker
@@ -4022,6 +4131,418 @@ func init() {
 			}
 			return a, nil
 		},
+		"schedule new\x00cli": func(b Bound) (Action, error) {
+			a := ScheduleSpecAction{}
+			a.Sub = "new"
+			a.Cron = b.Str("cron")
+			a.Tz = b.Str("tz")
+			a.TaskID = b.Str("task")
+			a.Repo = b.Str("repo")
+			a.ResumeConversationPresent = b.Set["resume-conversation"]
+			a.ResumeConversation = b.Bool("resume-conversation")
+			a.CapsPresent = b.Set["caps"]
+			if b.Set["caps"] {
+				v, err := parseCapsFlag(b.Str("caps"))
+				if err != nil {
+					return nil, fmt.Errorf("schedule new: --caps: %w", err)
+				}
+				a.Caps = v
+			}
+			a.ScopePresent = b.Set["scope"] || b.Set["scope-for"]
+			if b.Set["scope"] {
+				v, err := parseScopeFlag(b.Str("scope"))
+				if err != nil {
+					return nil, fmt.Errorf("schedule new: --scope: %w", err)
+				}
+				a.Scope = v
+			}
+			a.Agent = b.Str("agent")
+			if b.Set["scope-for"] {
+				v, err := parseScopeForList(stringsOf(b.Custom["scope-for"]))
+				if err != nil {
+					return nil, fmt.Errorf("schedule new: --scope-for: %w", err)
+				}
+				a.Overrides = v
+			}
+			a.DelegateCapsPresent = b.Set["delegate-caps"]
+			if b.Set["delegate-caps"] {
+				v, err := parseCapsFlag(b.Str("delegate-caps"))
+				if err != nil {
+					return nil, fmt.Errorf("schedule new: --delegate-caps: %w", err)
+				}
+				a.DelegateCaps = v
+			}
+			a.DelegateScopePresent = b.Set["delegate-scope"]
+			if b.Set["delegate-scope"] {
+				v, err := parseScopeFlag(b.Str("delegate-scope"))
+				if err != nil {
+					return nil, fmt.Errorf("schedule new: --delegate-scope: %w", err)
+				}
+				a.DelegateScope = v
+			}
+			a.SpawnDepthPresent = b.Set["spawn-depth"]
+			if b.Set["spawn-depth"] {
+				v, err := parseSpawnLimitFlag(b.Str("spawn-depth"))
+				if err != nil {
+					return nil, fmt.Errorf("schedule new: --spawn-depth: %w", err)
+				}
+				a.SpawnDepth = v
+			}
+			a.MaxDescendantsPresent = b.Set["max-descendants"]
+			if b.Set["max-descendants"] {
+				v, err := parseSpawnLimitFlag(b.Str("max-descendants"))
+				if err != nil {
+					return nil, fmt.Errorf("schedule new: --max-descendants: %w", err)
+				}
+				a.MaxDescendants = v
+			}
+			a.ExtraArgs = stringsOf(b.Custom["agent-arg"])
+			a.Runner = b.Str("runner")
+			a.Host = b.Str("host")
+			a.IP = b.Str("ip")
+			a.RowsPresent = b.Set["rows"]
+			a.Rows = uintOf(b.Flags["rows"])
+			a.ColsPresent = b.Set["cols"]
+			a.Cols = uintOf(b.Flags["cols"])
+			a.Prompt = b.Str("prompt")
+			a.Deadline = durationOf(b.Flags["deadline"])
+			a.TurnEnd = b.Str("turn-end")
+			a.QuietFor = durationOf(b.Flags["quiet"])
+			a.BlockedFor = durationOf(b.Flags["blocked"])
+			a.QueueTimeout = durationOf(b.Flags["queue-timeout"])
+			a.Record = b.Bool("record")
+			a.NoRecord = b.Bool("no-record")
+			a.OneshotPresent = b.Set["oneshot"]
+			a.Oneshot = b.Bool("oneshot")
+			a.Pty = b.Bool("pty")
+			a.NoPty = b.Bool("no-pty")
+			return a, nil
+		},
+		"schedule new\x00tui": func(b Bound) (Action, error) {
+			a := ScheduleSpecAction{}
+			a.Sub = "new"
+			a.Cron = b.Str("cron")
+			a.Tz = b.Str("tz")
+			a.TaskID = b.Str("task")
+			a.Repo = b.Str("repo")
+			a.ResumeConversationPresent = b.Set["resume-conversation"]
+			a.ResumeConversation = b.Bool("resume-conversation")
+			a.CapsPresent = b.Set["caps"]
+			if b.Set["caps"] {
+				v, err := parseCapsFlag(b.Str("caps"))
+				if err != nil {
+					return nil, fmt.Errorf("schedule new: --caps: %w", err)
+				}
+				a.Caps = v
+			}
+			a.ScopePresent = b.Set["scope"] || b.Set["scope-for"]
+			if b.Set["scope"] {
+				v, err := parseScopeFlag(b.Str("scope"))
+				if err != nil {
+					return nil, fmt.Errorf("schedule new: --scope: %w", err)
+				}
+				a.Scope = v
+			}
+			a.Agent = b.Str("agent")
+			if b.Set["scope-for"] {
+				v, err := parseScopeForList(stringsOf(b.Custom["scope-for"]))
+				if err != nil {
+					return nil, fmt.Errorf("schedule new: --scope-for: %w", err)
+				}
+				a.Overrides = v
+			}
+			a.DelegateCapsPresent = b.Set["delegate-caps"]
+			if b.Set["delegate-caps"] {
+				v, err := parseCapsFlag(b.Str("delegate-caps"))
+				if err != nil {
+					return nil, fmt.Errorf("schedule new: --delegate-caps: %w", err)
+				}
+				a.DelegateCaps = v
+			}
+			a.DelegateScopePresent = b.Set["delegate-scope"]
+			if b.Set["delegate-scope"] {
+				v, err := parseScopeFlag(b.Str("delegate-scope"))
+				if err != nil {
+					return nil, fmt.Errorf("schedule new: --delegate-scope: %w", err)
+				}
+				a.DelegateScope = v
+			}
+			a.SpawnDepthPresent = b.Set["spawn-depth"]
+			if b.Set["spawn-depth"] {
+				v, err := parseSpawnLimitFlag(b.Str("spawn-depth"))
+				if err != nil {
+					return nil, fmt.Errorf("schedule new: --spawn-depth: %w", err)
+				}
+				a.SpawnDepth = v
+			}
+			a.MaxDescendantsPresent = b.Set["max-descendants"]
+			if b.Set["max-descendants"] {
+				v, err := parseSpawnLimitFlag(b.Str("max-descendants"))
+				if err != nil {
+					return nil, fmt.Errorf("schedule new: --max-descendants: %w", err)
+				}
+				a.MaxDescendants = v
+			}
+			a.ExtraArgs = stringsOf(b.Custom["agent-arg"])
+			a.Runner = b.Str("runner")
+			a.Host = b.Str("host")
+			a.IP = b.Str("ip")
+			a.RowsPresent = b.Set["rows"]
+			a.Rows = uintOf(b.Flags["rows"])
+			a.ColsPresent = b.Set["cols"]
+			a.Cols = uintOf(b.Flags["cols"])
+			a.Prompt = b.Str("prompt")
+			a.Deadline = durationOf(b.Flags["deadline"])
+			a.TurnEnd = b.Str("turn-end")
+			a.QuietFor = durationOf(b.Flags["quiet"])
+			a.BlockedFor = durationOf(b.Flags["blocked"])
+			a.QueueTimeout = durationOf(b.Flags["queue-timeout"])
+			a.Record = b.Bool("record")
+			a.NoRecord = b.Bool("no-record")
+			a.OneshotPresent = b.Set["oneshot"]
+			a.Oneshot = b.Bool("oneshot")
+			a.Pty = b.Bool("pty")
+			a.NoPty = b.Bool("no-pty")
+			return a, nil
+		},
+		"schedule edit\x00cli": func(b Bound) (Action, error) {
+			a := ScheduleSpecAction{}
+			a.Sub = "edit"
+			a.Cron = b.Str("cron")
+			a.Tz = b.Str("tz")
+			a.TaskID = b.Str("task")
+			a.Repo = b.Str("repo")
+			a.ResumeConversationPresent = b.Set["resume-conversation"]
+			a.ResumeConversation = b.Bool("resume-conversation")
+			a.CapsPresent = b.Set["caps"]
+			if b.Set["caps"] {
+				v, err := parseCapsFlag(b.Str("caps"))
+				if err != nil {
+					return nil, fmt.Errorf("schedule edit: --caps: %w", err)
+				}
+				a.Caps = v
+			}
+			a.ScopePresent = b.Set["scope"] || b.Set["scope-for"]
+			if b.Set["scope"] {
+				v, err := parseScopeFlag(b.Str("scope"))
+				if err != nil {
+					return nil, fmt.Errorf("schedule edit: --scope: %w", err)
+				}
+				a.Scope = v
+			}
+			a.Agent = b.Str("agent")
+			if b.Set["scope-for"] {
+				v, err := parseScopeForList(stringsOf(b.Custom["scope-for"]))
+				if err != nil {
+					return nil, fmt.Errorf("schedule edit: --scope-for: %w", err)
+				}
+				a.Overrides = v
+			}
+			a.DelegateCapsPresent = b.Set["delegate-caps"]
+			if b.Set["delegate-caps"] {
+				v, err := parseCapsFlag(b.Str("delegate-caps"))
+				if err != nil {
+					return nil, fmt.Errorf("schedule edit: --delegate-caps: %w", err)
+				}
+				a.DelegateCaps = v
+			}
+			a.DelegateScopePresent = b.Set["delegate-scope"]
+			if b.Set["delegate-scope"] {
+				v, err := parseScopeFlag(b.Str("delegate-scope"))
+				if err != nil {
+					return nil, fmt.Errorf("schedule edit: --delegate-scope: %w", err)
+				}
+				a.DelegateScope = v
+			}
+			a.SpawnDepthPresent = b.Set["spawn-depth"]
+			if b.Set["spawn-depth"] {
+				v, err := parseSpawnLimitFlag(b.Str("spawn-depth"))
+				if err != nil {
+					return nil, fmt.Errorf("schedule edit: --spawn-depth: %w", err)
+				}
+				a.SpawnDepth = v
+			}
+			a.MaxDescendantsPresent = b.Set["max-descendants"]
+			if b.Set["max-descendants"] {
+				v, err := parseSpawnLimitFlag(b.Str("max-descendants"))
+				if err != nil {
+					return nil, fmt.Errorf("schedule edit: --max-descendants: %w", err)
+				}
+				a.MaxDescendants = v
+			}
+			a.ExtraArgs = stringsOf(b.Custom["agent-arg"])
+			a.Runner = b.Str("runner")
+			a.Host = b.Str("host")
+			a.IP = b.Str("ip")
+			a.RowsPresent = b.Set["rows"]
+			a.Rows = uintOf(b.Flags["rows"])
+			a.ColsPresent = b.Set["cols"]
+			a.Cols = uintOf(b.Flags["cols"])
+			a.Prompt = b.Str("prompt")
+			a.Deadline = durationOf(b.Flags["deadline"])
+			a.TurnEnd = b.Str("turn-end")
+			a.QuietFor = durationOf(b.Flags["quiet"])
+			a.BlockedFor = durationOf(b.Flags["blocked"])
+			a.QueueTimeout = durationOf(b.Flags["queue-timeout"])
+			a.Record = b.Bool("record")
+			a.NoRecord = b.Bool("no-record")
+			a.OneshotPresent = b.Set["oneshot"]
+			a.Oneshot = b.Bool("oneshot")
+			a.Pty = b.Bool("pty")
+			a.NoPty = b.Bool("no-pty")
+			if len(b.Args) > 0 {
+				a.ID = b.Args[0]
+			}
+			return a, nil
+		},
+		"schedule edit\x00tui": func(b Bound) (Action, error) {
+			a := ScheduleSpecAction{}
+			a.Sub = "edit"
+			a.Cron = b.Str("cron")
+			a.Tz = b.Str("tz")
+			a.TaskID = b.Str("task")
+			a.Repo = b.Str("repo")
+			a.ResumeConversationPresent = b.Set["resume-conversation"]
+			a.ResumeConversation = b.Bool("resume-conversation")
+			a.CapsPresent = b.Set["caps"]
+			if b.Set["caps"] {
+				v, err := parseCapsFlag(b.Str("caps"))
+				if err != nil {
+					return nil, fmt.Errorf("schedule edit: --caps: %w", err)
+				}
+				a.Caps = v
+			}
+			a.ScopePresent = b.Set["scope"] || b.Set["scope-for"]
+			if b.Set["scope"] {
+				v, err := parseScopeFlag(b.Str("scope"))
+				if err != nil {
+					return nil, fmt.Errorf("schedule edit: --scope: %w", err)
+				}
+				a.Scope = v
+			}
+			a.Agent = b.Str("agent")
+			if b.Set["scope-for"] {
+				v, err := parseScopeForList(stringsOf(b.Custom["scope-for"]))
+				if err != nil {
+					return nil, fmt.Errorf("schedule edit: --scope-for: %w", err)
+				}
+				a.Overrides = v
+			}
+			a.DelegateCapsPresent = b.Set["delegate-caps"]
+			if b.Set["delegate-caps"] {
+				v, err := parseCapsFlag(b.Str("delegate-caps"))
+				if err != nil {
+					return nil, fmt.Errorf("schedule edit: --delegate-caps: %w", err)
+				}
+				a.DelegateCaps = v
+			}
+			a.DelegateScopePresent = b.Set["delegate-scope"]
+			if b.Set["delegate-scope"] {
+				v, err := parseScopeFlag(b.Str("delegate-scope"))
+				if err != nil {
+					return nil, fmt.Errorf("schedule edit: --delegate-scope: %w", err)
+				}
+				a.DelegateScope = v
+			}
+			a.SpawnDepthPresent = b.Set["spawn-depth"]
+			if b.Set["spawn-depth"] {
+				v, err := parseSpawnLimitFlag(b.Str("spawn-depth"))
+				if err != nil {
+					return nil, fmt.Errorf("schedule edit: --spawn-depth: %w", err)
+				}
+				a.SpawnDepth = v
+			}
+			a.MaxDescendantsPresent = b.Set["max-descendants"]
+			if b.Set["max-descendants"] {
+				v, err := parseSpawnLimitFlag(b.Str("max-descendants"))
+				if err != nil {
+					return nil, fmt.Errorf("schedule edit: --max-descendants: %w", err)
+				}
+				a.MaxDescendants = v
+			}
+			a.ExtraArgs = stringsOf(b.Custom["agent-arg"])
+			a.Runner = b.Str("runner")
+			a.Host = b.Str("host")
+			a.IP = b.Str("ip")
+			a.RowsPresent = b.Set["rows"]
+			a.Rows = uintOf(b.Flags["rows"])
+			a.ColsPresent = b.Set["cols"]
+			a.Cols = uintOf(b.Flags["cols"])
+			a.Prompt = b.Str("prompt")
+			a.Deadline = durationOf(b.Flags["deadline"])
+			a.TurnEnd = b.Str("turn-end")
+			a.QuietFor = durationOf(b.Flags["quiet"])
+			a.BlockedFor = durationOf(b.Flags["blocked"])
+			a.QueueTimeout = durationOf(b.Flags["queue-timeout"])
+			a.Record = b.Bool("record")
+			a.NoRecord = b.Bool("no-record")
+			a.OneshotPresent = b.Set["oneshot"]
+			a.Oneshot = b.Bool("oneshot")
+			a.Pty = b.Bool("pty")
+			a.NoPty = b.Bool("no-pty")
+			if len(b.Args) > 0 {
+				a.ID = b.Args[0]
+			}
+			return a, nil
+		},
+		"schedule run\x00cli": func(b Bound) (Action, error) {
+			a := ScheduleIDAction{}
+			a.Sub = "run"
+			if len(b.Args) > 0 {
+				a.ID = b.Args[0]
+			}
+			return a, nil
+		},
+		"schedule run\x00tui": func(b Bound) (Action, error) {
+			a := ScheduleIDAction{}
+			a.Sub = "run"
+			if len(b.Args) > 0 {
+				a.ID = b.Args[0]
+			}
+			return a, nil
+		},
+		"schedule rm\x00cli": func(b Bound) (Action, error) {
+			a := ScheduleIDAction{}
+			a.Sub = "rm"
+			if len(b.Args) > 0 {
+				a.ID = b.Args[0]
+			}
+			return a, nil
+		},
+		"schedule rm\x00tui": func(b Bound) (Action, error) {
+			a := ScheduleIDAction{}
+			a.Sub = "rm"
+			if len(b.Args) > 0 {
+				a.ID = b.Args[0]
+			}
+			return a, nil
+		},
+		"schedule ls\x00cli": func(b Bound) (Action, error) {
+			a := ScheduleLsAction{}
+			a.JSON = b.Bool("json")
+			return a, nil
+		},
+		"schedule ls\x00tui": func(b Bound) (Action, error) {
+			a := ScheduleLsAction{}
+			a.JSON = b.Bool("json")
+			return a, nil
+		},
+		"schedule show\x00cli": func(b Bound) (Action, error) {
+			a := ScheduleShowAction{}
+			a.JSON = b.Bool("json")
+			if len(b.Args) > 0 {
+				a.ID = b.Args[0]
+			}
+			return a, nil
+		},
+		"schedule show\x00tui": func(b Bound) (Action, error) {
+			a := ScheduleShowAction{}
+			a.JSON = b.Bool("json")
+			if len(b.Args) > 0 {
+				a.ID = b.Args[0]
+			}
+			return a, nil
+		},
 		"session snapshot\x00cli": func(b Bound) (Action, error) {
 			a := SessionAction{}
 			a.Sub = "snapshot"
@@ -4467,6 +4988,12 @@ const (
 	CmdRecordOff              = "record off"
 	CmdTranscriptLs           = "transcript ls"
 	CmdTranscriptGet          = "transcript get"
+	CmdScheduleNew            = "schedule new"
+	CmdScheduleEdit           = "schedule edit"
+	CmdScheduleRun            = "schedule run"
+	CmdScheduleRm             = "schedule rm"
+	CmdScheduleLs             = "schedule ls"
+	CmdScheduleShow           = "schedule show"
 	CmdSessionSnapshot        = "session snapshot"
 	CmdSessionStreamAttach    = "session stream attach"
 	CmdSessionStreamInterrupt = "session stream interrupt"
@@ -4510,6 +5037,7 @@ const (
 	SubDetach          = "detach"
 	SubDiag            = "diag"
 	SubDiff            = "diff"
+	SubEdit            = "edit"
 	SubFile            = "file"
 	SubFlush           = "flush"
 	SubForwardAdd      = "forward-add"
@@ -4522,6 +5050,7 @@ const (
 	SubLog             = "log"
 	SubLs              = "ls"
 	SubMode            = "mode"
+	SubNew             = "new"
 	SubNotifyWatch     = "notify-watch"
 	SubOff             = "off"
 	SubOn              = "on"
@@ -7102,6 +7631,132 @@ func ParseCmdTranscriptGet(sf Surface, args []string, ctx map[string]string) (Tr
 	return a, nil
 }
 
+func ParseCmdScheduleNew(sf Surface, args []string, ctx map[string]string) (ScheduleSpecAction, error) {
+	var zero ScheduleSpecAction
+	sp, ok := Lookup("schedule", "new")
+	if !ok {
+		return zero, fmt.Errorf("schedule new: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(ScheduleSpecAction)
+	return a, nil
+}
+
+func ParseCmdScheduleEdit(sf Surface, args []string, ctx map[string]string) (ScheduleSpecAction, error) {
+	var zero ScheduleSpecAction
+	sp, ok := Lookup("schedule", "edit")
+	if !ok {
+		return zero, fmt.Errorf("schedule edit: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(ScheduleSpecAction)
+	return a, nil
+}
+
+func ParseCmdScheduleRun(sf Surface, args []string, ctx map[string]string) (ScheduleIDAction, error) {
+	var zero ScheduleIDAction
+	sp, ok := Lookup("schedule", "run")
+	if !ok {
+		return zero, fmt.Errorf("schedule run: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(ScheduleIDAction)
+	return a, nil
+}
+
+func ParseCmdScheduleRm(sf Surface, args []string, ctx map[string]string) (ScheduleIDAction, error) {
+	var zero ScheduleIDAction
+	sp, ok := Lookup("schedule", "rm")
+	if !ok {
+		return zero, fmt.Errorf("schedule rm: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(ScheduleIDAction)
+	return a, nil
+}
+
+func ParseCmdScheduleLs(sf Surface, args []string, ctx map[string]string) (ScheduleLsAction, error) {
+	var zero ScheduleLsAction
+	sp, ok := Lookup("schedule", "ls")
+	if !ok {
+		return zero, fmt.Errorf("schedule ls: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(ScheduleLsAction)
+	return a, nil
+}
+
+func ParseCmdScheduleShow(sf Surface, args []string, ctx map[string]string) (ScheduleShowAction, error) {
+	var zero ScheduleShowAction
+	sp, ok := Lookup("schedule", "show")
+	if !ok {
+		return zero, fmt.Errorf("schedule show: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(ScheduleShowAction)
+	return a, nil
+}
+
 func ParseCmdSessionSnapshot(sf Surface, args []string, ctx map[string]string) (SessionAction, error) {
 	var zero SessionAction
 	sp, ok := Lookup("session", "snapshot")
@@ -7751,6 +8406,18 @@ type CLIDispatch[R any] interface {
 	TranscriptLs(TranscriptLsAction) R
 	// transcript get
 	TranscriptGet(TranscriptGetAction) R
+	// schedule new
+	ScheduleNew(ScheduleSpecAction) R
+	// schedule edit
+	ScheduleEdit(ScheduleSpecAction) R
+	// schedule run
+	ScheduleRun(ScheduleIDAction) R
+	// schedule rm
+	ScheduleRm(ScheduleIDAction) R
+	// schedule ls
+	ScheduleLs(ScheduleLsAction) R
+	// schedule show
+	ScheduleShow(ScheduleShowAction) R
 	// session snapshot
 	SessionSnapshot(SessionAction) R
 	// session stream attach
@@ -8406,6 +9073,42 @@ func DispatchCLI[R any](h CLIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.TranscriptGet(a), true, nil
+	case CmdScheduleNew:
+		a, perr := ParseCmdScheduleNew(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.ScheduleNew(a), true, nil
+	case CmdScheduleEdit:
+		a, perr := ParseCmdScheduleEdit(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.ScheduleEdit(a), true, nil
+	case CmdScheduleRun:
+		a, perr := ParseCmdScheduleRun(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.ScheduleRun(a), true, nil
+	case CmdScheduleRm:
+		a, perr := ParseCmdScheduleRm(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.ScheduleRm(a), true, nil
+	case CmdScheduleLs:
+		a, perr := ParseCmdScheduleLs(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.ScheduleLs(a), true, nil
+	case CmdScheduleShow:
+		a, perr := ParseCmdScheduleShow(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.ScheduleShow(a), true, nil
 	case CmdSessionSnapshot:
 		a, perr := ParseCmdSessionSnapshot(CLI, args, ctx)
 		if perr != nil {
@@ -8792,6 +9495,24 @@ func DispatchCLIAction[R any](h CLIDispatch[R], act Action) (r R, handled bool) 
 		return h.TranscriptLs(a), true
 	case TranscriptGetAction:
 		return h.TranscriptGet(a), true
+	case ScheduleSpecAction:
+		switch a.Sub {
+		case "new":
+			return h.ScheduleNew(a), true
+		case "edit":
+			return h.ScheduleEdit(a), true
+		}
+	case ScheduleIDAction:
+		switch a.Sub {
+		case "run":
+			return h.ScheduleRun(a), true
+		case "rm":
+			return h.ScheduleRm(a), true
+		}
+	case ScheduleLsAction:
+		return h.ScheduleLs(a), true
+	case ScheduleShowAction:
+		return h.ScheduleShow(a), true
 	case AgentAction:
 		switch a.Sub {
 		case "inbox":
@@ -9449,6 +10170,42 @@ func ParseCLICommand(tokens []string, ctx map[string]string) (act Action, handle
 				return nil, true, perr
 			}
 			return a, true, nil
+		case CmdScheduleNew:
+			a, perr := ParseCmdScheduleNew(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdScheduleEdit:
+			a, perr := ParseCmdScheduleEdit(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdScheduleRun:
+			a, perr := ParseCmdScheduleRun(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdScheduleRm:
+			a, perr := ParseCmdScheduleRm(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdScheduleLs:
+			a, perr := ParseCmdScheduleLs(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdScheduleShow:
+			a, perr := ParseCmdScheduleShow(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
 		case CmdSessionSnapshot:
 			a, perr := ParseCmdSessionSnapshot(CLI, tokens[n:], ctx)
 			if perr != nil {
@@ -9737,6 +10494,18 @@ type TUIDispatch[R any] interface {
 	TranscriptLs(TranscriptLsAction) R
 	// transcript get
 	TranscriptGet(TranscriptGetAction) R
+	// schedule new
+	ScheduleNew(ScheduleSpecAction) R
+	// schedule edit
+	ScheduleEdit(ScheduleSpecAction) R
+	// schedule run
+	ScheduleRun(ScheduleIDAction) R
+	// schedule rm
+	ScheduleRm(ScheduleIDAction) R
+	// schedule ls
+	ScheduleLs(ScheduleLsAction) R
+	// schedule show
+	ScheduleShow(ScheduleShowAction) R
 	// session stream attach
 	SessionStreamAttach(SessionAction) R
 	// session stream interrupt
@@ -10256,6 +11025,42 @@ func DispatchTUI[R any](h TUIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.TranscriptGet(a), true, nil
+	case CmdScheduleNew:
+		a, perr := ParseCmdScheduleNew(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.ScheduleNew(a), true, nil
+	case CmdScheduleEdit:
+		a, perr := ParseCmdScheduleEdit(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.ScheduleEdit(a), true, nil
+	case CmdScheduleRun:
+		a, perr := ParseCmdScheduleRun(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.ScheduleRun(a), true, nil
+	case CmdScheduleRm:
+		a, perr := ParseCmdScheduleRm(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.ScheduleRm(a), true, nil
+	case CmdScheduleLs:
+		a, perr := ParseCmdScheduleLs(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.ScheduleLs(a), true, nil
+	case CmdScheduleShow:
+		a, perr := ParseCmdScheduleShow(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.ScheduleShow(a), true, nil
 	case CmdSessionStreamAttach:
 		a, perr := ParseCmdSessionStreamAttach(TUI, args, ctx)
 		if perr != nil {
@@ -10514,6 +11319,24 @@ func DispatchTUIAction[R any](h TUIDispatch[R], act Action) (r R, handled bool) 
 		return h.TranscriptLs(a), true
 	case TranscriptGetAction:
 		return h.TranscriptGet(a), true
+	case ScheduleSpecAction:
+		switch a.Sub {
+		case "new":
+			return h.ScheduleNew(a), true
+		case "edit":
+			return h.ScheduleEdit(a), true
+		}
+	case ScheduleIDAction:
+		switch a.Sub {
+		case "run":
+			return h.ScheduleRun(a), true
+		case "rm":
+			return h.ScheduleRm(a), true
+		}
+	case ScheduleLsAction:
+		return h.ScheduleLs(a), true
+	case ScheduleShowAction:
+		return h.ScheduleShow(a), true
 	}
 	// A surface-local action (the TUI's clear / quit / grid), which the
 	// declaration does not describe.
@@ -11030,6 +11853,42 @@ func ParseTUICommand(tokens []string, ctx map[string]string) (act Action, handle
 			return a, true, nil
 		case CmdTranscriptGet:
 			a, perr := ParseCmdTranscriptGet(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdScheduleNew:
+			a, perr := ParseCmdScheduleNew(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdScheduleEdit:
+			a, perr := ParseCmdScheduleEdit(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdScheduleRun:
+			a, perr := ParseCmdScheduleRun(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdScheduleRm:
+			a, perr := ParseCmdScheduleRm(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdScheduleLs:
+			a, perr := ParseCmdScheduleLs(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdScheduleShow:
+			a, perr := ParseCmdScheduleShow(TUI, tokens[n:], ctx)
 			if perr != nil {
 				return nil, true, perr
 			}

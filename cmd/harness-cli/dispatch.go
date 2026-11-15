@@ -1282,3 +1282,29 @@ func (h cliVerbs) TranscriptGet(a verb.TranscriptGetAction) error {
 		return cli.TranscriptGetOut(h.ctx, h.cid(), a.TaskID, a.Session, a.File, w)
 	})
 }
+
+// --- Schedules (pillar S) ------------------------------------------------------
+
+func (h cliVerbs) ScheduleNew(a verb.ScheduleSpecAction) error {
+	return cli.ScheduleSpecOut(h.ctx, h.cid(), a, os.Stdout)
+}
+
+func (h cliVerbs) ScheduleEdit(a verb.ScheduleSpecAction) error {
+	return cli.ScheduleSpecOut(h.ctx, h.cid(), a, os.Stdout)
+}
+
+func (h cliVerbs) ScheduleRun(a verb.ScheduleIDAction) error {
+	return cli.ScheduleIDOut(h.ctx, h.cid(), a, os.Stdout)
+}
+
+func (h cliVerbs) ScheduleRm(a verb.ScheduleIDAction) error {
+	return cli.ScheduleIDOut(h.ctx, h.cid(), a, os.Stdout)
+}
+
+func (h cliVerbs) ScheduleLs(a verb.ScheduleLsAction) error {
+	return cli.ScheduleLsOut(h.ctx, h.cid(), a.JSON, os.Stdout)
+}
+
+func (h cliVerbs) ScheduleShow(a verb.ScheduleShowAction) error {
+	return cli.ScheduleShowOut(h.ctx, h.cid(), a.ID, a.JSON, os.Stdout)
+}

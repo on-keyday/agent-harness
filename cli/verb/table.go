@@ -3184,6 +3184,113 @@ var Verbs = []VerbSpec{
 			"transcript get -o session.tar aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0f3c2a1e-5b6d-4e7f-8a9b-0c1d2e3f4a5b",
 		},
 	},
+	// --- schedules (pillar S, docs/superpowers/specs/2026-11-15-pillar-s-schedules-design.md) ---
+	//
+	// The run and authority flags are the spawn rows (spawnFlags with
+	// spawnSchedule), not copies. CLI and TUI only until the WebUI dialog
+	// lands with its JS (Task 7 adds WebUI and WebUIDispatch together).
+	{
+		Path: []string{"schedule", "new"}, CmdlineSurfaces: CLI | TUI,
+		NoModalSurface: "none yet: the TUI Schedules table and the WebUI dialog come with pillar S Tasks 6 and 7, which replace this with ModalSurfaces rows",
+		Notes: []string{
+			"create a server-kept cron schedule: each firing resumes the schedule's background task (the first firing creates it, or --task binds one now)",
+			"needs the schedule capability; the stored authority is bounded by yours, from the same --caps / --scope / --scope-for / --delegate-* flags as session new",
+			"needs --cron, --repo or --task, --prompt, --deadline and (without --task) --agent; the run flags are session new --background's",
+		},
+		Action:    "ScheduleSpecAction",
+		Const:     map[string]string{"Sub": "new"},
+		Flags:     scheduleVerbFlags(true),
+		Exclusive: scheduleExclusive(),
+		AtLeastOne: []Rule{{Flags: []string{"repo", "task"},
+			Reason: "the first firing needs a repo to create the task in, or --task names the task whose repo it is"}},
+		Validate: func(b Bound) error {
+			if err := scheduleValidate(b, true); err != nil {
+				return fmt.Errorf("schedule new: %w", err)
+			}
+			return nil
+		},
+		Examples: []string{
+			"schedule new --cron @daily --tz Asia/Tokyo --repo /r --agent claude --prompt triage --deadline 30m",
+			"schedule new --cron @hourly --task aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --prompt check --deadline 10m",
+		},
+	},
+	{
+		Path: []string{"schedule", "edit"}, CmdlineSurfaces: CLI | TUI,
+		NoModalSurface: "none yet: the TUI Schedules table and the WebUI dialog come with pillar S Tasks 6 and 7, which replace this with ModalSurfaces rows",
+		Notes: []string{
+			"change a schedule's future firings: only the flags named are changed (--cron or --tz recomputes the next firing; --task binds a task to a schedule with none)",
+			"the stored authority is recomputed with YOU as granter whether or not an authority flag is named, so an edit never leaves it wider than you",
+			"--agent-arg and --runner/--host/--ip replace the stored value when named; naming none keeps it. A bare `schedule edit <id>` only refreshes the authority",
+		},
+		Action:    "ScheduleSpecAction",
+		Const:     map[string]string{"Sub": "edit"},
+		Args:      []Arg{{Name: "schedule-id", Type: ArgTaskID, Field: "ID"}},
+		Flags:     scheduleVerbFlags(false),
+		Exclusive: scheduleExclusive(),
+		// One size block on the wire: naming one of the pair would overwrite
+		// the other with its default.
+		Requires: []Requirement{
+			{Flags: []string{"rows"}, Needs: "cols", Reason: "the run's size is one value on the wire; naming one alone would overwrite the other with its default"},
+			{Flags: []string{"cols"}, Needs: "rows", Reason: "the run's size is one value on the wire; naming one alone would overwrite the other with its default"},
+		},
+		Validate: func(b Bound) error {
+			if err := scheduleValidate(b, false); err != nil {
+				return fmt.Errorf("schedule edit: %w", err)
+			}
+			return nil
+		},
+		Examples: []string{
+			"schedule edit aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --cron @weekly",
+			"schedule edit aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --oneshot=false --deadline 1h",
+		},
+	},
+	{
+		Path: []string{"schedule", "run"}, CmdlineSurfaces: CLI | TUI,
+		NoModalSurface: "none yet: the TUI Schedules table and the WebUI dialog come with pillar S Tasks 6 and 7, which replace this with ModalSurfaces rows",
+		Notes: []string{
+			"fire a schedule now, outside its times (recorded run_now); its next firing is unchanged. Needs the schedule capability and reach to the schedule's task",
+		},
+		Action:   "ScheduleIDAction",
+		Const:    map[string]string{"Sub": "run"},
+		Args:     []Arg{{Name: "schedule-id", Type: ArgTaskID, Field: "ID"}},
+		Examples: []string{"schedule run aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+	},
+	{
+		Path: []string{"schedule", "rm"}, CmdlineSurfaces: CLI | TUI,
+		NoModalSurface: "none yet: the TUI Schedules table and the WebUI dialog come with pillar S Tasks 6 and 7, which replace this with ModalSurfaces rows",
+		Notes: []string{
+			"delete a schedule; its task stays as an ordinary background task and a run in progress is not cancelled (cancel it to stop it)",
+		},
+		Action:   "ScheduleIDAction",
+		Const:    map[string]string{"Sub": "rm"},
+		Args:     []Arg{{Name: "schedule-id", Type: ArgTaskID, Field: "ID"}},
+		Examples: []string{"schedule rm aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+	},
+	{
+		Path: []string{"schedule", "ls"}, CmdlineSurfaces: CLI | TUI,
+		NoModalSurface: "none yet: the TUI Schedules table and the WebUI dialog come with pillar S Tasks 6 and 7, which replace this with ModalSurfaces rows",
+		Notes: []string{
+			"one row per schedule you can reach: id, cron + zone, next firing (in its zone), last outcome and age, task, agent, repo, prompt head. Needs no capability",
+		},
+		Action: "ScheduleLsAction",
+		Flags: []Flag{
+			{Name: "json", Type: FlagBool, Default: false, Field: "JSON", Help: "one JSON document with every field, none elided"},
+		},
+		Examples: []string{"schedule ls", "schedule ls --json"},
+	},
+	{
+		Path: []string{"schedule", "show"}, CmdlineSurfaces: CLI | TUI,
+		NoModalSurface: "none yet: the TUI Schedules table and the WebUI dialog come with pillar S Tasks 6 and 7, which replace this with ModalSurfaces rows",
+		Notes: []string{
+			"a schedule's definition, stored authority, history (last 50 firings) and the wait statistics over its runs. Needs no capability",
+		},
+		Action: "ScheduleShowAction",
+		Args:   []Arg{{Name: "schedule-id", Type: ArgTaskID, Field: "ID"}},
+		Flags: []Flag{
+			{Name: "json", Type: FlagBool, Default: false, Field: "JSON", Help: "one JSON document with every field, none elided"},
+		},
+		Examples: []string{"schedule show aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+	},
 	{
 		// CLI only. It renders a session's screen to STDOUT for something that
 		// reads text -- an agent driving a loop, a script. The TUI has its own

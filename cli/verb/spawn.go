@@ -1,6 +1,7 @@
 package verb
 
 import (
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"time"
@@ -15,6 +16,10 @@ type spawnKind int
 
 const (
 	spawnSessionNew spawnKind = iota
+	// spawnSchedule is `schedule new` / `schedule edit` (pillar S): the run
+	// and authority flags of a background `session new`, as the same Flag
+	// rows, minus what a firing cannot carry.
+	spawnSchedule
 )
 
 // stringList accumulates one entry per occurrence, in the order given, which
@@ -92,7 +97,7 @@ func spawnFlags(k spawnKind) []Flag {
 	}
 	// `session new`: a session can be detached, streamed, X11-forwarded and
 	// sized.
-	return append(out,
+	out = append(out,
 		Flag{Name: "x11", Type: FlagBool, Default: false, Field: "X11",
 			Help:            "forward X11: inject DISPLAY/XAUTHORITY so GUI apps render on your local X server",
 			CmdlineSurfaces: CLI | TUI, SurfaceReason: x11SurfaceReason},
@@ -145,6 +150,117 @@ func spawnFlags(k spawnKind) []Flag {
 		Flag{Name: "no-pty", Type: FlagBool, Default: false, Field: "NoPty",
 			Help: "run the child on pipes, no PTY (a --oneshot's default: stdin /dev/null, output byte for byte; interactive: stdin is your input, and nothing echoes it)"},
 	)
+	if k == spawnSchedule {
+		return scheduleFlags(out)
+	}
+	return out
+}
+
+// scheduleOff are the spawn flags a schedule does not take, with why: a firing
+// resumes (or creates) a background task nobody is attached to, so nothing that
+// names a resume target, a terminal, a foreground run or a stream applies.
+// --stream is absent because ScheduleSpec cannot carry it (Pillar S ruling
+// R16); --ip and --host stay (a schedule can pin a runner).
+var scheduleOff = map[string]string{
+	"resume":      "a firing resumes the schedule's own task",
+	"exact":       "a firing resumes the schedule's own task",
+	"x11":         "a firing has no client to host the X tunnel",
+	"x11-display": "a firing has no client to host the X tunnel",
+	"detach":      "every firing is a background run, which is detached",
+	"stream":      "a schedule cannot start an event-stream session",
+	"foreground":  "every firing is a background run",
+	"background":  "every firing is a background run",
+}
+
+// SchedulePresenceFlags are the rows that gain a PresenceField on a schedule:
+// an edit must tell "not named" from the zero value (--oneshot=false,
+// --resume-conversation=false, and --rows / --cols, whose Default is not 0).
+// ScheduleFlagDifferences is the whole list of attributes in which a schedule's
+// copy of a shared row differs from `session new`'s; a test holds it.
+var schedulePresence = map[string]string{
+	"resume-conversation": "ResumeConversationPresent",
+	"oneshot":             "OneshotPresent",
+	"rows":                "RowsPresent",
+	"cols":                "ColsPresent",
+}
+
+// scheduleFlags is spawnFlags minus scheduleOff, the same Flag rows with the
+// differences schedulePresence and the two below name, plus nothing of its own
+// (scheduleVerbFlags adds --cron, --tz, --task).
+//
+//   - --repo loses its ladder: HARNESS_REPO_PATH is set in every runner-spawned
+//     task and would make `schedule new --task T` name a repo too (refused,
+//     S-D14) and a bare `schedule edit` try to change a bound schedule's repo.
+//   - --resume-conversation's help names --resume, which a schedule has not.
+func scheduleFlags(all []Flag) []Flag {
+	var out []Flag
+	for _, f := range all {
+		if _, off := scheduleOff[f.Name]; off {
+			continue
+		}
+		if p, ok := schedulePresence[f.Name]; ok {
+			f.PresenceField = p
+		}
+		switch f.Name {
+		case "repo":
+			f.Resolve = nil
+			f.Help = "the repo the first firing creates the task in; must match a runner-registered RepoPath verbatim (needs this or --task; no HARNESS_REPO_PATH fallback)"
+		case "resume-conversation":
+			f.Help = "resume the agent's own conversation state at every firing after the first"
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
+// scheduleExclusive are the cross-flag constraints of schedule new / edit: the
+// spawn rules that name flags a schedule has, plus --repo against --task
+// (S-D14: the repo is the task's).
+func scheduleExclusive() []Rule {
+	return []Rule{
+		{Flags: []string{"runner", "host", "ip"},
+			Reason: "they each name one runner, and two of them name two"},
+		{Flags: []string{"record", "no-record"},
+			Reason: "they are the two answers to one question"},
+		{Flags: []string{"pty", "no-pty"},
+			Reason: "they are the two answers to one question"},
+		{Flags: []string{"repo", "task"},
+			Reason: "a bound task brings its own repo"},
+	}
+}
+
+// scheduleValidate is spawnValidate's residue for a schedule. isNew: a create
+// states its prompt; an edit names only what changes.
+func scheduleValidate(b Bound, isNew bool) error {
+	if te := b.Str("turn-end"); te != "" {
+		if _, err := ParseTurnEnd(te); err != nil {
+			return err
+		}
+	}
+	if b.Bool("oneshot") && isNew && b.Str("prompt") == "" {
+		return fmt.Errorf("--oneshot needs --prompt: it runs the agent's one-shot argv on that prompt")
+	}
+	if t := b.Str("task"); t != "" {
+		if raw, err := hex.DecodeString(t); err != nil || len(raw) != 16 {
+			return fmt.Errorf("--task: want 32 hex characters")
+		}
+	}
+	return nil
+}
+
+// scheduleVerbFlags is a schedule new / edit row's flag list: the schedule's
+// own three, then the shared spawn rows. --cron is required on a create and
+// optional on an edit (an edit changes only what it names).
+func scheduleVerbFlags(isNew bool) []Flag {
+	own := []Flag{
+		{Name: "cron", Type: FlagString, Default: "", Field: "Cron", Required: isNew,
+			Help: "five-field cron expression or @hourly/@daily/@weekly/@monthly/@yearly, matched against the schedule's local clock (`*/30 * * * *` for every half hour; no @every)"},
+		{Name: "tz", Type: FlagString, Default: "", Field: "Tz",
+			Help: "IANA time zone the expression is read in (default: the server's local zone, stored by name)"},
+		{Name: "task", Type: FlagString, Default: "", Field: "TaskID",
+			Help: "bind this existing task (32 hex) instead of creating one at the first firing; it must not be running in foreground"},
+	}
+	return append(own, spawnFlags(spawnSchedule)...)
 }
 
 // x11SurfaceReason is why --x11 and --x11-display stop at the WebUI: the

@@ -1228,3 +1228,38 @@ func (h tuiVerbs) recordSwitch(v verb.RecordSwitchAction, on bool) tea.Cmd {
 		return cli.RecordSwitchWith(ctx, c, full, on, out)
 	})
 }
+
+// --- Schedules (pillar S) ------------------------------------------------------
+//
+// The command line reaches the shared cli.Schedule*With functions through the
+// long-lived client, as the record verbs do. The Schedules table, its keys and
+// the detail popup are pillar S Task 6's.
+
+func (h tuiVerbs) scheduleSpec(v verb.ScheduleSpecAction) tea.Cmd {
+	return h.recordCmd("schedule "+v.Sub, func(ctx context.Context, c *cli.Client, out io.Writer) error {
+		return cli.ScheduleSpecWith(ctx, c, v, out)
+	})
+}
+
+func (h tuiVerbs) scheduleID(v verb.ScheduleIDAction) tea.Cmd {
+	return h.recordCmd("schedule "+v.Sub, func(ctx context.Context, c *cli.Client, out io.Writer) error {
+		return cli.ScheduleIDWith(ctx, c, v, out)
+	})
+}
+
+func (h tuiVerbs) ScheduleNew(v verb.ScheduleSpecAction) tea.Cmd  { return h.scheduleSpec(v) }
+func (h tuiVerbs) ScheduleEdit(v verb.ScheduleSpecAction) tea.Cmd { return h.scheduleSpec(v) }
+func (h tuiVerbs) ScheduleRun(v verb.ScheduleIDAction) tea.Cmd    { return h.scheduleID(v) }
+func (h tuiVerbs) ScheduleRm(v verb.ScheduleIDAction) tea.Cmd     { return h.scheduleID(v) }
+
+func (h tuiVerbs) ScheduleLs(v verb.ScheduleLsAction) tea.Cmd {
+	return h.recordCmd("schedule ls", func(ctx context.Context, c *cli.Client, out io.Writer) error {
+		return cli.ScheduleLsWith(ctx, c, v.JSON, out)
+	})
+}
+
+func (h tuiVerbs) ScheduleShow(v verb.ScheduleShowAction) tea.Cmd {
+	return h.recordCmd("schedule show", func(ctx context.Context, c *cli.Client, out io.Writer) error {
+		return cli.ScheduleShowWith(ctx, c, v.ID, v.JSON, out)
+	})
+}

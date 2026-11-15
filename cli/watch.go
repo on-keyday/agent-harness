@@ -48,8 +48,7 @@ func (c *Client) Watch(ctx context.Context, out io.Writer) error {
 				return
 			}
 			mu.Lock()
-			fmt.Fprintf(out, "task %x kind=%s status=%s ts=%d exit=%d\n",
-				ev.TaskId.Id[:6], ev.Kind, ev.TaskStatus, ev.Ts, ev.ExitCode)
+			fmt.Fprintln(out, taskEventLine(ev))
 			mu.Unlock()
 		})
 	}
@@ -84,4 +83,18 @@ func Watch(ctx context.Context, peerCID objproto.ConnectionID, out io.Writer) er
 	}
 	defer c.Close()
 	return c.Watch(ctx, out)
+}
+
+// taskEventLine is one `watch` line for a task event. A task bound to a
+// schedule names it (schedule=<id8>, as `ls` does), which is what a
+// task_schedule event (a binding change) carries.
+func taskEventLine(ev *protocol.TaskStatusEvent) string {
+	line := fmt.Sprintf("task %x kind=%s status=%s ts=%d exit=%d",
+		ev.TaskId.Id[:6], ev.Kind, ev.TaskStatus, ev.Ts, ev.ExitCode)
+	if ev.SchedulePresent() {
+		if id := ev.ScheduleId(); id != nil {
+			line += fmt.Sprintf(" schedule=%x", id.Id[:4])
+		}
+	}
+	return line
 }

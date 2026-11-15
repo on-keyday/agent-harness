@@ -321,6 +321,7 @@ var probeValues = map[string]string{
 	"caps":      "none",
 	"scope":     "subtree",
 	"scope-for": "cancel=none",
+	"task":      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", // schedule new/edit: 32 hex
 	"resize":    "40x150",
 	"size":      "40x150",
 }

@@ -250,6 +250,15 @@ func taskLine(t protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo) st
 	if t.ResumedByKind != protocol.ClientKind_Unspecified {
 		resumedBy = "  resumed_by=" + originStr(t.ResumedByKind)
 	}
+	// The schedule this task is bound to (pillar S). Gated on the binding
+	// existing, never on its value. An id8 like by=: the full id is in
+	// `ls --json` and `schedule ls`.
+	sched := ""
+	if t.SchedulePresent() {
+		if id := t.ScheduleId(); id != nil {
+			sched = "  schedule=" + hex.EncodeToString(id.Id[:4])
+		}
+	}
 	act := ""
 	if t.LastOutputAt > 0 {
 		act = "  act=" + ActivityStr(t.OutputIdleMs)
@@ -329,7 +338,7 @@ func taskLine(t protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo) st
 	caps += "  granter=" + AuthorityLabel(t)
 	// The kind column is fixed-width; a one-shot run's longer label pushes
 	// only its own row's repo= right.
-	return fmt.Sprintf("%s  %s  %-11s  repo=%s  from=%s%s%s%s%s%s%s%s  prompt=%q%s",
+	return fmt.Sprintf("%s  %s  %-11s  repo=%s  from=%s%s%s%s%s%s%s%s%s  prompt=%q%s",
 		taskIDStr(t.Id.Id[:]),
 		taskStatusStr(t.Status),
 		KindLabel(&t),
@@ -337,6 +346,7 @@ func taskLine(t protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo) st
 		originStr(t.OriginKind),
 		agent,
 		resumedBy,
+		sched,
 		act,
 		obs,
 		execs,
@@ -505,7 +515,10 @@ type taskJSON struct {
 	// is a real answer here, and an absent key would read as "unknown".
 	SkillsInjected bool   `json:"skills_injected"`
 	ResumedBy      string `json:"resumed_by,omitempty"`
-	Activity       string `json:"activity,omitempty"`
+	// ScheduleID is the schedule the task is bound to (32 hex), absent while
+	// it is bound to none: the binding is what is absent, not a zero value.
+	ScheduleID string `json:"schedule_id,omitempty"`
+	Activity   string `json:"activity,omitempty"`
 	// Observers on the live session. NOT omitempty: 0 is a real answer ("a
 	// session nobody is watching") and an absent key would read as "not
 	// reported". Both are 0 for a task with no live session at all — `status`
@@ -673,7 +686,14 @@ func newTaskJSON(t *protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo
 	if t.LastOutputAt > 0 {
 		activity = ActivityStr(t.OutputIdleMs)
 	}
+	scheduleID := ""
+	if t.SchedulePresent() {
+		if id := t.ScheduleId(); id != nil {
+			scheduleID = hex.EncodeToString(id.Id[:])
+		}
+	}
 	return taskJSON{
+		ScheduleID:     scheduleID,
 		Id:             taskIDHexOrEmpty(t.Id.Id[:]),
 		Status:         taskStatusJSON(t.Status),
 		Kind:           taskKindJSON(t.Kind),
