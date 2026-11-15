@@ -776,21 +776,48 @@ func schedAge(ns uint64, now time.Time) string {
 	return AgeStr(uint64(d / time.Millisecond))
 }
 
-func schedTaskField(r protocol.ScheduleRow) string {
+// ScheduleTaskCell is the task a schedule is bound to, as the row words it:
+// <id8>:<status>, created-at-first-firing, or no-task. The TUI table cell and
+// the `task=` field of ScheduleRowLine are this one function.
+func ScheduleTaskCell(r protocol.ScheduleRow) string {
 	switch r.TaskState {
 	case protocol.ScheduleTaskState_Bound:
-		return "task=" + hex.EncodeToString(r.TaskId.Id[:4]) + ":" + taskStatusJSON(r.TaskStatus)
+		return hex.EncodeToString(r.TaskId.Id[:4]) + ":" + taskStatusJSON(r.TaskStatus)
 	case protocol.ScheduleTaskState_PendingCreate:
-		return "task=created-at-first-firing"
+		return "created-at-first-firing"
 	}
-	return "task=no-task"
+	return "no-task"
 }
 
-func schedPromptField(r protocol.ScheduleRow) string {
+func schedTaskField(r protocol.ScheduleRow) string { return "task=" + ScheduleTaskCell(r) }
+
+// ScheduleAboutCell is the prompt head as the row shows it: quoted, so a
+// control character in it cannot reach the terminal or split a row, and
+// (hidden) for a prompt the caller may not read.
+func ScheduleAboutCell(r protocol.ScheduleRow) string {
 	if r.PromptHidden() {
-		return "prompt=(hidden)"
+		return "(hidden)"
 	}
-	return fmt.Sprintf("prompt=%q", string(r.PromptHead))
+	return fmt.Sprintf("%q", string(r.PromptHead))
+}
+
+func schedPromptField(r protocol.ScheduleRow) string { return "prompt=" + ScheduleAboutCell(r) }
+
+// ScheduleNextCell is the next firing in the schedule's zone ("none" when
+// there is none), ScheduleLastCell the last history entry's outcome and age
+// ("none" when it never fired): the spellings of ScheduleRowLine's next= and
+// last=.
+func ScheduleNextCell(r protocol.ScheduleRow) string {
+	return schedNextLocal(r.NextAt, scheduleLocation(string(r.Tz)))
+}
+
+func ScheduleLastCell(r protocol.ScheduleRow, now time.Time) string {
+	if r.LastPresent() {
+		if l := r.Last(); l != nil {
+			return schedOutcomeWord(l.Outcome) + " " + schedAge(l.At, now)
+		}
+	}
+	return "none"
 }
 
 // ScheduleRowLine is one `schedule ls` row:
@@ -803,16 +830,8 @@ func schedPromptField(r protocol.ScheduleRow) string {
 // into them (the rule taskIDStr states). The prompt is quoted so a newline in
 // it cannot split the row, and a prompt the caller may not read says so.
 func ScheduleRowLine(r protocol.ScheduleRow, now time.Time) string {
-	loc := scheduleLocation(string(r.Tz))
-	next := schedNextLocal(r.NextAt, loc)
-	last := "none"
-	if r.LastPresent() {
-		if l := r.Last(); l != nil {
-			last = schedOutcomeWord(l.Outcome) + " " + schedAge(l.At, now)
-		}
-	}
 	return fmt.Sprintf("%s  %s  %s  next=%s  last=%s  %s  %s  %s  %s",
-		hex.EncodeToString(r.Id.Id[:]), string(r.Cron), string(r.Tz), next, last,
+		hex.EncodeToString(r.Id.Id[:]), string(r.Cron), string(r.Tz), ScheduleNextCell(r), ScheduleLastCell(r, now),
 		schedTaskField(r), string(r.Agent), string(r.Repo), schedPromptField(r))
 }
 

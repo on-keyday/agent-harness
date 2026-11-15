@@ -60,6 +60,11 @@ type mainKeyMap struct {
 	ForwardRemoteStop      string
 	ForwardLink            string
 	RawConnect             string
+	// Schedules table: n (now) fires the selected schedule, x deletes it
+	// after a y/n confirm. r is the tasks pane's resume key and d is shared
+	// with the other tables, so run-now takes the free letter n.
+	ScheduleRunNow string
+	ScheduleDelete string
 }
 
 var mainKeys = mainKeyMap{
@@ -100,6 +105,9 @@ var mainKeys = mainKeyMap{
 	ForwardRemoteStop:      "B",
 	ForwardLink:            "L",
 	RawConnect:             "t",
+
+	ScheduleRunNow: "n",
+	ScheduleDelete: "x",
 }
 
 // modalKeyMap holds keys dispatched by app.go while a full-screen overlay is
@@ -267,13 +275,14 @@ type keyScope uint8
 const (
 	scopeRunners keyScope = 1 << iota
 	scopeTasks
+	scopeSchedules
 	scopeNotify
 	scopeCmdresult
 	scopeCmdline
 )
 
 const (
-	scopeAllPanes = scopeRunners | scopeTasks | scopeNotify | scopeCmdresult | scopeCmdline
+	scopeAllPanes = scopeRunners | scopeTasks | scopeSchedules | scopeNotify | scopeCmdresult | scopeCmdline
 	// scopeGlobal is every pane but the command line, where a letter must
 	// stay typeable text.
 	scopeGlobal = scopeAllPanes &^ scopeCmdline
@@ -338,8 +347,14 @@ var mainKeyBindings = []keyBinding{
 	{Keys: []string{"up", "down"}, Scope: scopeCmdline, Short: "↑/↓ history", Long: "walk the command history"},
 	{Keys: []string{"enter"}, Scope: scopeCmdline, Short: "enter run", Long: "run the typed command"},
 
-	// --- runners + tasks ---
-	{Keys: []string{mainKeys.Detail}, Scope: scopeRunners | scopeTasks, Do: (*App).onDetail, Short: "d detail", Long: "detail popup for the selected runner / task"},
+	// --- schedules pane ---
+	{Keys: []string{mainKeys.ScheduleRunNow}, Scope: scopeSchedules, Do: (*App).onScheduleRunNow,
+		Short: "n run now", Long: "fire the selected schedule now (schedule run): its next firing is unchanged"},
+	{Keys: []string{mainKeys.ScheduleDelete}, Scope: scopeSchedules, Do: (*App).onScheduleDelete,
+		Short: "x delete", Long: "delete the selected schedule after a y/n confirm (schedule rm): its task stays and a run in progress is not cancelled"},
+
+	// --- runners + tasks + schedules ---
+	{Keys: []string{mainKeys.Detail}, Scope: scopeRunners | scopeTasks | scopeSchedules, Do: (*App).onDetail, Short: "d detail", Long: "detail popup for the selected runner / task / schedule (a schedule's shows its history and wait statistics)"},
 
 	// --- global (every pane but the command line) ---
 	{Keys: []string{"tab", "shift+tab"}, Scope: scopeGlobal, Short: "tab focus", Long: "cycle focus between panes (shift-tab reverses)"},
@@ -364,6 +379,8 @@ func scopeForFocus(f focus) keyScope {
 		return scopeRunners
 	case focusTasks:
 		return scopeTasks
+	case focusSchedules:
+		return scopeSchedules
 	case focusNotify:
 		return scopeNotify
 	case focusCmdresult:
@@ -447,6 +464,7 @@ func keyHelpBody() string {
 		{title: "global ", scope: scopeGlobal},
 		{title: "runners", scope: scopeRunners, only: true},
 		{title: "tasks  ", scope: scopeTasks, only: true},
+		{title: "sched  ", scope: scopeSchedules, only: true},
 		{title: "cmdline", scope: scopeCmdline, only: true},
 	}
 	var sb strings.Builder

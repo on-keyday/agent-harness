@@ -1815,16 +1815,18 @@ bin/harness-tui --server-cid 'ws:HOSTNAME:8539-*' --repo /abs/path/to/repo
 ```
 
 Layout — one table at a time, full width. The table shown follows focus
-(`Tab` / `Shift-Tab` cycle runners → tasks → notify → cmdresult → cmdline);
-while focus is on notify, cmdresult or cmdline the last-focused table stays
-up, and the tasks table is the one at startup. The line above the table names
-both (`[Tasks] Runners`) and always carries the fleet summary
+(`Tab` / `Shift-Tab` cycle runners → tasks → schedules → notify → cmdresult →
+cmdline); while focus is on notify, cmdresult or cmdline the last-focused
+table stays up, and the tasks table is the one at startup. The line above the
+table names all three, brackets the shown one, gives each of the others the
+keys that reach it from where focus is (`Tab`, `Shift-Tab`, with `x2` / `x3`
+for more presses) and always carries the fleet summary
 (`runners N: X idle Y busy …`; idle and busy keep a zero, other statuses
 appear when present). The tasks table's `Run` column (a background task's
 deadline or end reason) appears only while some listed task has a Run cell.
 
 ```
- [Tasks] Runners (Shift-Tab: runners) · runners 3: 1 idle 2 busy
+ Runners:Shift-Tab  [Tasks]  Schedules:Tab · runners 3: 1 idle 2 busy
 ┌───────────────────────────────────────────────────────┐
 │ Status   ID     From  Agent  Act   Repo         About │
 │ Queued   9d50   cli   claude ...   /home/foo    ...   │
@@ -1838,6 +1840,16 @@ deadline or end reason) appears only while some listed task has a Run cell.
 > [cmdline]
 tab focus · s one-shot · S session · d detail · c cancel · T tree · ? help · q quit
 ```
+
+The **Schedules** table lists the server-kept cron schedules (`schedule ls`'s
+rows, refreshed with the snapshot): `ID` (first 8 hex; `d` shows all 32),
+`Cron`, `Next` (in the schedule's zone), `Last` (outcome and age), `Task`,
+and, on a wide terminal, `About` (the prompt head), `Agent` and `Repo`. With
+the cursor on a schedule, `d` opens its detail — history and wait
+statistics — in the popup, `n` fires it now (`schedule run`), and `x` deletes
+it after a `y` (any other key keeps it; its task stays). Create and edit are
+the command line's `schedule new` / `schedule edit`. The task detail popup
+names the schedule a task is bound to.
 
 Keys for orientation — `Tab` cycles focus, `s` the one-shot popup (a
 detached `session new --oneshot`), `S` opens
@@ -1858,7 +1870,7 @@ stale.
 
 The cmdline accepts `session {new,attach,ls,kill}
 / session await-idle [ls,kill] / await-progress [ls,kill] / session stream attach / file {ls,push,pull,delete} / git / exec
-/ record {ls,get,rm,keep,on,off} / transcript {ls,get}
+/ record {ls,get,rm,keep,on,off} / schedule {new,ls,show,edit,run,rm} / transcript {ls,get}
 / forward {ls,kill,tap} / conns
 / grid / caps / scope
 / caps set / caps set-parent / caps audit / caps reach / caps what-if / workspace {save,apply,detach,ls,show,rm} / workspace forward {add,rm}

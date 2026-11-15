@@ -493,7 +493,11 @@ func RefreshSnapshot(c *cli.Client) tea.Cmd {
 		if err != nil {
 			return SnapshotMsg{Err: err}
 		}
-		return SnapshotMsg{Runners: lr.Runners, Tasks: lr.Tasks}
+		msg := SnapshotMsg{Runners: lr.Runners, Tasks: lr.Tasks}
+		// The Schedules table refreshes with the snapshot. Its failure is the
+		// table's, not the snapshot's (see SnapshotMsg.SchedulesErr).
+		msg.Schedules, msg.SchedulesErr = c.ScheduleList(ctx)
+		return msg
 	}
 }
 

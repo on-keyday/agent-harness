@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strings"
@@ -26,6 +27,7 @@ type focus int
 const (
 	focusRunners focus = iota
 	focusTasks
+	focusSchedules
 	focusNotify
 	focusCmdresult
 	focusCmdline
@@ -44,6 +46,7 @@ type App struct {
 
 	runners    RunnersModel
 	tasks      TasksModel
+	schedules  SchedulesModel
 	notify     NotifyModel
 	cmdresult  CmdResultModel
 	cmdline    textinput.Model
@@ -66,7 +69,7 @@ type App struct {
 	fileEditTmpPath string
 
 	focus focus
-	// lastTable is the table (focusRunners / focusTasks) focus last rested on;
+	// lastTable is the table (focusRunners / focusTasks / focusSchedules) focus last rested on;
 	// shownTable draws it while focus is on notify / cmdresult / cmdline.
 	lastTable focus
 	width     int
@@ -100,6 +103,15 @@ type App struct {
 	// authorityRecvAt is the same for authority_age_ms. Only a snapshot brings
 	// provenance (no task event carries it), so only a snapshot stamps it.
 	authorityRecvAt map[string]time.Time
+	// schedDeleteID is the schedule (32 hex) whose delete awaits y/n; "" = none.
+	// While set, inSchedDeleteConfirm owns the keys.
+	schedDeleteID string
+	// schedErr is the last schedule-list failure reported, so a list that keeps
+	// failing is said once, not on every snapshot.
+	schedErr string
+	// schedExec, when set, replaces cli.ScheduleIDWith for the run / delete
+	// keys. A test seam: the real call needs a server.
+	schedExec func(ctx context.Context, act verb.ScheduleIDAction, out io.Writer) error
 	// runnersSnapshot holds the latest runners from the most recent snapshot.
 	runnersSnapshot []protocol.RunnerInfo
 
@@ -389,6 +401,7 @@ func New(cfg Config) *App {
 		configPath:        cfg.ConfigPath,
 		runners:           NewRunners(),
 		tasks:             NewTasks(),
+		schedules:         NewSchedules(),
 		detail:            NewDetailPopup(),
 		notify:            NewNotify(),
 		cmdresult:         NewCmdResult(),
@@ -543,6 +556,7 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		a.runnersSnapshot = msg.Runners
 		a.runners.SetRows(msg.Runners)
+		a.applySchedules(msg)
 		a.tasksByID = make(map[string]protocol.TaskInfo, len(msg.Tasks))
 		now := time.Now()
 		a.actRecvAt = make(map[string]time.Time, len(msg.Tasks))
@@ -601,6 +615,7 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.applyEventAct(&ti, id, msg.Event)
 			a.applyEventObservers(&ti, msg.Event)
 			a.applyEventProgress(&ti, id, msg.Event)
+			applyEventSchedule(&ti, msg.Event)
 			a.tasksByID[id] = ti
 			a.refreshTasksTable()
 			return a, RefreshSnapshot(a.client)
@@ -613,6 +628,7 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.applyEventAct(&cur, id, msg.Event)
 		a.applyEventObservers(&cur, msg.Event)
 		a.applyEventProgress(&cur, id, msg.Event)
+		applyEventSchedule(&cur, msg.Event)
 		a.tasksByID[id] = cur
 		a.refreshTasksTable()
 		return a, nil
@@ -1153,11 +1169,25 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case RecordResultMsg:
 		if msg.Err != nil {
 			a.cmdresult.Append(ErrorStyle.Render(msg.Verb + " failed: " + msg.Err.Error()))
+			// A failed schedule verb may still have changed something
+			// (a rm whose answer was lost): the table follows the server.
+			if strings.HasPrefix(msg.Verb, "schedule ") && a.client != nil {
+				return a, RefreshSnapshot(a.client)
+			}
 			return a, nil
 		}
 		for _, line := range strings.Split(msg.Text, "\n") {
 			a.cmdresult.Append(line)
 		}
+		// A schedule verb changed (or may have changed) what the Schedules
+		// table lists, and a run/rm moves a bound task too: refresh with the
+		// snapshot, which carries both.
+		if strings.HasPrefix(msg.Verb, "schedule ") && a.client != nil {
+			return a, RefreshSnapshot(a.client)
+		}
+		return a, nil
+	case ScheduleShowMsg:
+		a.onScheduleShowMsg(msg)
 		return a, nil
 	case RestoreResultMsg:
 		if msg.Err != nil {
@@ -1830,6 +1860,8 @@ func (a *App) updatePane(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.runners, cmd = a.runners.Update(msg)
 	case focusTasks:
 		a.tasks, cmd = a.tasks.Update(msg)
+	case focusSchedules:
+		a.schedules, cmd = a.schedules.Update(msg)
 	case focusNotify:
 		a.notify, cmd = a.notify.Update(msg)
 	case focusCmdresult:
@@ -1890,12 +1922,13 @@ func (a *App) cycleFocus(delta int) {
 func (a *App) setFocus(f focus) {
 	a.runners.Blur()
 	a.tasks.Blur()
+	a.schedules.Blur()
 	a.notify.Blur()
 	a.cmdresult.Blur()
 	a.cmdline.Blur()
 
 	a.focus = f
-	if f == focusRunners || f == focusTasks {
+	if isTableFocus(f) {
 		a.lastTable = f
 	}
 
@@ -1904,6 +1937,8 @@ func (a *App) setFocus(f focus) {
 		a.runners.Focus()
 	case focusTasks:
 		a.tasks.Focus()
+	case focusSchedules:
+		a.schedules.Focus()
 	case focusNotify:
 		a.notify.Focus()
 	case focusCmdresult:
@@ -1924,9 +1959,9 @@ func (a *App) quit() tea.Cmd {
 
 // layout computes per-panel sizes from a.width / a.height. Header 1, table
 // strip 1, notify border-inclusive 6, cmdresult border-inclusive 7, cmdline 1,
-// footer 1 = 17 fixed rows; ONE table (runners or tasks, see shownTable) takes
+// footer 1 = 17 fixed rows; ONE table (runners, tasks or schedules, see shownTable) takes
 // the rest, less its own 2 border rows, so tableHeight = a.height - 19 (5 at
-// the 24-row minimum). Both tables are sized to the full width: only one is
+// the 24-row minimum). All three tables are sized to the full width: only one is
 // drawn, and the tasks table is the one that needs the room. The task log
 // pane that used to sit under the tables held those rows (A3, A-D30).
 //
@@ -1940,6 +1975,7 @@ func (a *App) layout() {
 	tableHeight := a.height - 19
 	a.runners.SetSize(a.width-2, tableHeight)
 	a.tasks.SetSize(a.width-2, tableHeight)
+	a.schedules.SetSize(a.width-2, tableHeight)
 	a.notify.SetSize(a.width-2, 4)
 	a.cmdresult.SetSize(a.width-2, 5)
 	a.cmdline.Width = a.width - 4
@@ -1948,22 +1984,54 @@ func (a *App) layout() {
 // shownTable is which table is drawn: the focused one, or — while focus is on
 // notify / cmdresult / cmdline — the one focused last (tasks at startup).
 func (a *App) shownTable() focus {
-	if a.focus == focusRunners || a.focus == focusTasks {
+	if isTableFocus(a.focus) {
 		return a.focus
 	}
 	return a.lastTable
 }
 
-// tableStrip is the one line above the table: which table is shown, the key
-// that reaches the other one, and the fleet summary. The focus cycle runs
-// runners → tasks → notify → …, so from runners it is Tab, and from tasks it
-// is Shift-Tab (Tab goes on to notify and leaves the tasks table up).
-func tableStrip(showRunners bool, rs []protocol.RunnerInfo) string {
-	tab := "[Tasks] Runners (Shift-Tab: runners)"
-	if showRunners {
-		tab = "Tasks [Runners] (Tab: tasks)"
+// isTableFocus reports whether f is one of the three tables.
+func isTableFocus(f focus) bool {
+	return f == focusRunners || f == focusTasks || f == focusSchedules
+}
+
+// keysToReach is the Tab / Shift-Tab presses that take focus from one pane to
+// another along the focus cycle (runners → tasks → schedules → notify →
+// cmdresult → cmdline → runners): the shorter direction, Tab on a tie, with an
+// " xN" repeat count past one press. It reads numFocus and the order of the
+// focus constants, so the strip below cannot say a key that the cycle does not
+// honour — an earlier strip said "Tab switches" and was wrong (the test
+// presses every hint it prints).
+func keysToReach(from, to focus) string {
+	fwd := (int(to) - int(from) + numFocus) % numFocus
+	back := numFocus - fwd
+	key, n := "Tab", fwd
+	if back < fwd {
+		key, n = "Shift-Tab", back
 	}
-	return " " + tab + " · " + runnerSummary(rs)
+	if n > 1 {
+		key += fmt.Sprintf(" x%d", n)
+	}
+	return key
+}
+
+// tableStrip is the one line above the table: the three tables with the shown
+// one bracketed, for each of the others the keys that reach it from where focus
+// IS (from — it is not the shown table while focus rests on notify / cmdresult
+// / cmdline), and the fleet summary. Entries are Name:keys, in cycle order.
+func tableStrip(shown, from focus, rs []protocol.RunnerInfo) string {
+	var entries []string
+	for _, t := range []struct {
+		name string
+		f    focus
+	}{{"Runners", focusRunners}, {"Tasks", focusTasks}, {"Schedules", focusSchedules}} {
+		if t.f == shown {
+			entries = append(entries, "["+t.name+"]")
+			continue
+		}
+		entries = append(entries, t.name+":"+keysToReach(from, t.f))
+	}
+	return " " + strings.Join(entries, "  ") + " · " + runnerSummary(rs)
 }
 
 func (a *App) View() string {
@@ -1980,19 +2048,21 @@ func (a *App) View() string {
 	// One table at a time: the one the focus last rested on. The strip above
 	// it names both and carries the fleet summary, so the hidden one is never
 	// out of sight, out of mind.
-	showRunners := a.shownTable() == focusRunners
 	var top string
-	if showRunners {
+	switch a.shownTable() {
+	case focusRunners:
 		top = a.runners.View()
-	} else {
+	case focusSchedules:
+		top = a.schedules.View()
+	default:
 		top = a.tasks.View()
 	}
-	if a.runners.IsFocused() || a.tasks.IsFocused() {
+	if a.runners.IsFocused() || a.tasks.IsFocused() || a.schedules.IsFocused() {
 		top = PanelStyleFocused.Render(top)
 	} else {
 		top = PanelStyle.Render(top)
 	}
-	strip := MutedStyle.Render(clipLine(tableStrip(showRunners, a.runnersSnapshot), 0, a.width))
+	strip := MutedStyle.Render(clipLine(tableStrip(a.shownTable(), a.focus, a.runnersSnapshot), 0, a.width))
 
 	notifyBorder := PanelStyle
 	if a.notify.IsFocused() {
@@ -2010,6 +2080,11 @@ func (a *App) View() string {
 	// here is clipped to the terminal width — an over-long hint wraps and
 	// pushes the bottom of the view off-screen.
 	footer := FooterStyle.Render(clipLine(footerHints(a.focus, a.width), 0, a.width))
+	if a.schedDeleteID != "" {
+		// The question is on screen, not only in cmdresult, which may be
+		// scrolled or narrow.
+		footer = WarnStyle.Render(clipLine(schedDeletePrompt(a.schedDeleteID), 0, a.width))
+	}
 
 	view := strings.Join([]string{
 		header,
@@ -2149,6 +2224,36 @@ func (a *App) applyEventObservers(ti *protocol.TaskInfo, ev protocol.TaskStatusE
 	}
 	ti.Viewers = ev.Viewers
 	ti.Cowriters = ev.Cowriters
+}
+
+// applySchedules takes the schedule list a snapshot carried. A failed list
+// keeps the rows and says why, once per distinct reason: it most often means
+// the connection lacks the schedule capability, which is no reason to blank a
+// table the operator is reading or to repeat a line on every snapshot.
+func (a *App) applySchedules(msg SnapshotMsg) {
+	if msg.SchedulesErr != nil {
+		if e := msg.SchedulesErr.Error(); e != a.schedErr {
+			a.schedErr = e
+			a.cmdresult.Append(WarnStyle.Render("schedules: could not list: " + e))
+		}
+		return
+	}
+	a.schedErr = ""
+	a.schedules.SetRows(msg.Schedules)
+}
+
+// applyEventSchedule copies the schedule binding from a task event into ti.
+// EVERY task event carries it (a binding-change event, task_schedule, exists
+// to say so), so it is overwritten rather than merged: an event with no
+// binding unbinds the row, and the task popup follows without a list.
+func applyEventSchedule(ti *protocol.TaskInfo, ev protocol.TaskStatusEvent) {
+	id := ev.ScheduleId()
+	if ev.SchedulePresent() && id != nil {
+		ti.SetSchedulePresent(true)
+		ti.SetScheduleId(*id)
+		return
+	}
+	ti.SetSchedulePresent(false)
 }
 
 // applyEventProgress copies the progress line and the live title from a task

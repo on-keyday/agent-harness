@@ -381,7 +381,7 @@ func (a *App) onProgressClear(msg tea.KeyMsg) (tea.Cmd, bool) {
 	return DoProgressClear(a.client, taskID), true
 }
 
-// `d` opens the detail popup for the focused row (runners or tasks).
+// `d` opens the detail popup for the focused row (runners, tasks or schedules).
 func (a *App) onDetail(msg tea.KeyMsg) (tea.Cmd, bool) {
 	switch a.focus {
 	case focusRunners:
@@ -408,6 +408,8 @@ func (a *App) onDetail(msg tea.KeyMsg) (tea.Cmd, bool) {
 		}
 		a.cmdresult.Append(WarnStyle.Render("no task selected"))
 		return nil, true
+	case focusSchedules:
+		return a.onScheduleDetail()
 	}
 	return nil, false
 }

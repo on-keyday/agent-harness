@@ -21,7 +21,12 @@ import (
 type SnapshotMsg struct {
 	Runners []protocol.RunnerInfo
 	Tasks   []protocol.TaskInfo
-	Err     error
+	// Schedules is the schedule list fetched with the snapshot. A failed fetch
+	// sets SchedulesErr and leaves the snapshot itself valid: the table keeps
+	// its rows and says why (it needs the schedule capability to be read).
+	Schedules    []protocol.ScheduleRow
+	SchedulesErr error
+	Err          error
 }
 
 type TaskEventMsg struct {

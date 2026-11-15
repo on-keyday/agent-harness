@@ -386,6 +386,14 @@ func formatTaskDetail(t protocol.TaskInfo, runnerByID map[string]protocol.Runner
 		fmt.Fprintf(&sb, "attached:      %s\n", attachDetail(t))
 	}
 	fmt.Fprintf(&sb, "from:          %s\n", originCell(t.OriginKind))
+	// The schedule this task is bound to (pillar S): the full id, which is what
+	// `schedule show` / `edit` / `run` / `rm` take. Gated on the binding
+	// existing, never on its value, as `ls` does.
+	if t.SchedulePresent() {
+		if id := t.ScheduleId(); id != nil {
+			fmt.Fprintf(&sb, "schedule:      %s\n", hex.EncodeToString(id.Id[:]))
+		}
+	}
 	if t.CreatorTaskId.Id != ([16]byte{}) {
 		fmt.Fprintf(&sb, "created by:    %s\n", hex.EncodeToString(t.CreatorTaskId.Id[:]))
 	}
