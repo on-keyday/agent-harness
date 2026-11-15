@@ -493,11 +493,7 @@ func RefreshSnapshot(c *cli.Client) tea.Cmd {
 		if err != nil {
 			return SnapshotMsg{Err: err}
 		}
-		msg := SnapshotMsg{Runners: lr.Runners, Tasks: lr.Tasks}
-		// The Schedules table refreshes with the snapshot. Its failure is the
-		// table's, not the snapshot's (see SnapshotMsg.SchedulesErr).
-		msg.Schedules, msg.SchedulesErr = c.ScheduleList(ctx)
-		return msg
+		return SnapshotMsg{Runners: lr.Runners, Tasks: lr.Tasks}
 	}
 }
 
@@ -529,13 +525,17 @@ func DoSessionList(c *cli.Client) tea.Cmd {
 }
 
 // DoRecord runs one record verb and carries its text to the results pane.
-func DoRecord(c *cli.Client, verbName string, fn func(ctx context.Context, c *cli.Client, out io.Writer) error) tea.Cmd {
+func DoRecord(c *cli.Client, verbName string, fn func(ctx context.Context, c *cli.Client, out io.Writer) error, failLine ...func(error) string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 		var buf strings.Builder
 		err := fn(ctx, c, &buf)
-		return RecordResultMsg{Verb: verbName, Text: strings.TrimSpace(buf.String()), Err: err}
+		msg := RecordResultMsg{Verb: verbName, Text: strings.TrimSpace(buf.String()), Err: err}
+		if err != nil && len(failLine) > 0 {
+			msg.Line = failLine[0](err)
+		}
+		return msg
 	}
 }
 
@@ -544,6 +544,9 @@ type RecordResultMsg struct {
 	Verb string
 	Text string
 	Err  error
+	// Line, when set, is the whole error line to show instead of
+	// "<Verb> failed: <Err>" (schedule verbs name their target in it).
+	Line string
 }
 
 // DoRecordList fetches a task's PTY records for the detail popup.

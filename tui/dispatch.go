@@ -1235,16 +1235,59 @@ func (h tuiVerbs) recordSwitch(v verb.RecordSwitchAction, on bool) tea.Cmd {
 // long-lived client, as the record verbs do. The Schedules table, its keys and
 // the detail popup are pillar S Task 6's.
 
+// scheduleTarget resolves a typed schedule id prefix, saying why on failure.
+func (h tuiVerbs) scheduleTarget(prefix string) (string, bool) {
+	full, errStr := h.a.resolveSchedulePrefix(prefix)
+	if errStr != "" {
+		h.a.cmdresult.Append(ErrorStyle.Render(errStr))
+		return "", false
+	}
+	return full, true
+}
+
+// scheduleRecord is recordCmd for a verb on one schedule: a failure names the
+// target and keeps the server's status words ("schedule run <id8>:
+// no_such_schedule: …"), not "schedule run failed: schedule run: …".
+func (h tuiVerbs) scheduleRecord(verbName, id string, fn func(ctx context.Context, c *cli.Client, out io.Writer) error) tea.Cmd {
+	a := h.a
+	if a.client == nil && a.schedExec == nil {
+		a.cmdresult.Append(ErrorStyle.Render(verbName + ": not connected to server"))
+		return nil
+	}
+	return DoRecord(a.client, verbName, func(ctx context.Context, c *cli.Client, out io.Writer) error {
+		return fn(ctx, c, out)
+	}, scheduleFailureLine(verbName, id))
+}
+
+// scheduleFailureLine builds a RecordResultMsg.Line for a failed schedule verb.
+func scheduleFailureLine(verbName, id string) func(error) string {
+	return func(err error) string {
+		return fmt.Sprintf("%s %s: %s", verbName, schedShort(id), strings.TrimPrefix(err.Error(), verbName+": "))
+	}
+}
+
 func (h tuiVerbs) scheduleSpec(v verb.ScheduleSpecAction) tea.Cmd {
-	return h.recordCmd("schedule "+v.Sub, func(ctx context.Context, c *cli.Client, out io.Writer) error {
+	id := ""
+	if v.Sub == verb.SubEdit {
+		full, ok := h.scheduleTarget(v.ID)
+		if !ok {
+			return nil
+		}
+		id = full
+		v.ID = full
+	}
+	return h.scheduleRecord("schedule "+v.Sub, id, func(ctx context.Context, c *cli.Client, out io.Writer) error {
 		return cli.ScheduleSpecWith(ctx, c, v, out)
 	})
 }
 
 func (h tuiVerbs) scheduleID(v verb.ScheduleIDAction) tea.Cmd {
-	return h.recordCmd("schedule "+v.Sub, func(ctx context.Context, c *cli.Client, out io.Writer) error {
-		return cli.ScheduleIDWith(ctx, c, v, out)
-	})
+	full, ok := h.scheduleTarget(v.ID)
+	if !ok {
+		return nil
+	}
+	v.ID = full
+	return h.a.scheduleIDCmd(v.Sub, full)
 }
 
 func (h tuiVerbs) ScheduleNew(v verb.ScheduleSpecAction) tea.Cmd  { return h.scheduleSpec(v) }
@@ -1259,7 +1302,11 @@ func (h tuiVerbs) ScheduleLs(v verb.ScheduleLsAction) tea.Cmd {
 }
 
 func (h tuiVerbs) ScheduleShow(v verb.ScheduleShowAction) tea.Cmd {
-	return h.recordCmd("schedule show", func(ctx context.Context, c *cli.Client, out io.Writer) error {
-		return cli.ScheduleShowWith(ctx, c, v.ID, v.JSON, out)
+	full, ok := h.scheduleTarget(v.ID)
+	if !ok {
+		return nil
+	}
+	return h.scheduleRecord("schedule show", full, func(ctx context.Context, c *cli.Client, out io.Writer) error {
+		return cli.ScheduleShowWith(ctx, c, full, v.JSON, out)
 	})
 }

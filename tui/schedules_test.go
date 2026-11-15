@@ -3,7 +3,9 @@ package tui
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"io"
+	"os"
 	"reflect"
 	"strconv"
 	"strings"
@@ -65,7 +67,7 @@ func schedFixRows() []protocol.ScheduleRow {
 
 func schedApp(w, h int) *App {
 	a := oneTableApp(w, h)
-	a.Update(SnapshotMsg{Schedules: schedFixRows()})
+	a.Update(ScheduleListMsg{Rows: schedFixRows()})
 	return a
 }
 
@@ -94,23 +96,24 @@ func TestFocusCycleIncludesSchedules(t *testing.T) {
 }
 
 // stripHint parses the strip's "<Table>:<keys>" entries for the tables that are
-// not shown. keys is "Tab", "Shift-Tab", optionally followed by " xN".
+// not shown. keys is "Tab" or "S-Tab" (Shift-Tab), optionally followed by "*N"
+// presses.
 func stripHint(t *testing.T, s string, table string) (back bool, n int) {
 	t.Helper()
-	for _, part := range strings.Split(strings.SplitN(s, " · ", 2)[0], "  ") {
-		name, keys, ok := strings.Cut(strings.TrimSpace(part), ":")
+	for _, part := range strings.Fields(strings.SplitN(s, " | ", 2)[0]) {
+		name, keys, ok := strings.Cut(part, ":")
 		if !ok || strings.Trim(name, "[]") != table {
 			continue
 		}
 		n = 1
-		if k, cnt, has := strings.Cut(keys, " x"); has {
+		if k, cnt, has := strings.Cut(keys, "*"); has {
 			keys = k
 			n, _ = strconv.Atoi(cnt)
 		}
 		switch keys {
 		case "Tab":
 			return false, n
-		case "Shift-Tab":
+		case "S-Tab":
 			return true, n
 		}
 		t.Fatalf("strip %q: unreadable keys %q for %s", s, keys, table)
@@ -175,19 +178,30 @@ func TestStripKeysFollowFocusOffTheTable(t *testing.T) {
 	}
 }
 
+// A realistic fleet summary (two-digit counts, an offline bucket) and the
+// hints of every focus must fit 80 cells together under both East Asian width
+// readings, the summary whole.
 func TestStripFitsEightyColumns(t *testing.T) {
-	for _, f := range []focus{focusRunners, focusTasks, focusSchedules, focusNotify} {
-		a := oneTableApp(80, 24)
-		a.Update(SnapshotMsg{Runners: []protocol.RunnerInfo{{Status: protocol.RunnerStatus_Busy}}})
-		a.setFocus(f)
-		strip := tableStrip(a.shownTable(), a.focus, a.runnersSnapshot)
-		for name, cond := range map[string]*runewidth.Condition{"narrow": {EastAsianWidth: false}, "wide": {EastAsianWidth: true}} {
-			if w := cond.StringWidth(strip); w > 80 {
-				t.Errorf("focus %d: strip is %d cells under %s width (> 80): %q", f, w, name, strip)
+	var fleet []protocol.RunnerInfo
+	for i := 0; i < 12; i++ {
+		st := []protocol.RunnerStatus{protocol.RunnerStatus_Idle, protocol.RunnerStatus_Busy, protocol.RunnerStatus_Offline}[i%3]
+		fleet = append(fleet, protocol.RunnerInfo{Status: st})
+	}
+	const summary = "runners 12: 4 idle 4 busy 4 offline"
+	for _, f := range []focus{focusRunners, focusTasks, focusSchedules, focusNotify, focusCmdresult, focusCmdline} {
+		for _, shown := range []focus{focusRunners, focusTasks, focusSchedules} {
+			if isTableFocus(f) && f != shown {
+				continue
 			}
-		}
-		if !strings.Contains(strip, "runners 1: 0 idle 1 busy") {
-			t.Errorf("focus %d: summary missing: %q", f, strip)
+			strip := tableStrip(shown, f, fleet)
+			for name, cond := range map[string]*runewidth.Condition{"narrow": {EastAsianWidth: false}, "wide": {EastAsianWidth: true}} {
+				if w := cond.StringWidth(strip); w > 80 {
+					t.Errorf("focus %d shown %d: strip is %d cells under %s width (> 80): %q", f, shown, w, name, strip)
+				}
+			}
+			if !strings.Contains(strip, summary) {
+				t.Errorf("focus %d shown %d: summary cut: %q", f, shown, strip)
+			}
 		}
 	}
 }
@@ -458,15 +472,15 @@ func TestScheduleShowErrorGoesToCmdresult(t *testing.T) {
 
 // --- refresh ---
 
-func TestSnapshotFillsSchedulesAndAScheduleVerbRefreshes(t *testing.T) {
+func TestListFillsSchedulesAndAScheduleVerbRefreshes(t *testing.T) {
 	a := oneTableApp(120, 40)
-	a.Update(SnapshotMsg{Schedules: schedFixRows()})
+	a.Update(ScheduleListMsg{Rows: schedFixRows()})
 	if got := len(a.schedules.table.Rows()); got != 3 {
-		t.Fatalf("%d rows after the snapshot", got)
+		t.Fatalf("%d rows after the list", got)
 	}
 	// A failed list keeps what was there and says why, once.
-	a.Update(SnapshotMsg{SchedulesErr: context.DeadlineExceeded})
-	a.Update(SnapshotMsg{SchedulesErr: context.DeadlineExceeded})
+	a.Update(ScheduleListMsg{Err: context.DeadlineExceeded})
+	a.Update(ScheduleListMsg{Err: context.DeadlineExceeded})
 	if got := len(a.schedules.table.Rows()); got != 3 {
 		t.Errorf("a failed list dropped the rows: %d", got)
 	}
@@ -553,5 +567,259 @@ func TestMainKeysDoNotCollideForSchedules(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// --- fix round 1 ---
+
+// schedListSeam installs a fake list that counts its calls and answers rows.
+func schedListSeam(a *App, rows func() []protocol.ScheduleRow) *int {
+	n := 0
+	a.schedList = func(context.Context) ([]protocol.ScheduleRow, error) {
+		n++
+		return rows(), nil
+	}
+	return &n
+}
+
+// drain runs cmd and feeds every message it yields back, following batches and
+// the commands those messages return.
+func drain(a *App, cmd tea.Cmd) {
+	if cmd == nil {
+		return
+	}
+	switch m := cmd().(type) {
+	case nil:
+	case tea.BatchMsg:
+		for _, c := range m {
+			drain(a, c)
+		}
+	default:
+		_, next := a.Update(m)
+		drain(a, next)
+	}
+}
+
+// boundSchedApp has one schedule bound to a live task (id 0x44), and the task
+// in the snapshot.
+func boundSchedApp(t *testing.T) (*App, protocol.TaskInfo, protocol.ScheduleRow) {
+	t.Helper()
+	a := oneTableApp(200, 50)
+	tk := liveTask(0x44, 0, 0)
+	row := schedFixRow(0xb2, protocol.ScheduleTaskState_Bound)
+	row.TaskId = tk.Id
+	row.TaskStatus = protocol.TaskStatus_Running
+	a.Update(SnapshotMsg{Tasks: []protocol.TaskInfo{tk}})
+	a.Update(ScheduleListMsg{Rows: []protocol.ScheduleRow{row}})
+	return a, tk, row
+}
+
+func schedTaskCell(a *App) string {
+	for i, c := range a.schedules.table.Columns() {
+		if c.Title == "Task" {
+			return a.schedules.table.Rows()[0][i]
+		}
+	}
+	return ""
+}
+
+// A later firing resumes a task that is already bound: its events change the
+// task row and, on the schedule's side, next / last / task status. The table
+// asks for a fresh list when an event names a binding (or is the binding
+// changing), and its Task cell follows the task's live status before that list
+// lands.
+func TestScheduleTableFollowsBoundTaskEvents(t *testing.T) {
+	a, tk, row := boundSchedApp(t)
+	calls := schedListSeam(a, func() []protocol.ScheduleRow { return []protocol.ScheduleRow{row} })
+	sid := row.Id
+	for _, st := range []protocol.TaskStatus{protocol.TaskStatus_Queued, protocol.TaskStatus_Running, protocol.TaskStatus_Succeeded} {
+		before := *calls
+		ev := protocol.TaskStatusEvent{Kind: protocol.StatusEventKind_TaskStarted, TaskStatus: st, TaskId: tk.Id}
+		ev.SetSchedulePresent(true)
+		ev.SetScheduleId(sid)
+		_, cmd := a.Update(TaskEventMsg{Event: ev})
+		if cmd == nil {
+			t.Fatalf("status %v: an event of a bound task requested no list refresh", st)
+		}
+		want := row
+		want.TaskStatus = st
+		if got := schedTaskCell(a); got != cli.ScheduleTaskCell(want) {
+			t.Errorf("status %v: Task cell %q, want %q (live, before the list answers)", st, got, cli.ScheduleTaskCell(want))
+		}
+		drain(a, cmd)
+		if *calls != before+1 {
+			t.Errorf("status %v: %d list calls, want %d", st, *calls, before+1)
+		}
+	}
+	// A binding-change event with no binding (an unbind) refreshes too; an
+	// ordinary event of an unbound task does not.
+	_, cmd := a.Update(TaskEventMsg{Event: protocol.TaskStatusEvent{Kind: protocol.StatusEventKind_TaskSchedule, TaskStatus: protocol.TaskStatus_Succeeded, TaskId: tk.Id}})
+	if cmd == nil {
+		t.Error("an unbind (task_schedule, no binding) requested no refresh")
+	}
+	drain(a, cmd)
+	_, cmd = a.Update(TaskEventMsg{Event: protocol.TaskStatusEvent{Kind: protocol.StatusEventKind_TaskEnded, TaskStatus: protocol.TaskStatus_Succeeded, TaskId: tk.Id}})
+	if cmd != nil {
+		t.Error("an event of an unbound task must not list schedules")
+	}
+}
+
+// A burst of events asks for at most two lists: one in flight, and one more for
+// everything that arrived meanwhile.
+func TestScheduleListRefreshIsCoalesced(t *testing.T) {
+	a, tk, row := boundSchedApp(t)
+	calls := schedListSeam(a, func() []protocol.ScheduleRow { return []protocol.ScheduleRow{row} })
+	var cmds []tea.Cmd
+	for i := 0; i < 10; i++ {
+		ev := protocol.TaskStatusEvent{Kind: protocol.StatusEventKind_TaskStarted, TaskStatus: protocol.TaskStatus_Running, TaskId: tk.Id}
+		ev.SetSchedulePresent(true)
+		ev.SetScheduleId(row.Id)
+		if _, cmd := a.Update(TaskEventMsg{Event: ev}); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	if len(cmds) != 1 {
+		t.Fatalf("a burst of 10 issued %d list commands, want 1 in flight", len(cmds))
+	}
+	drain(a, cmds[0]) // answers, then the one coalesced follow-up
+	if *calls != 2 {
+		t.Errorf("a burst of 10 made %d list calls, want 2", *calls)
+	}
+}
+
+// A list that never answers must not hold the snapshot: it is its own command.
+func TestHangingScheduleListDoesNotDelayTheSnapshot(t *testing.T) {
+	a := oneTableApp(120, 40)
+	block := make(chan struct{})
+	defer close(block)
+	a.schedList = func(ctx context.Context) ([]protocol.ScheduleRow, error) {
+		select {
+		case <-block:
+		case <-ctx.Done():
+		}
+		return nil, ctx.Err()
+	}
+	_, lcmd := a.Update(ScheduleListMsg{Rows: nil})
+	_ = lcmd
+	listCmd := a.requestScheduleList()
+	if listCmd == nil {
+		t.Fatal("no list command")
+	}
+	go listCmd() // hangs
+	done := make(chan struct{})
+	go func() {
+		a.Update(SnapshotMsg{Tasks: []protocol.TaskInfo{liveTask(1, 0, 0)}})
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the snapshot waited on the schedule list")
+	}
+	if len(a.tasks.table.Rows()) != 1 {
+		t.Error("the snapshot was not applied")
+	}
+	src, _ := os.ReadFile("client.go")
+	i := strings.Index(string(src), "func RefreshSnapshot")
+	if body := string(src)[i : i+900]; strings.Contains(body, "ScheduleList") {
+		t.Error("RefreshSnapshot must not fetch schedules inside its own budget")
+	}
+}
+
+func TestResolveSchedulePrefix(t *testing.T) {
+	a := schedApp(120, 40)
+	full := schedHex(0xa1)
+	if got, e := a.resolveSchedulePrefix("a1a1"); got != full || e != "" {
+		t.Errorf("unique prefix: %q %q", got, e)
+	}
+	if got, e := a.resolveSchedulePrefix(strings.ToUpper(full[:6])); got != full || e != "" {
+		t.Errorf("upper-case prefix: %q %q", got, e)
+	}
+	if got, e := a.resolveSchedulePrefix("zz"); got != "" || !strings.Contains(e, "no schedule matches") {
+		t.Errorf("none: %q %q", got, e)
+	}
+	// Two rows sharing a prefix.
+	rows := schedFixRows()
+	rows[1].Id = rows[0].Id
+	rows[1].Id.Id[15] = 0x01
+	a.Update(ScheduleListMsg{Rows: rows})
+	if got, e := a.resolveSchedulePrefix("a1a1"); got != "" || !strings.Contains(e, "ambiguous") {
+		t.Errorf("ambiguous: %q %q", got, e)
+	}
+	// A full id the table does not list yet (just created) goes to the server.
+	other := schedHex(0x77)
+	if got, e := a.resolveSchedulePrefix(other); got != other || e != "" {
+		t.Errorf("full unknown id: %q %q", got, e)
+	}
+}
+
+func TestTypedScheduleVerbsResolveThePrefix(t *testing.T) {
+	a, calls := schedKeyApp(t)
+	h := tuiVerbs{a}
+	cmd := h.ScheduleRun(verb.ScheduleIDAction{Sub: verb.SubRun, ID: "b2b2"})
+	runCmd(a, cmd)
+	if want := []schedExecCall{{verb.SubRun, schedHex(0xb2)}}; !reflect.DeepEqual(*calls, want) {
+		t.Fatalf("calls %+v, want %+v", *calls, want)
+	}
+	// none / ambiguous: nothing is sent, the error is in cmdresult.
+	if cmd := h.ScheduleRm(verb.ScheduleIDAction{Sub: verb.SubRm, ID: "zz"}); cmd != nil {
+		t.Error("an unresolved id must send nothing")
+	}
+	if !strings.Contains(strings.Join(a.cmdresult.lines, "\n"), "no schedule matches zz") {
+		t.Errorf("cmdresult:\n%s", strings.Join(a.cmdresult.lines, "\n"))
+	}
+	if cmd := h.ScheduleShow(verb.ScheduleShowAction{ID: "zz"}); cmd != nil {
+		t.Error("show with an unresolved id must send nothing")
+	}
+}
+
+// Errors from n / x and the typed verbs name the target and keep the server's
+// status words, not "schedule run failed: schedule run: ...".
+func TestScheduleErrorsNameTheTarget(t *testing.T) {
+	a, _ := schedKeyApp(t)
+	a.schedExec = func(_ context.Context, act verb.ScheduleIDAction, _ io.Writer) error {
+		return errors.New("schedule " + act.Sub + ": no_such_schedule: gone")
+	}
+	runCmd(a, pressRune(a, rune(mainKeys.ScheduleRunNow[0])))
+	got := strings.Join(a.cmdresult.lines, "\n")
+	if !strings.Contains(got, "schedule run a1a1a1a1: no_such_schedule: gone") || strings.Contains(got, "failed:") {
+		t.Errorf("cmdresult:\n%s", got)
+	}
+}
+
+func TestScheduleLastAgeMovesOnTheTick(t *testing.T) {
+	a := schedApp(200, 50)
+	a.setFocus(focusSchedules)
+	lastCell := func() string {
+		for i, c := range a.schedules.table.Columns() {
+			if c.Title == "Last" {
+				return a.schedules.table.Rows()[1][i]
+			}
+		}
+		return ""
+	}
+	before := lastCell()
+	a.schedules.now = func() time.Time { return time.Now().Add(2 * time.Hour) }
+	a.Update(actAgeTickMsg{})
+	if after := lastCell(); after == before {
+		t.Errorf("Last still %q after the tick", after)
+	}
+}
+
+// The delete asks about the id captured at x: a list that reorders the rows
+// before y must not move the target.
+func TestScheduleDeleteKeepsTheCapturedID(t *testing.T) {
+	a, calls := schedKeyApp(t)
+	captured := a.schedules.SelectedID()
+	pressRune(a, rune(mainKeys.ScheduleDelete[0]))
+	rows := schedFixRows()
+	rows[0], rows[2] = rows[2], rows[0]
+	a.Update(ScheduleListMsg{Rows: rows})
+	if a.schedules.SelectedID() == captured {
+		t.Fatal("the reorder did not move the cursor's row; the test proves nothing")
+	}
+	runCmd(a, pressRune(a, 'y'))
+	if want := []schedExecCall{{verb.SubRm, captured}}; !reflect.DeepEqual(*calls, want) {
+		t.Errorf("calls = %v, want %v", *calls, want)
 	}
 }

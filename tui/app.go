@@ -111,7 +111,9 @@ type App struct {
 	schedErr string
 	// schedExec, when set, replaces cli.ScheduleIDWith for the run / delete
 	// keys. A test seam: the real call needs a server.
-	schedExec func(ctx context.Context, act verb.ScheduleIDAction, out io.Writer) error
+	schedExec                           func(ctx context.Context, act verb.ScheduleIDAction, out io.Writer) error
+	schedList                           func(ctx context.Context) ([]protocol.ScheduleRow, error)
+	schedListInFlight, schedListPending bool
 	// runnersSnapshot holds the latest runners from the most recent snapshot.
 	runnersSnapshot []protocol.RunnerInfo
 
@@ -434,6 +436,10 @@ func New(cfg Config) *App {
 		sessionCaps:       protocol.Capability_None,
 		sessionScope:      protocol.TaskScope{Base: protocol.ScopeBase_Subtree},
 	}
+	a.schedules.liveStatus = func(id protocol.TaskID) (protocol.TaskStatus, bool) {
+		t, ok := a.tasksByID[FormatTaskID(id)]
+		return t.Status, ok
+	}
 	// setFocus, not tasks.Focus(): a.focus must agree with the pane that is
 	// focused, or key scope and the shown table start out as the runners'.
 	a.setFocus(focusTasks)
@@ -510,6 +516,11 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if a.hasAgingActRow() {
 			a.refreshTasksTable()
 		}
+		// The Last column's age reads the clock, and a schedule that is not
+		// firing sends no event.
+		if a.shownTable() == focusSchedules && len(a.schedules.rows) > 0 {
+			a.schedules.rebuild()
+		}
 		// The execs modal's `last` / `age` read the clock too, and a wedged
 		// exec sends no event to refresh them.
 		if a.execsModal.IsOpen() {
@@ -556,7 +567,6 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		a.runnersSnapshot = msg.Runners
 		a.runners.SetRows(msg.Runners)
-		a.applySchedules(msg)
 		a.tasksByID = make(map[string]protocol.TaskInfo, len(msg.Tasks))
 		now := time.Now()
 		a.actRecvAt = make(map[string]time.Time, len(msg.Tasks))
@@ -580,11 +590,13 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		a.refreshTasksTable()
+		a.schedules.rebuild()
+		listCmd := a.requestScheduleList()
 		if a.workspaceArmed {
 			a.workspaceArmed = false
-			return a, a.applyWorkspace()
+			return a, tea.Batch(listCmd, a.applyWorkspace())
 		}
-		return a, nil
+		return a, listCmd
 
 	case TaskEventMsg:
 		id := FormatTaskID(msg.Event.TaskId)
@@ -597,6 +609,7 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 			delete(a.lifecycleRecvAt, id)
 			delete(a.authorityRecvAt, id)
 			a.refreshTasksTable()
+			a.schedules.rebuild()
 			return a, nil
 		}
 		cur, ok := a.tasksByID[id]
@@ -618,7 +631,8 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 			applyEventSchedule(&ti, msg.Event)
 			a.tasksByID[id] = ti
 			a.refreshTasksTable()
-			return a, RefreshSnapshot(a.client)
+			a.schedules.rebuild()
+			return a, tea.Batch(RefreshSnapshot(a.client), a.scheduleListFor(msg.Event))
 		}
 		cur.Status = msg.Event.TaskStatus
 		if msg.Event.Kind == protocol.StatusEventKind_TaskEnded {
@@ -631,7 +645,8 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		applyEventSchedule(&cur, msg.Event)
 		a.tasksByID[id] = cur
 		a.refreshTasksTable()
-		return a, nil
+		a.schedules.rebuild()
+		return a, a.scheduleListFor(msg.Event)
 
 	case RunnerEventMsg:
 		// RunnerStatusEvent now carries the runner's identity, but a registered
@@ -1168,7 +1183,11 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 	case RecordResultMsg:
 		if msg.Err != nil {
-			a.cmdresult.Append(ErrorStyle.Render(msg.Verb + " failed: " + msg.Err.Error()))
+			if msg.Line != "" {
+				a.cmdresult.Append(ErrorStyle.Render(msg.Line))
+			} else {
+				a.cmdresult.Append(ErrorStyle.Render(msg.Verb + " failed: " + msg.Err.Error()))
+			}
 			// A failed schedule verb may still have changed something
 			// (a rm whose answer was lost): the table follows the server.
 			if strings.HasPrefix(msg.Verb, "schedule ") && a.client != nil {
@@ -1184,6 +1203,16 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// snapshot, which carries both.
 		if strings.HasPrefix(msg.Verb, "schedule ") && a.client != nil {
 			return a, RefreshSnapshot(a.client)
+		}
+		return a, nil
+	case ScheduleListMsg:
+		a.schedListInFlight = false
+		a.applySchedules(msg.Rows, msg.Err)
+		if a.schedListPending {
+			// Events arrived while that list was in flight: one more, whose
+			// answer is later than all of them.
+			a.schedListPending = false
+			return a, a.requestScheduleList()
 		}
 		return a, nil
 	case ScheduleShowMsg:
@@ -1995,22 +2024,23 @@ func isTableFocus(f focus) bool {
 	return f == focusRunners || f == focusTasks || f == focusSchedules
 }
 
-// keysToReach is the Tab / Shift-Tab presses that take focus from one pane to
-// another along the focus cycle (runners → tasks → schedules → notify →
-// cmdresult → cmdline → runners): the shorter direction, Tab on a tie, with an
-// " xN" repeat count past one press. It reads numFocus and the order of the
+// keysToReach is the Tab / S-Tab (Shift-Tab) presses that take focus from one
+// pane to another along the focus cycle (runners → tasks → schedules → notify →
+// cmdresult → cmdline → runners): the shorter direction, Tab on a tie, with a
+// "*N" repeat count past one press. It reads numFocus and the order of the
 // focus constants, so the strip below cannot say a key that the cycle does not
 // honour — an earlier strip said "Tab switches" and was wrong (the test
-// presses every hint it prints).
+// presses every hint it prints). Terse on purpose: the hints and a fleet
+// summary with two-digit counts share 80 cells.
 func keysToReach(from, to focus) string {
 	fwd := (int(to) - int(from) + numFocus) % numFocus
 	back := numFocus - fwd
 	key, n := "Tab", fwd
 	if back < fwd {
-		key, n = "Shift-Tab", back
+		key, n = "S-Tab", back
 	}
 	if n > 1 {
-		key += fmt.Sprintf(" x%d", n)
+		key += fmt.Sprintf("*%d", n)
 	}
 	return key
 }
@@ -2018,7 +2048,9 @@ func keysToReach(from, to focus) string {
 // tableStrip is the one line above the table: the three tables with the shown
 // one bracketed, for each of the others the keys that reach it from where focus
 // IS (from — it is not the shown table while focus rests on notify / cmdresult
-// / cmdline), and the fleet summary. Entries are Name:keys, in cycle order.
+// / cmdline), and the fleet summary. Entries are Name:keys, in cycle order,
+// separated by single spaces; " | " precedes the summary (ASCII, so the line
+// measures the same under either East Asian width reading).
 func tableStrip(shown, from focus, rs []protocol.RunnerInfo) string {
 	var entries []string
 	for _, t := range []struct {
@@ -2031,7 +2063,7 @@ func tableStrip(shown, from focus, rs []protocol.RunnerInfo) string {
 		}
 		entries = append(entries, t.name+":"+keysToReach(from, t.f))
 	}
-	return " " + strings.Join(entries, "  ") + " · " + runnerSummary(rs)
+	return " " + strings.Join(entries, " ") + " | " + runnerSummary(rs)
 }
 
 func (a *App) View() string {
@@ -2226,20 +2258,20 @@ func (a *App) applyEventObservers(ti *protocol.TaskInfo, ev protocol.TaskStatusE
 	ti.Cowriters = ev.Cowriters
 }
 
-// applySchedules takes the schedule list a snapshot carried. A failed list
-// keeps the rows and says why, once per distinct reason: it most often means
-// the connection lacks the schedule capability, which is no reason to blank a
-// table the operator is reading or to repeat a line on every snapshot.
-func (a *App) applySchedules(msg SnapshotMsg) {
-	if msg.SchedulesErr != nil {
-		if e := msg.SchedulesErr.Error(); e != a.schedErr {
+// applySchedules takes a schedule list answer. Listing needs no capability (the
+// caller's reach filters the rows, S-D17), so a failure is a transport or
+// server problem: the table keeps its rows and the reason is said once per
+// distinct text, not on every refresh.
+func (a *App) applySchedules(rows []protocol.ScheduleRow, err error) {
+	if err != nil {
+		if e := err.Error(); e != a.schedErr {
 			a.schedErr = e
 			a.cmdresult.Append(WarnStyle.Render("schedules: could not list: " + e))
 		}
 		return
 	}
 	a.schedErr = ""
-	a.schedules.SetRows(msg.Schedules)
+	a.schedules.SetRows(rows)
 }
 
 // applyEventSchedule copies the schedule binding from a task event into ti.
@@ -2633,4 +2665,73 @@ func principalLabel() string {
 		hexID = hexID[:8]
 	}
 	return "agent " + hexID
+}
+
+// DoScheduleList fetches the schedule list as a command of its own, with its
+// own budget: a server that does not answer the schedule kinds never replies,
+// and inside RefreshSnapshot's budget that would hold every runners / tasks
+// refresh.
+func DoScheduleList(list func(context.Context) ([]protocol.ScheduleRow, error)) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		rows, err := list(ctx)
+		return ScheduleListMsg{Rows: rows, Err: err}
+	}
+}
+
+// requestScheduleList asks for a fresh list, one in flight at a time: a request
+// made while one is out only marks a follow-up (handled when the answer
+// lands), so a burst of task events costs at most two lists. nil when there is
+// nothing to ask (no client) or a list is already out.
+func (a *App) requestScheduleList() tea.Cmd {
+	list := a.schedList
+	if list == nil {
+		if a.client == nil {
+			return nil
+		}
+		list = a.client.ScheduleList
+	}
+	if a.schedListInFlight {
+		a.schedListPending = true
+		return nil
+	}
+	a.schedListInFlight = true
+	return DoScheduleList(list)
+}
+
+// scheduleListFor is the list refresh a task event calls for: one that names a
+// schedule binding, or is the binding changing (task_schedule, which an unbind
+// sends with none). A later firing resumes the bound task, so its events are
+// the only signal that the schedule's next / last / task status moved.
+func (a *App) scheduleListFor(ev protocol.TaskStatusEvent) tea.Cmd {
+	if ev.SchedulePresent() || ev.Kind == protocol.StatusEventKind_TaskSchedule {
+		return a.requestScheduleList()
+	}
+	return nil
+}
+
+// resolveSchedulePrefix turns a typed schedule id prefix into the full 32 hex
+// the server takes, over the rows the table lists (as resolveTaskIDPrefix does
+// over tasks). A full id the table does not list yet (a schedule just created)
+// is passed through for the server to judge.
+func (a *App) resolveSchedulePrefix(prefix string) (string, string) {
+	p := strings.ToLower(prefix)
+	var matches []string
+	for _, r := range a.schedules.rows {
+		if id := hex.EncodeToString(r.Id.Id[:]); strings.HasPrefix(id, p) {
+			matches = append(matches, id)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		if _, err := hex.DecodeString(p); err == nil && len(p) == 32 {
+			return p, ""
+		}
+		return "", "no schedule matches " + prefix
+	case 1:
+		return matches[0], ""
+	default:
+		return "", fmt.Sprintf("ambiguous prefix %q matches %d schedules", prefix, len(matches))
+	}
 }

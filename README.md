@@ -1819,14 +1819,14 @@ Layout — one table at a time, full width. The table shown follows focus
 cmdline); while focus is on notify, cmdresult or cmdline the last-focused
 table stays up, and the tasks table is the one at startup. The line above the
 table names all three, brackets the shown one, gives each of the others the
-keys that reach it from where focus is (`Tab`, `Shift-Tab`, with `x2` / `x3`
+keys that reach it from where focus is (`Tab`, `S-Tab` for Shift-Tab, with `*2` / `*3`
 for more presses) and always carries the fleet summary
 (`runners N: X idle Y busy …`; idle and busy keep a zero, other statuses
 appear when present). The tasks table's `Run` column (a background task's
 deadline or end reason) appears only while some listed task has a Run cell.
 
 ```
- Runners:Shift-Tab  [Tasks]  Schedules:Tab · runners 3: 1 idle 2 busy
+ Runners:S-Tab [Tasks] Schedules:Tab | runners 3: 1 idle 2 busy
 ┌───────────────────────────────────────────────────────┐
 │ Status   ID     From  Agent  Act   Repo         About │
 │ Queued   9d50   cli   claude ...   /home/foo    ...   │

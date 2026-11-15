@@ -30,7 +30,9 @@ type SchedulesModel struct {
 	width int
 	// rows[i] is the full ScheduleRow for table row i, mirrored for the keys
 	// (which act on the full 32-hex id) and the detail popup.
-	rows []protocol.ScheduleRow
+	rows       []protocol.ScheduleRow
+	now        func() time.Time
+	liveStatus func(protocol.TaskID) (protocol.TaskStatus, bool)
 }
 
 // Column tiers (PANEL widths: the terminal less 2). Below schedAboutMinWidth the table is ID, Cron, Next, Last,
@@ -177,8 +179,18 @@ func (m *SchedulesModel) SetRows(rs []protocol.ScheduleRow) {
 // rebuild is the only place schedule cells are produced.
 func (m *SchedulesModel) rebuild() {
 	now := time.Now()
+	if m.now != nil {
+		now = m.now()
+	}
 	rows := make([]table.Row, 0, len(m.rows))
 	for _, r := range m.rows {
+		if m.liveStatus != nil && r.TaskState == protocol.ScheduleTaskState_Bound {
+			// The bound task's status is what its events say now, not what
+			// the last list said.
+			if st, ok := m.liveStatus(r.TaskId); ok {
+				r.TaskStatus = st
+			}
+		}
 		row := table.Row{
 			hex.EncodeToString(r.Id.Id[:4]),
 			string(r.Cron),
@@ -262,14 +274,14 @@ func schedShort(id string) string {
 // RecordResultMsg, which also refreshes the table (see Update).
 func (a *App) scheduleIDCmd(sub, id string) tea.Cmd {
 	act := verb.ScheduleIDAction{Sub: sub, ID: id}
-	name := "schedule " + sub
-	if a.schedExec != nil {
-		exec := a.schedExec
-		return DoRecord(a.client, name, func(ctx context.Context, _ *cli.Client, out io.Writer) error {
+	h := tuiVerbs{a}
+	exec := a.schedExec
+	return h.scheduleRecord("schedule "+sub, id, func(ctx context.Context, c *cli.Client, out io.Writer) error {
+		if exec != nil {
 			return exec(ctx, act, out)
-		})
-	}
-	return tuiVerbs{a}.scheduleID(act)
+		}
+		return cli.ScheduleIDWith(ctx, c, act, out)
+	})
 }
 
 func (a *App) onScheduleRunNow(msg tea.KeyMsg) (tea.Cmd, bool) {
