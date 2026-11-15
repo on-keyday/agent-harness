@@ -1599,6 +1599,13 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 				resp.SetErrorMsg([]byte("a schedule's own task cannot unbind itself"))
 				return resp, body
 			}
+			if !hasCap(creatorCaps, protocol.Capability_Schedule) {
+				// The dispatch checked the bit against the binding it saw; this
+				// gate reads the binding again, so it checks the bit itself.
+				resp, body := errResp(protocol.OpenInteractiveStatus_ScopeNotPermitted)
+				resp.SetErrorMsg([]byte("unbinding a task from its schedule needs the schedule bit"))
+				return resp, body
+			}
 		}
 		var ok bool
 		repo, _, ok = h.Tasks.PeekRepo(idHex)

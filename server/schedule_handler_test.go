@@ -1326,6 +1326,9 @@ func TestBindingChangesPublishATaskEvent(t *testing.T) {
 		evs := getEvents()
 		for i := len(evs) - 1; i >= 0; i-- {
 			if hex.EncodeToString(evs[i].TaskId.Id[:]) == task {
+				if evs[i].Kind != protocol.StatusEventKind_TaskSchedule {
+					t.Fatalf("last event for %s is %v, want task_schedule", task[:8], evs[i].Kind)
+				}
 				return &evs[i]
 			}
 		}
@@ -1361,5 +1364,25 @@ func TestBindingChangesPublishATaskEvent(t *testing.T) {
 	}
 	if ev := last(b); ev.SchedulePresent() {
 		t.Fatal("the deleted schedule's task still shows its id")
+	}
+}
+
+// The dispatch bit check and handleOpenInteractive's gate read the binding at
+// different moments; the latter must refuse a caller without the schedule bit
+// itself (after reach and self, so it is no oracle).
+func TestOpenGateChecksTheBitItself(t *testing.T) {
+	e := newSchedEnv(t)
+	openRunner(t, e.h)
+	task := e.terminal(t, protocol.RunMode_Background, "")
+	sc := e.seed(t, 1, protocol.ScheduleTaskState_Bound, task, "")
+	conn, _ := e.agent(t, authority.Grant{Caps: protocol.Capability_Resume | protocol.Capability_Schedule,
+		Scope: authority.Scope{Base: protocol.ScopeBase_Global}})
+	cid := e.connIDOf(conn)
+	r, _ := e.h.handleOpenInteractive(cid, nil, foregroundResume(task), protocol.ClientKind_Agent, e.h.lookupPrincipal(cid), protocol.Capability_Resume, "")
+	if r.Status == protocol.OpenInteractiveStatus_Ok {
+		t.Fatal("a caller without the schedule bit unbound a task")
+	}
+	if got := e.stored(t, sc.ID); got.State != protocol.ScheduleTaskState_Bound {
+		t.Fatal("still must be bound")
 	}
 }

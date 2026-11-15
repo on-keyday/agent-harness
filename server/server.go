@@ -334,7 +334,6 @@ func New(cfg Config) *Server {
 		Sched: &ScheduleOps{
 			Store: cfg.Schedules, Fire: s.fireSchedule, Poke: s.pokeSchedules,
 			Lock: s.sched.firingMutex, Ready: s.sched.started.Load, Now: s.sched.now,
-			OnBound: func(taskHex string) { s.taskHandler.OnTaskProgress(taskHex) },
 		},
 		RingBufferSize: int(cfg.DetachRingBufferSize),
 		Records:        records,
@@ -635,6 +634,16 @@ func New(cfg Config) *Server {
 			return
 		}
 		publishTaskEvent(taskHex, protocol.StatusEventKind_TaskProgress, t.Status, 0)
+	}
+
+	// A task's schedule binding changed: publish task_schedule so event-driven
+	// clients gain or drop its schedule_id without a List.
+	s.taskHandler.Sched.OnBound = func(taskHex string) {
+		t, ok := s.tasks.Get(taskHex)
+		if !ok {
+			return
+		}
+		publishTaskEvent(taskHex, protocol.StatusEventKind_TaskSchedule, t.Status, 0)
 	}
 
 	// A task's hooks reported a lifecycle state: publish task_lifecycle so

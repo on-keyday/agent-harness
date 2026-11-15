@@ -107,12 +107,12 @@ function watcherWaitsFor(w) {
 }
 
 // taskEventBanner is the command-output line for a task event, or null for a
-// routine one: a busy/idle edge or a progress write fires per session per
+// routine one: a busy/idle edge, a progress write or a schedule binding change fires per session per
 // change, and a banner each time would bury the lifecycle lines. The caller
 // still refreshes for the routine kinds that change a row's text.
 function taskEventBanner(line) {
   if (!line || line.includes("kind=TaskActivity") || line.includes("kind=TaskProgress") ||
-      line.includes("kind=TaskLifecycle")) return null;
+      line.includes("kind=TaskLifecycle") || line.includes("kind=TaskSchedule")) return null;
   return line;
 }
 

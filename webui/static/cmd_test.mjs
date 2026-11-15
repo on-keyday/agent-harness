@@ -729,6 +729,7 @@ test("task event banner: routine kinds print nothing", () => {
 // routine, like a progress write.
 test("task event banner: lifecycle reports print nothing", () => {
   eq(page.taskEventBanner("task abc kind=TaskLifecycle status=Detached"), null);
+  eq(page.taskEventBanner("task abc kind=TaskSchedule status=Detached"), null);
 });
 
 // The task row's program badge: the program's own OSC 7501 report, kind only

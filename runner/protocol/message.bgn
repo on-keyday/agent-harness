@@ -3791,6 +3791,9 @@ enum StatusEventKind:
     task_lifecycle      # appended: the task's hooks reported a lifecycle state
                         # (lifecycle_set, accepted, not stale). Payload of
                         # interest is lifecycle / lifecycle_at.
+    task_schedule       # appended: the task's schedule binding changed (bound,
+                        # unbound, its schedule deleted). Payload of interest is
+                        # schedule_present / schedule_id.
 
 format TaskStatusEvent:
     kind :StatusEventKind
