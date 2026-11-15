@@ -2409,7 +2409,7 @@ func (a *App) agedTask(id string, t protocol.TaskInfo, now time.Time) protocol.T
 }
 
 // refreshTasksTable rebuilds the tasks table from tasksByID, sorted by
-// descending CreatedAt, capped at 100 rows. Idle badges are aged here: the
+// descending CreatedAt: every live task and the 100 newest finished ones. Idle badges are aged here: the
 // rendered idle duration is the wire value plus the local time elapsed since
 // receipt (wire age is server-clock, elapsed is local — no cross-host skew).
 // Busy badges are NOT aged; they flip only via the server's idle-edge event.
@@ -2420,17 +2420,22 @@ func (a *App) refreshTasksTable() {
 		all = append(all, a.agedTask(id, t, now))
 	}
 	sort.Slice(all, func(i, j int) bool { return all[i].CreatedAt > all[j].CreatedAt })
-	if len(all) > 100 {
-		// The caps audit's pins survive the cut: an old task it pointed at is
-		// the case it exists for.
-		kept := all[:100:100]
-		for _, t := range all[100:] {
-			if a.auditPins[FormatTaskID(t.Id)] {
-				kept = append(kept, t)
+	// The cut is on history: the 100 newest finished tasks, and every task
+	// that has not ended however old (as the server's list). The caps audit's
+	// pins survive it too: an old task it pointed at is the case it exists for.
+	kept := all[:0:0]
+	finished := 0
+	for _, t := range all {
+		switch t.Status {
+		case protocol.TaskStatus_Succeeded, protocol.TaskStatus_Failed, protocol.TaskStatus_Cancelled:
+			finished++
+			if finished > 100 && !a.auditPins[FormatTaskID(t.Id)] {
+				continue
 			}
 		}
-		all = kept
+		kept = append(kept, t)
 	}
+	all = kept
 	a.tasks.SetRows(all, a.runnersSnapshot)
 	if a.capsAuditModal.IsOpen() {
 		a.capsAuditModal.SetTasks(a.auditTasks())

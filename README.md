@@ -268,7 +268,8 @@ bin/harness-cli --server-cid 'ws:HOSTNAME:8539-*' \
 # --deadline (5c) to wait for a free runner instead.
 
 # 4. Inspect / control
-bin/harness-cli ls
+bin/harness-cli ls                      # every task that has not ended, however old,
+                                        # plus the 100 newest finished ones
 bin/harness-cli ls --tree               # order tasks under whoever spawned them
 bin/harness-cli ls --order state        # created|activity|live|state|repo; live/state/repo
                                         # print an `== label (n) ==` line per group, and
@@ -1620,8 +1621,8 @@ task itself.
     into view. The node opens the task sheet with its 🔑 re-grant.
 
 Ended tasks are marked too, because a resume brings their recorded caps
-back. A task older than the TUI table's 100 newest rows is kept in the
-table, with its creators, while the audit points at it.
+back. A finished task older than the TUI table's 100 newest finished rows
+is kept in the table, with its creators, while the audit points at it.
 
 `caps reach` answers the per-task question: what ONE task reaches, per
 capability it exercises, what it sees, and what it may hand down —

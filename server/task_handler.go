@@ -2117,6 +2117,11 @@ func (h *TaskHandler) sessionMux(taskID string) *SessionMux {
 	return h.Sessions.Get(taskID)
 }
 
+// listFinishedRows is how many finished tasks a list carries, newest first; a
+// task that has not ended is always listed. The bound is on history: with
+// --task-retain unset nothing is forgotten, and every client lists on a poll.
+const listFinishedRows = 100
+
 func (h *TaskHandler) handleList(conn ConnHandle, requestID uint32, connID string) {
 	respond := func(streamID uint64) {
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_List, RequestId: requestID}
@@ -2126,7 +2131,7 @@ func (h *TaskHandler) handleList(conn ConnHandle, requestID uint32, connID strin
 	}
 
 	all, allowed, parentHex := h.listVisibleToCaller(connID)
-	tasks := h.Tasks.List(100)
+	tasks := h.Tasks.ListLiveAndRecent(listFinishedRows)
 	// RUNNERS visibility rides the task-visibility answer: a confined caller
 	// (visibility rank below global, not an operator) sees zero runners, so it
 	// cannot enumerate the operator's runner topology (hostnames, dial addrs,

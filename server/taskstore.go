@@ -1778,6 +1778,34 @@ func (s *TaskStore) List(limit int) []TaskEntry {
 	return result
 }
 
+// ListLiveAndRecent is the task list's rows, in insertion order: every task
+// that has not ended, however old, plus the finished newest finished ones.
+// Only finished tasks pile up (retention keeps them until pruned); the live
+// ones are bounded by the runners' slots and are what the list is opened for.
+func (s *TaskStore) ListLiveAndRecent(finished int) []TaskEntry {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	keep := make([]bool, len(s.order))
+	for i := len(s.order) - 1; i >= 0; i-- {
+		switch s.tasks[s.order[i]].Status {
+		case protocol.TaskStatus_Succeeded, protocol.TaskStatus_Failed, protocol.TaskStatus_Cancelled:
+			if finished > 0 {
+				keep[i] = true
+				finished--
+			}
+		default:
+			keep[i] = true
+		}
+	}
+	var result []TaskEntry
+	for i, id := range s.order {
+		if keep[i] {
+			result = append(result, *s.tasks[id])
+		}
+	}
+	return result
+}
+
 // applyRunSpec writes a create's or a resume's run mode and conditions, and
 // clears every per-run fact of an earlier run (A-D7: nothing is reused).
 func (e *TaskEntry) applyRunSpec(run RunSpec, now int64) {

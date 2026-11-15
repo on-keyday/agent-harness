@@ -2040,7 +2040,7 @@ var Verbs = []VerbSpec{
 			{Surface: TUI, At: "tui/runners.go:RunnersModel"},
 		},
 		Notes: []string{
-			"list runners and recent tasks; --json emits one {runners,tasks} object",
+			"list runners and tasks: every task that has not ended, plus the 100 newest finished ones; --json emits one {runners,tasks} object",
 		},
 		Action: "ListAction",
 		// --json already carries created_by on every row, so a consumer

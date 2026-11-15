@@ -169,3 +169,21 @@ func hexID(b byte) string {
 	id.Id[0] = b
 	return FormatTaskID(id)
 }
+
+// The table's 100-row cut applies to finished tasks only: a live task older
+// than the 100 newest is still listed.
+func TestTasksTableKeepsOldLiveTasksPastTheCut(t *testing.T) {
+	a := New(Config{})
+	a.width, a.height = 160, 40
+	ts := []protocol.TaskInfo{tuiTask(1, 0, 1)} // the oldest, Running
+	for i := 0; i < 101; i++ {
+		f := tuiTask(byte(10+i), 0, uint64(100+i))
+		f.Status = protocol.TaskStatus_Succeeded
+		ts = append(ts, f)
+	}
+	setAuditTasks(a, ts...)
+	rows := a.tasks.Rows()
+	if len(rows) != 101 || rows[len(rows)-1].Id.Id[0] != 1 {
+		t.Fatalf("got %d rows, last %d; want 100 finished + the old live task", len(rows), rows[len(rows)-1].Id.Id[0])
+	}
+}
