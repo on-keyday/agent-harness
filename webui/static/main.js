@@ -4218,22 +4218,6 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   const composeBg     = document.getElementById("compose-bg");
   const bgInput = (id) => document.getElementById(id);
 
-  // parseDurationMs reads Go's duration grammar ("90s", "5m", "1h30m");
-  // blank is 0, which the server reads as "its default" (none for a deadline).
-  const DUR_UNIT_MS = { ms: 1, s: 1000, m: 60000, h: 3600000 };
-  function parseDurationMs(name, v) {
-    v = (v || "").trim();
-    if (v === "") return 0;
-    const re = /(\d+(?:\.\d+)?)(ms|s|m|h)/gy;
-    let total = 0, at = 0, m;
-    while ((m = re.exec(v)) !== null) {
-      total += parseFloat(m[1]) * DUR_UNIT_MS[m[2]];
-      at = re.lastIndex;
-    }
-    if (at !== v.length || at === 0) throw new Error(`${name}: "${v}" is not a duration (e.g. 90s, 5m, 1h)`);
-    return Math.round(total);
-  }
-
   // composeRunMode is Compose's run-mode half of a session request; throws on
   // a malformed duration.
   function composeRunMode(tab, f) {
@@ -4251,43 +4235,6 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     return r;
   }
 
-  const msDurationStr = (ms) => {
-    if (!ms) return "";
-    const h = Math.floor(ms / 3600000), m = Math.floor(ms % 3600000 / 60000), s = (ms % 60000) / 1000;
-    return `${h ? h + "h" : ""}${m ? m + "m" : ""}${s ? s + "s" : ""}`;
-  };
-
-  // prefillComposeFromTask fills Compose from a background task's last run
-  // (A-D15: the server reuses nothing of it) and scrolls there: the prompt,
-  // the agent, the conditions and the resume id, Background checked.
-  // pinRunner is the runner id an "assigned" resume asks for, or "". Compose
-  // pins by host, which is what keeps a conversation resume on the machine
-  // that holds the agent's transcript; it is set only while that runner is
-  // connected, because a background open is never refused for no runner and a
-  // pin to a gone one would queue it forever.
-  function prefillComposeFromTask(t, resumeConversation, pinRunner = "") {
-    if (hostSelect) {
-      const r = pinRunner ? lastRunnerRows.find((x) => x.id === pinRunner) : null;
-      hostSelect.value = r && r.hostname ? r.hostname : "";
-    }
-    if (composePrompt) composePrompt.value = t.prompt || "";
-    if (agentSelect) populateAgentSelect(agentSelect, knownAgentProfiles, t.agentProfile || "", t.agentProfile);
-    const c = t.conditions || {};
-    bgInput("bg-deadline").value = msDurationStr(c.deadlineMs) || "1h";
-    bgInput("bg-turn-end").value = c.turnEnd && c.turnEnd !== "unset" ? c.turnEnd : "";
-    bgInput("bg-quiet").value = msDurationStr(c.quietMs);
-    bgInput("bg-blocked").value = msDurationStr(c.blockedMs);
-    bgInput("bg-queue").value = msDurationStr(c.queueTimeoutMs);
-    setComposeTab("background");
-    const boxes = composeBoxesFromTask(t);
-    if (spawnStreamBox) spawnStreamBox.checked = boxes.stream;
-    if (composeOneshotBox) composeOneshotBox.checked = boxes.oneshot;
-    const ptySelect = document.getElementById("compose-pty");
-    if (ptySelect) ptySelect.value = boxes.pty;
-    if (resumeConvBox) resumeConvBox.checked = !!resumeConversation;
-    setActiveTab("tasks");
-    document.getElementById("compose").scrollIntoView({ behavior: "smooth", block: "start" });
-  }
 
   // Pillar S: Compose's cron + zone. A filled cron turns Submit into
   // `schedule new` from the form's background fields. The zone select offers
@@ -5357,7 +5304,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // snapshot's render, which runs before this point in the file.
   async function resumeDirect(t, agent, a) {
     if (t.runMode === "background") {
-      prefillComposeFromTask(t, a.conversation, a.runner);
+      openResumeDialog(t);
       return;
     }
     const req = sessionReq({ agent, agentArgs: currentAgentArgs(), resumeTaskId: t.id, resumeConversation: a.conversation, runner: a.runner });
@@ -5375,10 +5322,87 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     try { fit.fit(); } catch (_) {}
     window.harness.resizeInteractive({ cols: term.cols, rows: term.rows });
   }
-  // taskResumeActions is t's one-click resumes as {label, run}, for the sheet
-  // and the id dialog alike; agentOf names the agent at click time.
+  // taskResumeActions is t's resumes as {label, run}, for the sheet and the id
+  // dialog alike: the one-click ones (not for a background task, whose resume
+  // needs a prompt and a deadline), then Resume…. agentOf names the agent at
+  // click time.
   function taskResumeActions(t, agentOf) {
-    return taskResumeActionsModel(t).map((a) => ({ label: a.label, run: () => resumeDirect(t, agentOf(), a) }));
+    const direct = t.runMode === "background" ? []
+      : taskResumeActionsModel(t).map((a) => ({ label: a.label, run: () => resumeDirect(t, agentOf(), a) }));
+    return [...direct, { label: "▶ Resume…", run: () => openResumeDialog(t) }];
+  }
+
+  // openResumeDialog: a resume with a prompt, args, a mode or an authority
+  // override (resumeDialogDefaults / resumeDialogRequest). The override has
+  // its own state, seeded from the task's grant; closed, nothing is re-granted.
+  function openResumeDialog(t) {
+    const modal = document.getElementById("resume-modal");
+    const $ = (id) => document.getElementById(id);
+    const d = resumeDialogDefaults(t);
+    $("resume-title").textContent = `▶ Resume ${t.id.slice(0, 8)} ${repoTail(t.repoPath || "")}`;
+    const radio = (name, v) => { for (const r of modal.querySelectorAll(`input[name="${name}"]`)) r.checked = r.value === v; };
+    radio("resume-mode", d.mode);
+    radio("resume-runner", d.runner);
+    $("resume-runner-assigned").hidden = !t.assignedTo;
+    $("resume-stream").checked = d.stream;
+    $("resume-oneshot").checked = d.oneshot;
+    $("resume-conv").checked = d.conversation;
+    populateAgentSelect($("resume-agent"), knownAgentProfiles, d.agent, t.agentProfile);
+    $("resume-args").value = "";
+    $("resume-prompt").value = "";
+    $("resume-deadline").value = d.cond.deadline;
+    $("resume-turn-end").value = d.cond.turnEnd;
+    $("resume-quiet").value = d.cond.quiet;
+    $("resume-blocked").value = d.cond.blocked;
+    $("resume-queue").value = d.cond.queueTimeout;
+    $("resume-error").textContent = "";
+    $("resume-override").open = false;
+    let bits = typeof t.capsBits === "number" ? t.capsBits : 0;
+    buildCapChips($("resume-chips"), () => bits, (v) => { bits = v; });
+    const scope = newScopeState();
+    setScopeState(scope, { base: t.scopeBase, excludeSelf: t.scopeExcludeSelf, visBase: t.scopeVisBase, ids: t.scopeIds, visIds: t.scopeVisIds });
+    buildScopeControls($("resume-scope"), scope, t.id, () => {});
+    const mode = () => (modal.querySelector('input[name="resume-mode"]:checked') || {}).value || "interactive";
+    const showForMode = () => {
+      for (const el of modal.querySelectorAll("[data-resume-for]")) el.hidden = !el.dataset.resumeFor.split(" ").includes(mode());
+    };
+    for (const r of modal.querySelectorAll('input[name="resume-mode"]')) r.onchange = showForMode;
+    showForMode();
+    $("resume-cancel").onclick = () => modal.close();
+    $("resume-go").onclick = async () => {
+      let req;
+      try {
+        const f = {
+          mode: mode(), stream: $("resume-stream").checked, oneshot: $("resume-oneshot").checked,
+          runner: (modal.querySelector('input[name="resume-runner"]:checked') || {}).value || "any",
+          conversation: $("resume-conv").checked, agent: $("resume-agent").value,
+          args: $("resume-args").value.trim() ? tokenize($("resume-args").value.trim()) : [],
+          prompt: $("resume-prompt").value,
+          cond: { deadline: $("resume-deadline").value, turnEnd: $("resume-turn-end").value, quiet: $("resume-quiet").value,
+            blocked: $("resume-blocked").value, queueTimeout: $("resume-queue").value },
+          override: $("resume-override").open, caps: capsLabelFor(bits), scope: scopeStateSpec(scope),
+        };
+        const r = resumeDialogRequest(f, t);
+        // The PTY size (A-D7): the terminal's own, as a foreground open gets it.
+        if (r.runMode === "background") { r.rows = term.rows; r.cols = term.cols; }
+        req = sessionReq(r);
+      } catch (e) {
+        $("resume-error").textContent = e.message;
+        return;
+      }
+      const open = async (r) => {
+        const id = await openSession(r, "resumed");
+        if (r.runMode === "background") appendCmdOutput(`background: ${id} queued`, true);
+      };
+      try {
+        await open(req);
+        modal.close();
+      } catch (e) {
+        if (routeAmbiguous(e, req, open)) { modal.close(); return; }
+        $("resume-error").textContent = `resume: ${e.message}`;
+      }
+    };
+    if (!modal.open) modal.showModal();
   }
 
   const reattachTo = async (id) => {
@@ -5407,7 +5431,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     // A background task resumes in background from Compose, prefilled.
     const known = lastTasks.find((x) => x.id === id);
     if (known && known.runMode === "background") {
-      prefillComposeFromTask(known, true);
+      openResumeDialog(known);
       return;
     }
     const args = currentAgentArgs();
@@ -7147,7 +7171,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       // A resume reuses nothing of the last run (A-D29): a foreground resume
       // of a one-shot opens the interactive argv. Said here, where the
       // buttons are, since the row's interactive+oneshot would suggest
-      // otherwise. A background one goes to Compose with its one-shot box set.
+      // otherwise. Resume… (and a background task) can keep it one-shot.
       if (t.oneshot && t.runMode !== "background") {
         const note = document.createElement("div");
         note.className = "notify-meta";

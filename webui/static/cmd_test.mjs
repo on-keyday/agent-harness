@@ -1054,3 +1054,33 @@ test("taskResumeActionsModel: assigned pair only with a runner, then any runner"
   eq(page.taskResumeActionsModel({ id: ID, assignedTo: "" }).map((a) => a.label),
     ["▶ Resume any runner", "▶ Resume conversation any runner"]);
 });
+
+// Resume…: the dialog starts from the task's last run, with the conversation on.
+test("resumeDialogDefaults: the task's last run, conversation on", () => {
+  const bg = { id: ID, runMode: "background", oneshot: true, kind: "Interactive", assignedTo: "f".repeat(32), agentProfile: "claude",
+    conditions: { deadlineMs: 1800000, turnEnd: "quiet", quietMs: 120000, blockedMs: 0, queueTimeoutMs: 0 } };
+  eq(page.resumeDialogDefaults(bg), { mode: "background", stream: false, oneshot: true, runner: "assigned", conversation: true,
+    agent: "claude", cond: { deadline: "30m", turnEnd: "quiet", quiet: "2m", blocked: "", queueTimeout: "" } });
+  const st = page.resumeDialogDefaults({ id: ID, runMode: "foreground", kind: "Stream", assignedTo: "" });
+  eq([st.mode, st.stream, st.runner, st.cond.deadline], ["interactive", true, "any", "1h"]);
+  eq(page.resumeDialogDefaults({ id: ID, runMode: "foreground", oneshot: true, kind: "Interactive" }).mode, "oneshot");
+});
+
+// The override re-grants only when it is open (resumeRegrantFlags reads null
+// as "not given").
+test("resumeDialogRequest: the override decides the re-grant; the mode decides the run", () => {
+  const form = (o) => ({ mode: "interactive", stream: false, oneshot: false, runner: "any", conversation: true, agent: "claude",
+    args: ["--x"], prompt: "", cond: { deadline: "1h", turnEnd: "", quiet: "", blocked: "", queueTimeout: "" },
+    override: false, caps: "exec_view", scope: "none", ...o });
+  const t = { id: ID, assignedTo: "f".repeat(32) };
+  let r = page.resumeDialogRequest(form(), t);
+  eq([r.resumeTaskId, r.caps, r.scope, r.scopeFor, r.runner, r.resumeConversation, r.runMode, r.agentArgs],
+    [ID, null, null, null, "", true, "", ["--x"]]);
+  r = page.resumeDialogRequest(form({ override: true, runner: "assigned" }), t);
+  eq([r.caps, r.scope, r.runner], ["exec_view", "none", "f".repeat(32)]);
+  r = page.resumeDialogRequest(form({ mode: "background", prompt: "go", oneshot: true, stream: true }), t);
+  eq([r.runMode, r.deadlineMs, r.oneshot, r.eventStream, r.prompt], ["background", 3600000, true, true, "go"]);
+  assert.throws(() => page.resumeDialogRequest(form({ mode: "background" }), t), /prompt/);
+  r = page.resumeDialogRequest(form({ mode: "oneshot", stream: true, oneshot: false }), t);
+  eq([r.oneshot, r.eventStream, r.runMode], [true, false, ""]);
+});

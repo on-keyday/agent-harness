@@ -334,6 +334,9 @@ button:hover { background: #555; }
 .compose-tab.is-active { background:#2d5; color:#000; border-color:#2d5; font-weight:bold; }
 .compose-options { display:flex; flex-wrap:wrap; gap:0.4rem 0.8rem; align-items:center; margin:0.3rem 0; }
 #compose details { margin:0.4rem 0; }
+.resume-row { margin:0.3rem 0; }
+#resume-modal label[for="resume-prompt"] { display:block; margin-top:0.4rem; }
+#resume-prompt { display:block; width:100%; box-sizing:border-box; }
 .task-group-head { color:#aaa; font-size:0.8rem; font-weight:bold; padding:0.5rem 0.2rem 0.15rem; border-bottom:1px solid #444; margin-bottom:0.2rem; }
 .task-sheet { display:flex; flex-wrap:wrap; gap:0.4rem; padding:0.3rem 0.5rem 0.6rem; }
 .task-action { background:#2a2a2a; color:#fff; border:1px solid #555; border-radius:4px; padding:0.45rem 0.7rem; font-size:0.9rem; cursor:pointer; min-height:2.4rem; }

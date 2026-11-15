@@ -644,6 +644,82 @@ function taskResumeActionsModel(t) {
   return out;
 }
 
+// parseDurationMs reads Go's duration grammar ("90s", "5m", "1h30m"); blank
+// is 0, which the server reads as "its default" (none for a deadline). name
+// heads the error.
+const DUR_UNIT_MS = { ms: 1, s: 1000, m: 60000, h: 3600000 };
+function parseDurationMs(name, v) {
+  v = (v || "").trim();
+  if (v === "") return 0;
+  const re = /(\d+(?:\.\d+)?)(ms|s|m|h)/gy;
+  let total = 0, at = 0, m;
+  while ((m = re.exec(v)) !== null) {
+    total += parseFloat(m[1]) * DUR_UNIT_MS[m[2]];
+    at = re.lastIndex;
+  }
+  if (at !== v.length || at === 0) throw new Error(`${name}: "${v}" is not a duration (e.g. 90s, 5m, 1h)`);
+  return Math.round(total);
+}
+
+// msDurationStr is parseDurationMs's inverse for a prefill ("" for 0).
+function msDurationStr(ms) {
+  if (!ms) return "";
+  const h = Math.floor(ms / 3600000), m = Math.floor(ms % 3600000 / 60000), s = (ms % 60000) / 1000;
+  return `${h ? h + "h" : ""}${m ? m + "m" : ""}${s ? s + "s" : ""}`;
+}
+
+// resumeDialogDefaults is the Resume… dialog's starting values: the task's
+// last run (its mode, one-shot / stream, and a background run's conditions),
+// where it last ran when it has a runner, its own agent, and the agent's
+// conversation on. A resume reuses nothing of the last run (A-D7), so these
+// are only what the form starts from.
+function resumeDialogDefaults(t) {
+  const boxes = composeBoxesFromTask(t);
+  const c = t.conditions || {};
+  const mode = t.runMode === "background" ? "background" : boxes.oneshot ? "oneshot" : "interactive";
+  return {
+    mode, stream: boxes.stream, oneshot: mode === "background" && boxes.oneshot,
+    runner: typeof t.assignedTo === "string" && t.assignedTo ? "assigned" : "any",
+    conversation: true,
+    agent: t.agentProfile || "",
+    cond: {
+      deadline: msDurationStr(c.deadlineMs) || "1h",
+      turnEnd: c.turnEnd && c.turnEnd !== "unset" ? c.turnEnd : "",
+      quiet: msDurationStr(c.quietMs), blocked: msDurationStr(c.blockedMs), queueTimeout: msDurationStr(c.queueTimeoutMs),
+    },
+  };
+}
+
+// resumeDialogRequest turns the dialog's form into sessionReq's argument. The
+// mode decides the run: one-shot is always one-shot and never a stream, a
+// background resume needs a prompt and takes the conditions. The authority is
+// re-granted only when the override is open (null = not given).
+function resumeDialogRequest(f, t) {
+  const bg = f.mode === "background";
+  if (bg && !String(f.prompt || "").trim()) throw new Error("prompt: a background resume needs one");
+  const r = {
+    resumeTaskId: t.id, agent: f.agent || "", agentArgs: f.args || [],
+    resumeConversation: !!f.conversation,
+    runner: f.runner === "assigned" && typeof t.assignedTo === "string" ? t.assignedTo : "",
+    prompt: f.prompt || "",
+    oneshot: f.mode === "oneshot" || (bg && !!f.oneshot),
+    eventStream: f.mode !== "oneshot" && !!f.stream,
+    runMode: bg ? "background" : "",
+    caps: f.override ? f.caps : null,
+    scope: f.override ? f.scope : null,
+    scopeFor: null,
+  };
+  if (bg) {
+    const c = f.cond || {};
+    r.deadlineMs = parseDurationMs("deadline", c.deadline);
+    r.quietMs = parseDurationMs("quiet", c.quiet);
+    r.blockedMs = parseDurationMs("blocked", c.blocked);
+    r.queueTimeoutMs = parseDurationMs("queue timeout", c.queueTimeout);
+    r.turnEnd = c.turnEnd || "";
+  }
+  return r;
+}
+
 // latestLoad lets only the newest of overlapping async loads render.
 function latestLoad() {
   let n = 0;

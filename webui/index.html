@@ -751,6 +751,55 @@
     </menu>
   </form>
 </dialog>
+<!-- Resume…: a resume with a prompt, args, a mode or an authority override.
+     A dialog, not a form in the sheet: the sheet moves with its row and is
+     rebuilt on every poll. Filled by openResumeDialog. -->
+<dialog id="resume-modal" class="picker-modal regrant-modal">
+  <form method="dialog" class="picker-form">
+    <h3 class="picker-title" id="resume-title"></h3>
+    <div class="resume-row">mode
+      <label><input type="radio" name="resume-mode" value="interactive"> interactive</label>
+      <label><input type="radio" name="resume-mode" value="oneshot"> one-shot</label>
+      <label><input type="radio" name="resume-mode" value="background"> background</label>
+      <label data-resume-for="interactive background"><input type="checkbox" id="resume-stream"> event-stream</label>
+      <label data-resume-for="background"><input type="checkbox" id="resume-oneshot"> one-shot で</label>
+    </div>
+    <div class="resume-row">runner
+      <label id="resume-runner-assigned"><input type="radio" name="resume-runner" value="assigned"> assigned (前回の runner)</label>
+      <label><input type="radio" name="resume-runner" value="any"> any runner</label>
+      <label><input type="checkbox" id="resume-conv"> 会話も再開</label>
+    </div>
+    <div class="resume-row">Agent <select id="resume-agent"></select>
+      args <input id="resume-args" type="text" size="40" placeholder='e.g. --settings "..."'></div>
+    <label for="resume-prompt">Prompt (background では必須)</label>
+    <textarea id="resume-prompt" rows="4"></textarea>
+    <div class="bg-block" data-resume-for="background">
+      <label class="limit-field">deadline <input id="resume-deadline" type="text" size="7"></label>
+      <label class="limit-field">turn end
+        <select id="resume-turn-end">
+          <option value="">any (既定)</option>
+          <option value="any">any</option>
+          <option value="off">off</option>
+          <option value="quiet">quiet</option>
+          <option value="lifecycle">lifecycle</option>
+          <option value="program">program</option>
+        </select></label>
+      <label class="limit-field">quiet <input id="resume-quiet" type="text" size="6" placeholder="5m"></label>
+      <label class="limit-field">blocked <input id="resume-blocked" type="text" size="6" placeholder="5m"></label>
+      <label class="limit-field">queue timeout <input id="resume-queue" type="text" size="6" placeholder="なし"></label>
+    </div>
+    <details id="resume-override">
+      <summary>権限を上書き (閉じていれば元の権限のまま)</summary>
+      <div id="resume-chips" class="caps-row"></div>
+      <div id="resume-scope"></div>
+    </details>
+    <p id="resume-error" class="task-err"></p>
+    <menu class="picker-actions">
+      <button type="button" id="resume-go">再開する</button>
+      <button type="button" id="resume-cancel">閉じる</button>
+    </menu>
+  </form>
+</dialog>
 <dialog id="task-actions-modal" class="picker-modal">
   <form method="dialog" class="picker-form">
     <h3 class="picker-title" id="task-actions-title"></h3>
