@@ -1626,17 +1626,10 @@ func connRemoteAddr(cid string) string {
 	return c.Addr.String()
 }
 
-// snapshotTasks is the task list of the last snapshot harnessSnapshot fetched,
-// the rows the page's task list renders, kept for harnessOrderTasks.
-var snapshotTasks struct {
-	sync.Mutex
-	tasks []protocol.TaskInfo
-}
-
 // harnessOrderTasks orders the task list's rows by cli.OrderTasks, so the page
-// does not restate the rules. ids are the rows the page's filter admits; an id
-// the last snapshot does not hold comes last, unlabelled. null for an unknown
-// mode.
+// does not restate the rules, over lastListing. ids are the rows the page's
+// filter admits; an id the last snapshot does not hold comes last, unlabelled.
+// null for an unknown mode.
 //
 //	harness.orderTasks(mode, ids) -> [{group, ids}] | null
 func harnessOrderTasks(this js.Value, args []js.Value) any {
@@ -1651,11 +1644,8 @@ func harnessOrderTasks(this js.Value, args []js.Value) any {
 	for i := range ids {
 		ids[i] = args[1].Index(i).String()
 	}
-	snapshotTasks.Lock()
-	ts := snapshotTasks.tasks
-	snapshotTasks.Unlock()
 	var out []any
-	for _, g := range cli.OrderTaskIDs(ts, ids, o, time.Now()) {
+	for _, g := range cli.OrderTaskIDs(lastListing, ids, o, time.Now()) {
 		gids := make([]any, len(g.IDs))
 		for i, id := range g.IDs {
 			gids[i] = id
@@ -1695,9 +1685,6 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 				rejectErr(reject, fmt.Errorf("snapshot: %w", err))
 				return
 			}
-			snapshotTasks.Lock()
-			snapshotTasks.tasks = lr.Tasks
-			snapshotTasks.Unlock()
 			runners := make([]any, 0, len(lr.Runners))
 			for _, r := range lr.Runners {
 				roots := make([]any, 0, len(r.AllowedRoots))

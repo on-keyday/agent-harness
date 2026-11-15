@@ -3,7 +3,6 @@ package cli
 import (
 	"encoding/hex"
 	"fmt"
-	"path"
 	"sort"
 	"strings"
 	"time"
@@ -255,7 +254,7 @@ func repoLabels(ts []protocol.TaskInfo) map[string]string {
 	byBase := map[string]map[string]bool{}
 	for _, t := range ts {
 		p := string(t.RepoPath)
-		b := path.Base(strings.TrimRight(p, "/"))
+		b := repoBasename(p)
 		if byBase[b] == nil {
 			byBase[b] = map[string]bool{}
 		}

@@ -164,3 +164,13 @@ func TestOrderTaskIDsKeepsUnknownIDsLast(t *testing.T) {
 		t.Errorf("OrderTaskIDs = %v, want %v", got, want)
 	}
 }
+
+// A Windows runner reports backslash paths: the group is still named by the
+// last element.
+func TestOrderRepoNamesWindowsPathsByLastElement(t *testing.T) {
+	w := ot(0, protocol.TaskStatus_Running, 1, 1, 0)
+	w.RepoPath = []byte(`C:\work\proj`)
+	if got := groupIDs(OrderTasks([]protocol.TaskInfo{w}, OrderRepo, orderNow)); got != "proj:a" {
+		t.Errorf("repo = %q, want proj:a", got)
+	}
+}
