@@ -204,7 +204,9 @@ not copies, so a later change to one reaches both verbs.
 ### Surfaces
 
 - **CLI:** the verbs above. `ls` and the task detail name the schedule a task
-  is bound to; a run a schedule started reads `from=schedule`.
+  is bound to; a task the schedule CREATED (its first firing) reads
+  `from=schedule`, while a task bound with `--task` keeps the origin it had and
+  its firings show as `resumed_by=schedule`.
 - **TUI:** a third table, Schedules, in the one-table-at-a-time layout
   (landed separately, 2026-11-15): the focus cycle becomes runners → tasks →
   schedules → notify → cmdresult → cmdline. Columns as `schedule ls`. `d`

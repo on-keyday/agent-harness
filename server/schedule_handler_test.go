@@ -1485,3 +1485,23 @@ func TestTwoEditsOfDifferentConditionsBothSurvive(t *testing.T) {
 		t.Errorf("after two edits: %+v", got)
 	}
 }
+
+// When the stored zone no longer loads, an edit that recomputes next_at must
+// answer invalid_zone naming the zone, not "no firing within five years".
+func TestEditWithUnloadableStoredZoneAnswersInvalidZone(t *testing.T) {
+	e := newSchedEnv(t)
+	sc := fireTestSchedule(7, protocol.ScheduleTaskState_PendingCreate, "")
+	sc.TZ = "Gone/Zone"
+	sc.Repo = "/r"
+	sc.NextAt = fireNow.Add(time.Hour)
+	if err := e.store.Put(sc); err != nil {
+		t.Fatal(err)
+	}
+	sp := &protocol.ScheduleSpec{}
+	sp.SetCronPresent(true)
+	sp.SetCron([]byte("0 10 * * *"))
+	r := e.edit(t, "", sc.ID, sp, "")
+	if r.Status != protocol.ScheduleStatus_InvalidZone || !strings.Contains(string(r.Message), "Gone/Zone") {
+		t.Fatalf("%v %q, want invalid_zone naming Gone/Zone", r.Status, r.Message)
+	}
+}

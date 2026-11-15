@@ -715,6 +715,11 @@ harness-cli schedule rm <schedule-id>            # the task stays; a run is not 
   and an instruction injected into it must not outlive the run by rewriting
   the prompt, the times or the binding. Do not read the refusal (`self_refused`)
   as a missing bit; the operator or another task changes it.
+- **Do not grant `schedule` in a scheduled task's authority** (the grant a
+  schedule stores). That refusal compares the caller with the bound task only:
+  a bound task holding `schedule` can still create a NEW schedule, and a child
+  it spawns with `schedule` and reach to its parent can edit the parent's
+  schedule — so an injected instruction could outlive the run.
 - **Every due firing leaves a history entry** (`schedule show`, last 50):
   `fired`, `run_now`, `skipped_busy` (the previous run is still queued or
   running), `skipped_no_task`, `skipped_task_gone`, `skipped_refused` (with the
@@ -725,8 +730,9 @@ harness-cli schedule rm <schedule-id>            # the task stays; a run is not 
   `--foreground`, or `session mode <id> foreground`, on a task bound to a
   schedule needs `schedule` as well as what it needs today; it unbinds the task,
   and its firings are `skipped_no_task` until `schedule edit --task <id>` binds
-  one. `ls` shows the binding as `schedule=<id8>`, and a run a schedule started
-  reads `from=schedule`.
+  one. `ls` shows the binding as `schedule=<id8>`. A task the schedule CREATED
+  (its first firing) reads `from=schedule`; a task bound with `--task` keeps
+  the origin it had, and its firings show as `resumed_by=schedule`.
 
 ## One-shot sessions & monitoring (`session new --oneshot`, `watch`)
 

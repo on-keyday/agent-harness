@@ -12,6 +12,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/agent-harness/topics"
 )
 
 // fakeSchedClock drives the schedule loop and the firing function. after
@@ -703,3 +704,48 @@ func parseIDSlice(t *testing.T, h string) []byte {
 }
 
 func hexID(id protocol.TaskID) string { return hex.EncodeToString(id.Id[:]) }
+
+// taskScheduleEvents are the task_schedule events captured for task that carry
+// a schedule id.
+func taskScheduleEventsWithID(evs []protocol.TaskStatusEvent, task string) int {
+	n := 0
+	for _, ev := range evs {
+		if hex.EncodeToString(ev.TaskId.Id[:]) == task && ev.Kind == protocol.StatusEventKind_TaskSchedule && ev.SchedulePresent() {
+			n++
+		}
+	}
+	return n
+}
+
+// The first firing's task_queued is published before the schedule binds, so
+// the binding must be published afterwards (kind=task_schedule, schedule_id).
+func TestFirstFiringPublishesTheBinding(t *testing.T) {
+	s, _ := newFireServer(t, t.TempDir())
+	getEvents := captureTaskEvents(s, topics.TasksStatus())
+	sc := fireTestSchedule(1, protocol.ScheduleTaskState_PendingCreate, "")
+	putSchedule(t, s, sc)
+	s.fireSchedule(sc.ID, sc.NextAt, false)
+	after := getSched(t, s, sc.ID)
+	if n := taskScheduleEventsWithID(getEvents(), after.TaskID); n != 1 {
+		t.Fatalf("%d task_schedule events with a schedule id for the created task; events: %+v", n, getEvents())
+	}
+}
+
+// A creation whose outcome save failed binds inside the next firing's settle;
+// that binding is published too.
+func TestSettleBindingInsideAFiringIsPublished(t *testing.T) {
+	s, _ := newFireServer(t, t.TempDir())
+	getEvents := captureTaskEvents(s, topics.TasksStatus())
+	sc := fireTestSchedule(1, protocol.ScheduleTaskState_PendingCreate, "")
+	putSchedule(t, s, sc)
+	failNthWrite(s.cfg.Schedules, 2)
+	s.fireSchedule(sc.ID, sc.NextAt, false)
+	x := getSched(t, s, sc.ID).History[0].TaskID
+	if n := taskScheduleEventsWithID(getEvents(), x); n != 0 {
+		t.Fatalf("bound event before any binding was stored: %d", n)
+	}
+	s.fireSchedule(sc.ID, wantNextAfterFireNow, false)
+	if n := taskScheduleEventsWithID(getEvents(), x); n < 1 {
+		t.Fatalf("settle's binding was not published")
+	}
+}

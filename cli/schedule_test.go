@@ -827,3 +827,37 @@ func TestTaskScheduleHex(t *testing.T) {
 		t.Errorf("unbound = %q", got)
 	}
 }
+
+// A negative duration must be refused: the later ms() clamp would turn -5m
+// into "no queue timeout" / "the default", silently.
+func TestScheduleRefusesNegativeDurations(t *testing.T) {
+	for _, flag := range []string{"--deadline", "--quiet", "--blocked", "--queue-timeout"} {
+		for _, sub := range []string{"new --cron @hourly --task " + schedHexID + " --prompt p", "edit " + schedHexID} {
+			line := sub + " " + flag + "=-5m"
+			a := parseScheduleLine(t, line)
+			if _, err := ScheduleSpecOptsFromAction(a); err == nil || !strings.Contains(err.Error(), flag) {
+				t.Errorf("%q: err %v, want a refusal naming %s", line, err, flag)
+			}
+		}
+	}
+}
+
+// `edit --rows 50` alone used to be dropped silently. The verb parser refuses
+// it; the shared builder refuses it too, for an action built another way.
+func TestScheduleEditRefusesRowsWithoutCols(t *testing.T) {
+	a := parseScheduleLine(t, "edit "+schedHexID+" --rows 50 --cols 100")
+	if o, err := ScheduleSpecOptsFromAction(a); err != nil || !o.SizeSet {
+		t.Fatalf("both named: %v %+v", err, o)
+	}
+	for _, drop := range []string{"cols", "rows"} {
+		b := a
+		if drop == "cols" {
+			b.ColsPresent = false
+		} else {
+			b.RowsPresent = false
+		}
+		if _, err := ScheduleSpecOptsFromAction(b); err == nil || !strings.Contains(err.Error(), "--rows") || !strings.Contains(err.Error(), "--cols") {
+			t.Errorf("without %s: err %v, want a refusal naming both", drop, err)
+		}
+	}
+}

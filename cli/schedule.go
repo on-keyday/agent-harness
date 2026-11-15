@@ -149,6 +149,16 @@ func ScheduleSpecOptsFromAction(a verb.ScheduleSpecAction) (ScheduleSpecOpts, er
 		}
 		o.Overrides = a.Overrides
 	}
+	for _, nd := range []struct {
+		flag    string
+		present bool
+		d       time.Duration
+	}{{"--deadline", a.DeadlinePresent, a.Deadline}, {"--quiet", a.QuietPresent, a.QuietFor},
+		{"--blocked", a.BlockedPresent, a.BlockedFor}, {"--queue-timeout", a.QueueTimeoutPresent, a.QueueTimeout}} {
+		if nd.present && nd.d < 0 {
+			return ScheduleSpecOpts{}, fmt.Errorf("%s %s: a duration cannot be negative (0 means none)", nd.flag, nd.d)
+		}
+	}
 	if a.DeadlinePresent {
 		d := a.Deadline
 		o.Deadline = &d
@@ -174,6 +184,9 @@ func ScheduleSpecOptsFromAction(a verb.ScheduleSpecAction) (ScheduleSpecOpts, er
 			}
 		}
 		o.TurnEnd = &te
+	}
+	if !isNew && a.RowsPresent != a.ColsPresent {
+		return ScheduleSpecOpts{}, fmt.Errorf("schedule edit: --rows and --cols go together (the size is one value on the wire; one alone would overwrite the other with its default)")
 	}
 	if isNew || (a.RowsPresent && a.ColsPresent) {
 		if a.Rows > 0xffff || a.Cols > 0xffff {

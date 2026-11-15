@@ -823,3 +823,35 @@ func TestScheduleDeleteKeepsTheCapturedID(t *testing.T) {
 		t.Errorf("calls = %v, want %v", *calls, want)
 	}
 }
+
+// The history lines are ~200 cells; the popup must wrap them so the outcome
+// and a long skipped_refused message are readable at 80 columns.
+func TestScheduleDetailPopupWrapsLongHistoryAt80(t *testing.T) {
+	a := schedApp(80, 24)
+	d := protocol.ScheduleDetail{Row: schedFixRows()[0]}
+	d.SetPrompt([]byte("triage"))
+	e := protocol.ScheduleHistoryEntry{Outcome: protocol.ScheduleOutcome_SkippedRefused, DueAt: 1, At: 1}
+	const msg = "spawn limit reached because the parent already holds forty descendants and refuses more today"
+	e.SetMessage([]byte(msg))
+	d.SetHistory([]protocol.ScheduleHistoryEntry{e})
+	a.Update(ScheduleShowMsg{ID: hex.EncodeToString(d.Row.Id.Id[:]), Detail: d})
+	a.detail.SetSize(80, 24)
+	shown := a.detail.vp.View()
+	a.detail.vp.GotoBottom()
+	shown = a.detail.vp.View()
+	content := a.detail.content()
+	for _, ln := range strings.Split(content, "\n") {
+		if w := runewidth.StringWidth(ln); w > a.detail.vp.Width {
+			t.Errorf("line %d cells > width %d: %q", w, a.detail.vp.Width, ln)
+		}
+	}
+	flat := strings.Join(strings.Fields(content), " ")
+	for _, want := range []string{"skipped_refused", "end=-", "msg=\"" + msg + "\""} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("popup content lacks %q:\n%s", want, content)
+		}
+	}
+	if !strings.Contains(strings.Join(strings.Fields(shown), " "), "forty descendants and refuses more today") {
+		t.Errorf("the message tail is not in the scrolled-to-bottom view:\n%s", shown)
+	}
+}

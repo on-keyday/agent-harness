@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -119,6 +120,10 @@ func scheduleTerminal(st protocol.TaskStatus) bool {
 // nextFor is the schedule's next firing instant after t, from its stored
 // expression and zone. Zero with a nil error means the expression has no
 // further match.
+// errZoneLoad marks a nextFor failure caused by a stored zone that no longer
+// loads, so the verbs can answer invalid_zone rather than invalid_cron.
+var errZoneLoad = errors.New("time zone does not load")
+
 func nextFor(sc *Schedule, t time.Time) (time.Time, error) {
 	c, err := parseCron(sc.Cron)
 	if err != nil {
@@ -126,7 +131,7 @@ func nextFor(sc *Schedule, t time.Time) (time.Time, error) {
 	}
 	loc, _, err := loadZone(sc.TZ)
 	if err != nil {
-		return time.Time{}, fmt.Errorf("time zone %q does not load: %w", sc.TZ, err)
+		return time.Time{}, fmt.Errorf("time zone %q does not load: %w (%v)", sc.TZ, errZoneLoad, err)
 	}
 	return nextFiring(c, loc, t), nil
 }
@@ -157,7 +162,16 @@ func (s *Server) fireSchedule(id string, due time.Time, manual bool) protocol.Sc
 	var (
 		outcome protocol.ScheduleOutcome
 		act     *firingAct
+		// bound is a task this firing bound the schedule to (settle inside
+		// step 1-4, or the creation in step 6); its binding is published
+		// once stored, because task_queued went out before it existed.
+		bound string
 	)
+	publishBound := func() {
+		if bound != "" && s.taskHandler != nil && s.taskHandler.Sched != nil {
+			s.taskHandler.Sched.boundChanged(bound)
+		}
+	}
 	// Steps 1-4 in one write: the decision is made against the schedule as
 	// the store holds it under its lock, so an edit cannot slip in between
 	// the check and the intent. A skip is its entry plus next_at; an intent
@@ -167,10 +181,14 @@ func (s *Server) fireSchedule(id string, due time.Time, manual bool) protocol.Sc
 		// pending although its action happened: settle it from the task
 		// store first, so a creation is not repeated under a new id and
 		// step 3 sees the task's real state (S-D22).
+		wasPending := sc.State == protocol.ScheduleTaskState_PendingCreate
 		sc.settlePending(func(tid string) (uint32, bool) {
 			t, ok := s.tasks.Get(tid)
 			return t.Run, ok
 		})
+		if wasPending && sc.State == protocol.ScheduleTaskState_Bound {
+			bound = sc.TaskID
+		}
 		next, nextErr := nextFor(sc, now)
 		entry := HistoryEntry{DueAt: due, At: now, TaskID: sc.TaskID}
 		record := func(o protocol.ScheduleOutcome, msg string) {
@@ -223,8 +241,11 @@ func (s *Server) fireSchedule(id string, due time.Time, manual bool) protocol.Sc
 		if err != ErrScheduleNotFound {
 			slog.Error("schedule firing: write failed; nothing was done", "schedule", id, "err", err)
 		}
+		bound = ""
 		return protocol.ScheduleOutcome_Pending
 	}
+	publishBound()
+	bound = ""
 	if act == nil {
 		return outcome
 	}
@@ -274,6 +295,7 @@ func (s *Server) fireSchedule(id string, due time.Time, manual bool) protocol.Sc
 			// task state in the meantime (then the entry still reads fired).
 			if act.creates && sc.State == protocol.ScheduleTaskState_PendingCreate {
 				sc.State, sc.TaskID = protocol.ScheduleTaskState_Bound, act.taskID
+				bound = act.taskID
 			}
 			return nil
 		}
@@ -283,7 +305,9 @@ func (s *Server) fireSchedule(id string, due time.Time, manual bool) protocol.Sc
 		// The entry stays pending in memory and on disk; the next start
 		// settles it from the task store (S-D22).
 		slog.Error("schedule firing: outcome write failed", "schedule", id, "err", err)
+		return outcome
 	}
+	publishBound()
 	return outcome
 }
 

@@ -1760,7 +1760,8 @@ task at the times its cron expression names, in a stated time zone. It is for
 work a machine starts and that ends itself (a watcher that triages new issues,
 a nightly report). The definitions live in `<data-dir>/schedules.json`
 (rewritten whole and atomically; the server refuses to start on a file it
-cannot parse) and survive a server restart. Spec:
+cannot parse) and survive a server restart — with `--data-dir`; without it the
+server only logs a warning and the schedules are lost at the next start. Spec:
 `docs/superpowers/specs/2026-11-15-pillar-s-schedules-design.md`.
 
 A firing is a background resume of the schedule's task — the same open
@@ -1861,8 +1862,10 @@ task instead (within your reach, and not running in foreground: end it or
 schedule shows `schedule=<id8>` in `ls` (the first 8 hex only: the verbs take
 the full 32-hex id, which `schedule ls`, `schedule_id` in `ls --json` and the
 task detail views print; the TUI command line also takes a unique prefix of a
-schedule it lists). A run it started reads `from=schedule`, and a
-`task_schedule` event on `watch` says its binding changed. Taking the task
+schedule it lists). A task the schedule CREATED (its first firing) reads
+`from=schedule`; a task bound with `--task` keeps the origin it had, and its
+firings show as `resumed_by=schedule` in `ls`. A `task_schedule` event on
+`watch` says its binding changed. Taking the task
 away — a resume asking for foreground, or `session mode … foreground` —
 needs the `schedule` bit as well as what it needs today, unbinds the task and
 appends `unbound` to the history. A schedule with no task shows as such, and
@@ -1883,6 +1886,12 @@ A schedule's own task can never act on its schedule — `edit`, `run`, `rm`, a
 the run reads untrusted text (issues, pull requests) and an injected
 instruction must not outlive it by rewriting the prompt, the times or the
 binding. Deleting a schedule leaves its task.
+
+**Do not grant `schedule` in a scheduled task's authority** (the grant a
+schedule stores). The rule above compares the caller with the bound task only:
+a bound task that holds `schedule` can still create a NEW schedule, and a child
+it spawns with `schedule` and reach to its parent can edit the parent's
+schedule — so an instruction injected into a run could outlive it.
 
 **Per-field edits.** The five run-condition fields (`--deadline`, `--turn-end`,
 `--quiet`, `--blocked`, `--queue-timeout`) are edited one by one: naming one

@@ -608,7 +608,7 @@ func (h *TaskHandler) scheduleCreate(cid string, spec *protocol.ScheduleSpec, pr
 	sc.CreatedAt = now
 	next, err := nextFor(&sc, now)
 	if err != nil || next.IsZero() {
-		return scheduleRefusal(protocol.ScheduleStatus_InvalidCron, "no firing within five years")
+		return nextForRefusal(err)
 	}
 	sc.NextAt = next
 
@@ -656,6 +656,16 @@ func (h *TaskHandler) writeBindingMode(taskHex string, cond RunConditions, now t
 	}
 	r := scheduleRefusal(protocol.ScheduleStatus_InternalError, "writing the task's mode: %v", err)
 	return &r
+}
+
+// nextForRefusal answers a nextFor that failed or found no firing: a zone that
+// no longer loads is invalid_zone (naming it, via err), anything else is the
+// five-year answer.
+func nextForRefusal(err error) protocol.ScheduleResponse {
+	if errors.Is(err, errZoneLoad) {
+		return scheduleRefusal(protocol.ScheduleStatus_InvalidZone, "%v", err)
+	}
+	return scheduleRefusal(protocol.ScheduleStatus_InvalidCron, "no firing within five years")
 }
 
 func (o *ScheduleOps) boundChanged(taskHex string) {
@@ -706,7 +716,7 @@ func (h *TaskHandler) scheduleEditLocked(cid string, id protocol.ScheduleID, idH
 	if d.timeChange {
 		n, err := nextFor(&next, now)
 		if err != nil || n.IsZero() {
-			return scheduleRefusal(protocol.ScheduleStatus_InvalidCron, "no firing within five years")
+			return nextForRefusal(err)
 		}
 		next.NextAt = n
 	}

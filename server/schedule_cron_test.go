@@ -268,7 +268,14 @@ func TestNextAcrossDST(t *testing.T) {
 func TestLoadZone(t *testing.T) {
 	loc, name, err := loadZone("")
 	if err != nil || loc == nil {
-		t.Fatalf("loadZone(\"\"): %v", err)
+		// A Windows dev box or a container without a symlinked /etc/localtime
+		// has no IANA name for the local zone: nothing to assert about it.
+		for _, cand := range localZoneCandidates() {
+			if _, e := time.LoadLocation(cand); e == nil && cand != "Local" && cand != "" {
+				t.Fatalf("loadZone(\"\"): %v", err)
+			}
+		}
+		t.Skip("the server's local zone has no loadable IANA name here")
 	}
 	if again, err := time.LoadLocation(name); err != nil || again == nil {
 		t.Errorf("stored name %q does not load: %v", name, err)

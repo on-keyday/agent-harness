@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mattn/go-runewidth"
 	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -55,6 +56,11 @@ type DetailPopup struct {
 	recordsBlock, transcriptsBlock string
 	// transcriptsFor is the task whose agent transcripts the popup waits for.
 	transcriptsFor string
+	// wrap soft-wraps the body to the viewport width (OpenWrapped). Bodies
+	// whose lines are long by nature (a schedule's history entries carry
+	// seven times and a message) would otherwise run off the edge, taking
+	// the outcome and message with them.
+	wrap bool
 }
 
 func NewDetailPopup() DetailPopup {
@@ -63,8 +69,61 @@ func NewDetailPopup() DetailPopup {
 
 func (d *DetailPopup) IsOpen() bool { return d.open }
 
+// OpenWrapped is Open for a body whose lines are long by nature (a
+// schedule's history entries carry seven times and a message): they are
+// soft-wrapped to the popup width, rune-width aware, so nothing runs off the
+// edge. Chosen over a two-line entry shape because the same cli renderer
+// feeds `schedule show` and the WebUI, which scroll or wrap on their own.
+func (d *DetailPopup) OpenWrapped(title, body string) {
+	d.Open(title, body)
+	d.wrap = true
+	d.vp.SetContent(d.content())
+}
+
+// content is the body as the viewport shows it.
+func (d *DetailPopup) content() string {
+	if !d.wrap {
+		return d.body
+	}
+	return wrapBody(d.body, d.vp.Width)
+}
+
+// wrapBody soft-wraps each line of s to width cells, breaking at the last
+// space that fits (else mid-word); continuations are indented four cells past
+// the line's own indent.
+func wrapBody(s string, width int) string {
+	if width < 12 {
+		return s
+	}
+	var out []string
+	for _, line := range strings.Split(s, "\n") {
+		indent := line[:len(line)-len(strings.TrimLeft(line, " "))]
+		cont := indent + "    "
+		cur := line
+		for runewidth.StringWidth(cur) > width {
+			w, cut := 0, 0
+			for i, r := range cur {
+				rw := runewidth.RuneWidth(r)
+				if w+rw > width {
+					break
+				}
+				w += rw
+				cut = i + len(string(r))
+			}
+			if sp := strings.LastIndexByte(cur[:cut], ' '); sp > len(cont) {
+				cut = sp
+			}
+			out = append(out, strings.TrimRight(cur[:cut], " "))
+			cur = cont + strings.TrimLeft(cur[cut:], " ")
+		}
+		out = append(out, cur)
+	}
+	return strings.Join(out, "\n")
+}
+
 func (d *DetailPopup) Open(title, body string) {
 	d.open = true
+	d.wrap = false
 	d.title = title
 	d.body = body
 	d.base, d.recordsFor, d.records = body, "", nil
@@ -129,7 +188,7 @@ func (d *DetailPopup) render() {
 		}
 	}
 	d.body = body
-	d.vp.SetContent(d.body)
+	d.vp.SetContent(d.content())
 }
 
 // formatTranscriptsBlock is the popup's agent-transcripts section: one line
@@ -198,8 +257,9 @@ func (d *DetailPopup) SetSize(w, h int) {
 	}
 	d.vp.Width = width
 	d.vp.Height = inner
-	d.vp.SetContent(d.body)
-	d.overflow = lipgloss.Height(d.body) > inner
+	c := d.content()
+	d.vp.SetContent(c)
+	d.overflow = lipgloss.Height(c) > inner
 }
 
 // Update handles scrolling while the popup is open. Esc is handled by the

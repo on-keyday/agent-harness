@@ -344,5 +344,5 @@ func (a *App) onScheduleShowMsg(msg ScheduleShowMsg) {
 		a.cmdresult.Append(ErrorStyle.Render("schedule show " + schedShort(msg.ID) + " failed: " + msg.Err.Error()))
 		return
 	}
-	a.detail.Open("Schedule detail", strings.TrimRight(cli.ScheduleDetailText(msg.Detail, time.Now()), "\n"))
+	a.detail.OpenWrapped("Schedule detail", strings.TrimRight(cli.ScheduleDetailText(msg.Detail, time.Now()), "\n"))
 }

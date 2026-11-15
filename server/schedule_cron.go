@@ -210,7 +210,8 @@ func (c cronExpr) nextWall(after time.Time) time.Time {
 // time (S-D3a): nextWall runs on the wall-clock fields carried in UTC (no
 // transitions) and each match is mapped back into loc. A match in a
 // spring-forward gap fires at the end of the gap; a match in a repeated hour
-// fires once, at the earlier instant (time.Date's choice).
+// fires once, at the earlier instant (wallToInstant's rule: time.Date's choice
+// depends on the sign of the zone's offset, S-D3a).
 func nextFiring(c cronExpr, loc *time.Location, after time.Time) time.Time {
 	w := after.In(loc)
 	cur := time.Date(w.Year(), w.Month(), w.Day(), w.Hour(), w.Minute(), w.Second(), w.Nanosecond(), time.UTC)
