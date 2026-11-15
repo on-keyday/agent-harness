@@ -2795,7 +2795,7 @@ var Verbs = []VerbSpec{
 			// mode is in the streamer's call, not beside it.
 			{Surface: TUI, At: "tui/grid.go:GridModel"},
 			{Surface: WebUI, At: "webui/index.html#session-grid-body"},
-			{Surface: WebUI, At: "webui/index.html#reattach"},
+			{Surface: WebUI, At: "webui/index.html#task-actions-modal"},
 			{Surface: WebUI, At: "webui/index.html#reattach-quick"},
 		},
 		Notes: []string{
