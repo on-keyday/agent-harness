@@ -355,3 +355,127 @@ function recordSheetModel(t, recs) {
     switchTo: live ? (t.recording ? "off" : "on") : "",
   };
 }
+
+// --- Server-kept cron schedules (pillar S) -------------------------------------
+//
+// Every word here was rendered in Go (cli.Schedule*Cell, cli.ScheduleDetailParts
+// -- the cells the TUI table and `schedule ls` / `schedule show` print); these
+// models only arrange it, so the page holds no second spelling of a time, a
+// task cell or a wait statistic.
+
+// scheduleRowModel is one row of the Schedules dialog from the bridge's row.
+// taskLink is true only for a bound task, whose id the row can open; a
+// schedule with no task yet says so in words (created-at-first-firing,
+// no-task), never a blank cell. Nothing is dropped at zero: a schedule that
+// never fired reads last=none, one with nothing due next=none.
+function scheduleRowModel(r) {
+  const bound = r.taskState === "bound" && !!r.taskId;
+  return {
+    id: r.id,
+    id8: String(r.id).slice(0, 8),
+    cron: r.cron,
+    zone: r.tz,
+    next: r.next,
+    last: r.last,
+    taskText: r.task,
+    taskId: bound ? r.taskId : "",
+    taskLink: bound,
+    taskState: r.taskState,
+    agent: r.agent,
+    repo: r.repo,
+    about: r.about,
+    line: r.line,
+  };
+}
+
+// scheduleDetailModel is the dialog's detail view: the definition lines, the
+// wait statistics, and the history in the order Go rendered it (oldest first,
+// each time in the schedule's zone with its absolute instant beside it).
+function scheduleDetailModel(d) {
+  return {
+    id: d.id,
+    head: [...(d.head || [])],
+    waits: d.waits,
+    waitN: d.waitN || 0,
+    waitMedianMs: d.waitMedianMs || 0,
+    waitMaxMs: d.waitMaxMs || 0,
+    historyTitle: d.historyTitle,
+    history: (d.history || []).map((text, n) => ({ n, text })),
+  };
+}
+
+// taskScheduleModel names the schedule a task is bound to, from the snapshot's
+// raw scheduleId: schedule=<id8> as an ls row prints it, the full id for the
+// sheet. null only when the task is bound to none -- gated on the binding
+// existing, never on its value.
+function taskScheduleModel(t) {
+  if (!t || !t.scheduleId) return null;
+  return { label: `schedule=${t.scheduleId.slice(0, 8)}`, id: t.scheduleId };
+}
+
+// taskEventRefreshes says whether a watch event re-reads the rows. Every
+// kind does -- a task_schedule event (a binding changed) included, since the
+// row's schedule= comes from the snapshot -- except a busy/idle edge, which
+// fires per session per change and is kept current by the poll.
+function taskEventRefreshes(line) {
+  return !(line && line.includes("kind=TaskActivity"));
+}
+
+// scheduleZoneOptions is Compose's zone select: the server's own zone first as
+// the empty value (the page cannot read it; the server resolves "" to it and
+// stores it by name), then the IANA names the browser knows.
+function scheduleZoneOptions(zones) {
+  return [{ value: "", label: "(server's zone)" }, ...(zones || []).map((z) => ({ value: z, label: z }))];
+}
+
+// composeIsSchedule: a filled cron turns Compose's Submit into a schedule.
+function composeIsSchedule(f) {
+  return String(f.cron || "").trim() !== "";
+}
+
+// composeScheduleTokens serializes Compose's form to the argument line of
+// `schedule new`, so the PARSER stays in Go (cli/verb) and the form cannot
+// accept what the CLI refuses. A foreground-only option is refused here with a
+// message instead of being dropped.
+function composeScheduleTokens(f) {
+  if (f.stream) {
+    throw new Error("schedule: an event-stream session cannot be scheduled -- untick \"event-stream で開く\" (a firing resumes a background task)");
+  }
+  const t = ["--cron", String(f.cron).trim()];
+  const tz = String(f.tz || "").trim();
+  if (tz) t.push("--tz", tz);
+  if (f.task) t.push("--task", f.task);
+  else if (f.repo) t.push("--repo", f.repo);
+  else throw new Error("schedule: select a repo (or fill in Task id to bind that task)");
+  if (f.host) t.push("--host", f.host);
+  if (f.agent) t.push("--agent", f.agent);
+  for (const a of f.agentArgs || []) t.push("--agent-arg", a);
+  if (f.prompt) t.push("--prompt", f.prompt);
+  if (f.deadline) t.push("--deadline", f.deadline);
+  if (f.turnEnd) t.push("--turn-end", f.turnEnd);
+  if (f.quiet) t.push("--quiet", f.quiet);
+  if (f.blocked) t.push("--blocked", f.blocked);
+  if (f.queueTimeout) t.push("--queue-timeout", f.queueTimeout);
+  if (f.oneshot) t.push("--oneshot");
+  if (f.record === "on") t.push("--record");
+  else if (f.record === "off") t.push("--no-record");
+  if (f.pty === "on") t.push("--pty");
+  else if (f.pty === "off") t.push("--no-pty");
+  if (f.resumeConversation) t.push("--resume-conversation");
+  // The authority block, as the chips and pickers hold it: the stored
+  // authority is bounded by the operator's, from the same flags session new has.
+  if (f.caps) t.push("--caps", f.caps);
+  if (f.scope) t.push("--scope", f.scope);
+  for (const s of f.scopeFor || []) t.push("--scope-for", s);
+  if (f.delegateCaps) t.push("--delegate-caps", f.delegateCaps);
+  if (f.delegateScope) t.push("--delegate-scope", f.delegateScope);
+  if (f.spawnDepth && f.spawnDepth !== "unbounded") t.push("--spawn-depth", f.spawnDepth);
+  if (f.maxDescendants && f.maxDescendants !== "unbounded") t.push("--max-descendants", f.maxDescendants);
+  return t;
+}
+
+// composeScheduleCreate creates the schedule from Compose and resolves with
+// the line `schedule new` prints (the id and the cron + zone).
+async function composeScheduleCreate(f, harness) {
+  return await harness.scheduleCreate(composeScheduleTokens(f));
+}

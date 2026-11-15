@@ -254,10 +254,8 @@ func taskLine(t protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo) st
 	// existing, never on its value. An id8 like by=: the full id is in
 	// `ls --json` and `schedule ls`.
 	sched := ""
-	if t.SchedulePresent() {
-		if id := t.ScheduleId(); id != nil {
-			sched = "  schedule=" + hex.EncodeToString(id.Id[:4])
-		}
+	if h := TaskScheduleHex(&t); h != "" {
+		sched = "  schedule=" + h[:8]
 	}
 	act := ""
 	if t.LastOutputAt > 0 {
@@ -686,12 +684,7 @@ func newTaskJSON(t *protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo
 	if t.LastOutputAt > 0 {
 		activity = ActivityStr(t.OutputIdleMs)
 	}
-	scheduleID := ""
-	if t.SchedulePresent() {
-		if id := t.ScheduleId(); id != nil {
-			scheduleID = hex.EncodeToString(id.Id[:])
-		}
-	}
+	scheduleID := TaskScheduleHex(t)
 	return taskJSON{
 		ScheduleID:     scheduleID,
 		Id:             taskIDHexOrEmpty(t.Id.Id[:]),
@@ -1067,4 +1060,17 @@ func LimitJSON(l protocol.SpawnLimit) *uint32 {
 	}
 	v := l.Value()
 	return &v
+}
+
+// TaskScheduleHex is the schedule a task is bound to, as 32 hex, or "" when it
+// is bound to none. Gated on the binding existing (checklist 31), never on its
+// value; the `schedule=` field of an ls row is its first 8 characters, the
+// WebUI's task row and sheet read it from here too.
+func TaskScheduleHex(t *protocol.TaskInfo) string {
+	if t.SchedulePresent() {
+		if id := t.ScheduleId(); id != nil {
+			return hex.EncodeToString(id.Id[:])
+		}
+	}
+	return ""
 }

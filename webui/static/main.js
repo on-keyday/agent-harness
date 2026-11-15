@@ -877,6 +877,139 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     if (!transcriptModal.open) transcriptModal.showModal();
     loadTranscripts(t);
   };
+  // --- Schedules (pillar S) ---------------------------------------------------
+  //
+  // The dialog behind the Schedules button: the rows of `schedule ls`, and for
+  // one of them the detail (`schedule show`: the definition, the wait
+  // statistics, the history with each time's zone and absolute instant) with
+  // Run now and Delete. Every word is rendered in Go (cli.Schedule*) and only
+  // arranged by scheduleRowModel / scheduleDetailModel. Results go to the
+  // command output, naming the schedule and the change, as the verbs print them.
+  const schedulesModal = document.getElementById("schedules-modal");
+  const schedulesBody = document.getElementById("schedules-modal-body");
+  const schedulesTitle = document.getElementById("schedules-modal-title");
+  const schedulesBack = document.getElementById("schedules-modal-back");
+  const schedulesRunBtn = document.getElementById("schedules-modal-run");
+  const schedulesDeleteBtn = document.getElementById("schedules-modal-delete");
+  let schedulesViewing = ""; // the schedule id whose detail is open, "" = the list
+  const scheduleNote = (cls, text) => transcriptLine(cls, text);
+  const setScheduleButtons = () => {
+    schedulesBack.hidden = schedulesRunBtn.hidden = schedulesDeleteBtn.hidden = schedulesViewing === "";
+  };
+  const loadScheduleList = async () => {
+    schedulesViewing = "";
+    setScheduleButtons();
+    schedulesTitle.textContent = "Schedules";
+    schedulesBody.replaceChildren(scheduleNote("schedule-note", "読み込み中…"));
+    try {
+      const { rows } = await window.harness.scheduleList({});
+      if (!rows.length) {
+        schedulesBody.replaceChildren(scheduleNote("schedule-empty", "no schedules"));
+        return;
+      }
+      schedulesBody.replaceChildren(...rows.map((r) => {
+        const m = scheduleRowModel(r);
+        const el = document.createElement("div");
+        el.className = "schedule-row";
+        el.title = m.line;
+        const id = document.createElement("span");
+        id.className = "schedule-id";
+        id.textContent = m.id;
+        const cells = document.createElement("div");
+        cells.className = "schedule-cells";
+        for (const text of [m.cron, m.zone, `next=${m.next}`, `last=${m.last}`, m.agent, m.repo, `prompt=${m.about}`]) {
+          const c = document.createElement("span");
+          c.textContent = text;
+          cells.appendChild(c);
+        }
+        const task = document.createElement("span");
+        task.textContent = `task=${m.taskText}`;
+        cells.appendChild(task);
+        if (m.taskLink) {
+          const go = document.createElement("button");
+          go.type = "button";
+          go.textContent = "task →";
+          go.title = "task list をこの task に絞る";
+          go.addEventListener("click", (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const f = document.getElementById("task-filter-input");
+            f.value = m.taskId;
+            f.dispatchEvent(new Event("input"));
+            schedulesModal.close();
+          });
+          cells.appendChild(go);
+        }
+        el.append(id, cells);
+        el.addEventListener("click", () => loadScheduleDetail(m.id));
+        return el;
+      }));
+    } catch (e) {
+      schedulesBody.replaceChildren(scheduleNote("schedule-note", e.message));
+    }
+  };
+  const loadScheduleDetail = async (id) => {
+    schedulesViewing = id;
+    setScheduleButtons();
+    schedulesTitle.textContent = `schedule ${id.slice(0, 8)}`;
+    schedulesBody.replaceChildren(scheduleNote("schedule-note", "読み込み中…"));
+    try {
+      const m = scheduleDetailModel(await window.harness.scheduleShow(id, {}));
+      const wrap = document.createElement("div");
+      wrap.className = "schedule-detail";
+      const head = document.createElement("pre");
+      head.textContent = m.head.join("\n");
+      const waits = document.createElement("div");
+      waits.className = "schedule-waits";
+      waits.textContent = m.waits;
+      const title = document.createElement("div");
+      title.className = "schedule-history-title";
+      title.textContent = m.historyTitle;
+      wrap.append(head, waits, title, ...m.history.map((h) => scheduleNote("schedule-history-line", h.text)));
+      schedulesBody.replaceChildren(wrap);
+    } catch (e) {
+      schedulesBody.replaceChildren(scheduleNote("schedule-note", e.message));
+    }
+  };
+  const refreshSchedulesDialog = () => {
+    if (!schedulesModal.open) return;
+    if (schedulesViewing) loadScheduleDetail(schedulesViewing);
+    else loadScheduleList();
+  };
+  const openSchedules = (id) => {
+    if (!schedulesModal.open) schedulesModal.showModal();
+    if (id) loadScheduleDetail(id);
+    else loadScheduleList();
+  };
+  document.getElementById("schedules-btn").addEventListener("click", () => openSchedules(""));
+  document.getElementById("schedules-modal-close").addEventListener("click", () => schedulesModal.close());
+  document.getElementById("schedules-modal-refresh").addEventListener("click", refreshSchedulesDialog);
+  schedulesBack.addEventListener("click", () => loadScheduleList());
+  schedulesRunBtn.addEventListener("click", async (e) => {
+    e.preventDefault();
+    const id = schedulesViewing;
+    try {
+      appendCmdOutput(await window.harness.scheduleRun(id), true);
+    } catch (err) {
+      appendCmdOutput(`error: ${err.message}`, true);
+    }
+    refreshSnapshot();
+    refreshSchedulesDialog();
+  });
+  schedulesDeleteBtn.addEventListener("click", async (e) => {
+    e.preventDefault();
+    const id = schedulesViewing;
+    if (!confirm(`Delete schedule ${id}?\nIts task stays, and a run in progress is not cancelled.`)) return;
+    try {
+      appendCmdOutput(await window.harness.scheduleDelete(id), true);
+    } catch (err) {
+      appendCmdOutput(`error: ${err.message}`, true);
+      return;
+    }
+    refreshSnapshot();
+    loadScheduleList();
+  });
+
   const gridShowBtn = document.getElementById("grid-show-btn");
   const gridAllOn   = document.getElementById("grid-all-on");
   const gridAllOff  = document.getElementById("grid-all-off");
@@ -2694,7 +2827,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       // session — routine badge refreshes, not lifecycle changes. Skip the
       // banner AND the snapshot kick (the 5s poll keeps the table current);
       // rendering each edge would spam the cmd output.
-      if (evt.line && evt.line.includes("kind=TaskActivity")) return;
+      if (!taskEventRefreshes(evt.line)) return;
       // A progress write changes the row's text, so it refreshes — but it is
       // routine, so it prints no banner (taskEventBanner).
       const line = taskEventBanner(evt.line);
@@ -3306,6 +3439,9 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       delegateCapsLabel: capsLabelFor(spawnDeleg.caps), delegateScope: scopeStateSpec(spawnDeleg),
       spawnDepth: spawnLimits.depth || "unbounded", maxDescendants: spawnLimits.max || "unbounded" }),
     setSpawnDefaults: (d) => setSpawnDefaults(d),
+    // A schedule verb typed on the command line changed (or read) the list the
+    // open dialog shows.
+    schedulesChanged: () => refreshSchedulesDialog(),
   };
 
   const runCmd = async () => {
@@ -4130,6 +4266,59 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     setActiveTab("tasks");
     document.getElementById("compose").scrollIntoView({ behavior: "smooth", block: "start" });
   }
+
+  // Pillar S: Compose's cron + zone. A filled cron turns Submit into
+  // `schedule new` from the form's background fields. The zone select offers
+  // the server's zone first (empty: the page cannot read it, the server
+  // resolves "" and stores it by name) and the browser's IANA names.
+  const composeCron = document.getElementById("compose-cron");
+  const composeZone = document.getElementById("compose-zone");
+  if (composeZone) {
+    let zones = [];
+    try { zones = Intl.supportedValuesOf("timeZone"); } catch (_) { /* older browser: the server's zone only */ }
+    if (!zones.includes("UTC")) zones = ["UTC", ...zones];
+    for (const o of scheduleZoneOptions(zones).slice(1)) {
+      const opt = document.createElement("option");
+      opt.value = o.value;
+      opt.textContent = o.label;
+      composeZone.appendChild(opt);
+    }
+  }
+  // A schedule is always a background run, so the conditions block is the
+  // part of the form it reads: show it as soon as a cron is typed.
+  if (composeCron) composeCron.addEventListener("input", () => {
+    if (composeCron.value.trim() !== "" && composeBgBox && composeBg) {
+      composeBgBox.checked = true;
+      composeBg.hidden = false;
+    }
+  });
+  const composeForm = () => ({
+    cron: composeCron ? composeCron.value : "",
+    tz: composeZone ? composeZone.value : "",
+    repo: runnerSelect.value || "",
+    task: currentResumeTaskID(),
+    host: hostSelect ? (hostSelect.value || "") : "",
+    agent: agentSelect ? (agentSelect.value || "") : "",
+    agentArgs: currentAgentArgs(),
+    prompt: composePrompt ? composePrompt.value : "",
+    oneshot: !!(composeOneshotBox && composeOneshotBox.checked),
+    record: (document.getElementById("compose-record") || {}).value,
+    pty: (document.getElementById("compose-pty") || {}).value,
+    resumeConversation: !!(resumeConvBox && resumeConvBox.checked),
+    stream: !!(spawnStreamBox && spawnStreamBox.checked),
+    deadline: bgInput("bg-deadline").value.trim(),
+    turnEnd: bgInput("bg-turn-end").value,
+    quiet: bgInput("bg-quiet").value.trim(),
+    blocked: bgInput("bg-blocked").value.trim(),
+    queueTimeout: bgInput("bg-queue").value.trim(),
+    caps: capsLabelFor(spawnCaps),
+    scope: spawnScope,
+    scopeFor: overrideSpecsFrom("spawn"),
+    delegateCaps: capsLabelFor(spawnDeleg.caps),
+    delegateScope: scopeStateSpec(spawnDeleg),
+    spawnDepth: spawnLimits.depth,
+    maxDescendants: spawnLimits.max,
+  });
 
   const composeRequest = () => sessionReq({
     repo: runnerSelect.value || "",
@@ -5306,6 +5495,18 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // detachable, takeover-able session (the one-shot/non-detachable variant
   // was removed; a session you cannot re-enter had no upside).
   const openInteractive = async (label) => {
+    // A filled cron: this Submit creates a schedule, it opens no session.
+    if (composeCron && composeIsSchedule({ cron: composeCron.value })) {
+      try {
+        const form = composeForm();
+        appendCmdOutput(await composeScheduleCreate(form, window.harness), true);
+        refreshSnapshot();
+        refreshSchedulesDialog();
+      } catch (e) {
+        alert(e.message);
+      }
+      return;
+    }
     let req;
     try {
       req = composeRequest();
@@ -6344,6 +6545,11 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       let metaText = `${t.id.slice(0, 12)}…  ${t.kindLabel || t.kind}  from=${t.origin || "-"}`;
       if (t.createdBy) metaText += `  by=${t.createdBy}`;
       if (t.resumedBy) metaText += `  resumed_by=${t.resumedBy}`;
+      // The bound schedule (pillar S), from the snapshot -- which every task
+      // event refreshes, task_schedule included. Gated on the binding, never
+      // on its value.
+      const rowSched = taskScheduleModel(t);
+      if (rowSched) metaText += `  ${rowSched.label}`;
       if (t.caps) metaText += `  caps=${t.caps}`;
       // Always shown, subtree included: hiding the default read as "this
       // task has no scope", which is never true.
@@ -6508,6 +6714,24 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     });
     idRow.append(idText, copyBtn);
     sheet.appendChild(idRow);
+
+    // The schedule this task is bound to: the full id, and the dialog's
+    // detail for it.
+    const sheetSched = taskScheduleModel(t);
+    if (sheetSched) {
+      const schedRow = document.createElement("div");
+      schedRow.className = "task-id";
+      const schedText = document.createElement("span");
+      schedText.className = "task-id-text";
+      schedText.textContent = `schedule: ${sheetSched.id}`;
+      const schedBtn = document.createElement("button");
+      schedBtn.type = "button";
+      schedBtn.className = "task-action";
+      schedBtn.textContent = "⏱ Schedule";
+      schedBtn.addEventListener("click", (e) => { e.stopPropagation(); openSchedules(sheetSched.id); });
+      schedRow.append(schedText, schedBtn);
+      sheet.appendChild(schedRow);
+    }
 
     const liveSession = t.status === "Running" || t.status === "Detached";
 

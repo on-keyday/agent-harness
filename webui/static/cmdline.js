@@ -314,6 +314,25 @@ async function runVerbCommandDispatch(tokens, ctx) {
       out = b.flags.trsf ? "conns: trsf reading open" : "conns: showing the connections tab";
       break;
     }
+    case "schedule": {
+      // The six schedule verbs. The line is parsed (and -h answered) by the
+      // shared declaration first, then the bridge parses its tail again into
+      // the typed action: one grammar, and the result text is cli's own.
+      // Ids are the full 32 hex the declaration validates (no prefixes here).
+      const b = parseOrHelp(ctx, tokens, {});
+      const rest = tokens.slice(2);
+      switch (tokens[1]) {
+        case "new": out = await ctx.harness.scheduleCreate(rest); break;
+        case "edit": out = await ctx.harness.scheduleEdit(rest); break;
+        case "run": out = await ctx.harness.scheduleRun(b.args[0]); break;
+        case "rm": out = await ctx.harness.scheduleDelete(b.args[0]); break;
+        case "ls": out = (await ctx.harness.scheduleList({ json: !!b.flags.json })).text; break;
+        case "show": out = (await ctx.harness.scheduleShow(b.args[0], { json: !!b.flags.json })).text; break;
+        default: throw new Error(`schedule: unknown sub-verb ${tokens[1]}`);
+      }
+      if (ctx.schedulesChanged) ctx.schedulesChanged();
+      break;
+    }
     case "scope":
     case "caps": {
       // Which of the three, by the SUB-VERB word rather than by counting

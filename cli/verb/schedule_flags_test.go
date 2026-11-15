@@ -134,13 +134,13 @@ func TestScheduleRefusesWhatAFiringCannotCarry(t *testing.T) {
 	}
 }
 
-// The schedule verbs are declared for the CLI and the TUI only until the WebUI
-// dialog lands (ruling R2).
-func TestScheduleRowsAreCLIAndTUI(t *testing.T) {
+// The schedule verbs are typable on all three surfaces (ruling R2: the WebUI
+// joined with its dispatch and its dialog).
+func TestScheduleRowsAreOnEverySurface(t *testing.T) {
 	for _, p := range []string{"new", "edit", "run", "rm", "ls", "show"} {
 		v := verbByPath(t, "schedule", p)
-		if v.CmdlineSurfaces != CLI|TUI {
-			t.Errorf("schedule %s: CmdlineSurfaces = %v, want CLI|TUI", p, v.CmdlineSurfaces)
+		if v.CmdlineSurfaces != CLI|TUI|WebUI {
+			t.Errorf("schedule %s: CmdlineSurfaces = %v, want CLI|TUI|WebUI", p, v.CmdlineSurfaces)
 		}
 	}
 }

@@ -67,6 +67,7 @@
         <span class="grid-control-sep">選択:</span>
         <button type="button" id="grid-all-on" class="task-chip">☑ 全</button>
         <button type="button" id="grid-all-off" class="task-chip">☐ 全解除</button>
+        <button type="button" id="schedules-btn" class="task-chip" title="server-kept cron schedules: list, detail, run now, delete">⏱ Schedules</button>
       </div>
             <!-- Creator tree: a node-link diagram of who spawned whom. Toggled by
            #task-chip-tree, hidden otherwise. Deliberately NOT a re-ordering of
@@ -142,6 +143,15 @@
           <option value="off">off</option>
         </select>
       </label>
+      <!-- Pillar S: a filled cron turns Submit into `schedule new` with this
+           form's background fields (deadline, conditions, agent, repo, prompt,
+           record, one-shot, PTY, authority) instead of opening a session. The
+           zone is the IANA name the expression is read in; the empty option is
+           the server's own zone, which the page cannot read. -->
+      <label class="limit-field" title="cron 式 (5 フィールド、または @hourly / @daily / @weekly / @monthly / @yearly)。入れると Submit は session を開かず schedule を作る">cron
+        <input id="compose-cron" type="text" size="16" placeholder="0 9 * * *  /  @daily"></label>
+      <label class="limit-field" title="cron 式を読むタイムゾーン (IANA 名)。空 = server の zone">zone
+        <select id="compose-zone"><option value="">(server's zone)</option></select></label>
       <div id="compose-bg" class="bg-block" hidden>
         <label class="limit-field">deadline <input id="bg-deadline" type="text" size="7" value="1h"></label>
         <label class="limit-field">turn end
@@ -692,6 +702,22 @@
     <menu class="picker-actions">
       <button type="button" id="transcript-modal-refresh">↻ 更新</button>
       <button type="button" id="transcript-modal-close">Close</button>
+    </menu>
+  </form>
+</dialog>
+<!-- Schedules (pillar S): the rows of `schedule ls`, a detail view (the
+     definition, wait statistics, history with each time's zone and absolute
+     instant) and Run now / Delete. Results go to the command output. -->
+<dialog id="schedules-modal" class="picker-modal schedules-modal">
+  <form method="dialog" class="picker-form">
+    <h3 class="picker-title" id="schedules-modal-title">Schedules</h3>
+    <div id="schedules-modal-body" class="schedules-body"></div>
+    <menu class="picker-actions">
+      <button type="button" id="schedules-modal-back" hidden>← 一覧</button>
+      <button type="button" id="schedules-modal-run" hidden>▶ Run now</button>
+      <button type="button" id="schedules-modal-delete" hidden>🗑 Delete</button>
+      <button type="button" id="schedules-modal-refresh">↻ 更新</button>
+      <button type="button" id="schedules-modal-close">Close</button>
     </menu>
   </form>
 </dialog>

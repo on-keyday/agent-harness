@@ -640,15 +640,31 @@ func ScheduleLsWith(ctx context.Context, c *Client, asJSON bool, out io.Writer) 
 	}
 	now := time.Now()
 	if asJSON {
-		return writeScheduleListJSON(out, rows, now)
+		return ScheduleListJSON(out, rows, now)
 	}
+	ScheduleListText(out, rows, now)
+	return nil
+}
+
+// ScheduleListText prints the rows `schedule ls` prints; ScheduleListJSON is
+// its --json document. A surface that fetched the rows itself (the WebUI,
+// which also draws them) renders through these, not a second copy.
+func ScheduleListText(out io.Writer, rows []protocol.ScheduleRow, now time.Time) {
 	if len(rows) == 0 {
 		fmt.Fprintln(out, "no schedules")
 	}
 	for _, r := range rows {
 		fmt.Fprintln(out, ScheduleRowLine(r, now))
 	}
-	return nil
+}
+
+func ScheduleListJSON(out io.Writer, rows []protocol.ScheduleRow, now time.Time) error {
+	return writeScheduleListJSON(out, rows, now)
+}
+
+// ScheduleDetailJSON is `schedule show --json`.
+func ScheduleDetailJSON(out io.Writer, d protocol.ScheduleDetail, now time.Time) error {
+	return writeScheduleDetailJSON(out, d, now)
 }
 
 // ScheduleShowWith runs schedule show.
@@ -893,10 +909,37 @@ func schedByLabel(kind protocol.ClientKind, id protocol.TaskID) string {
 // (S-D3: every surface shows a firing with its zone); an absent time is `-`,
 // never dropped; a history field that exists is always printed.
 func ScheduleDetailText(d protocol.ScheduleDetail, now time.Time) string {
+	p := ScheduleDetailParts(d, now)
+	var b strings.Builder
+	for _, l := range p.Head {
+		b.WriteString(l + "\n")
+	}
+	b.WriteString(p.Waits + "\n")
+	b.WriteString(p.HistoryTitle + "\n")
+	for _, l := range p.History {
+		b.WriteString("  " + l + "\n")
+	}
+	return b.String()
+}
+
+// ScheduleDetailPartsOf is ScheduleDetailText cut into the pieces a surface
+// with its own layout (the WebUI dialog) places itself: Head is every line
+// before the wait statistics, Waits the `waits:` line, HistoryTitle the line
+// introducing the history and History each entry without its indent. The text
+// form is these parts joined, so a surface cannot render a second wording.
+type ScheduleDetailPartsOf struct {
+	Head         []string
+	Waits        string
+	HistoryTitle string
+	History      []string
+}
+
+// ScheduleDetailParts renders d as its parts; ScheduleDetailText joins them.
+func ScheduleDetailParts(d protocol.ScheduleDetail, now time.Time) ScheduleDetailPartsOf {
 	r := d.Row
 	loc := scheduleLocation(string(r.Tz))
-	var b strings.Builder
-	line := func(format string, a ...any) { fmt.Fprintf(&b, format+"\n", a...) }
+	var head []string
+	line := func(format string, a ...any) { head = append(head, fmt.Sprintf(format, a...)) }
 
 	line("id: %s", hex.EncodeToString(r.Id.Id[:]))
 	line("cron: %s", string(r.Cron))
@@ -947,21 +990,20 @@ func ScheduleDetailText(d protocol.ScheduleDetail, now time.Time) string {
 	} else {
 		line("edited: %s (%s) by %s", schedTime(d.EditedAt, loc, schedMinute), schedInstant(d.EditedAt), schedByLabel(d.EditedByKind, d.EditedBy))
 	}
+	p := ScheduleDetailPartsOf{Head: head, HistoryTitle: "history: none yet"}
 	n, median, max := WaitStats(d.History)
 	if n == 0 {
-		line("waits: n=0 (no fired or run_now entry has both queued and started yet)")
+		p.Waits = "waits: n=0 (no fired or run_now entry has both queued and started yet)"
 	} else {
-		line("waits: n=%d median=%s max=%s", n, median.Round(time.Millisecond), max.Round(time.Millisecond))
+		p.Waits = fmt.Sprintf("waits: n=%d median=%s max=%s", n, median.Round(time.Millisecond), max.Round(time.Millisecond))
 	}
-	if len(d.History) == 0 {
-		line("history: none yet")
-		return b.String()
+	if len(d.History) > 0 {
+		p.HistoryTitle = fmt.Sprintf("history (%d, oldest first):", len(d.History))
+		for _, e := range d.History {
+			p.History = append(p.History, scheduleHistoryLine(e, loc))
+		}
 	}
-	line("history (%d, oldest first):", len(d.History))
-	for _, e := range d.History {
-		line("  %s", scheduleHistoryLine(e, loc))
-	}
-	return b.String()
+	return p
 }
 
 func quotedList(l []string) string {

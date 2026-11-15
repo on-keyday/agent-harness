@@ -786,3 +786,44 @@ func TestScheduleJSONAbsentNextSpelledLikeTheRow(t *testing.T) {
 		t.Errorf("next_local = %v, want \"none\" as in the text row", got)
 	}
 }
+
+// The WebUI dialog arranges ScheduleDetailParts itself; the text form is the
+// parts joined, so the two cannot word the same schedule differently.
+func TestScheduleDetailPartsAreTheTextCutUp(t *testing.T) {
+	d := schedDetail()
+	p := ScheduleDetailParts(d, schedNow)
+	var b strings.Builder
+	for _, l := range p.Head {
+		b.WriteString(l + "\n")
+	}
+	b.WriteString(p.Waits + "\n" + p.HistoryTitle + "\n")
+	for _, l := range p.History {
+		b.WriteString("  " + l + "\n")
+	}
+	if got := ScheduleDetailText(d, schedNow); got != b.String() {
+		t.Errorf("text != parts joined:\n%s\n---\n%s", got, b.String())
+	}
+	if len(p.History) != 3 || !strings.HasPrefix(p.HistoryTitle, "history (3, oldest first)") {
+		t.Errorf("history title %q, %d entries", p.HistoryTitle, len(p.History))
+	}
+	if !strings.HasPrefix(p.Waits, "waits: n=1 median=42s") {
+		t.Errorf("waits %q", p.Waits)
+	}
+	empty := ScheduleDetailParts(protocol.ScheduleDetail{Row: schedRow(protocol.ScheduleTaskState_Unbound)}, schedNow)
+	if empty.HistoryTitle != "history: none yet" || len(empty.History) != 0 {
+		t.Errorf("empty history: %q %v", empty.HistoryTitle, empty.History)
+	}
+}
+
+// TaskScheduleHex: the whole id when bound, "" when not, gated on existence.
+func TestTaskScheduleHex(t *testing.T) {
+	var bound protocol.TaskInfo
+	bound.SetSchedulePresent(true)
+	bound.SetScheduleId(schedID(0xab))
+	if got := TaskScheduleHex(&bound); got != strings.Repeat("ab", 16) {
+		t.Errorf("bound = %q", got)
+	}
+	if got := TaskScheduleHex(&protocol.TaskInfo{}); got != "" {
+		t.Errorf("unbound = %q", got)
+	}
+}

@@ -125,6 +125,12 @@ func main() {
 		"transcriptSessions": js.FuncOf(harnessTranscriptSessions),
 		"transcriptFiles":    js.FuncOf(harnessTranscriptFiles),
 		"transcriptGet":      js.FuncOf(harnessTranscriptGet),
+		"scheduleCreate":     js.FuncOf(harnessScheduleCreate),
+		"scheduleEdit":       js.FuncOf(harnessScheduleEdit),
+		"scheduleDelete":     js.FuncOf(harnessScheduleDelete),
+		"scheduleRun":        js.FuncOf(harnessScheduleRun),
+		"scheduleList":       js.FuncOf(harnessScheduleList),
+		"scheduleShow":       js.FuncOf(harnessScheduleShow),
 		"sendInteractive":    js.FuncOf(harnessSendInteractive),
 		"resizeInteractive":  js.FuncOf(harnessResizeInteractive),
 		"detachInteractive":  js.FuncOf(harnessDetachInteractive),
@@ -1703,6 +1709,10 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					"endedAt":    float64(t.EndedAt),
 					"origin":     clientKindLower(t.OriginKind),
 					"resumedBy":  clientKindLower(t.ResumedByKind),
+					// The schedule this task is bound to (pillar S), raw 32 hex,
+					// "" when bound to none: the row prints its first 8
+					// characters and the sheet the whole id (item 22/23).
+					"scheduleId": cli.TaskScheduleHex(&t),
 					"createdBy":  creatorShort(t.CreatorTaskId),
 					// createdById is the RAW full id beside the short label:
 					// the parent-picker dialog highlights the current parent

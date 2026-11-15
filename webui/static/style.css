@@ -2633,3 +2633,16 @@ label[for="compose-prompt"] { display: block; margin-top: 0.4rem; }
   .bg-block { display: block; }
   .bg-block[hidden] { display: none; }
 }
+
+/* The schedules dialog (pillar S): rows are `schedule ls` cells, the detail is
+   `schedule show`'s lines (long, monospace). */
+.picker-modal.schedules-modal { width: min(96vw, 60rem); max-height: 92vh; overflow-y: auto; }
+.schedules-modal .picker-form { width: 100%; box-sizing: border-box; }
+.schedules-body { display: flex; flex-direction: column; gap: 0.5rem; min-width: 0; }
+.schedule-row { border-top: 1px solid #3a3a3a; padding-top: 0.4rem; min-width: 0; font-family: monospace; font-size: 0.85rem; overflow-wrap: anywhere; cursor: pointer; }
+.schedule-row .schedule-id { font-weight: bold; }
+.schedule-row .schedule-cells { display: flex; flex-wrap: wrap; gap: 0.2rem 1rem; }
+.schedule-detail pre { margin: 0; max-height: none; overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.85rem; }
+.schedule-detail .schedule-waits { margin: 0.4rem 0; font-weight: bold; }
+.schedule-detail .schedule-history-line { font-family: monospace; font-size: 0.85rem; overflow-wrap: anywhere; border-top: 1px solid #3a3a3a; padding: 0.2rem 0; }
+.schedule-empty, .schedule-note { font-size: 0.85rem; color: #aaa; }

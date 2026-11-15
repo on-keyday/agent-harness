@@ -4327,6 +4327,98 @@ func init() {
 			a.NoPty = b.Bool("no-pty")
 			return a, nil
 		},
+		"schedule new\x00webui": func(b Bound) (Action, error) {
+			a := ScheduleSpecAction{}
+			a.Sub = "new"
+			a.Cron = b.Str("cron")
+			a.Tz = b.Str("tz")
+			a.TaskID = b.Str("task")
+			a.Repo = b.Str("repo")
+			a.ResumeConversationPresent = b.Set["resume-conversation"]
+			a.ResumeConversation = b.Bool("resume-conversation")
+			a.CapsPresent = b.Set["caps"]
+			if b.Set["caps"] {
+				v, err := parseCapsFlag(b.Str("caps"))
+				if err != nil {
+					return nil, fmt.Errorf("schedule new: --caps: %w", err)
+				}
+				a.Caps = v
+			}
+			a.ScopePresent = b.Set["scope"] || b.Set["scope-for"]
+			if b.Set["scope"] {
+				v, err := parseScopeFlag(b.Str("scope"))
+				if err != nil {
+					return nil, fmt.Errorf("schedule new: --scope: %w", err)
+				}
+				a.Scope = v
+			}
+			a.Agent = b.Str("agent")
+			if b.Set["scope-for"] {
+				v, err := parseScopeForList(stringsOf(b.Custom["scope-for"]))
+				if err != nil {
+					return nil, fmt.Errorf("schedule new: --scope-for: %w", err)
+				}
+				a.Overrides = v
+			}
+			a.DelegateCapsPresent = b.Set["delegate-caps"]
+			if b.Set["delegate-caps"] {
+				v, err := parseCapsFlag(b.Str("delegate-caps"))
+				if err != nil {
+					return nil, fmt.Errorf("schedule new: --delegate-caps: %w", err)
+				}
+				a.DelegateCaps = v
+			}
+			a.DelegateScopePresent = b.Set["delegate-scope"]
+			if b.Set["delegate-scope"] {
+				v, err := parseScopeFlag(b.Str("delegate-scope"))
+				if err != nil {
+					return nil, fmt.Errorf("schedule new: --delegate-scope: %w", err)
+				}
+				a.DelegateScope = v
+			}
+			a.SpawnDepthPresent = b.Set["spawn-depth"]
+			if b.Set["spawn-depth"] {
+				v, err := parseSpawnLimitFlag(b.Str("spawn-depth"))
+				if err != nil {
+					return nil, fmt.Errorf("schedule new: --spawn-depth: %w", err)
+				}
+				a.SpawnDepth = v
+			}
+			a.MaxDescendantsPresent = b.Set["max-descendants"]
+			if b.Set["max-descendants"] {
+				v, err := parseSpawnLimitFlag(b.Str("max-descendants"))
+				if err != nil {
+					return nil, fmt.Errorf("schedule new: --max-descendants: %w", err)
+				}
+				a.MaxDescendants = v
+			}
+			a.ExtraArgs = stringsOf(b.Custom["agent-arg"])
+			a.Runner = b.Str("runner")
+			a.Host = b.Str("host")
+			a.IP = b.Str("ip")
+			a.RowsPresent = b.Set["rows"]
+			a.Rows = uintOf(b.Flags["rows"])
+			a.ColsPresent = b.Set["cols"]
+			a.Cols = uintOf(b.Flags["cols"])
+			a.Prompt = b.Str("prompt")
+			a.DeadlinePresent = b.Set["deadline"]
+			a.Deadline = durationOf(b.Flags["deadline"])
+			a.TurnEndPresent = b.Set["turn-end"]
+			a.TurnEnd = b.Str("turn-end")
+			a.QuietPresent = b.Set["quiet"]
+			a.QuietFor = durationOf(b.Flags["quiet"])
+			a.BlockedPresent = b.Set["blocked"]
+			a.BlockedFor = durationOf(b.Flags["blocked"])
+			a.QueueTimeoutPresent = b.Set["queue-timeout"]
+			a.QueueTimeout = durationOf(b.Flags["queue-timeout"])
+			a.Record = b.Bool("record")
+			a.NoRecord = b.Bool("no-record")
+			a.OneshotPresent = b.Set["oneshot"]
+			a.Oneshot = b.Bool("oneshot")
+			a.Pty = b.Bool("pty")
+			a.NoPty = b.Bool("no-pty")
+			return a, nil
+		},
 		"schedule edit\x00cli": func(b Bound) (Action, error) {
 			a := ScheduleSpecAction{}
 			a.Sub = "edit"
@@ -4519,6 +4611,102 @@ func init() {
 			}
 			return a, nil
 		},
+		"schedule edit\x00webui": func(b Bound) (Action, error) {
+			a := ScheduleSpecAction{}
+			a.Sub = "edit"
+			a.Cron = b.Str("cron")
+			a.Tz = b.Str("tz")
+			a.TaskID = b.Str("task")
+			a.NoAgentArgs = b.Bool("no-agent-args")
+			a.Repo = b.Str("repo")
+			a.ResumeConversationPresent = b.Set["resume-conversation"]
+			a.ResumeConversation = b.Bool("resume-conversation")
+			a.CapsPresent = b.Set["caps"]
+			if b.Set["caps"] {
+				v, err := parseCapsFlag(b.Str("caps"))
+				if err != nil {
+					return nil, fmt.Errorf("schedule edit: --caps: %w", err)
+				}
+				a.Caps = v
+			}
+			a.ScopePresent = b.Set["scope"] || b.Set["scope-for"]
+			if b.Set["scope"] {
+				v, err := parseScopeFlag(b.Str("scope"))
+				if err != nil {
+					return nil, fmt.Errorf("schedule edit: --scope: %w", err)
+				}
+				a.Scope = v
+			}
+			a.Agent = b.Str("agent")
+			if b.Set["scope-for"] {
+				v, err := parseScopeForList(stringsOf(b.Custom["scope-for"]))
+				if err != nil {
+					return nil, fmt.Errorf("schedule edit: --scope-for: %w", err)
+				}
+				a.Overrides = v
+			}
+			a.DelegateCapsPresent = b.Set["delegate-caps"]
+			if b.Set["delegate-caps"] {
+				v, err := parseCapsFlag(b.Str("delegate-caps"))
+				if err != nil {
+					return nil, fmt.Errorf("schedule edit: --delegate-caps: %w", err)
+				}
+				a.DelegateCaps = v
+			}
+			a.DelegateScopePresent = b.Set["delegate-scope"]
+			if b.Set["delegate-scope"] {
+				v, err := parseScopeFlag(b.Str("delegate-scope"))
+				if err != nil {
+					return nil, fmt.Errorf("schedule edit: --delegate-scope: %w", err)
+				}
+				a.DelegateScope = v
+			}
+			a.SpawnDepthPresent = b.Set["spawn-depth"]
+			if b.Set["spawn-depth"] {
+				v, err := parseSpawnLimitFlag(b.Str("spawn-depth"))
+				if err != nil {
+					return nil, fmt.Errorf("schedule edit: --spawn-depth: %w", err)
+				}
+				a.SpawnDepth = v
+			}
+			a.MaxDescendantsPresent = b.Set["max-descendants"]
+			if b.Set["max-descendants"] {
+				v, err := parseSpawnLimitFlag(b.Str("max-descendants"))
+				if err != nil {
+					return nil, fmt.Errorf("schedule edit: --max-descendants: %w", err)
+				}
+				a.MaxDescendants = v
+			}
+			a.ExtraArgs = stringsOf(b.Custom["agent-arg"])
+			a.Runner = b.Str("runner")
+			a.Host = b.Str("host")
+			a.IP = b.Str("ip")
+			a.RowsPresent = b.Set["rows"]
+			a.Rows = uintOf(b.Flags["rows"])
+			a.ColsPresent = b.Set["cols"]
+			a.Cols = uintOf(b.Flags["cols"])
+			a.Prompt = b.Str("prompt")
+			a.DeadlinePresent = b.Set["deadline"]
+			a.Deadline = durationOf(b.Flags["deadline"])
+			a.TurnEndPresent = b.Set["turn-end"]
+			a.TurnEnd = b.Str("turn-end")
+			a.QuietPresent = b.Set["quiet"]
+			a.QuietFor = durationOf(b.Flags["quiet"])
+			a.BlockedPresent = b.Set["blocked"]
+			a.BlockedFor = durationOf(b.Flags["blocked"])
+			a.QueueTimeoutPresent = b.Set["queue-timeout"]
+			a.QueueTimeout = durationOf(b.Flags["queue-timeout"])
+			a.Record = b.Bool("record")
+			a.NoRecord = b.Bool("no-record")
+			a.OneshotPresent = b.Set["oneshot"]
+			a.Oneshot = b.Bool("oneshot")
+			a.Pty = b.Bool("pty")
+			a.NoPty = b.Bool("no-pty")
+			if len(b.Args) > 0 {
+				a.ID = b.Args[0]
+			}
+			return a, nil
+		},
 		"schedule run\x00cli": func(b Bound) (Action, error) {
 			a := ScheduleIDAction{}
 			a.Sub = "run"
@@ -4528,6 +4716,14 @@ func init() {
 			return a, nil
 		},
 		"schedule run\x00tui": func(b Bound) (Action, error) {
+			a := ScheduleIDAction{}
+			a.Sub = "run"
+			if len(b.Args) > 0 {
+				a.ID = b.Args[0]
+			}
+			return a, nil
+		},
+		"schedule run\x00webui": func(b Bound) (Action, error) {
 			a := ScheduleIDAction{}
 			a.Sub = "run"
 			if len(b.Args) > 0 {
@@ -4551,12 +4747,25 @@ func init() {
 			}
 			return a, nil
 		},
+		"schedule rm\x00webui": func(b Bound) (Action, error) {
+			a := ScheduleIDAction{}
+			a.Sub = "rm"
+			if len(b.Args) > 0 {
+				a.ID = b.Args[0]
+			}
+			return a, nil
+		},
 		"schedule ls\x00cli": func(b Bound) (Action, error) {
 			a := ScheduleLsAction{}
 			a.JSON = b.Bool("json")
 			return a, nil
 		},
 		"schedule ls\x00tui": func(b Bound) (Action, error) {
+			a := ScheduleLsAction{}
+			a.JSON = b.Bool("json")
+			return a, nil
+		},
+		"schedule ls\x00webui": func(b Bound) (Action, error) {
 			a := ScheduleLsAction{}
 			a.JSON = b.Bool("json")
 			return a, nil
@@ -4570,6 +4779,14 @@ func init() {
 			return a, nil
 		},
 		"schedule show\x00tui": func(b Bound) (Action, error) {
+			a := ScheduleShowAction{}
+			a.JSON = b.Bool("json")
+			if len(b.Args) > 0 {
+				a.ID = b.Args[0]
+			}
+			return a, nil
+		},
+		"schedule show\x00webui": func(b Bound) (Action, error) {
 			a := ScheduleShowAction{}
 			a.JSON = b.Bool("json")
 			if len(b.Args) > 0 {

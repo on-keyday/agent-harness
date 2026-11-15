@@ -3187,11 +3187,13 @@ var Verbs = []VerbSpec{
 	// --- schedules (pillar S, docs/superpowers/specs/2026-11-15-pillar-s-schedules-design.md) ---
 	//
 	// The run and authority flags are the spawn rows (spawnFlags with
-	// spawnSchedule), not copies. CLI and TUI only until the WebUI dialog
-	// lands with its JS (Task 7 adds WebUI and WebUIDispatch together).
+	// spawnSchedule), not copies. Typable on all three surfaces; the TUI
+	// table and the WebUI dialog (and Compose's cron field, for `new`) are the
+	// ModalSurfaces rows.
 	{
-		Path: []string{"schedule", "new"}, CmdlineSurfaces: CLI | TUI,
-		NoModalSurface: "none yet: the TUI Schedules table and the WebUI dialog come with pillar S Tasks 6 and 7, which replace this with ModalSurfaces rows",
+		Path: []string{"schedule", "new"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		WebUIDispatch: WebUIDispatch{Fn: "scheduleCreate"},
+		ModalSurfaces: []ModalSurface{{Surface: WebUI, At: "webui/index.html#compose-cron"}},
 		Notes: []string{
 			"create a server-kept cron schedule: each firing resumes the schedule's background task (the first firing creates it, or --task binds one now)",
 			"needs the schedule capability; the stored authority is bounded by yours, from the same --caps / --scope / --scope-for / --delegate-* flags as session new",
@@ -3215,8 +3217,9 @@ var Verbs = []VerbSpec{
 		},
 	},
 	{
-		Path: []string{"schedule", "edit"}, CmdlineSurfaces: CLI | TUI,
-		NoModalSurface: "none yet: the TUI Schedules table and the WebUI dialog come with pillar S Tasks 6 and 7, which replace this with ModalSurfaces rows",
+		Path: []string{"schedule", "edit"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		WebUIDispatch:  WebUIDispatch{Fn: "scheduleEdit"},
+		NoModalSurface: "looked for: the TUI Schedules table and the WebUI dialog show, run and delete a schedule; editing is by the command line on both (spec, Surfaces)",
 		Notes: []string{
 			"change a schedule's future firings: only the flags named are changed (--cron or --tz recomputes the next firing; --task binds a task to a schedule with none)",
 			"the stored authority is recomputed with YOU as granter whether or not an authority flag is named, so an edit never leaves it wider than you",
@@ -3245,8 +3248,12 @@ var Verbs = []VerbSpec{
 		},
 	},
 	{
-		Path: []string{"schedule", "run"}, CmdlineSurfaces: CLI | TUI,
-		NoModalSurface: "none yet: the TUI Schedules table and the WebUI dialog come with pillar S Tasks 6 and 7, which replace this with ModalSurfaces rows",
+		Path: []string{"schedule", "run"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		WebUIDispatch: WebUIDispatch{Fn: "scheduleRun"},
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/schedules.go:SchedulesModel"},
+			{Surface: WebUI, At: "webui/index.html#schedules-modal"},
+		},
 		Notes: []string{
 			"fire a schedule now, outside its times (recorded run_now); its next firing is unchanged. Needs the schedule capability and reach to the schedule's task",
 		},
@@ -3256,8 +3263,12 @@ var Verbs = []VerbSpec{
 		Examples: []string{"schedule run aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 	},
 	{
-		Path: []string{"schedule", "rm"}, CmdlineSurfaces: CLI | TUI,
-		NoModalSurface: "none yet: the TUI Schedules table and the WebUI dialog come with pillar S Tasks 6 and 7, which replace this with ModalSurfaces rows",
+		Path: []string{"schedule", "rm"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		WebUIDispatch: WebUIDispatch{Fn: "scheduleDelete"},
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/schedules.go:SchedulesModel"},
+			{Surface: WebUI, At: "webui/index.html#schedules-modal"},
+		},
 		Notes: []string{
 			"delete a schedule; its task stays as an ordinary background task and a run in progress is not cancelled (cancel it to stop it)",
 		},
@@ -3267,8 +3278,12 @@ var Verbs = []VerbSpec{
 		Examples: []string{"schedule rm aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 	},
 	{
-		Path: []string{"schedule", "ls"}, CmdlineSurfaces: CLI | TUI,
-		NoModalSurface: "none yet: the TUI Schedules table and the WebUI dialog come with pillar S Tasks 6 and 7, which replace this with ModalSurfaces rows",
+		Path: []string{"schedule", "ls"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		WebUIDispatch: WebUIDispatch{Fn: "scheduleList"},
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/schedules.go:SchedulesModel"},
+			{Surface: WebUI, At: "webui/index.html#schedules-modal"},
+		},
 		Notes: []string{
 			"one row per schedule you can reach: id, cron + zone, next firing (in its zone), last outcome and age, task, agent, repo, prompt head. Needs no capability",
 		},
@@ -3279,8 +3294,12 @@ var Verbs = []VerbSpec{
 		Examples: []string{"schedule ls", "schedule ls --json"},
 	},
 	{
-		Path: []string{"schedule", "show"}, CmdlineSurfaces: CLI | TUI,
-		NoModalSurface: "none yet: the TUI Schedules table and the WebUI dialog come with pillar S Tasks 6 and 7, which replace this with ModalSurfaces rows",
+		Path: []string{"schedule", "show"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		WebUIDispatch: WebUIDispatch{Fn: "scheduleShow"},
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/schedules.go:SchedulesModel"},
+			{Surface: WebUI, At: "webui/index.html#schedules-modal"},
+		},
 		Notes: []string{
 			"a schedule's definition, stored authority, history (last 50 firings) and the wait statistics over its runs. Needs no capability",
 		},
