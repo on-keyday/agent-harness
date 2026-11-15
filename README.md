@@ -1893,8 +1893,9 @@ creates a task); `schedule new --task T` and an edit that binds T need `resume`
 with T inside that bit's scope (`resume_exact` is not enough: a firing passes
 its own prompt); an `edit` or `run` of an existing schedule needs what creating
 it would need now — `spawn` while its task is still to be created, `resume`
-over its bound task. An unbound schedule needs neither (nothing runs until a
-bind, which is checked then). A missing bit answers the same permission denial
+over its bound task; an edit that binds a task needs no `spawn`, since nothing
+will be created, but `resume` over the old and the new task. An unbound
+schedule needs neither (nothing runs until a bind, which is checked then). A missing bit answers the same permission denial
 as any other bit (`permission denied: ScheduleCreate requires capability
 spawn`); T outside `resume`'s scope answers `task_not_reachable`. Reach and the
 own-task refusal are answered first. `rm`, `ls` and `show` are unchanged, and a
@@ -1902,8 +1903,9 @@ firing checks nothing: the check was made when the schedule was written.
 
 **Do not grant `schedule` in a scheduled task's authority** (the grant a
 schedule stores). The rule above compares the caller with the bound task only:
-a bound task that holds `schedule` and `spawn` (or `resume`) can still create a NEW schedule, and a child
-it spawns with `schedule` and reach to its parent can edit the parent's
+a bound task that holds `schedule` and either `spawn` or `resume` over a task
+it can bind can still create a NEW schedule, and a child it spawns with
+`schedule` and `resume` over its parent can edit the parent's
 schedule — so an instruction injected into a run could outlive it.
 
 **Per-field edits.** The five run-condition fields (`--deadline`, `--turn-end`,

@@ -200,3 +200,142 @@ func TestSchedulePowerBoundTaskCannotCreate(t *testing.T) {
 		t.Fatalf("%d schedules stored, want the one seeded", n)
 	}
 }
+
+// resumeOver is a grant whose resume reaches only the named tasks.
+func resumeOver(caps protocol.Capability, ids ...string) authority.Grant {
+	g := powerGrant(caps, protocol.ScopeBase_None)
+	g.Scope.Overrides = []authority.ScopeOverride{{Caps: protocol.Capability_Resume, Base: protocol.ScopeBase_None, IDs: ids}}
+	return g
+}
+
+// bound(T) -> T2: the edit needs resume over both.
+func TestSchedulePowerRebindNeedsBothTasks(t *testing.T) {
+	e := newSchedEnv(t)
+	for _, c := range []struct {
+		name         string
+		oldIn, newIn bool
+		want         protocol.ScheduleStatus
+	}{
+		{"old inside, new outside", true, false, protocol.ScheduleStatus_TaskNotReachable},
+		{"old outside, new inside", false, true, protocol.ScheduleStatus_TaskNotReachable},
+		{"both inside", true, true, protocol.ScheduleStatus_Ok},
+	} {
+		t1 := e.terminal(t, protocol.RunMode_Background, "")
+		t2 := e.terminal(t, protocol.RunMode_Background, "")
+		sp := &protocol.ScheduleSpec{}
+		sp.SetTaskPresent(true)
+		sp.SetTaskId(hexToTaskID(t, t2))
+		var ids []string
+		if c.oldIn {
+			ids = append(ids, t1)
+		}
+		if c.newIn {
+			ids = append(ids, t2)
+		}
+		sc := e.seed(t, 1, protocol.ScheduleTaskState_Bound, t1, "")
+		conn, _ := e.agent(t, resumeOver(protocol.Capability_Resume, ids...))
+		r, d := e.editDeny(t, e.connIDOf(conn), sc.ID, sp, "")
+		wantAllowed(t, c.name, r, d, c.want)
+		if c.want == protocol.ScheduleStatus_Ok {
+			if got := e.stored(t, sc.ID); got.TaskID != t2 {
+				t.Errorf("%s: bound to %s", c.name, got.TaskID)
+			}
+		}
+		if err := e.store.Delete(sc.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// Binding a pending_create schedule creates nothing, so it needs no spawn.
+func TestSchedulePowerBindPendingNeedsNoSpawn(t *testing.T) {
+	e := newSchedEnv(t)
+	maker := e.terminal(t, protocol.RunMode_Background, "")
+	task := e.terminal(t, protocol.RunMode_Background, "")
+	pend := e.seed(t, 1, protocol.ScheduleTaskState_PendingCreate, "", maker)
+	sp := &protocol.ScheduleSpec{}
+	sp.SetTaskPresent(true)
+	sp.SetTaskId(hexToTaskID(t, task))
+	conn, _ := e.agent(t, powerGrant(protocol.Capability_Resume, protocol.ScopeBase_Global))
+	r, d := e.editDeny(t, e.connIDOf(conn), pend.ID, sp, "")
+	wantAllowed(t, "bind a pending schedule with resume only", r, d, protocol.ScheduleStatus_Ok)
+}
+
+// resume_exact alone does not satisfy edit or run of a bound schedule.
+func TestSchedulePowerResumeExactRefused(t *testing.T) {
+	e := newSchedEnv(t)
+	task := e.terminal(t, protocol.RunMode_Background, "")
+	sc := e.seed(t, 1, protocol.ScheduleTaskState_Bound, task, "")
+	conn, _ := e.agent(t, powerGrant(protocol.Capability_ResumeExact, protocol.ScopeBase_Global))
+	cron := &protocol.ScheduleSpec{}
+	cron.SetCronPresent(true)
+	cron.SetCron([]byte("0 10 * * *"))
+	r, d := e.editDeny(t, e.connIDOf(conn), sc.ID, cron, "")
+	wantDenied(t, "edit with resume_exact only", r, d, protocol.Capability_Resume)
+	r, d = e.h.scheduleRun(e.connIDOf(conn), schedHexID(t, sc.ID))
+	wantDenied(t, "run with resume_exact only", r, d, protocol.Capability_Resume)
+}
+
+// The denials reach the caller as the task-control permission denial, over
+// handleSchedule, not only from the cores.
+func TestSchedulePowerDenialsOverTheWire(t *testing.T) {
+	e := newSchedEnv(t)
+	maker := e.terminal(t, protocol.RunMode_Background, "")
+	task := e.terminal(t, protocol.RunMode_Background, "")
+	bound := e.seed(t, 1, protocol.ScheduleTaskState_Bound, task, "")
+	pend := e.seed(t, 2, protocol.ScheduleTaskState_PendingCreate, "", maker)
+	conn, _ := e.agent(t, powerGrant(0, protocol.ScopeBase_Global))
+	denied := func(what string, kind protocol.TaskControlKind, fill func(*protocol.TaskControlRequest), want protocol.Capability) {
+		t.Helper()
+		e.send(t, conn, kind, fill)
+		resp := lastTaskControlResponse(t, conn)
+		pd := resp.PermissionDenied()
+		if resp.Kind != protocol.TaskControlKind_PermissionDenied || pd == nil || pd.RequestedKind != kind || pd.RequiredCap != want {
+			t.Errorf("%s: %+v", what, resp)
+		}
+	}
+	cron := &protocol.ScheduleSpec{}
+	cron.SetCronPresent(true)
+	cron.SetCron([]byte("0 10 * * *"))
+	edit := func(id string) func(*protocol.TaskControlRequest) {
+		return func(r *protocol.TaskControlRequest) {
+			r.SetScheduleEdit(protocol.ScheduleEditRequest{Id: schedHexID(t, id), Spec: *cron})
+		}
+	}
+	run := func(id string) func(*protocol.TaskControlRequest) {
+		return func(r *protocol.TaskControlRequest) {
+			r.SetScheduleRun(protocol.ScheduleIDRequest{Id: schedHexID(t, id)})
+		}
+	}
+	denied("edit bound", protocol.TaskControlKind_ScheduleEdit, edit(bound.ID), protocol.Capability_Resume)
+	denied("edit pending", protocol.TaskControlKind_ScheduleEdit, edit(pend.ID), protocol.Capability_Spawn)
+	denied("run bound", protocol.TaskControlKind_ScheduleRun, run(bound.ID), protocol.Capability_Resume)
+	denied("run pending", protocol.TaskControlKind_ScheduleRun, run(pend.ID), protocol.Capability_Spawn)
+	if len(e.fires) != 0 {
+		t.Fatalf("a denied run fired: %v", e.fires)
+	}
+}
+
+// S-D17a, run: the caller is checked against the state the firing acts on. A
+// run read while the schedule was unbound (no bit needed) must be refused when
+// a bind lands before the firing takes its mutex.
+func TestSchedulePowerRunChecksStateAtFiring(t *testing.T) {
+	e := newSchedEnv(t)
+	maker := e.terminal(t, protocol.RunMode_Background, "")
+	task := e.terminal(t, protocol.RunMode_Background, "")
+	sc := e.seed(t, 1, protocol.ScheduleTaskState_Unbound, "", maker)
+	conn, _ := e.agent(t, powerGrant(0, protocol.ScopeBase_Global))
+	e.beforeFire = func(id string) {
+		if err := e.store.Update(id, func(s *Schedule) error {
+			s.State, s.TaskID = protocol.ScheduleTaskState_Bound, task
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r, d := e.h.scheduleRun(e.connIDOf(conn), schedHexID(t, sc.ID))
+	wantDenied(t, "run of a schedule bound after the first read", r, d, protocol.Capability_Resume)
+	if len(e.fires) != 0 {
+		t.Fatalf("fired: %v", e.fires)
+	}
+}

@@ -332,7 +332,7 @@ func New(cfg Config) *Server {
 		Sessions: s.sessions,
 		OnChange: s.scheduler.Tick,
 		Sched: &ScheduleOps{
-			Store: cfg.Schedules, Fire: s.fireSchedule, Poke: s.pokeSchedules,
+			Store: cfg.Schedules, Fire: s.fireScheduleChecked, Poke: s.pokeSchedules,
 			Lock: s.sched.firingMutex, Ready: s.sched.started.Load, Now: s.sched.now,
 		},
 		RingBufferSize: int(cfg.DetachRingBufferSize),

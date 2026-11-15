@@ -749,3 +749,68 @@ func TestSettleBindingInsideAFiringIsPublished(t *testing.T) {
 		t.Fatalf("settle's binding was not published")
 	}
 }
+
+// S-D17a: a verb's check runs inside the firing, on the state it acts on —
+// after a pending creation settles — and a veto records and starts nothing.
+func TestFireCheckSeesSettledStateAndVetoRecordsNothing(t *testing.T) {
+	s, _ := newFireServer(t, t.TempDir())
+	taskID := terminalTask(t, s)
+	sc := fireTestSchedule(1, protocol.ScheduleTaskState_PendingCreate, "")
+	sc.History = []HistoryEntry{{Outcome: protocol.ScheduleOutcome_Pending, Creates: true, ExpectRun: 1, TaskID: taskID, At: fireNow}}
+	putSchedule(t, s, sc)
+	var seen protocol.ScheduleTaskState
+	veto := &FireVeto{Deny: protocol.Capability_Resume}
+	got, v := s.fireScheduleChecked(sc.ID, sc.NextAt, true, func(x Schedule) *FireVeto {
+		seen = x.State
+		if x.State == protocol.ScheduleTaskState_Bound {
+			return veto
+		}
+		return nil
+	})
+	if seen != protocol.ScheduleTaskState_Bound {
+		t.Fatalf("check saw state %v, want the settled bound", seen)
+	}
+	if v != veto || got != protocol.ScheduleOutcome_Pending {
+		t.Fatalf("outcome %v veto %v, want the veto", got, v)
+	}
+	after := getSched(t, s, sc.ID)
+	if after.State != protocol.ScheduleTaskState_PendingCreate || len(after.History) != 1 || after.History[0].Outcome != protocol.ScheduleOutcome_Pending {
+		t.Fatalf("a veto changed the schedule: %+v", after)
+	}
+	if tk, _ := s.tasks.Get(taskID); tk.Run != 1 {
+		t.Fatalf("a vetoed run resumed the task: run %d", tk.Run)
+	}
+}
+
+// A schedule bound between a verb's first read and the firing is checked as
+// bound.
+func TestFireCheckSeesABindThatLandedFirst(t *testing.T) {
+	s, _ := newFireServer(t, t.TempDir())
+	taskID := terminalTask(t, s)
+	sc := fireTestSchedule(1, protocol.ScheduleTaskState_Unbound, "")
+	putSchedule(t, s, sc)
+	check := func(x Schedule) *FireVeto {
+		if x.State == protocol.ScheduleTaskState_Bound {
+			return &FireVeto{Deny: protocol.Capability_Resume}
+		}
+		return nil
+	}
+	if check(getSched(t, s, sc.ID)) != nil {
+		t.Fatal("the first read must pass")
+	}
+	if err := s.cfg.Schedules.Update(sc.ID, func(x *Schedule) error {
+		x.State, x.TaskID = protocol.ScheduleTaskState_Bound, taskID
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got, v := s.fireScheduleChecked(sc.ID, sc.NextAt, true, check); v == nil || got != protocol.ScheduleOutcome_Pending {
+		t.Fatalf("outcome %v veto %v, want a veto", got, v)
+	}
+	if tk, _ := s.tasks.Get(taskID); tk.Run != 1 {
+		t.Fatalf("a vetoed run resumed the task: run %d", tk.Run)
+	}
+	if h := getSched(t, s, sc.ID).History; len(h) != 0 {
+		t.Fatalf("history %+v", h)
+	}
+}

@@ -30,6 +30,9 @@ type schedEnv struct {
 	fires   []string
 	manual  []bool
 	outcome protocol.ScheduleOutcome
+	// beforeFire, when set, runs inside Fire before its check (a test's way
+	// to land a change between a verb's first read and the firing).
+	beforeFire func(id string)
 }
 
 func newSchedEnv(t *testing.T) *schedEnv {
@@ -42,12 +45,20 @@ func newSchedEnv(t *testing.T) *schedEnv {
 	e.ready.Store(true)
 	e.h.Sched = &ScheduleOps{
 		Store: st,
-		Fire: func(id string, due time.Time, manual bool) protocol.ScheduleOutcome {
+		Fire: func(id string, due time.Time, manual bool, check FireCheck) (protocol.ScheduleOutcome, *FireVeto) {
+			if e.beforeFire != nil {
+				e.beforeFire(id) // an interleaved change, before the firing takes its mutex
+			}
 			e.mu.Lock()
 			defer e.mu.Unlock()
+			if sc, ok := e.store.Get(id); ok && check != nil {
+				if v := check(sc); v != nil { // as the real firing: under its mutex, on fresh state
+					return protocol.ScheduleOutcome_Pending, v
+				}
+			}
 			e.fires = append(e.fires, id)
 			e.manual = append(e.manual, manual)
-			return e.outcome
+			return e.outcome, nil
 		},
 		Poke:  func() { e.pokes.Add(1) },
 		Lock:  e.rt.firingMutex,

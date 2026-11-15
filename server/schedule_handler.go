@@ -27,14 +27,28 @@ import (
 // around the store change, so they serialize with a firing of that schedule
 // (an edit out of pending_create cannot race an in-flight creation).
 
+// FireVeto is a refusal a FireCheck gives: a ScheduleResponse, or the bit
+// whose absence is answered as the permission denial.
+type FireVeto struct {
+	Refusal *protocol.ScheduleResponse
+	Deny    protocol.Capability
+}
+
+// FireCheck is made by a verb that fires a schedule (`schedule run`). The
+// firing calls it inside its decision write, under the firing mutex, after the
+// pending creation has settled, so it sees the state the firing acts on.
+type FireCheck func(Schedule) *FireVeto
+
 // ScheduleOps is what the handler needs from the server's schedule machinery.
 // Function fields, as the rest of TaskHandler's reach into Server is: the
 // handler holds no *Server by design.
 type ScheduleOps struct {
 	Store *ScheduleStore
-	// Fire is Server.fireSchedule. Run answers it only after Ready: start-up's
-	// Settle holds no firing mutex, so a firing must not overlap it.
-	Fire func(id string, due time.Time, manual bool) protocol.ScheduleOutcome
+	// Fire is Server.fireScheduleChecked. Run answers it only after Ready:
+	// start-up's Settle holds no firing mutex, so a firing must not overlap it.
+	// A non-nil check is evaluated under the firing mutex against the schedule
+	// as the firing will act on it (S-D17a); a veto records nothing.
+	Fire func(id string, due time.Time, manual bool, check FireCheck) (protocol.ScheduleOutcome, *FireVeto)
 	// Poke re-arms the timer loop (Server.pokeSchedules).
 	Poke func()
 	// Lock is the schedule's firing mutex (scheduleRuntime.firingMutex).
@@ -616,10 +630,9 @@ func scheduleSpecTask(spec *protocol.ScheduleSpec) string {
 // run of it only records skipped_no_task.
 func (h *TaskHandler) schedulePower(cid string, cur *Schedule, bindTask string) (protocol.Capability, *protocol.ScheduleResponse) {
 	callerCaps := h.callerCaps(cid)
-	needSpawn := cur != nil && cur.State == protocol.ScheduleTaskState_PendingCreate
-	if cur == nil && bindTask == "" {
-		needSpawn = true
-	}
+	// A bind means nothing will be created, so a bind needs no spawn even on a
+	// pending_create schedule.
+	needSpawn := bindTask == "" && (cur == nil || cur.State == protocol.ScheduleTaskState_PendingCreate)
 	if needSpawn && !hasCap(callerCaps, protocol.Capability_Spawn) {
 		return protocol.Capability_Spawn, nil
 	}
@@ -902,31 +915,34 @@ func (h *TaskHandler) scheduleDelete(cid string, id protocol.ScheduleID) (resp p
 // answered no_such_schedule before it is called, so the zero outcome means
 // the second.
 func (h *TaskHandler) scheduleRun(cid string, id protocol.ScheduleID) (protocol.ScheduleResponse, protocol.Capability) {
-	sc, refusal := h.scheduleFor(cid, id)
-	if refusal != nil {
-		return *refusal, 0
-	}
-	if h.scheduleOwnTask(cid, sc) {
-		return scheduleRefusal(protocol.ScheduleStatus_SelfRefused, "a schedule's own task cannot run it"), 0
-	}
-	if c, refusal := h.schedulePower(cid, &sc, ""); c != 0 || refusal != nil {
-		if refusal != nil {
-			return *refusal, 0
-		}
-		return protocol.ScheduleResponse{}, c
-	}
-	return h.scheduleRunChecked(id, sc), 0
-}
-
-func (h *TaskHandler) scheduleRunChecked(id protocol.ScheduleID, sc Schedule) protocol.ScheduleResponse {
 	ops := h.Sched
 	idHex := hex.EncodeToString(id.Id[:])
-	if ops.Fire == nil || ops.Ready == nil || !ops.Ready() {
-		return scheduleRefusal(protocol.ScheduleStatus_NotReady, "the server is still starting its schedules; try again")
+	check := h.scheduleRunCheck(cid)
+	veto := func(v *FireVeto) (protocol.ScheduleResponse, protocol.Capability) {
+		if v.Refusal != nil {
+			return *v.Refusal, 0
+		}
+		return protocol.ScheduleResponse{}, v.Deny
 	}
-	outcome := ops.Fire(idHex, ops.now(), true)
+	// An early answer from a lock-free read, so a refusal comes before
+	// NotReady; the authoritative check is the one the firing makes under its
+	// mutex, against the state it acts on.
+	sc, ok := ops.Store.Get(idHex)
+	if !ok {
+		return scheduleRefusal(protocol.ScheduleStatus_NoSuchSchedule, ""), 0
+	}
+	if v := check(sc); v != nil {
+		return veto(v)
+	}
+	if ops.Fire == nil || ops.Ready == nil || !ops.Ready() {
+		return scheduleRefusal(protocol.ScheduleStatus_NotReady, "the server is still starting its schedules; try again"), 0
+	}
+	outcome, v := ops.Fire(idHex, ops.now(), true, check)
+	if v != nil {
+		return veto(v)
+	}
 	if outcome == protocol.ScheduleOutcome_Pending {
-		return scheduleRefusal(protocol.ScheduleStatus_InternalError, "the firing could not be recorded; nothing was started")
+		return scheduleRefusal(protocol.ScheduleStatus_InternalError, "the firing could not be recorded; nothing was started"), 0
 	}
 	msg := scheduleOutcomeName(outcome)
 	if after, ok := ops.Store.Get(idHex); ok {
@@ -937,7 +953,26 @@ func (h *TaskHandler) scheduleRunChecked(id protocol.ScheduleID, sc Schedule) pr
 			}
 		}
 	}
-	return scheduleOK(id, msg)
+	return scheduleOK(id, msg), 0
+}
+
+// scheduleRunCheck is `schedule run`'s FireCheck: reach (no_such_schedule),
+// the schedule's own task (S-D20), then what S-D17a needs, in that order.
+func (h *TaskHandler) scheduleRunCheck(cid string) FireCheck {
+	return func(sc Schedule) *FireVeto {
+		if !h.scheduleReach(cid, sc) {
+			r := scheduleRefusal(protocol.ScheduleStatus_NoSuchSchedule, "")
+			return &FireVeto{Refusal: &r}
+		}
+		if h.scheduleOwnTask(cid, sc) {
+			r := scheduleRefusal(protocol.ScheduleStatus_SelfRefused, "a schedule's own task cannot run it")
+			return &FireVeto{Refusal: &r}
+		}
+		if c, refusal := h.schedulePower(cid, &sc, ""); c != 0 || refusal != nil {
+			return &FireVeto{Refusal: refusal, Deny: c}
+		}
+		return nil
+	}
 }
 
 // scheduleOutcomeName is the outcome as the spec and the history write it.

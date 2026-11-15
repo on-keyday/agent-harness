@@ -136,6 +136,9 @@ func nextFor(sc *Schedule, t time.Time) (time.Time, error) {
 	return nextFiring(c, loc, t), nil
 }
 
+// errFireVetoed aborts the decision write when a FireCheck refuses.
+var errFireVetoed = errors.New("schedule firing vetoed by its caller's check")
+
 // firingAct is what steps 1-4 decided for step 5 to carry out.
 type firingAct struct {
 	sc         Schedule // snapshot at the intent
@@ -153,6 +156,16 @@ type firingAct struct {
 // zero outcome (pending); so does a firing whose intent could not be saved,
 // which acts on nothing (at most once, S-D22).
 func (s *Server) fireSchedule(id string, due time.Time, manual bool) protocol.ScheduleOutcome {
+	o, _ := s.fireScheduleChecked(id, due, manual, nil)
+	return o
+}
+
+// fireScheduleChecked is fireSchedule with the verb's check (S-D17a): a
+// non-nil check runs inside the decision write, after the pending creation
+// settled and before anything is recorded; a veto records nothing (the
+// settle is not saved either) and is returned. The timer and start-up pass no
+// check.
+func (s *Server) fireScheduleChecked(id string, due time.Time, manual bool, check FireCheck) (protocol.ScheduleOutcome, *FireVeto) {
 	fm := s.sched.firingMutex(id)
 	fm.Lock()
 	defer fm.Unlock()
@@ -165,7 +178,8 @@ func (s *Server) fireSchedule(id string, due time.Time, manual bool) protocol.Sc
 		// bound is a task this firing bound the schedule to (settle inside
 		// step 1-4, or the creation in step 6); its binding is published
 		// once stored, because task_queued went out before it existed.
-		bound string
+		bound  string
+		vetoed *FireVeto
 	)
 	publishBound := func() {
 		if bound != "" && s.taskHandler != nil && s.taskHandler.Sched != nil {
@@ -188,6 +202,16 @@ func (s *Server) fireSchedule(id string, due time.Time, manual bool) protocol.Sc
 		})
 		if wasPending && sc.State == protocol.ScheduleTaskState_Bound {
 			bound = sc.TaskID
+		}
+		// The verb's check (S-D17a), on the state this firing acts on: after
+		// the settle, under the firing mutex and the store lock. A veto
+		// aborts the write, so nothing is recorded and the settle is redone
+		// by whoever fires next.
+		if check != nil {
+			if v := check(sc.clone()); v != nil {
+				vetoed = v
+				return errFireVetoed
+			}
 		}
 		next, nextErr := nextFor(sc, now)
 		entry := HistoryEntry{DueAt: due, At: now, TaskID: sc.TaskID}
@@ -237,17 +261,21 @@ func (s *Server) fireSchedule(id string, due time.Time, manual bool) protocol.Sc
 			expectRun: entry.ExpectRun, creatorTID: taskIDFromHex(sc.Creator)}
 		return nil
 	})
+	if errors.Is(err, errFireVetoed) {
+		bound = ""
+		return protocol.ScheduleOutcome_Pending, vetoed
+	}
 	if err != nil {
 		if err != ErrScheduleNotFound {
 			slog.Error("schedule firing: write failed; nothing was done", "schedule", id, "err", err)
 		}
 		bound = ""
-		return protocol.ScheduleOutcome_Pending
+		return protocol.ScheduleOutcome_Pending, nil
 	}
 	publishBound()
 	bound = ""
 	if act == nil {
-		return outcome
+		return outcome, nil
 	}
 
 	// Step 5: act, with no schedule-store lock held.
@@ -305,10 +333,10 @@ func (s *Server) fireSchedule(id string, due time.Time, manual bool) protocol.Sc
 		// The entry stays pending in memory and on disk; the next start
 		// settles it from the task store (S-D22).
 		slog.Error("schedule firing: outcome write failed", "schedule", id, "err", err)
-		return outcome
+		return outcome, nil
 	}
 	publishBound()
-	return outcome
+	return outcome, nil
 }
 
 // fireDueSchedules fires every schedule whose next_at has come, once each,
