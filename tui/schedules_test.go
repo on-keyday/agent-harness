@@ -81,10 +81,12 @@ func schedColTitles(m *SchedulesModel) []string {
 
 // --- focus cycle and strip ---
 
-func TestFocusCycleIncludesSchedules(t *testing.T) {
+// Tab visits the shown table, notify, cmdresult and cmdline: the three tables
+// are ONE stop, and ←/→ switch between them while a table has focus.
+func TestTabTreatsTheTablesAsOneStop(t *testing.T) {
 	a := oneTableApp(120, 40)
 	a.setFocus(focusRunners)
-	want := []focus{focusTasks, focusSchedules, focusNotify, focusCmdresult, focusCmdline, focusRunners}
+	want := []focus{focusNotify, focusCmdresult, focusCmdline, focusRunners}
 	var got []focus
 	for range want {
 		a.Update(tea.KeyMsg{Type: tea.KeyTab})
@@ -93,17 +95,54 @@ func TestFocusCycleIncludesSchedules(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("tab cycle = %v, want %v", got, want)
 	}
+	a.setFocus(focusSchedules)
+	a.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	if a.focus != focusCmdline {
+		t.Fatalf("shift-tab from a table = %d, want cmdline", a.focus)
+	}
+	a.Update(tea.KeyMsg{Type: tea.KeyTab})
+	if a.focus != focusSchedules {
+		t.Fatalf("tab back onto the tables = %d, want the one last shown (schedules)", a.focus)
+	}
 }
 
-// stripHint parses the strip's "<Table>:<keys>" entries for the tables that are
-// not shown. keys is "Tab" or "S-Tab" (Shift-Tab), optionally followed by "*N"
-// presses.
-func stripHint(t *testing.T, s string, table string) (back bool, n int) {
+func TestArrowsSwitchTables(t *testing.T) {
+	a := oneTableApp(120, 40)
+	a.setFocus(focusRunners)
+	want := []focus{focusTasks, focusSchedules, focusRunners}
+	for _, w := range want {
+		a.Update(tea.KeyMsg{Type: tea.KeyRight})
+		if a.focus != w {
+			t.Fatalf("right = %d, want %d", a.focus, w)
+		}
+	}
+	a.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	if a.focus != focusSchedules {
+		t.Fatalf("left from runners = %d, want schedules (wraps)", a.focus)
+	}
+	// Off the tables the arrows are the pane's own (the command line's cursor).
+	a.setFocus(focusCmdline)
+	a.Update(tea.KeyMsg{Type: tea.KeyRight})
+	if a.focus != focusCmdline {
+		t.Fatalf("right on the command line moved focus to %d", a.focus)
+	}
+}
+
+// stripHint parses the strip's entries: "<Table>:←" / "<Table>:→" for a table
+// that is not shown, and "[<Shown>:<keys>]" when focus is off the tables, where
+// keys ("Tab" / "S-Tab", optionally "*N") take focus back onto them.
+func stripHint(t *testing.T, s, table string) (arrow tea.KeyType, back bool, n int) {
 	t.Helper()
 	for _, part := range strings.Fields(strings.SplitN(s, " | ", 2)[0]) {
-		name, keys, ok := strings.Cut(part, ":")
-		if !ok || strings.Trim(name, "[]") != table {
+		name, keys, ok := strings.Cut(strings.Trim(part, "[]"), ":")
+		if !ok || name != table {
 			continue
+		}
+		switch keys {
+		case "←":
+			return tea.KeyLeft, false, 0
+		case "→":
+			return tea.KeyRight, false, 0
 		}
 		n = 1
 		if k, cnt, has := strings.Cut(keys, "*"); has {
@@ -112,19 +151,24 @@ func stripHint(t *testing.T, s string, table string) (back bool, n int) {
 		}
 		switch keys {
 		case "Tab":
-			return false, n
+			return 0, false, n
 		case "S-Tab":
-			return true, n
+			return 0, true, n
 		}
 		t.Fatalf("strip %q: unreadable keys %q for %s", s, keys, table)
 	}
-	t.Fatalf("strip %q does not name %s", s, table)
+	t.Fatalf("strip %q gives no keys for %s", s, table)
 	return
 }
 
-// The strip names all three tables and, from the table shown, the keys that
-// reach the others. Each hint is PRESSED against the real focus cycle: an
-// earlier strip said "Tab switches" and was wrong.
+func pressKey(a *App, k tea.KeyType, times int) {
+	for i := 0; i < times; i++ {
+		a.Update(tea.KeyMsg{Type: k})
+	}
+}
+
+// From a table, the strip's arrow for each other table is PRESSED and must land
+// there: an earlier strip said "Tab switches" and was wrong.
 func TestStripNamesThreeTables(t *testing.T) {
 	tables := map[string]focus{"Runners": focusRunners, "Tasks": focusTasks, "Schedules": focusSchedules}
 	for fromName, from := range tables {
@@ -138,43 +182,39 @@ func TestStripNamesThreeTables(t *testing.T) {
 			if toName == fromName {
 				continue
 			}
-			back, n := stripHint(t, strip, toName)
+			arrow, _, _ := stripHint(t, strip, toName)
 			a.setFocus(from)
-			for i := 0; i < n; i++ {
-				if back {
-					a.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
-				} else {
-					a.Update(tea.KeyMsg{Type: tea.KeyTab})
-				}
-			}
+			pressKey(a, arrow, 1)
 			if a.focus != to {
-				t.Errorf("from %s the strip says %s is %v x%d (%q); that lands on focus %d, want %d",
-					fromName, toName, back, n, strip, a.focus, to)
+				t.Errorf("from %s the strip says %s is %v (%q); that lands on %d, want %d",
+					fromName, toName, arrow, strip, a.focus, to)
 			}
 		}
 	}
 }
 
-// With focus on notify the shown table is the one last rested on, and the
-// hint must be the keys from where focus IS, not from the table.
+// Off the tables the bracket carries the keys that go back onto them, from
+// where focus IS; then the arrows apply as before.
 func TestStripKeysFollowFocusOffTheTable(t *testing.T) {
-	a := oneTableApp(120, 40)
-	a.setFocus(focusSchedules)
-	a.setFocus(focusNotify) // schedules stays shown
-	if a.shownTable() != focusSchedules {
-		t.Fatalf("shown = %d", a.shownTable())
-	}
-	strip := tableStrip(a.shownTable(), a.focus, nil)
-	back, n := stripHint(t, strip, "Tasks")
-	for i := 0; i < n; i++ {
+	for _, off := range []focus{focusNotify, focusCmdresult, focusCmdline} {
+		a := oneTableApp(120, 40)
+		a.setFocus(focusSchedules)
+		a.setFocus(off) // schedules stays shown
+		strip := tableStrip(a.shownTable(), a.focus, nil)
+		_, back, n := stripHint(t, strip, "Schedules")
 		if back {
-			a.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+			pressKey(a, tea.KeyShiftTab, n)
 		} else {
-			a.Update(tea.KeyMsg{Type: tea.KeyTab})
+			pressKey(a, tea.KeyTab, n)
 		}
-	}
-	if a.focus != focusTasks {
-		t.Errorf("strip %q: lands on %d, want tasks", strip, a.focus)
+		if a.focus != focusSchedules {
+			t.Fatalf("from %d, strip %q: lands on %d, want schedules", off, strip, a.focus)
+		}
+		arrow, _, _ := stripHint(t, strip, "Tasks")
+		pressKey(a, arrow, 1)
+		if a.focus != focusTasks {
+			t.Errorf("from %d, strip %q: then %v lands on %d, want tasks", off, strip, arrow, a.focus)
+		}
 	}
 }
 

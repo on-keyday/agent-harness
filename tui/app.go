@@ -1833,7 +1833,9 @@ func (a *App) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		a.detail.Open("keys", keyHelpBody())
 		return a, nil
 	}
-	// Tab cycles focus.
+	// Tab cycles focus over the shown table, notify, cmdresult and cmdline;
+	// ←/→ switch between the three tables while one has focus (anywhere else
+	// they are the pane's own: the command line's cursor).
 	switch msg.Type {
 	case tea.KeyTab:
 		a.cycleFocus(+1)
@@ -1841,6 +1843,15 @@ func (a *App) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyShiftTab:
 		a.cycleFocus(-1)
 		return a, nil
+	case tea.KeyLeft, tea.KeyRight:
+		if isTableFocus(a.focus) {
+			d := +1
+			if msg.Type == tea.KeyLeft {
+				d = -1
+			}
+			a.setFocus(tableOrder[(tableIndex(a.focus)+d+len(tableOrder))%len(tableOrder)])
+			return a, nil
+		}
 	}
 	if cmd, ok := a.dispatchMainKey(msg); ok {
 		return a, cmd
@@ -1944,8 +1955,46 @@ func (a *App) navigateCmdHistory(previous bool) bool {
 	return true
 }
 
+// tableOrder is the three tables in strip order, the order ←/→ step through.
+var tableOrder = []focus{focusRunners, focusTasks, focusSchedules}
+
+func tableIndex(f focus) int {
+	for i, t := range tableOrder {
+		if t == f {
+			return i
+		}
+	}
+	return 0
+}
+
+// tabStops is the Tab cycle: the three tables count as ONE stop (the table
+// shown), then notify, cmdresult and cmdline.
+const tabStops = 4
+
+// focusStop is f's position in the Tab cycle.
+func focusStop(f focus) int {
+	switch f {
+	case focusNotify:
+		return 1
+	case focusCmdresult:
+		return 2
+	case focusCmdline:
+		return 3
+	}
+	return 0
+}
+
 func (a *App) cycleFocus(delta int) {
-	a.setFocus(focus((int(a.focus) + delta + numFocus) % numFocus))
+	switch (focusStop(a.focus) + delta + tabStops) % tabStops {
+	case 0:
+		a.setFocus(a.shownTable())
+	case 1:
+		a.setFocus(focusNotify)
+	case 2:
+		a.setFocus(focusCmdresult)
+	default:
+		a.setFocus(focusCmdline)
+	}
 }
 
 // setFocus moves focus straight to one pane, blurring the rest.
@@ -2026,16 +2075,15 @@ func isTableFocus(f focus) bool {
 }
 
 // keysToReach is the Tab / S-Tab (Shift-Tab) presses that take focus from one
-// pane to another along the focus cycle (runners → tasks → schedules → notify →
-// cmdresult → cmdline → runners): the shorter direction, Tab on a tie, with a
-// "*N" repeat count past one press. It reads numFocus and the order of the
-// focus constants, so the strip below cannot say a key that the cycle does not
-// honour — an earlier strip said "Tab switches" and was wrong (the test
-// presses every hint it prints). Terse on purpose: the hints and a fleet
-// summary with two-digit counts share 80 cells.
+// pane to another along the Tab cycle (tables → notify → cmdresult → cmdline →
+// tables): the shorter direction, Tab on a tie, with a "*N" repeat count past
+// one press. It reads focusStop, so the strip below cannot say a key that the
+// cycle does not honour — an earlier strip said "Tab switches" and was wrong
+// (the test presses every hint it prints). Terse on purpose: the hints and a
+// fleet summary with two-digit counts share 80 cells.
 func keysToReach(from, to focus) string {
-	fwd := (int(to) - int(from) + numFocus) % numFocus
-	back := numFocus - fwd
+	fwd := (focusStop(to) - focusStop(from) + tabStops) % tabStops
+	back := tabStops - fwd
 	key, n := "Tab", fwd
 	if back < fwd {
 		key, n = "S-Tab", back
@@ -2047,22 +2095,27 @@ func keysToReach(from, to focus) string {
 }
 
 // tableStrip is the one line above the table: the three tables with the shown
-// one bracketed, for each of the others the keys that reach it from where focus
-// IS (from — it is not the shown table while focus rests on notify / cmdresult
-// / cmdline), and the fleet summary. Entries are Name:keys, in cycle order,
-// separated by single spaces; " | " precedes the summary (ASCII, so the line
-// measures the same under either East Asian width reading).
+// one bracketed, each of the others with the arrow that switches to it
+// (Name:← / Name:→), and the fleet summary after " | ". While focus is off the
+// tables (notify / cmdresult / cmdline) the bracket also carries the keys that
+// go back onto them from where focus IS: [Tasks:Tab*2]. Every hint is pressed
+// by the tests.
 func tableStrip(shown, from focus, rs []protocol.RunnerInfo) string {
+	names := map[focus]string{focusRunners: "Runners", focusTasks: "Tasks", focusSchedules: "Schedules"}
+	i := tableIndex(shown)
+	n := len(tableOrder)
 	var entries []string
-	for _, t := range []struct {
-		name string
-		f    focus
-	}{{"Runners", focusRunners}, {"Tasks", focusTasks}, {"Schedules", focusSchedules}} {
-		if t.f == shown {
-			entries = append(entries, "["+t.name+"]")
-			continue
+	for j, f := range tableOrder {
+		switch {
+		case f == shown && isTableFocus(from):
+			entries = append(entries, "["+names[f]+"]")
+		case f == shown:
+			entries = append(entries, "["+names[f]+":"+keysToReach(from, shown)+"]")
+		case j == (i+1)%n:
+			entries = append(entries, names[f]+":→")
+		default:
+			entries = append(entries, names[f]+":←")
 		}
-		entries = append(entries, t.name+":"+keysToReach(from, t.f))
 	}
 	return " " + strings.Join(entries, " ") + " | " + runnerSummary(rs)
 }

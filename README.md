@@ -1995,19 +1995,21 @@ into one screen.
 bin/harness-tui --server-cid 'ws:HOSTNAME:8539-*' --repo /abs/path/to/repo
 ```
 
-Layout — one table at a time, full width. The table shown follows focus
-(`Tab` / `Shift-Tab` cycle runners → tasks → schedules → notify → cmdresult →
-cmdline); while focus is on notify, cmdresult or cmdline the last-focused
-table stays up, and the tasks table is the one at startup. The line above the
-table names all three, brackets the shown one, gives each of the others the
-keys that reach it from where focus is (`Tab`, `S-Tab` for Shift-Tab, with `*2` / `*3`
-for more presses) and always carries the fleet summary
+Layout — one table at a time, full width. `←` / `→` switch between the
+runners, tasks and schedules tables while one has focus; `Tab` / `Shift-Tab`
+cycle the shown table → notify → cmdresult → cmdline (the three tables are one
+stop). While focus is on notify, cmdresult or cmdline the last-focused table
+stays up, and the tasks table is the one at startup. The line above the table
+names all three, brackets the shown one, gives each of the others the arrow
+that switches to it (`Name:←` / `Name:→`); off the tables the bracket also
+carries the keys back onto them (`[Tasks:Tab*2]`, `S-Tab` for Shift-Tab). It
+always carries the fleet summary
 (`runners N: X idle Y busy …`; idle and busy keep a zero, other statuses
 appear when present). The tasks table's `Run` column (a background task's
 deadline or end reason) appears only while some listed task has a Run cell.
 
 ```
- Runners:S-Tab [Tasks] Schedules:Tab | runners 3: 1 idle 2 busy
+ Runners:← [Tasks] Schedules:→ | runners 3: 1 idle 2 busy
 ┌───────────────────────────────────────────────────────┐
 │ Status   ID     From  Agent  Act   Repo         About │
 │ Queued   9d50   cli   claude ...   /home/foo    ...   │

@@ -148,9 +148,9 @@ Harness-specific facts:
   TUI's size, so `stty size` inside the attached shell is a free check that the
   handover really propagated the winsize.
 
-- Focus order is `runners, tasks, notify, cmdresult, cmdline` (5 panes; the
-  log pane was retired with the task log).
-  Tab is `+1`, Shift-Tab (`\x1b[Z`) is `-1`.
+- Tab order is `<shown table>, notify, cmdresult, cmdline`: the runners, tasks
+  and schedules tables are ONE stop, switched with `←` / `→` (`\x1b[D` /
+  `\x1b[C`) while a table has focus. Tab is `+1`, Shift-Tab (`\x1b[Z`) is `-1`.
 - **Initial focus is `tasks`.** A reflexive Tab on startup moves focus *off* the
   panel you want.
 - Enter on the `tasks` panel does nothing (it used to follow the task log);

@@ -146,14 +146,14 @@ func TestViewFooterFitsTerminal(t *testing.T) {
 }
 
 // TestFocusCycleHasNoLogPane: Tab walks every pane in order and wraps; the
-// task log pane is not one of them any more (A3, A-D30). The Schedules table
-// sits between tasks and notify (TestFocusCycleIncludesSchedules).
+// task log pane is not one of them any more (A3, A-D30). The three tables are
+// one stop (TestTabTreatsTheTablesAsOneStop).
 func TestFocusCycleHasNoLogPane(t *testing.T) {
 	a := New(Config{Server: "ws://test:8080"})
 	a.width, a.height = 120, 40
 	a.layout()
 	a.setFocus(focusRunners)
-	want := []focus{focusTasks, focusSchedules, focusNotify, focusCmdresult, focusCmdline, focusRunners}
+	want := []focus{focusNotify, focusCmdresult, focusCmdline, focusRunners}
 	var got []focus
 	for range want {
 		a.Update(tea.KeyMsg{Type: tea.KeyTab})

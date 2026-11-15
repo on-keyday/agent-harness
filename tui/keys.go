@@ -357,7 +357,8 @@ var mainKeyBindings = []keyBinding{
 	{Keys: []string{mainKeys.Detail}, Scope: scopeRunners | scopeTasks | scopeSchedules, Do: (*App).onDetail, Short: "d detail", Long: "detail popup for the selected runner / task / schedule (a schedule's shows its history and wait statistics)"},
 
 	// --- global (every pane but the command line) ---
-	{Keys: []string{"tab", "shift+tab"}, Scope: scopeGlobal, Short: "tab focus", Long: "cycle focus between panes (shift-tab reverses)"},
+	{Keys: []string{"tab", "shift+tab"}, Scope: scopeGlobal, Short: "tab focus", Long: "cycle focus: the shown table, notifications, results, command line (shift-tab reverses)"},
+	{Keys: []string{"left", "right"}, Scope: scopeRunners | scopeTasks | scopeSchedules, Short: "←/→ table", Long: "switch between the runners, tasks and schedules tables"},
 	{Keys: []string{mainKeys.Submit}, Scope: scopeGlobal, Do: (*App).onSubmit, Short: "s one-shot", Long: "open the one-shot popup (a detached session new --oneshot)"},
 	{Keys: []string{mainKeys.Session}, Scope: scopeGlobal, Do: (*App).onSession, Short: "S session", Long: "open a new detachable session"},
 	{Keys: []string{mainKeys.Grid}, Scope: scopeGlobal, Do: (*App).onGrid, Short: "g grid", Long: "live session viewer grid"},
