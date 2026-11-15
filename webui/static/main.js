@@ -6571,15 +6571,9 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     taskChips.finished.textContent = `Finished (${finished})`;
     taskChips.all.textContent      = `All (${lastTasks.length})`;
     const terms = taskFilterInput.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
-    const visible = lastTasks
-      .filter((t) => taskMatchesFilter(t, terms))
-      .sort((a, b) => taskActivityMs(b) - taskActivityMs(a));
-    // The order and its groups are Go's (harness.orderTasks); the activity
-    // sort above is the fallback for a wasm that predates the bridge.
-    const groups = typeof harness.orderTasks === "function"
-      ? harness.orderTasks(taskOrder, visible.map((t) => t.id))
-      : null;
-    const rows = groups ? orderedRowsModel(groups, visible) : visible.map((t) => ({ task: t }));
+    const visible = lastTasks.filter((t) => taskMatchesFilter(t, terms));
+    // The order and its groups are Go's (harness.orderTasks).
+    const rows = orderedRowsModel(harness.orderTasks(taskOrder, visible.map((t) => t.id)), visible);
     // The rebuild below wipes all sheet DOM, which would reset any agent
     // dropdown the user changed — every 5s poll. Capture those picks first and
     // restore them after the rebuild.
