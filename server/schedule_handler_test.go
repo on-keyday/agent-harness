@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"encoding/hex"
+	"errors"
 	"strconv"
 	"strings"
 	"sync"
@@ -1129,5 +1130,236 @@ func TestStatusEventCarriesScheduleID(t *testing.T) {
 	}
 	if withID == 0 || without == 0 {
 		t.Fatalf("events with id %d, without %d (assign events expected)", withID, without)
+	}
+}
+
+// --- fix round 1 ---
+
+// R15: a bound task's grant is bounded by the creator even with no authority
+// flag; binding a more privileged task does not lend the creator its authority.
+func TestCreateWithTaskGrantBoundedByCreator(t *testing.T) {
+	e := newSchedEnv(t)
+	e.addCandidate("claude")
+	conn, creator := e.agent(t, authority.Grant{
+		Caps:  protocol.Capability_Schedule | protocol.Capability_FileRead,
+		Scope: authority.Scope{Base: protocol.ScopeBase_Subtree}, DelegateCaps: protocol.Capability_FileRead,
+		DelegateScope: authority.Scope{Base: protocol.ScopeBase_Subtree},
+	})
+	task, err := e.h.Tasks.CreateWithinLimits("/r", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Cli, taskIDFromHex(creator), "",
+		protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{Base: protocol.ScopeBase_Global},
+			DelegateCaps: protocol.Capability_All, DelegateScope: authority.Scope{Base: protocol.ScopeBase_Global}}, "claude",
+		RunSpec{Mode: protocol.RunMode_Background, Cond: RunConditions{Deadline: time.Hour}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.h.Tasks.Cancel(task, protocol.EndReason_Cancelled, protocol.TaskID{})
+	sp := bindSpec(t, createSpec(), task)
+	sp.SetRequestedCapsPresent(false) // no authority flags at all
+	r := e.create(t, e.connIDOf(conn), sp, "go")
+	if r.Status != protocol.ScheduleStatus_Ok {
+		t.Fatalf("%v %s", r.Status, r.Message)
+	}
+	g := e.stored(t, schedIDHex(r.Id)).Grant
+	if g.Caps&^protocol.Capability_FileRead != 0 || g.DelegateCaps&^protocol.Capability_FileRead != 0 {
+		t.Errorf("stored caps %v / delegate %v exceed the creator's", g.Caps, g.DelegateCaps)
+	}
+	if g.Scope.Base == protocol.ScopeBase_Global || g.DelegateScope.Base == protocol.ScopeBase_Global {
+		t.Errorf("stored scope %v / bound %v still global", g.Scope.Base, g.DelegateScope.Base)
+	}
+}
+
+// S-D15's bit check must not tell a caller anything about a task it cannot
+// reach: bound and unbound answer alike.
+func TestForegroundResumeOutOfReachIsNoOracle(t *testing.T) {
+	e := newSchedEnv(t)
+	bound := e.terminal(t, protocol.RunMode_Background, "")
+	free := e.terminal(t, protocol.RunMode_Background, "")
+	e.seed(t, 1, protocol.ScheduleTaskState_Bound, bound, "")
+	conn, _ := e.agent(t, authority.Grant{Caps: protocol.Capability_Resume, Scope: authority.Scope{Base: protocol.ScopeBase_None}})
+	cid := e.connIDOf(conn)
+	_ = cid
+	var got [2]protocol.OpenInteractiveStatus
+	for i, task := range []string{bound, free} {
+		req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_OpenInteractive, RequestId: 3}}
+		req.SetOpenInteractive(*foregroundResume(task))
+		e.h.Handle(conn, encodeTaskControlRequest(t, req))
+		resp := lastTaskControlResponse(t, conn)
+		if resp.Kind != protocol.TaskControlKind_OpenInteractive || resp.OpenInteractive() == nil {
+			t.Fatalf("task %d: response %+v (a permission_denied here is the oracle)", i, resp)
+		}
+		got[i] = resp.OpenInteractive().Status
+	}
+	if got[0] != protocol.OpenInteractiveStatus_ResumeNotFound || got[1] != got[0] {
+		t.Fatalf("bound %v, unbound %v: both must be resume_not_found", got[0], got[1])
+	}
+}
+
+func TestScheduleRefusalStatuses(t *testing.T) {
+	e := newSchedEnv(t)
+	e.addCandidate("claude")
+	want := func(name string, r protocol.ScheduleResponse, st protocol.ScheduleStatus) {
+		t.Helper()
+		if r.Status != st || len(r.Message) == 0 {
+			t.Errorf("%s: %v %q, want %v with a message", name, r.Status, r.Message, st)
+		}
+	}
+	// repo_required
+	sp := createSpec()
+	sp.SetRepoPresent(false)
+	want("no repo or task", e.create(t, "", sp, "go"), protocol.ScheduleStatus_RepoRequired)
+	// repo_conflict: --repo with --task, and --repo on a bound schedule's edit.
+	task := e.terminal(t, protocol.RunMode_Background, "")
+	sp = bindSpec(t, createSpec(), task)
+	sp.SetRepoPresent(true)
+	sp.SetRepoPath([]byte("/r"))
+	want("repo with task", e.create(t, "", sp, "go"), protocol.ScheduleStatus_RepoConflict)
+	bsc := e.seed(t, 1, protocol.ScheduleTaskState_Bound, task, "")
+	esp := &protocol.ScheduleSpec{}
+	esp.SetRepoPresent(true)
+	esp.SetRepoPath([]byte("/r"))
+	want("repo on bound edit", e.edit(t, "", bsc.ID, esp, ""), protocol.ScheduleStatus_RepoConflict)
+	// scope_not_permitted: a scope id outside the creator's reach.
+	conn, _ := e.agent(t, authority.Grant{Caps: protocol.Capability_Schedule | protocol.Capability_FileRead,
+		Scope: authority.Scope{Base: protocol.ScopeBase_Subtree}, DelegateCaps: protocol.Capability_All,
+		DelegateScope: authority.Scope{Base: protocol.ScopeBase_Subtree}})
+	sp = createSpec()
+	sp.SetScopePresent(true)
+	var ts protocol.TaskScope
+	ts.Base = protocol.ScopeBase_None
+	ts.Ids = []protocol.TaskID{hexToTaskID(t, task)}
+	sp.SetScope(ts)
+	sp.SetOverrides(nil)
+	want("scope id out of reach", e.create(t, e.connIDOf(conn), sp, "go"), protocol.ScheduleStatus_ScopeNotPermitted)
+	// record_not_permitted
+	rsp := createSpec()
+	rsp.SetRecordSet(true)
+	rsp.SetRecord(true)
+	want("record without the bit", e.create(t, e.connIDOf(conn), rsp, "go"), protocol.ScheduleStatus_RecordNotPermitted)
+	// turn_end_unsupported
+	tsp := createSpec()
+	tsp.SetConditions(protocol.BackgroundConditions{DeadlineMs: 3600000, TurnEnd: protocol.TurnEndSignal(99)})
+	want("turn end", e.create(t, "", tsp, "go"), protocol.ScheduleStatus_TurnEndUnsupported)
+	// task_already_bound
+	want("second binding", e.create(t, "", bindSpec(t, createSpec(), task), "go"), protocol.ScheduleStatus_TaskAlreadyBound)
+	// not_ready
+	e.ready.Store(false)
+	rsc := e.seed(t, 2, protocol.ScheduleTaskState_Unbound, "", "")
+	want("run before start", e.call(t, schedOpConn(), protocol.TaskControlKind_ScheduleRun, rsc.ID), protocol.ScheduleStatus_NotReady)
+}
+
+func TestBindBackgroundRefusesForegroundRun(t *testing.T) {
+	e := newSchedEnv(t)
+	fg := e.running(t, protocol.RunMode_Foreground, "")
+	if err := e.h.Tasks.BindBackground(fg, RunConditions{Deadline: time.Hour}, 1); !errors.Is(err, ErrBindForeground) {
+		t.Fatalf("err %v", err)
+	}
+	if tk, _ := e.h.Tasks.Get(fg); tk.RunMode != protocol.RunMode_Foreground {
+		t.Fatal("mode written")
+	}
+	// Create writes the mode before the schedule: a refusal stores nothing.
+	e.addCandidate("claude")
+	e.h.Tasks.SetDetached(fg) // still foreground and active
+	if r := e.create(t, "", bindSpec(t, createSpec(), fg), "go"); r.Status != protocol.ScheduleStatus_TaskRunningForeground || len(e.store.List()) != 0 {
+		t.Fatalf("%v, %d schedules", r.Status, len(e.store.List()))
+	}
+}
+
+// One record rule on edit: record_persist is checked only when the edit names
+// --record / --no-record.
+func TestEditChecksRecordOnlyWhenNamed(t *testing.T) {
+	e := newSchedEnv(t)
+	task := e.terminal(t, protocol.RunMode_Background, "")
+	sc := e.seed(t, 1, protocol.ScheduleTaskState_Bound, task, "")
+	conn, creator := e.agent(t, authority.Grant{Caps: protocol.Capability_Schedule | protocol.Capability_RecordPersist,
+		Scope:        authority.Scope{Base: protocol.ScopeBase_Global, Overrides: []authority.ScopeOverride{{Caps: protocol.Capability_RecordPersist, Base: protocol.ScopeBase_None}}},
+		DelegateCaps: protocol.Capability_All, DelegateScope: authority.Scope{Base: protocol.ScopeBase_Global}})
+	_ = creator
+	cid := e.connIDOf(conn)
+	psp := &protocol.ScheduleSpec{}
+	psp.SetPromptPresent(true)
+	if r := e.edit(t, cid, sc.ID, psp, "new"); r.Status != protocol.ScheduleStatus_Ok {
+		t.Fatalf("an edit that names no record flag: %v %s", r.Status, r.Message)
+	}
+	_ = creator
+	rsp := &protocol.ScheduleSpec{}
+	rsp.SetRecordSet(true)
+	rsp.SetRecord(true)
+	if r := e.edit(t, cid, sc.ID, rsp, ""); r.Status != protocol.ScheduleStatus_RecordNotPermitted {
+		t.Fatalf("--record without the bit: %v", r.Status)
+	}
+}
+
+func TestNilVariantsAreAnswered(t *testing.T) {
+	e := newSchedEnv(t)
+	for _, k := range []protocol.TaskControlKind{protocol.TaskControlKind_ScheduleDelete, protocol.TaskControlKind_ScheduleRun, protocol.TaskControlKind_ScheduleShow} {
+		conn := schedOpConn()
+		req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: k, RequestId: 9}}
+		e.h.handleSchedule("", conn, req)
+		if len(conn.Sent()) != 1 {
+			t.Fatalf("%v: %d responses", k, len(conn.Sent()))
+		}
+		if r := scheduleResp(t, conn, k); r.Status != protocol.ScheduleStatus_InternalError {
+			t.Errorf("%v: %v", k, r.Status)
+		}
+	}
+}
+
+// Live surfaces drop or gain schedule_id when a binding changes with no other
+// task event: a session-mode unbind, a delete, a bind of a task already in background.
+func TestBindingChangesPublishATaskEvent(t *testing.T) {
+	st, _ := LoadScheduleStore("")
+	s := New(Config{Schedules: st})
+	getEvents := captureTaskEvents(s, topics.TasksStatus())
+	h := s.taskHandler
+	s.registry.Add(&RunnerEntry{ID: tcid("R"), Identity: testRunnerID("R"), Hostname: "h", AllowedRoots: []string{"/r"},
+		AgentProfiles: []string{"claude"}, MaxTasks: 2, ActiveTasks: map[string]struct{}{}, ConnectedAt: time.Now(), LastTaskActivity: time.Now(), Conn: &fakeConn{}})
+	mk := func() string {
+		id, err := s.tasks.CreateWithinLimits("/r", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Cli, protocol.TaskID{}, "",
+			protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_FileRead, Scope: authority.DefaultScope()}, "claude",
+			RunSpec{Mode: protocol.RunMode_Background, Cond: RunConditions{Deadline: time.Hour}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	last := func(task string) *protocol.TaskStatusEvent {
+		evs := getEvents()
+		for i := len(evs) - 1; i >= 0; i-- {
+			if hex.EncodeToString(evs[i].TaskId.Id[:]) == task {
+				return &evs[i]
+			}
+		}
+		return nil
+	}
+	// bind of a task already in background: no mode write, still an event.
+	a := mk()
+	before := len(getEvents())
+	r := h.scheduleCreate("", bindSpec(t, createSpec(), a), "go")
+	if r.Status != protocol.ScheduleStatus_Ok {
+		t.Fatalf("%v %s", r.Status, r.Message)
+	}
+	if evs := getEvents(); len(evs) == before || !last(a).SchedulePresent() {
+		t.Fatalf("no event carrying the schedule id after the bind (%d -> %d)", before, len(evs))
+	}
+	// session-mode unbind.
+	s.tasks.Assign(a, testRunnerID("r1"), "", false)
+	conn := schedOpConn()
+	sm := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_SessionMode, RequestId: 5}}
+	sm.SetSessionMode(protocol.SessionModeRequest{TaskId: hexToTaskID(t, a)})
+	h.Handle(conn, encodeTaskControlRequest(t, sm))
+	if ev := last(a); ev == nil || ev.SchedulePresent() {
+		t.Fatalf("last event for the unbound task still carries a schedule id: %+v", ev)
+	}
+	// delete.
+	b := mk()
+	r = h.scheduleCreate("", bindSpec(t, createSpec(), b), "go")
+	if r.Status != protocol.ScheduleStatus_Ok || !last(b).SchedulePresent() {
+		t.Fatalf("bind b: %v", r.Status)
+	}
+	if d := h.scheduleDelete("", r.Id); d.Status != protocol.ScheduleStatus_Ok {
+		t.Fatal(d.Status)
+	}
+	if ev := last(b); ev.SchedulePresent() {
+		t.Fatal("the deleted schedule's task still shows its id")
 	}
 }

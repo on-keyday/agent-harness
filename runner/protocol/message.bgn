@@ -6168,13 +6168,20 @@ enum ScheduleStatus:
     prompt_required
     profile_required
     profile_unavailable
-    stream_refused
     task_not_reachable
     task_running_foreground
     self_refused
     spawn_limit
     prompt_too_large
     internal_error
+    # appended (R16): the refusals that had only internal_error to say them.
+    repo_required           # create with neither --repo nor --task
+    repo_conflict           # --repo with --task; --repo on a bound schedule's edit
+    scope_not_permitted     # a grantFor refusal: an id outside reach or delegation, an invalid scope
+    record_not_permitted    # --record without record_persist
+    turn_end_unsupported    # mirrors the open status
+    task_already_bound      # --task T names a task another schedule is bound to
+    not_ready               # schedule run before the server finished starting its schedules
 
 # message: why, for the statuses that have more to say. stream_id is non-zero
 # for list and show (a ScheduleRow list / a ScheduleDetail on that stream).

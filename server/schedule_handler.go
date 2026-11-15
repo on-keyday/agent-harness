@@ -41,6 +41,10 @@ type ScheduleOps struct {
 	Lock  func(id string) *sync.Mutex
 	Ready func() bool
 	Now   func() time.Time
+	// OnBound publishes a task status event for a task whose schedule binding
+	// changed (bound, unbound, its schedule deleted), so live surfaces gain or
+	// drop its schedule_id. Wired to a task event by Server.New; nil in tests.
+	OnBound func(taskHex string)
 
 	// bindMu makes "this task is bound to no other schedule" and the write that
 	// binds it one step: the store assumes one schedule per task.
@@ -138,13 +142,19 @@ func (h *TaskHandler) handleSchedule(cid string, conn ConnHandle, req *protocol.
 			send(h.scheduleEdit(cid, id, spec, prompt))
 		})
 	case protocol.TaskControlKind_ScheduleDelete:
-		if r := req.ScheduleDelete(); r != nil {
-			send(h.scheduleDelete(cid, r.Id))
+		r := req.ScheduleDelete()
+		if r == nil {
+			send(scheduleRefusal(protocol.ScheduleStatus_InternalError, "empty request"))
+			return
 		}
+		send(h.scheduleDelete(cid, r.Id))
 	case protocol.TaskControlKind_ScheduleRun:
-		if r := req.ScheduleRun(); r != nil {
-			send(h.scheduleRun(cid, r.Id))
+		r := req.ScheduleRun()
+		if r == nil {
+			send(scheduleRefusal(protocol.ScheduleStatus_InternalError, "empty request"))
+			return
 		}
+		send(h.scheduleRun(cid, r.Id))
 	case protocol.TaskControlKind_ScheduleList:
 		body := h.scheduleListBody(cid)
 		respondWithBody(conn, "schedule list", &body, func(streamID uint64) {
@@ -153,6 +163,7 @@ func (h *TaskHandler) handleSchedule(cid string, conn ConnHandle, req *protocol.
 	case protocol.TaskControlKind_ScheduleShow:
 		r := req.ScheduleShow()
 		if r == nil {
+			send(scheduleRefusal(protocol.ScheduleStatus_InternalError, "empty request"))
 			return
 		}
 		detail, refusal := h.scheduleDetail(cid, r.Id)
@@ -270,19 +281,16 @@ func scheduleStatusFromOpen(st protocol.OpenInteractiveStatus) protocol.Schedule
 		return protocol.ScheduleStatus_PromptRequired
 	case protocol.OpenInteractiveStatus_ProfileUnavailable:
 		return protocol.ScheduleStatus_ProfileUnavailable
+	case protocol.OpenInteractiveStatus_TurnEndUnsupported:
+		return protocol.ScheduleStatus_TurnEndUnsupported
 	}
-	// turn_end_unsupported has no status of its own on this wire; the message
-	// carries it.
 	return protocol.ScheduleStatus_InternalError
 }
 
+// scheduleGrantRefusal is every grantFor refusal: an id outside the granter's
+// reach or what it may delegate, an inconsistent scope.
 func scheduleGrantRefusal(err error) protocol.ScheduleResponse {
-	var oor *authority.OutOfReachError
-	var ood *authority.OutOfDelegationError
-	if errors.As(err, &oor) || errors.As(err, &ood) {
-		return scheduleRefusal(protocol.ScheduleStatus_TaskNotReachable, "%s", err.Error())
-	}
-	return scheduleRefusal(protocol.ScheduleStatus_InternalError, "%s", err.Error())
+	return scheduleRefusal(protocol.ScheduleStatus_ScopeNotPermitted, "%s", err.Error())
 }
 
 // specGrantRequest is the authority half of a spec, as grantFor reads an
@@ -348,39 +356,15 @@ func grantRequestOver(stored authority.Grant, spec *protocol.ScheduleSpec) grant
 }
 
 // storedGrant is the grant a schedule stores for r written onto task idHex
-// ("" = the task it will create). A resume-form grantFor writes only the
-// halves r names; the others stay the task's own, so they are read from its
-// record, because a firing writes the stored grant whole.
+// ("" = the task it will create). Every half of r is present (a create over a
+// task builds it with grantRequestOver, as an edit does), so the whole grant
+// is bounded by the granter and a firing writes it whole.
 func (h *TaskHandler) storedGrant(g *authority.Granter, r grantRequest, idHex string) (authority.Grant, error) {
 	u, err := h.grantFor(g, r, idHex)
 	if err != nil {
 		return authority.Grant{}, err
 	}
-	out := u.To
-	if idHex != "" {
-		if rec, ok := h.Tasks.Get(idHex); ok {
-			cur := rec.Grant()
-			if !u.Caps {
-				out.Caps = cur.Caps
-			}
-			if !u.Scope {
-				out.Scope = cur.Scope
-			}
-			if !u.DelegateCaps {
-				out.DelegateCaps = cur.DelegateCaps
-			}
-			if !u.DelegateScope {
-				out.DelegateScope = cur.DelegateScope
-			}
-			if !u.SpawnDepth {
-				out.SpawnDepth = cur.SpawnDepth
-			}
-			if !u.MaxDescendants {
-				out.MaxDescendants = cur.MaxDescendants
-			}
-		}
-	}
-	return out, nil
+	return u.To, nil
 }
 
 // scheduleBinding is S-D14: the task a schedule is to be bound to must exist,
@@ -396,7 +380,7 @@ func (h *TaskHandler) scheduleBinding(cid string, taskHex, own string) (TaskEntr
 		return fail(protocol.ScheduleStatus_TaskNotReachable, "no task %s within your reach", short(taskHex))
 	}
 	if other, bound := h.Sched.Store.BoundTo(taskHex); bound && other != own {
-		return fail(protocol.ScheduleStatus_TaskNotReachable, "task %s is already bound to schedule %s", short(taskHex), short(other))
+		return fail(protocol.ScheduleStatus_TaskAlreadyBound, "task %s is already bound to schedule %s", short(taskHex), short(other))
 	}
 	if t.RunMode == protocol.RunMode_Foreground && !scheduleTerminal(t.Status) {
 		return fail(protocol.ScheduleStatus_TaskRunningForeground,
@@ -463,7 +447,7 @@ func (h *TaskHandler) applySpec(cid string, base Schedule, spec *protocol.Schedu
 	// default agent and the run's size all follow from it.
 	if spec.TaskPresent() && spec.TaskId() != nil {
 		if spec.RepoPresent() {
-			return refuse(protocol.ScheduleStatus_InternalError, "--repo with --task is refused: the repo is the task's")
+			return refuse(protocol.ScheduleStatus_RepoConflict, "--repo with --task is refused: the repo is the task's")
 		}
 		taskHex := hex.EncodeToString(spec.TaskId().Id[:])
 		own := ""
@@ -481,13 +465,13 @@ func (h *TaskHandler) applySpec(cid string, base Schedule, spec *protocol.Schedu
 		}
 	} else if spec.RepoPresent() && spec.RepoPath() != nil {
 		if !create && sc.State == protocol.ScheduleTaskState_Bound {
-			return refuse(protocol.ScheduleStatus_InternalError, "the repo is the bound task's; unbind the task to change it")
+			return refuse(protocol.ScheduleStatus_RepoConflict, "the repo is the bound task's; unbind the task to change it")
 		}
 		sc.Repo = path.Clean(string(*spec.RepoPath()))
 	}
 	if create && sc.State != protocol.ScheduleTaskState_Bound {
 		if !spec.RepoPresent() || sc.Repo == "" || sc.Repo == "." {
-			return refuse(protocol.ScheduleStatus_InternalError, "a schedule needs --repo or --task")
+			return refuse(protocol.ScheduleStatus_RepoRequired, "a schedule needs --repo or --task")
 		}
 		sc.State = protocol.ScheduleTaskState_PendingCreate
 	}
@@ -518,14 +502,18 @@ func (h *TaskHandler) applySpec(cid string, base Schedule, spec *protocol.Schedu
 	switch {
 	case spec.RecordSet():
 		sc.Run.Record = spec.Record()
-		if sc.Run.Record && !hasCap(callerCaps, protocol.Capability_RecordPersist) {
-			return refuse(protocol.ScheduleStatus_InternalError, "recording a session needs record_persist")
+		// Saying on needs record_persist, within the bit's scope over a bound
+		// task (the open's rule); off, and saying nothing, need nothing.
+		if sc.Run.Record {
+			if !hasCap(callerCaps, protocol.Capability_RecordPersist) {
+				return refuse(protocol.ScheduleStatus_RecordNotPermitted, "recording a session needs record_persist")
+			}
+			if sc.State == protocol.ScheduleTaskState_Bound && !h.inScope(cid, protocol.Capability_RecordPersist, sc.TaskID) {
+				return refuse(protocol.ScheduleStatus_RecordNotPermitted, "recording a session needs record_persist within reach of task %s", short(sc.TaskID))
+			}
 		}
 	case create:
 		sc.Run.Record = h.RecordDefault
-	}
-	if sc.Run.Record && sc.State == protocol.ScheduleTaskState_Bound && !h.inScope(cid, protocol.Capability_RecordPersist, sc.TaskID) {
-		return refuse(protocol.ScheduleStatus_InternalError, "recording a session needs record_persist within reach of task %s", short(sc.TaskID))
 	}
 	if spec.ConditionsPresent() && spec.Conditions() != nil {
 		rows, cols := sc.Run.Cond.Rows, sc.Run.Cond.Cols
@@ -574,7 +562,14 @@ func (h *TaskHandler) scheduleCreate(cid string, spec *protocol.ScheduleSpec, pr
 	// Authority (S-D16): as for a new child of the creator, or as a resume over
 	// the bound task.
 	g := h.granter(cid, h.callerCaps(cid))
-	grant, err := h.storedGrant(g, specGrantRequest(spec), d.bindTask)
+	req := specGrantRequest(spec)
+	if d.bindTask != "" {
+		// Every half present (R15): the task's own grant is only the starting
+		// point, so the stored grant is bounded by the creator.
+		rec, _ := h.Tasks.Get(d.bindTask)
+		req = grantRequestOver(rec.Grant(), spec)
+	}
+	grant, err := h.storedGrant(g, req, d.bindTask)
 	if err != nil {
 		return scheduleGrantRefusal(err)
 	}
@@ -593,8 +588,15 @@ func (h *TaskHandler) scheduleCreate(cid string, spec *protocol.ScheduleSpec, pr
 		// Re-checked under the lock that makes the binding.
 		if other, bound := ops.Store.BoundTo(d.bindTask); bound {
 			ops.bindMu.Unlock()
-			return scheduleRefusal(protocol.ScheduleStatus_TaskNotReachable, "task %s is already bound to schedule %s", short(d.bindTask), short(other))
+			return scheduleRefusal(protocol.ScheduleStatus_TaskAlreadyBound, "task %s is already bound to schedule %s", short(d.bindTask), short(other))
 		}
+	}
+	// The mode is written first, under TaskStore.mu: a task a concurrent
+	// foreground resume took is refused, and then no schedule is stored bound
+	// to it.
+	if refusal := h.writeBindingMode(d.bindTask, sc.Run.Cond, now); refusal != nil {
+		ops.bindMu.Unlock()
+		return *refusal
 	}
 	err = ops.Store.Put(sc)
 	ops.bindMu.Unlock()
@@ -602,7 +604,7 @@ func (h *TaskHandler) scheduleCreate(cid string, spec *protocol.ScheduleSpec, pr
 		slog.Error("schedule create: store write failed", "err", err)
 		return scheduleRefusal(protocol.ScheduleStatus_InternalError, "could not save the schedule: %v", err)
 	}
-	h.writeBindingMode(d.bindTask, sc.Run.Cond, now)
+	ops.boundChanged(d.bindTask)
 	ops.poke()
 	r := protocol.ScheduleResponse{Status: protocol.ScheduleStatus_Ok, Id: scheduleIDFromHex(sc.ID)}
 	return r
@@ -610,13 +612,26 @@ func (h *TaskHandler) scheduleCreate(cid string, spec *protocol.ScheduleSpec, pr
 
 // writeBindingMode is S-D14's "binding writes the task's mode to background",
 // through the task mode write (task_mode_changed). A task already in
-// background is left alone; a running one in foreground was refused earlier.
-func (h *TaskHandler) writeBindingMode(taskHex string, cond RunConditions, now time.Time) {
+// background is left alone; one running in foreground is refused.
+func (h *TaskHandler) writeBindingMode(taskHex string, cond RunConditions, now time.Time) *protocol.ScheduleResponse {
 	if taskHex == "" {
-		return
+		return nil
 	}
-	if err := h.Tasks.BindBackground(taskHex, cond, now.UnixNano()); err != nil {
-		slog.Error("schedule bind: writing the task's mode failed", "task", taskHex, "err", err)
+	err := h.Tasks.BindBackground(taskHex, cond, now.UnixNano())
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, ErrBindForeground):
+		r := scheduleRefusal(protocol.ScheduleStatus_TaskRunningForeground, "task %s is running in foreground", short(taskHex))
+		return &r
+	}
+	r := scheduleRefusal(protocol.ScheduleStatus_InternalError, "writing the task's mode: %v", err)
+	return &r
+}
+
+func (o *ScheduleOps) boundChanged(taskHex string) {
+	if taskHex != "" && o.OnBound != nil {
+		o.OnBound(taskHex)
 	}
 }
 
@@ -686,7 +701,11 @@ func (h *TaskHandler) scheduleEditLocked(cid string, id protocol.ScheduleID, idH
 		ops.bindMu.Lock()
 		if other, bound := ops.Store.BoundTo(d.bindTask); bound && other != idHex {
 			ops.bindMu.Unlock()
-			return scheduleRefusal(protocol.ScheduleStatus_TaskNotReachable, "task %s is already bound to schedule %s", short(d.bindTask), short(other))
+			return scheduleRefusal(protocol.ScheduleStatus_TaskAlreadyBound, "task %s is already bound to schedule %s", short(d.bindTask), short(other))
+		}
+		if refusal := h.writeBindingMode(d.bindTask, next.Run.Cond, now); refusal != nil {
+			ops.bindMu.Unlock()
+			return *refusal
 		}
 		err2 = ops.Store.Update(idHex, apply)
 		ops.bindMu.Unlock()
@@ -700,7 +719,12 @@ func (h *TaskHandler) scheduleEditLocked(cid string, id protocol.ScheduleID, idH
 		slog.Error("schedule edit: store write failed", "schedule", idHex, "err", err2)
 		return scheduleRefusal(protocol.ScheduleStatus_InternalError, "could not save the schedule: %v", err2)
 	}
-	h.writeBindingMode(d.bindTask, next.Run.Cond, now)
+	if d.bindTask != "" {
+		if cur.State == protocol.ScheduleTaskState_Bound && cur.TaskID != d.bindTask {
+			ops.boundChanged(cur.TaskID) // the old task loses its schedule id
+		}
+		ops.boundChanged(d.bindTask)
+	}
 	return protocol.ScheduleResponse{Status: protocol.ScheduleStatus_Ok, Id: id}
 }
 
@@ -728,6 +752,9 @@ func (h *TaskHandler) scheduleDelete(cid string, id protocol.ScheduleID) (resp p
 			resp = scheduleRefusal(protocol.ScheduleStatus_InternalError, "could not save: %v", err)
 		default:
 			resp = protocol.ScheduleResponse{Status: protocol.ScheduleStatus_Ok, Id: id}
+			if sc.State == protocol.ScheduleTaskState_Bound {
+				ops.boundChanged(sc.TaskID)
+			}
 		}
 	})
 	if resp.Status == protocol.ScheduleStatus_Ok {
@@ -752,7 +779,7 @@ func (h *TaskHandler) scheduleRun(cid string, id protocol.ScheduleID) protocol.S
 		return scheduleRefusal(protocol.ScheduleStatus_SelfRefused, "a schedule's own task cannot run it")
 	}
 	if ops.Fire == nil || ops.Ready == nil || !ops.Ready() {
-		return scheduleRefusal(protocol.ScheduleStatus_InternalError, "the server is still starting its schedules; try again")
+		return scheduleRefusal(protocol.ScheduleStatus_NotReady, "the server is still starting its schedules; try again")
 	}
 	outcome := ops.Fire(idHex, ops.now(), true)
 	if outcome == protocol.ScheduleOutcome_Pending {
@@ -939,7 +966,9 @@ func (h *TaskHandler) unbindSchedule(taskHex string, by protocol.ClientKind, act
 		})
 		if err != nil {
 			slog.Error("schedule unbind: store write failed", "schedule", id, "task", taskHex, "err", err)
+			return
 		}
+		ops.boundChanged(taskHex)
 	})
 }
 
@@ -989,6 +1018,9 @@ func (s *TaskStore) BindBackground(id string, cond RunConditions, now int64) err
 	if e.RunMode == protocol.RunMode_Background {
 		return nil
 	}
+	if !scheduleTerminal(e.Status) {
+		return ErrBindForeground // it would become a background run with no deadline
+	}
 	e.RunMode = protocol.RunMode_Background
 	e.ModeSwitchedAt = now
 	e.Cond = cond
@@ -1002,3 +1034,7 @@ func (s *TaskStore) BindBackground(id string, cond RunConditions, now int64) err
 	}
 	return nil
 }
+
+// ErrBindForeground is BindBackground refusing a task that is running in
+// foreground: it would become a background run with no deadline.
+var ErrBindForeground = errors.New("task is running in foreground")

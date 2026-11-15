@@ -503,7 +503,11 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		}
 		// S-D15: a foreground resume of a task bound to a schedule unbinds it,
 		// which needs the schedule bit as well as the resume bit.
-		if _, unbinds := h.openUnbinds(oi); unbinds && !hasCap(h.callerCaps(cid), protocol.Capability_Schedule) {
+		// Only for a caller that reaches the task through the resume gate
+		// (handleOpenInteractive answers resume_not_found otherwise): the bit's
+		// absence must not say whether an unreachable task is bound.
+		if t, unbinds := h.openUnbinds(oi); unbinds && h.resumeTargetAllowed(cid, oi.ResumeExact(), t) &&
+			!hasCap(h.callerCaps(cid), protocol.Capability_Schedule) {
 			deny(protocol.Capability_Schedule)
 			return
 		}
@@ -1567,6 +1571,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 		}
 	}
 	var existingTaskIDHex string
+	var unbinds bool // the S-D15 gate ran and passed: this resume unbinds its task
 	args := req.ExtraArgs.AsStrings()
 	var exactRec *TaskEntry
 	if resuming {
@@ -1584,6 +1589,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 		// S-D15 / S-D20: unbinding is within the schedule bit's reach, and a
 		// schedule's own task cannot do it to itself.
 		if h.resolveRunMode(req, idHex) == protocol.RunMode_Foreground && h.boundScheduleOf(idHex) != "" {
+			unbinds = true
 			reach, self := h.unbindRefusal(cid, idHex)
 			switch {
 			case !reach:
@@ -1817,7 +1823,9 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 			}
 		}
 		taskIDHex = existingTaskIDHex
-		h.unbindSchedule(taskIDHex, origin, h.lookupPrincipal(cid))
+		if unbinds {
+			h.unbindSchedule(taskIDHex, origin, h.lookupPrincipal(cid))
+		}
 	} else {
 		// The TaskKind_Interactive value is the authoritative marker — empty
 		// prompt is incidental.

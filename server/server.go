@@ -334,6 +334,7 @@ func New(cfg Config) *Server {
 		Sched: &ScheduleOps{
 			Store: cfg.Schedules, Fire: s.fireSchedule, Poke: s.pokeSchedules,
 			Lock: s.sched.firingMutex, Ready: s.sched.started.Load, Now: s.sched.now,
+			OnBound: func(taskHex string) { s.taskHandler.OnTaskProgress(taskHex) },
 		},
 		RingBufferSize: int(cfg.DetachRingBufferSize),
 		Records:        records,
