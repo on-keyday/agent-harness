@@ -5,11 +5,15 @@ package main
 import (
 	"context"
 	"errors"
+	"log/slog"
+	"net/netip"
 	"sync/atomic"
 	"syscall/js"
 	"time"
 
 	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/objtrsf/objproto"
+	"github.com/on-keyday/objtrsf/transport"
 )
 
 // What a page that was asleep needs from the persist loop (see
@@ -36,6 +40,16 @@ var (
 )
 
 func init() { pageVisible.Store(true) }
+
+// underlayDropper names the page's one endpoint and the server address its
+// WebSocket goes to, so a probe that finds the link dead can drop that socket.
+type underlayDropper struct {
+	ep   objproto.Endpoint
+	addr netip.AddrPort
+}
+
+// dropUnderlay is set once the page has built its endpoint.
+var dropUnderlay atomic.Pointer[underlayDropper]
 
 func sendKick() {
 	select {
@@ -99,6 +113,12 @@ func harnessProbeConnection(this js.Value, args []js.Value) any {
 			if alive {
 				resolve.Invoke(true)
 				return
+			}
+			// Closing the connection alone is not enough after sleep: the
+			// browser still reports the WebSocket OPEN, and the next handshake
+			// would ride that dead socket. Drop it so the redial opens a new one.
+			if d := dropUnderlay.Load(); d != nil {
+				transport.CloseUnderlayAt(d.ep, d.addr, slog.Default())
 			}
 			if cl, ok := c.(*cli.Client); ok {
 				cl.Close()

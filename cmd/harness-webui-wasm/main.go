@@ -489,6 +489,7 @@ func harnessConnect(this js.Value, args []js.Value) any {
 				rejectErr(reject, fmt.Errorf("endpoint: %w", epErr))
 				return
 			}
+			dropUnderlay.Store(&underlayDropper{ep: endpoint, addr: peerCIDLocal.Addr})
 
 			go func() {
 				err := cli.PersistLoop(rootCtx,
