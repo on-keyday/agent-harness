@@ -474,8 +474,72 @@ function composeScheduleTokens(f) {
   return t;
 }
 
-// composeScheduleCreate creates the schedule from Compose and resolves with
-// the line `schedule new` prints (the id and the cron + zone).
-async function composeScheduleCreate(f, harness) {
-  return await harness.scheduleCreate(composeScheduleTokens(f));
+// --- Schedules: refresh, failures, Compose routing (pillar S, fix round 1) ----
+
+// scheduleEventRefresher is what a task event does to an open Schedules
+// dialog: an event naming a schedule (kind=TaskSchedule, or any event of a
+// bound task, which the watch line tags schedule=<id8>) reloads the dialog,
+// coalesced -- one load in flight and at most one follow-up for the burst that
+// arrived meanwhile. A closed dialog and an unbound task's event do nothing.
+function scheduleEventRefresher({ isOpen, load }) {
+  let inflight = false, pending = false;
+  const run = async () => {
+    inflight = true;
+    try { await load(); } finally { inflight = false; }
+    if (pending) { pending = false; run(); }
+  };
+  return (line) => {
+    if (!isOpen() || !line || !(line.includes("kind=TaskSchedule") || line.includes(" schedule="))) return;
+    if (inflight) pending = true;
+    else run();
+  };
+}
+
+// scheduleFailureLine is a failed Run now / Delete as the result surface says
+// it: the verb and the schedule (id8), then cli's status and message without
+// its own `<verb>: ` prefix, as the TUI's scheduleFailureLine words it.
+function scheduleFailureLine(verbName, id, err) {
+  const msg = String((err && err.message) || err);
+  return `${verbName} ${String(id).slice(0, 8)}: ${msg.startsWith(verbName + ": ") ? msg.slice(verbName.length + 2) : msg}`;
+}
+
+// composeSubmitAction is what Compose's button does now and says: a filled
+// cron creates a schedule (the tokens `schedule new` parses), otherwise it
+// opens a session. Throws what composeScheduleTokens refuses.
+function composeSubmitAction(f) {
+  if (composeIsSchedule(f)) {
+    return { action: "create-schedule", label: "Create schedule", tokens: composeScheduleTokens(f) };
+  }
+  return { action: "open-session", label: "Open interactive session" };
+}
+
+// composeCronState / composeCronSync: a cron ticks Background (a schedule is
+// always a background run); clearing the cron -- typed, or by a successful
+// create -- puts Background back to what it was before the cron ticked it, so
+// a second click cannot silently create a duplicate.
+function composeCronState() { return { saved: null }; }
+function composeCronSync(st, cron, bg) {
+  const filled = String(cron || "").trim() !== "";
+  if (filled && st.saved === null) {
+    st.saved = !!bg.checked;
+    bg.checked = true;
+  } else if (!filled && st.saved !== null) {
+    bg.checked = st.saved;
+    st.saved = null;
+  }
+}
+
+// composeCapsOnResumeState: with a cron and a Task id the form creates a
+// schedule bound to that task, which stores the authority outright (S-D16), so
+// "apply caps/scope on resume" has nothing to mean; it is disabled and says so
+// rather than being ignored.
+function composeCapsOnResumeState(f) {
+  const off = composeIsSchedule(f) && !!f.task;
+  return { disabled: off, note: off ? "schedule: 権限は常に schedule に保存されるため無効" : "" };
+}
+
+// latestLoad lets only the newest of overlapping async loads render.
+function latestLoad() {
+  let n = 0;
+  return { begin: () => ++n, current: (t) => t === n };
 }

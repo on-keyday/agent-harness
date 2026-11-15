@@ -892,6 +892,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   const schedulesRunBtn = document.getElementById("schedules-modal-run");
   const schedulesDeleteBtn = document.getElementById("schedules-modal-delete");
   let schedulesViewing = ""; // the schedule id whose detail is open, "" = the list
+  const schedulesLatest = latestLoad(); // only the newest load renders
   const scheduleNote = (cls, text) => transcriptLine(cls, text);
   const setScheduleButtons = () => {
     schedulesBack.hidden = schedulesRunBtn.hidden = schedulesDeleteBtn.hidden = schedulesViewing === "";
@@ -901,8 +902,10 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     setScheduleButtons();
     schedulesTitle.textContent = "Schedules";
     schedulesBody.replaceChildren(scheduleNote("schedule-note", "読み込み中…"));
+    const tok = schedulesLatest.begin();
     try {
       const { rows } = await window.harness.scheduleList({});
+      if (!schedulesLatest.current(tok)) return;
       if (!rows.length) {
         schedulesBody.replaceChildren(scheduleNote("schedule-empty", "no schedules"));
         return;
@@ -945,7 +948,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
         return el;
       }));
     } catch (e) {
-      schedulesBody.replaceChildren(scheduleNote("schedule-note", e.message));
+      if (schedulesLatest.current(tok)) schedulesBody.replaceChildren(scheduleNote("schedule-note", e.message));
     }
   };
   const loadScheduleDetail = async (id) => {
@@ -953,8 +956,11 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     setScheduleButtons();
     schedulesTitle.textContent = `schedule ${id.slice(0, 8)}`;
     schedulesBody.replaceChildren(scheduleNote("schedule-note", "読み込み中…"));
+    const tok = schedulesLatest.begin();
     try {
-      const m = scheduleDetailModel(await window.harness.scheduleShow(id, {}));
+      const d = await window.harness.scheduleShow(id, {});
+      if (!schedulesLatest.current(tok)) return;
+      const m = scheduleDetailModel(d);
       const wrap = document.createElement("div");
       wrap.className = "schedule-detail";
       const head = document.createElement("pre");
@@ -968,7 +974,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       wrap.append(head, waits, title, ...m.history.map((h) => scheduleNote("schedule-history-line", h.text)));
       schedulesBody.replaceChildren(wrap);
     } catch (e) {
-      schedulesBody.replaceChildren(scheduleNote("schedule-note", e.message));
+      if (schedulesLatest.current(tok)) schedulesBody.replaceChildren(scheduleNote("schedule-note", e.message));
     }
   };
   const refreshSchedulesDialog = () => {
@@ -976,6 +982,14 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     if (schedulesViewing) loadScheduleDetail(schedulesViewing);
     else loadScheduleList();
   };
+  // A bound task's events (and task_schedule) reload an open dialog, coalesced.
+  const schedulesOnTaskEvent = scheduleEventRefresher({
+    isOpen: () => schedulesModal.open,
+    load: async () => {
+      if (schedulesViewing) await loadScheduleDetail(schedulesViewing);
+      else await loadScheduleList();
+    },
+  });
   const openSchedules = (id) => {
     if (!schedulesModal.open) schedulesModal.showModal();
     if (id) loadScheduleDetail(id);
@@ -991,7 +1005,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     try {
       appendCmdOutput(await window.harness.scheduleRun(id), true);
     } catch (err) {
-      appendCmdOutput(`error: ${err.message}`, true);
+      appendCmdOutput(scheduleFailureLine("schedule run", id, err), true);
     }
     refreshSnapshot();
     refreshSchedulesDialog();
@@ -1003,7 +1017,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     try {
       appendCmdOutput(await window.harness.scheduleDelete(id), true);
     } catch (err) {
-      appendCmdOutput(`error: ${err.message}`, true);
+      appendCmdOutput(scheduleFailureLine("schedule rm", id, err), true);
       return;
     }
     refreshSnapshot();
@@ -2827,6 +2841,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       // session — routine badge refreshes, not lifecycle changes. Skip the
       // banner AND the snapshot kick (the 5s poll keeps the table current);
       // rendering each edge would spam the cmd output.
+      schedulesOnTaskEvent(evt.line);
       if (!taskEventRefreshes(evt.line)) return;
       // A progress write changes the row's text, so it refreshes — but it is
       // routine, so it prints no banner (taskEventBanner).
@@ -4286,12 +4301,24 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   }
   // A schedule is always a background run, so the conditions block is the
   // part of the form it reads: show it as soon as a cron is typed.
-  if (composeCron) composeCron.addEventListener("input", () => {
-    if (composeCron.value.trim() !== "" && composeBgBox && composeBg) {
-      composeBgBox.checked = true;
-      composeBg.hidden = false;
+  const composeCronSt = composeCronState();
+  const openBtn = document.getElementById("open-detachable");
+  const capsOnResumeBox = document.getElementById("caps-on-resume");
+  const capsOnResumeNote = document.getElementById("caps-on-resume-note");
+  const syncComposeSchedule = () => {
+    const cron = composeCron ? composeCron.value : "";
+    if (composeBgBox) {
+      composeCronSync(composeCronSt, cron, composeBgBox);
+      if (composeBg) composeBg.hidden = !composeBgBox.checked;
     }
-  });
+    // The button says what it will do.
+    openBtn.textContent = composeSubmitAction({ cron, stream: false, repo: "x" }).label;
+    const cr = composeCapsOnResumeState({ cron, task: currentResumeTaskID() });
+    if (capsOnResumeBox) capsOnResumeBox.disabled = cr.disabled;
+    if (capsOnResumeNote) { capsOnResumeNote.textContent = cr.note; capsOnResumeNote.hidden = !cr.note; }
+  };
+  if (composeCron) composeCron.addEventListener("input", syncComposeSchedule);
+  if (taskIdInput) taskIdInput.addEventListener("input", syncComposeSchedule);
   const composeForm = () => ({
     cron: composeCron ? composeCron.value : "",
     tz: composeZone ? composeZone.value : "",
@@ -5498,8 +5525,12 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     // A filled cron: this Submit creates a schedule, it opens no session.
     if (composeCron && composeIsSchedule({ cron: composeCron.value })) {
       try {
-        const form = composeForm();
-        appendCmdOutput(await composeScheduleCreate(form, window.harness), true);
+        const act = composeSubmitAction(composeForm());
+        appendCmdOutput(await window.harness.scheduleCreate(act.tokens), true);
+        // Created: clear the cron so a second click cannot make a duplicate,
+        // and give Background back what the cron took.
+        composeCron.value = "";
+        syncComposeSchedule();
         refreshSnapshot();
         refreshSchedulesDialog();
       } catch (e) {

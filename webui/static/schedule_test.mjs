@@ -106,7 +106,9 @@ test("Compose with a cron routes to scheduleCreate and never opens a session", a
   assert.equal(page.composeIsSchedule(form({ cron: "   " })), false, "blank cron is a plain open");
   assert.equal(page.composeIsSchedule(form({ cron: "" })), false);
   const ctx = recordingCtx(page, { scheduleCreate: "schedule new X: cron=\"0 9 * * *\" tz=Asia/Tokyo" });
-  const text = await page.composeScheduleCreate(form(), ctx.harness);
+  const act = page.composeSubmitAction(form());
+  assert.equal(act.action, "create-schedule");
+  const text = await ctx.harness.scheduleCreate(act.tokens);
   assert.match(text, /^schedule new /);
   assert.equal(named(ctx.calls, "scheduleCreate").length, 1);
   assert.equal(named(ctx.calls, "openSession").length, 0);
@@ -213,4 +215,87 @@ test("the zone select offers the server's zone first, as the empty value", () =>
   const o = page.scheduleZoneOptions(["Asia/Tokyo", "UTC"]);
   eq(o[0], { value: "", label: "(server's zone)" });
   eq(o.slice(1).map((x) => x.value), ["Asia/Tokyo", "UTC"]);
+});
+
+// --- fix round 1 ---
+
+const tick = () => new Promise((r) => setTimeout(r, 0));
+const schedEv = "task aabbccddeeff kind=TaskSchedule status=Running ts=1 exit=0 schedule=fedcba98";
+const boundEv = "task aabbccddeeff kind=TaskStarted status=Running ts=1 exit=0 schedule=fedcba98";
+const plainEv = "task aabbccddeeff kind=TaskStarted status=Running ts=1 exit=0";
+
+test("task events refresh an open Schedules dialog, coalesced to one load plus one follow-up", async () => {
+  let loads = 0, release;
+  const gate = () => new Promise((r) => { release = r; });
+  let open = true;
+  const ref = page.scheduleEventRefresher({ isOpen: () => open, load: async () => { loads++; await gate(); } });
+  for (let i = 0; i < 10; i++) ref(i % 2 ? schedEv : boundEv);
+  await tick();
+  assert.equal(loads, 1, "one load in flight");
+  release(); await tick(); await tick();
+  assert.equal(loads, 2, "at most one follow-up for the burst");
+  release(); await tick(); await tick();
+  assert.equal(loads, 2);
+});
+
+test("events of unbound tasks and a closed dialog load nothing", async () => {
+  let loads = 0, open = true;
+  const ref = page.scheduleEventRefresher({ isOpen: () => open, load: async () => { loads++; } });
+  ref(plainEv); ref("task aa kind=TaskActivity status=Running ts=1 exit=0");
+  await tick();
+  assert.equal(loads, 0, "no schedule binding");
+  open = false;
+  ref(schedEv); ref(boundEv);
+  await tick();
+  assert.equal(loads, 0, "dialog closed");
+});
+
+test("a failed Run now / Delete names the verb and the schedule, without cli's own prefix", () => {
+  assert.equal(
+    page.scheduleFailureLine("schedule run", ID, new Error("schedule run: no_such_schedule: gone")),
+    "schedule run 01234567: no_such_schedule: gone");
+  assert.equal(
+    page.scheduleFailureLine("schedule rm", ID, new Error("schedule: not connected; call harness.connect first")),
+    "schedule rm 01234567: schedule: not connected; call harness.connect first");
+});
+
+test("composeSubmitAction routes and labels both directions", () => {
+  const c = page.composeSubmitAction(form());
+  assert.equal(c.action, "create-schedule");
+  assert.equal(c.label, "Create schedule");
+  eq(c.tokens, page.composeScheduleTokens(form()));
+  const o = page.composeSubmitAction(form({ cron: " " }));
+  assert.equal(o.action, "open-session");
+  assert.equal(o.label, "Open interactive session");
+  assert.equal(o.tokens, undefined);
+  assert.throws(() => page.composeSubmitAction(form({ stream: true })), /event-stream/);
+});
+
+test("a cron ticks Background and clearing it (or a created schedule) restores what it was", () => {
+  const bg = { checked: false };
+  const st = page.composeCronState();
+  page.composeCronSync(st, "0 9 * * *", bg);
+  assert.equal(bg.checked, true);
+  page.composeCronSync(st, "0 9 * * 1", bg); // typing more keeps the saved value
+  page.composeCronSync(st, "", bg);          // what a successful create does
+  assert.equal(bg.checked, false, "restored to before the auto-tick");
+  const on = { checked: true }, st2 = page.composeCronState();
+  page.composeCronSync(st2, "@daily", on);
+  page.composeCronSync(st2, "", on);
+  assert.equal(on.checked, true, "an operator's own tick survives");
+});
+
+test("cron plus Task id disables caps-on-resume with a note instead of ignoring it", () => {
+  let s = page.composeCapsOnResumeState({ cron: "@daily", task: ID });
+  assert.equal(s.disabled, true);
+  assert.match(s.note, /schedule/);
+  assert.equal(page.composeCapsOnResumeState({ cron: "@daily", task: "" }).disabled, false);
+  assert.equal(page.composeCapsOnResumeState({ cron: "", task: ID }).disabled, false);
+});
+
+test("only the latest load renders", () => {
+  const l = page.latestLoad();
+  const a = l.begin(), b = l.begin();
+  assert.equal(l.current(a), false);
+  assert.equal(l.current(b), true);
 });
