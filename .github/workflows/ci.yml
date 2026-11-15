@@ -25,6 +25,12 @@ jobs:
       - name: webui-build
         run: make webui-build
 
+      # daemon.py (and so test_daemon / test_restart) imports psutil
+      # (scripts/requirements.txt). Ubuntu's system python is externally
+      # managed (PEP 668), so take the distro package rather than pip.
+      - name: psutil for the script tests
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends python3-psutil
+
       - name: offline agent preset and sandbox regressions
         run: make scripts-test
 

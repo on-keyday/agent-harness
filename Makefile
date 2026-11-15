@@ -95,6 +95,10 @@ scripts-test:
 	python3 scripts/test_agent_presets.py
 	python3 scripts/test_stop_build_start.py
 	python3 scripts/test_tour_draw.py
+	python3 scripts/test_daemon.py
+	python3 scripts/test_restart.py
+	python3 scripts/test_cgroup_adopt.py
+	python3 scripts/test_dummy_harness.py
 	python3 -m unittest discover -s scripts/sandbox -p 'test_*.py'
 	python3 scripts/kvm-runner/test_kvm_runner.py
 
