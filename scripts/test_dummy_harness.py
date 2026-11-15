@@ -111,5 +111,18 @@ class ScrubTest(unittest.TestCase):
                          "CLAUDE_CONFIG_DIR is configuration, not a session marker")
 
 
+class ConsumerUnsetTest(unittest.TestCase):
+    """`env` must clear, in the shell that evals it, everything a harness task
+    carries that points a client at the LIVE server. The server's public key was
+    missing: a client in a task then rejected the dummy server's signed answer
+    with "signature does not verify", which reads like a broken build."""
+
+    def test_unsets_the_live_server_identity(self) -> None:
+        names = dummy_harness._UNSET_IN_CONSUMER.split()
+        for name in ("HARNESS_AUTH_TICKET", "HARNESS_TASK_ID", "HARNESS_SERVER_CID",
+                     "HARNESS_SERVER_PUBKEY", "HARNESS_SERVER_PUBKEY_FILE"):
+            self.assertIn(name, names)
+
+
 if __name__ == "__main__":
     unittest.main()

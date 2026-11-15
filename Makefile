@@ -85,8 +85,17 @@ check: webui-build
 wasm-check:
 	GOOS=js GOARCH=wasm go build ./cli/... ./cmd/harness-webui-wasm/
 
+# A task the harness spawns carries the LIVE harness's identity: its ticket,
+# task id, server address and server public key. Tests that start their own
+# in-process server and dial it as a client would pick those up and fail (84
+# failures in 5 packages, 2026-11-15) — a red suite that reads as a regression
+# in whatever you just changed. The go tests run without them.
+GO_TEST_ENV := env -u HARNESS_AUTH_TICKET -u HARNESS_TASK_ID -u HARNESS_RUNNER_ID \
+	-u HARNESS_SERVER_CID -u HARNESS_SERVER_PUBKEY -u HARNESS_SERVER_PUBKEY_FILE \
+	-u HARNESS_WS_PATH -u HARNESS_PROXY_VIA_RUNNER
+
 test: js-test scripts-test
-	go test ./...
+	$(GO_TEST_ENV) go test ./...
 
 # Offline wrapper/preset regressions belong to the ordinary development path.
 scripts-test:
@@ -152,7 +161,7 @@ js-test: webui-build
 # part of `make test` / `go test ./...`. Run it explicitly (CI mirrors this in
 # its own job). Requires bash for the fake-claude testdata scripts.
 test-integration:
-	go test -tags integration ./integration/... -count=1 -timeout 600s
+	$(GO_TEST_ENV) go test -tags integration ./integration/... -count=1 -timeout 600s
 
 vet:
 	@go vet ./...
