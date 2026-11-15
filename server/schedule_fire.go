@@ -158,6 +158,14 @@ func (s *Server) fireSchedule(id string, due time.Time, manual bool) protocol.Sc
 	// the check and the intent. A skip is its entry plus next_at; an intent
 	// is a pending entry plus next_at.
 	err := st.Update(id, func(sc *Schedule) error {
+		// A failed outcome save rolled an earlier firing's entry back to
+		// pending although its action happened: settle it from the task
+		// store first, so a creation is not repeated under a new id and
+		// step 3 sees the task's real state (S-D22).
+		sc.settlePending(func(tid string) (uint32, bool) {
+			t, ok := s.tasks.Get(tid)
+			return t.Run, ok
+		})
 		next, nextErr := nextFor(sc, now)
 		entry := HistoryEntry{DueAt: due, At: now, TaskID: sc.TaskID}
 		record := func(o protocol.ScheduleOutcome, msg string) {
@@ -349,6 +357,9 @@ func (s *Server) startSchedules() {
 					continue
 				}
 				e.EndedAt, e.EndReason = t.EndedAt.UTC(), t.EndReason
+				if e.QueuedAt.IsZero() {
+					e.QueuedAt = e.At
+				}
 				if e.StartedAt.IsZero() && t.StartedAt != nil {
 					e.StartedAt = t.StartedAt.UTC()
 				}

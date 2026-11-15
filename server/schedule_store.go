@@ -74,6 +74,8 @@ type ScheduleStore struct {
 	mu   sync.Mutex
 	path string // "" = memory only
 	m    map[string]Schedule
+	// writeFn writes the file; tests replace it to inject a failed save.
+	writeFn func(path string, data []byte) error
 }
 
 // LoadScheduleStore reads path (absent = empty). A file that does not parse,
@@ -81,7 +83,7 @@ type ScheduleStore struct {
 // schedule silently. A schedule whose zone no longer loads is NOT an error:
 // the name is kept and the firing reports it.
 func LoadScheduleStore(path string) (*ScheduleStore, error) {
-	st := &ScheduleStore{path: path, m: map[string]Schedule{}}
+	st := &ScheduleStore{path: path, m: map[string]Schedule{}, writeFn: writeFileAtomic}
 	if path == "" {
 		return st, nil
 	}
@@ -227,36 +229,9 @@ func (st *ScheduleStore) Settle(task func(id string) (run uint32, exists bool)) 
 	defer st.mu.Unlock()
 	changed := false
 	for id, s := range st.m {
-		var upd *Schedule
-		for i := range s.History {
-			if s.History[i].Outcome != protocol.ScheduleOutcome_Pending {
-				continue
-			}
-			if upd == nil {
-				c := s.clone()
-				upd = &c
-			}
-			e := &upd.History[i]
-			run, exists := task(e.TaskID)
-			switch {
-			case e.Creates:
-				if exists {
-					e.Outcome = protocol.ScheduleOutcome_Fired
-					if upd.State == protocol.ScheduleTaskState_PendingCreate {
-						upd.State = protocol.ScheduleTaskState_Bound
-						upd.TaskID = e.TaskID
-					}
-				} else {
-					e.Outcome = protocol.ScheduleOutcome_Lost
-				}
-			case exists && run >= e.ExpectRun:
-				e.Outcome = protocol.ScheduleOutcome_Fired
-			default:
-				e.Outcome = protocol.ScheduleOutcome_Lost
-			}
-		}
-		if upd != nil {
-			st.m[id] = *upd
+		c := s.clone()
+		if c.settlePending(task) {
+			st.m[id] = c
 			changed = true
 		}
 	}
@@ -264,6 +239,43 @@ func (st *ScheduleStore) Settle(task func(id string) (run uint32, exists bool)) 
 		return nil
 	}
 	return st.saveLocked()
+}
+
+// settlePending applies Settle's per-entry rule to every pending entry of s
+// and reports whether any changed. The firing function runs it on the one
+// schedule it is about to fire, because a failed outcome save leaves the
+// entry pending in memory (S-D22). An entry that settles to fired gets
+// queued_at = the intent time, so a later started_at yields a real wait (S-D11).
+func (s *Schedule) settlePending(task func(id string) (run uint32, exists bool)) bool {
+	changed := false
+	for i := range s.History {
+		e := &s.History[i]
+		if e.Outcome != protocol.ScheduleOutcome_Pending {
+			continue
+		}
+		changed = true
+		run, exists := task(e.TaskID)
+		switch {
+		case e.Creates:
+			if exists {
+				e.Outcome = protocol.ScheduleOutcome_Fired
+				if s.State == protocol.ScheduleTaskState_PendingCreate {
+					s.State = protocol.ScheduleTaskState_Bound
+					s.TaskID = e.TaskID
+				}
+			} else {
+				e.Outcome = protocol.ScheduleOutcome_Lost
+			}
+		case exists && run >= e.ExpectRun:
+			e.Outcome = protocol.ScheduleOutcome_Fired
+		default:
+			e.Outcome = protocol.ScheduleOutcome_Lost
+		}
+		if e.Outcome == protocol.ScheduleOutcome_Fired && e.QueuedAt.IsZero() {
+			e.QueuedAt = e.At
+		}
+	}
+	return changed
 }
 
 // UpdateForTask runs f on the schedule that task id belongs to: bound to it,
@@ -329,7 +341,7 @@ func (st *ScheduleStore) saveLocked() error {
 	if err != nil {
 		return fmt.Errorf("schedules: %w", err)
 	}
-	return writeFileAtomic(st.path, append(data, '\n'))
+	return st.writeFn(st.path, append(data, '\n'))
 }
 
 // writeFileAtomic writes data to path+".tmp" (0600), fsyncs it, renames it

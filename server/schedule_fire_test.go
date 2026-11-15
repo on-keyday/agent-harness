@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -407,6 +408,12 @@ func TestCrashAfterResume(t *testing.T) {
 	if e.Outcome != protocol.ScheduleOutcome_Fired || e.EndReason != protocol.EndReason_Failed || e.EndedAt.IsZero() {
 		t.Fatalf("entry %+v, want fired, ended, reason failed", e)
 	}
+	if !e.StartedAt.IsZero() && e.QueuedAt.IsZero() {
+		t.Fatalf("entry %+v has started_at without queued_at: its wait would be computed from year 1", e)
+	}
+	if !e.QueuedAt.Equal(e.At) {
+		t.Fatalf("queued_at %v, want the intent time %v", e.QueuedAt, e.At)
+	}
 	if task, _ := s2.tasks.Get(id); task.Run != 2 || task.Status != protocol.TaskStatus_Failed {
 		t.Fatalf("run %d status %v", task.Run, task.Status)
 	}
@@ -418,10 +425,15 @@ func TestUnloadableZoneSkipsRefused(t *testing.T) {
 	sc := fireTestSchedule(1, protocol.ScheduleTaskState_Bound, id)
 	sc.TZ = "Mars/Olympus"
 	putSchedule(t, s, sc)
-	if got := s.fireSchedule(sc.ID, sc.NextAt, false); got != protocol.ScheduleOutcome_SkippedRefused {
-		t.Fatalf("outcome %v", got)
-	}
+	// A second schedule with a good zone, due in the same pass.
+	goodTask := terminalTask(t, s)
+	good := fireTestSchedule(2, protocol.ScheduleTaskState_Bound, goodTask)
+	putSchedule(t, s, good)
+	s.fireDueSchedules()
 	after := getSched(t, s, sc.ID)
+	if len(after.History) != 1 || after.History[0].Outcome != protocol.ScheduleOutcome_SkippedRefused {
+		t.Fatalf("history %+v, want one skipped_refused", after.History)
+	}
 	if !strings.Contains(after.History[0].Message, "Mars/Olympus") {
 		t.Errorf("message %q does not name the zone", after.History[0].Message)
 	}
@@ -430,6 +442,104 @@ func TestUnloadableZoneSkipsRefused(t *testing.T) {
 	}
 	if task, _ := s.tasks.Get(id); task.Run != 1 {
 		t.Errorf("a refused firing resumed the task (run %d)", task.Run)
+	}
+	g := getSched(t, s, good.ID)
+	if len(g.History) != 1 || g.History[0].Outcome != protocol.ScheduleOutcome_Fired {
+		t.Fatalf("the good-zone schedule did not fire in the same pass: %+v", g.History)
+	}
+	if task, _ := s.tasks.Get(goodTask); task.Run != 2 {
+		t.Errorf("good schedule's task run %d, want 2", task.Run)
+	}
+}
+
+// failNthWrite makes the schedule store's nth file write from now fail once.
+func failNthWrite(st *ScheduleStore, n int) {
+	count := 0
+	st.writeFn = func(path string, data []byte) error {
+		count++
+		if count == n {
+			return errors.New("injected save failure")
+		}
+		return writeFileAtomic(path, data)
+	}
+}
+
+// A failed outcome save rolls memory back to the pending intent. The next
+// firing must settle it from the task store before it chooses a new id.
+func TestFailedOutcomeSaveCreation(t *testing.T) {
+	s, _ := newFireServer(t, t.TempDir())
+	sc := fireTestSchedule(1, protocol.ScheduleTaskState_PendingCreate, "")
+	putSchedule(t, s, sc)
+	failNthWrite(s.cfg.Schedules, 2) // 1 = the intent, 2 = the outcome
+	s.fireSchedule(sc.ID, sc.NextAt, false)
+	mid := getSched(t, s, sc.ID)
+	if len(mid.History) != 1 || mid.History[0].Outcome != protocol.ScheduleOutcome_Pending || mid.State != protocol.ScheduleTaskState_PendingCreate {
+		t.Fatalf("the failed save did not leave the intent pending: %+v state %v", mid.History, mid.State)
+	}
+	x := mid.History[0].TaskID
+	if _, ok := s.tasks.Get(x); !ok {
+		t.Fatalf("task %s was not created", x)
+	}
+	got := s.fireSchedule(sc.ID, wantNextAfterFireNow, false)
+	after := getSched(t, s, sc.ID)
+	if n := len(s.tasks.List(0)); n != 1 {
+		t.Fatalf("%d tasks: the second firing created a duplicate", n)
+	}
+	if after.State != protocol.ScheduleTaskState_Bound || after.TaskID != x {
+		t.Fatalf("state %v task %q, want bound to the first creation %s", after.State, after.TaskID, x)
+	}
+	if after.History[0].Outcome != protocol.ScheduleOutcome_Fired || got != protocol.ScheduleOutcome_SkippedBusy {
+		t.Fatalf("first entry %v, second outcome %v; want fired and skipped_busy (the task is queued)", after.History[0].Outcome, got)
+	}
+}
+
+func TestFailedOutcomeSaveResume(t *testing.T) {
+	s, _ := newFireServer(t, t.TempDir())
+	id := terminalTask(t, s)
+	sc := fireTestSchedule(1, protocol.ScheduleTaskState_Bound, id)
+	putSchedule(t, s, sc)
+	failNthWrite(s.cfg.Schedules, 2)
+	s.fireSchedule(sc.ID, sc.NextAt, false)
+	if mid := getSched(t, s, sc.ID); mid.History[0].Outcome != protocol.ScheduleOutcome_Pending {
+		t.Fatalf("intent not pending: %+v", mid.History)
+	}
+	got := s.fireSchedule(sc.ID, wantNextAfterFireNow, false)
+	after := getSched(t, s, sc.ID)
+	if after.History[0].Outcome != protocol.ScheduleOutcome_Fired || got != protocol.ScheduleOutcome_SkippedBusy {
+		t.Fatalf("first entry %v, second %v; want fired and skipped_busy", after.History[0].Outcome, got)
+	}
+	if task, _ := s.tasks.Get(id); task.Run != 2 {
+		t.Fatalf("run %d, want 2", task.Run)
+	}
+	// The run ends and the schedule fires again normally: the old entry
+	// stays fired, nothing is double-counted.
+	s.tasks.Finish(id, 0, nil)
+	if got := s.fireSchedule(sc.ID, wantNextAfterFireNow, false); got != protocol.ScheduleOutcome_Fired {
+		t.Fatalf("third firing %v", got)
+	}
+	if task, _ := s.tasks.Get(id); task.Run != 3 {
+		t.Fatalf("run %d, want 3", task.Run)
+	}
+}
+
+// S-D11: a wait is started_at - queued_at, so an entry that settles to fired
+// or is backfilled must carry queued_at (the intent time) too.
+func TestSettledEntriesHaveQueuedAt(t *testing.T) {
+	st, _ := LoadScheduleStore("")
+	ta := strings.Repeat("a1", 16)
+	sc := fullSchedule(t, scheduleID(1), 0)
+	sc.State, sc.TaskID = protocol.ScheduleTaskState_Bound, ta
+	at := time.Date(2026, 11, 15, 9, 0, 1, 0, time.UTC)
+	sc.History = []HistoryEntry{{Outcome: protocol.ScheduleOutcome_Pending, TaskID: ta, ExpectRun: 2, At: at}}
+	if err := st.Put(sc); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Settle(func(string) (uint32, bool) { return 2, true }); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := st.Get(sc.ID)
+	if e := got.History[0]; e.Outcome != protocol.ScheduleOutcome_Fired || !e.QueuedAt.Equal(at) {
+		t.Fatalf("settled entry %+v: want fired with queued_at = at", e)
 	}
 }
 
@@ -483,7 +593,7 @@ func TestResumedByRecorded(t *testing.T) {
 		t.Fatalf("history %+v, want one resumed_by entry", after.History)
 	}
 	e := after.History[0]
-	if e.Outcome != protocol.ScheduleOutcome_ResumedBy || e.ByKind != protocol.ClientKind_Cli || e.TaskID != id || e.ExpectRun != 2 {
+	if e.Outcome != protocol.ScheduleOutcome_ResumedBy || e.ByKind != protocol.ClientKind_Cli || e.By != "" || e.TaskID != id || e.ExpectRun != 2 {
 		t.Fatalf("entry %+v", e)
 	}
 	if !e.QueuedAt.IsZero() || !e.StartedAt.IsZero() {
