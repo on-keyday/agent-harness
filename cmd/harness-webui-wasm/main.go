@@ -180,6 +180,7 @@ func main() {
 		"capsWhatIfText":     js.FuncOf(harnessCapsWhatIfText),
 		"whatIf":             js.FuncOf(harnessWhatIf),
 		"capsAuditOrder":     js.FuncOf(harnessCapsAuditOrder),
+		"orderTasks":         js.FuncOf(harnessOrderTasks),
 		"parseAuthority":     js.FuncOf(harnessParseAuthority),
 		"scopeForms":         js.FuncOf(harnessScopeForms),
 		"scopeSpec":          js.FuncOf(harnessScopeSpec),
@@ -1625,6 +1626,45 @@ func connRemoteAddr(cid string) string {
 	return c.Addr.String()
 }
 
+// snapshotTasks is the task list of the last snapshot harnessSnapshot fetched,
+// the rows the page's task list renders, kept for harnessOrderTasks.
+var snapshotTasks struct {
+	sync.Mutex
+	tasks []protocol.TaskInfo
+}
+
+// harnessOrderTasks orders the task list's rows by cli.OrderTasks, so the page
+// does not restate the rules. ids are the rows the page's filter admits; an id
+// the last snapshot does not hold comes last, unlabelled. null for an unknown
+// mode.
+//
+//	harness.orderTasks(mode, ids) -> [{group, ids}] | null
+func harnessOrderTasks(this js.Value, args []js.Value) any {
+	if len(args) < 2 {
+		return js.Null()
+	}
+	o, err := cli.ParseTaskOrder(args[0].String())
+	if err != nil {
+		return js.Null()
+	}
+	ids := make([]string, args[1].Length())
+	for i := range ids {
+		ids[i] = args[1].Index(i).String()
+	}
+	snapshotTasks.Lock()
+	ts := snapshotTasks.tasks
+	snapshotTasks.Unlock()
+	var out []any
+	for _, g := range cli.OrderTaskIDs(ts, ids, o, time.Now()) {
+		gids := make([]any, len(g.IDs))
+		for i, id := range g.IDs {
+			gids[i] = id
+		}
+		out = append(out, map[string]any{"group": g.Label, "ids": gids})
+	}
+	return js.ValueOf(out)
+}
+
 // harnessSnapshot returns the current runners + tasks + connections as a JS
 // object, shaped for direct consumption by the webui. Strings are pre-decoded,
 // TaskIDs are pre-hexed, and statuses are stringified so the JS side does
@@ -1655,6 +1695,9 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 				rejectErr(reject, fmt.Errorf("snapshot: %w", err))
 				return
 			}
+			snapshotTasks.Lock()
+			snapshotTasks.tasks = lr.Tasks
+			snapshotTasks.Unlock()
 			runners := make([]any, 0, len(lr.Runners))
 			for _, r := range lr.Runners {
 				roots := make([]any, 0, len(r.AllowedRoots))

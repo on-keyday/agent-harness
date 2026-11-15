@@ -489,6 +489,16 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     all:      document.getElementById("task-chip-all"),
   };
   let taskStatusFilter = "active"; // "active" | "finished" | "all"
+  // The list's order (cli.OrderTasks' mode names), per browser. activity is
+  // the order the list always had.
+  const TASK_ORDER_KEY = "taskOrder";
+  const taskOrderSelect = document.getElementById("task-order");
+  let taskOrder = "activity";
+  try {
+    const saved = localStorage.getItem(TASK_ORDER_KEY);
+    if (saved && [...taskOrderSelect.options].some((o) => o.value === saved)) taskOrder = saved;
+  } catch (_) { /* storage blocked */ }
+  taskOrderSelect.value = taskOrder;
   // Creator-tree ordering. A MODE, not a filter: while it is on the status
   // chips are ignored, because a tree with its middle links filtered out is a
   // set of disconnected fragments pretending to be a hierarchy.
@@ -785,6 +795,11 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     });
   }
   taskFilterInput.addEventListener("input", () => renderTaskList(lastTasks));
+  taskOrderSelect.addEventListener("change", () => {
+    taskOrder = taskOrderSelect.value;
+    try { localStorage.setItem(TASK_ORDER_KEY, taskOrder); } catch (_) { /* storage blocked */ }
+    renderTaskList(lastTasks);
+  });
 
   // Grid selection. A live session (either kind) is INCLUDED in the grid by
   // default; gridExcluded holds the ids the user unchecked. Keyed by id so it
@@ -6559,6 +6574,12 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     const visible = lastTasks
       .filter((t) => taskMatchesFilter(t, terms))
       .sort((a, b) => taskActivityMs(b) - taskActivityMs(a));
+    // The order and its groups are Go's (harness.orderTasks); the activity
+    // sort above is the fallback for a wasm that predates the bridge.
+    const groups = typeof harness.orderTasks === "function"
+      ? harness.orderTasks(taskOrder, visible.map((t) => t.id))
+      : null;
+    const rows = groups ? orderedRowsModel(groups, visible) : visible.map((t) => ({ task: t }));
     // The rebuild below wipes all sheet DOM, which would reset any agent
     // dropdown the user changed — every 5s poll. Capture those picks first and
     // restore them after the rebuild.
@@ -6575,7 +6596,15 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       taskList.appendChild(empty);
       return;
     }
-    for (const t of visible) {
+    for (const r of rows) {
+      if (r.head) {
+        const head = document.createElement("div");
+        head.className = "task-group-head";
+        head.textContent = r.head;
+        taskList.appendChild(head);
+        continue;
+      }
+      const t = r.task;
       const wrap = document.createElement("div");
       const row = document.createElement("div");
       row.className = "task-row";

@@ -50,6 +50,15 @@
         <button type="button" id="task-chip-active" class="task-chip is-active">Active</button>
         <button type="button" id="task-chip-finished" class="task-chip">Finished</button>
         <button type="button" id="task-chip-all" class="task-chip">All</button>
+        <!-- How the list is ordered and grouped: Go's cli.OrderTasks through
+             harness.orderTasks. Remembered in this browser (taskOrder). -->
+        <select id="task-order" title="タスク一覧の並べ方 (state / repo はまとめて見出しを付ける)">
+          <option value="activity">並び: 最近の動き</option>
+          <option value="created">並び: 作成順</option>
+          <option value="live">並び: 動いているもの優先</option>
+          <option value="state">並び: 状態ごと</option>
+          <option value="repo">並び: リポジトリごと</option>
+        </select>
         <button type="button" id="task-chip-tree" class="task-chip" title="親子（作成者）順に並べる。ツリー中は状態フィルタを無視して可視タスクを全部出す">🌳 ツリー</button>
         <!-- Marks the holders of one capability in the tree (ended tasks too:
              a resume brings their recorded caps back). Filled from

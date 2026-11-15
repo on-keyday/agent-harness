@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/hex"
 	"fmt"
 	"path"
 	"sort"
@@ -162,6 +163,50 @@ func OrderTasks(ts []protocol.TaskInfo, o TaskOrder, now time.Time) []TaskGroup 
 	}
 	byCreated(all)
 	return nonEmptyGroups([]TaskGroup{{Tasks: all}})
+}
+
+// TaskIDGroup is a TaskGroup as hex task ids, for the WebUI's bridge.
+type TaskIDGroup struct {
+	Label string
+	IDs   []string
+}
+
+// OrderTaskIDs is OrderTasks over the tasks of ts that ids names (hex), for a
+// page that orders the rows its filter admits over the snapshot it last
+// fetched. An id ts does not hold — the page's rows are newer — is kept, last,
+// in an unlabelled group.
+func OrderTaskIDs(ts []protocol.TaskInfo, ids []string, o TaskOrder, now time.Time) []TaskIDGroup {
+	want := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		want[id] = true
+	}
+	var admitted []protocol.TaskInfo
+	for _, t := range ts {
+		id := hex.EncodeToString(t.Id.Id[:])
+		if want[id] {
+			admitted = append(admitted, t)
+			delete(want, id)
+		}
+	}
+	var out []TaskIDGroup
+	for _, g := range OrderTasks(admitted, o, now) {
+		ig := TaskIDGroup{Label: g.Label}
+		for _, t := range g.Tasks {
+			ig.IDs = append(ig.IDs, hex.EncodeToString(t.Id.Id[:]))
+		}
+		out = append(out, ig)
+	}
+	var unknown []string
+	for _, id := range ids {
+		if want[id] {
+			unknown = append(unknown, id)
+			delete(want, id)
+		}
+	}
+	if len(unknown) > 0 {
+		out = append(out, TaskIDGroup{IDs: unknown})
+	}
+	return out
 }
 
 func nonEmptyGroups(gs []TaskGroup) []TaskGroup {

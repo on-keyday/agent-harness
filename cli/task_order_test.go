@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/hex"
 	"reflect"
 	"strings"
 	"testing"
@@ -146,5 +147,20 @@ func TestParseTaskOrderAndNext(t *testing.T) {
 	}
 	if OrderRepo.Next() != OrderCreated || OrderCreated.Next() != OrderActivity {
 		t.Error("Next does not cycle created → … → repo → created")
+	}
+}
+
+// The WebUI orders the ids its filter admits over the snapshot the wasm last
+// fetched: ids outside that snapshot (Review Focus 4) come last, unlabelled;
+// tasks the filter hid are left out.
+func TestOrderTaskIDsKeepsUnknownIDsLast(t *testing.T) {
+	a := ot(0, protocol.TaskStatus_Running, 1, 1, 0)
+	b := ot(1, protocol.TaskStatus_Succeeded, 2, 2, 3)
+	hidden := ot(2, protocol.TaskStatus_Running, 3, 3, 0)
+	hexOf := func(t protocol.TaskInfo) string { return hex.EncodeToString(t.Id.Id[:]) }
+	got := OrderTaskIDs([]protocol.TaskInfo{a, b, hidden}, []string{"ff", hexOf(b), hexOf(a)}, OrderLive, orderNow)
+	want := []TaskIDGroup{{"live", []string{hexOf(a)}}, {"finished", []string{hexOf(b)}}, {"", []string{"ff"}}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("OrderTaskIDs = %v, want %v", got, want)
 	}
 }

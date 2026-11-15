@@ -802,6 +802,23 @@ test("paneAboutText: progress, else title, else empty", () => {
   eq(page.paneAboutText({}), "");
 });
 
+// The task list's order comes from Go (harness.orderTasks); the page only lays
+// the groups out: a header per labelled group, counting the rows under it.
+test("orderedRowsModel: a header per labelled group, none for an unlabelled one", () => {
+  const a = { id: "a" }, b = { id: "b" }, c = { id: "c" };
+  eq(page.orderedRowsModel([{ group: "ready", ids: ["a", "c"] }, { group: "", ids: ["b"] }], [a, b, c]),
+    [{ head: "ready (2)" }, { task: a }, { task: c }, { task: b }]);
+});
+
+// Review Focus 4: a row the bridge did not order (its snapshot lagged the
+// page's) is kept, last and without a header; an id the filter hid is not shown.
+test("orderedRowsModel: rows the bridge missed go last, hidden ids stay hidden", () => {
+  const a = { id: "a" }, b = { id: "b" };
+  eq(page.orderedRowsModel([{ group: "live", ids: ["x", "a"] }], [b, a]),
+    [{ head: "live (1)" }, { task: a }, { task: b }]);
+  eq(page.orderedRowsModel([{ group: "live", ids: ["x"] }], [a]), [{ task: a }]);
+});
+
 // await-progress needs no live session (a oneshot writes progress too), so
 // the sheet offers it on every task that can still write: any non-terminal one.
 test("task sheet: await-progress offered on any live task, oneshot included", () => {

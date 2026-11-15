@@ -103,6 +103,33 @@ function paneStateBadge(t) {
   return taskLifecycleModel(t) || taskProgramModel(t);
 }
 
+// orderedRowsModel lays the task list out from harness.orderTasks' groups
+// ([{group, ids}], ordered by Go's cli.OrderTasks): a {head} row before each
+// labelled group, counting the rows under it, then a {task} row per task.
+// tasks are the rows the filter admits; a group id not among them is skipped,
+// and a task no group named (the wasm's snapshot lagged the page's) is kept,
+// last and without a header.
+function orderedRowsModel(groups, tasks) {
+  const byId = new Map(tasks.map((t) => [t.id, t]));
+  const seen = new Set();
+  const rows = [];
+  for (const g of groups || []) {
+    const members = [];
+    for (const id of g.ids || []) {
+      const t = byId.get(id);
+      if (t && !seen.has(id)) {
+        seen.add(id);
+        members.push({ task: t });
+      }
+    }
+    if (members.length === 0) continue;
+    if (g.group) rows.push({ head: `${g.group} (${members.length})` });
+    rows.push(...members);
+  }
+  for (const t of tasks) if (!seen.has(t.id)) rows.push({ task: t });
+  return rows;
+}
+
 // treeNodeProgress is what a task-tree node shows of the task's progress: a
 // fourth line cut to the node's slot (a node is 132px wide), and tooltip lines
 // with the full text, its age and the window title. Built on taskNowModel, so
