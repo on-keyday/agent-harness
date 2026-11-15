@@ -134,7 +134,7 @@ func TestBoardReadResponseRoundTrip(t *testing.T) {
 	var ft TaskID
 	ft.Id[0] = 0xAB
 	row := BoardMessageRow{Seq: 3, FromTask: ft, ReceivedAtUnixMs: 1700, Size: 5}
-	row.SetFromHostname([]byte("gmkhost"))
+	row.SetFromHostname([]byte("host1"))
 	in.Msgs = append(in.Msgs, row)
 	in.MsgsLen = uint16(len(in.Msgs))
 
@@ -146,7 +146,7 @@ func TestBoardReadResponseRoundTrip(t *testing.T) {
 	if out.RequestId != 7 || out.Status != BoardStatus_Ok || out.StreamId != 42 || out.MsgsLen != 1 {
 		t.Fatalf("header round-trip mismatch: %+v", out)
 	}
-	if out.Msgs[0].Seq != 3 || out.Msgs[0].Size != 5 || string(out.Msgs[0].FromHostname) != "gmkhost" || out.Msgs[0].FromTask.Id[0] != 0xAB {
+	if out.Msgs[0].Seq != 3 || out.Msgs[0].Size != 5 || string(out.Msgs[0].FromHostname) != "host1" || out.Msgs[0].FromTask.Id[0] != 0xAB {
 		t.Fatalf("row round-trip mismatch: %+v", out.Msgs[0])
 	}
 }

@@ -40,7 +40,7 @@ func makeRunnerInfo(hostname string, status protocol.RunnerStatus, maxTasks int,
 // host=, tasks=N/M, and roots= columns.
 func TestLsRunnerColumnsHostTasksRoots(t *testing.T) {
 	roots := []string{"/home/user/project"}
-	r := makeRunnerInfo("gmkhost", protocol.RunnerStatus_Idle, 4, roots, 2)
+	r := makeRunnerInfo("host1", protocol.RunnerStatus_Idle, 4, roots, 2)
 	lr := &protocol.ListResultBody{
 		Runners: []protocol.RunnerInfo{r},
 	}
@@ -50,8 +50,8 @@ func TestLsRunnerColumnsHostTasksRoots(t *testing.T) {
 	renderList(lr, &out)
 	s := out.String()
 
-	if !strings.Contains(s, "host=gmkhost") {
-		t.Errorf("expected host=gmkhost in output:\n%s", s)
+	if !strings.Contains(s, "host=host1") {
+		t.Errorf("expected host=host1 in output:\n%s", s)
 	}
 	if !strings.Contains(s, "tasks=2/4") {
 		t.Errorf("expected tasks=2/4 in output:\n%s", s)

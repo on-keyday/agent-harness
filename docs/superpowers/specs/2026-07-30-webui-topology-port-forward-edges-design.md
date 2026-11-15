@@ -273,7 +273,7 @@ one payload field, so verification is browser-driven, as it was for the panel:
 - Confirm on a dense cluster — the real fleet's 13-runner host is the case this
   design exists for — that the edge visibly lands on one rect and not merely
   "somewhere in the fan". **Confirmed on the real fleet**: two tui-owned `-L`
-  edges crossed from a `192.168.3.246` leaf over the 13-runner fan and terminated
+  edges crossed from a `192.0.2.246` leaf over the 13-runner fan and terminated
   visibly on two distinct `remote-agent-harness` rects.
 - Confirm a warm-hued edge (any `-R`, or a tui-owned `-L`) stays distinguishable
   from the amber task rect it touches — this is what the casing exists for.

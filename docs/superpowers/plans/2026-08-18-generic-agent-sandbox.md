@@ -261,7 +261,7 @@ Expected: builds `harness-agent-sandbox:latest` with no error.
 Run each from a repo directory (the wrapper mounts `$PWD`'s repo root):
 
 ```bash
-cd /home/kforfk/workspace/remote-agent-harness
+cd /home/user/workspace/remote-agent-harness
 scripts/sandbox/agent-in-podman.sh --sandbox-agent bash   -c 'id -un; pwd'
 scripts/sandbox/agent-in-podman.sh --sandbox-agent codex  --version
 scripts/sandbox/agent-in-podman.sh --sandbox-agent agy    --version
@@ -372,7 +372,7 @@ Rebuild the image (it ships the proxy binary), then run each agent under the pro
 
 ```bash
 scripts/sandbox/build.sh
-cd /home/kforfk/workspace/remote-agent-harness
+cd /home/user/workspace/remote-agent-harness
 scripts/sandbox/agent-in-podman.sh --sandbox-agent codex --firewall-proxy \
   exec --skip-git-repo-check 'reply with exactly: X' 2>&1 | grep -i 'refus\|deny\|not allowed'
 scripts/sandbox/agent-in-podman.sh --sandbox-agent agy --firewall-proxy \
@@ -560,7 +560,7 @@ add "host_proc_leak" "$(cat /proc/[0-9]*/comm 2>/dev/null | grep -Ec 'agent-runn
 - [ ] **Step 4: Run the probe inside a container, per agent**
 
 ```bash
-cd /home/kforfk/workspace/remote-agent-harness
+cd /home/user/workspace/remote-agent-harness
 scripts/sandbox/agent-in-podman.sh --sandbox-agent bash -c 'bash scripts/sandbox/probe.sh' | head -20
 scripts/sandbox/agent-in-podman.sh --sandbox-agent bash --firewall-proxy -c 'bash scripts/sandbox/probe.sh' | head -20
 ```
@@ -704,7 +704,7 @@ for a in bash codex agy claude; do
 done
 ```
 
-Expected: every file exists and is owned by the host user (`kforfk`), not by
+Expected: every file exists and is owned by the host user (`user`), not by
 root — that is what `--userns=keep-id` buys and the only reason podman was
 chosen over docker.
 

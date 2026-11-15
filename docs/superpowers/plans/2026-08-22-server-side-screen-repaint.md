@@ -20,7 +20,7 @@ and its job: it is the scrollback.
 
 ## Global Constraints
 
-- **Two repositories, in order.** `objtrsf` (`/home/kforfk/workspace/objtrsf`)
+- **Two repositories, in order.** `objtrsf` (`/home/user/workspace/objtrsf`)
   lands first and publishes; the harness bumps to it. Nothing in the harness
   compiles against `FrameType_Synth` until Task 2 is done.
 - **Landing is Mode A in both repos**: rebase onto the current trunk, FF-push to
@@ -45,10 +45,10 @@ and its job: it is the scrollback.
 ### Task 1: `FrameType_Synth` in objtrsf
 
 **Files:**
-- Modify: `/home/kforfk/workspace/objtrsf/exec/frame/frame.bgn`
-- Regenerate: `/home/kforfk/workspace/objtrsf/exec/frame/frame.go`
-- Modify: `/home/kforfk/workspace/objtrsf/exec/exec_stream.go:59-92` (the dispatch switch)
-- Test: `/home/kforfk/workspace/objtrsf/exec/exec_stream_synth_test.go` (create)
+- Modify: `/home/user/workspace/objtrsf/exec/frame/frame.bgn`
+- Regenerate: `/home/user/workspace/objtrsf/exec/frame/frame.go`
+- Modify: `/home/user/workspace/objtrsf/exec/exec_stream.go:59-92` (the dispatch switch)
+- Test: `/home/user/workspace/objtrsf/exec/exec_stream_synth_test.go` (create)
 
 **Interfaces:**
 - Produces: `frame.FrameType_Synth` (value 4), and the guarantee that
@@ -57,7 +57,7 @@ and its job: it is the scrollback.
 
 - [ ] **Step 1: Write the failing test**
 
-Create `/home/kforfk/workspace/objtrsf/exec/exec_stream_synth_test.go`. Match
+Create `/home/user/workspace/objtrsf/exec/exec_stream_synth_test.go`. Match
 the existing helpers in `exec_test.go` for building a fake stream — read it
 first and reuse whatever it already has rather than inventing a second fake.
 
@@ -110,7 +110,7 @@ func TestCommandExecutionStreamDeliversSynthOnStdoutInOrder(t *testing.T) {
 - [ ] **Step 2: Run it and watch it fail**
 
 ```bash
-cd /home/kforfk/workspace/objtrsf && go test ./exec/ -run TestCommandExecutionStreamDeliversSynthOnStdout -v
+cd /home/user/workspace/objtrsf && go test ./exec/ -run TestCommandExecutionStreamDeliversSynthOnStdout -v
 ```
 
 Expected: a compile error, `undefined: frame.FrameType_Synth`. If instead the
@@ -136,8 +136,8 @@ enum FrameType:
 - [ ] **Step 4: Regenerate**
 
 ```bash
-cd /home/kforfk/workspace/remote-agent-harness
-scripts/protoregen.sh /home/kforfk/workspace/objtrsf/exec/frame/frame.bgn
+cd /home/user/workspace/remote-agent-harness
+scripts/protoregen.sh /home/user/workspace/objtrsf/exec/frame/frame.bgn
 ```
 
 The brgen kit is already cached at `~/.cache/brgen-kit`, so this starts a local
@@ -147,7 +147,7 @@ and gofmts it.
 - [ ] **Step 5: Read the generated diff before trusting it**
 
 ```bash
-cd /home/kforfk/workspace/objtrsf && git diff --stat exec/frame/frame.go && git diff exec/frame/frame.go | head -60
+cd /home/user/workspace/objtrsf && git diff --stat exec/frame/frame.go && git diff exec/frame/frame.go | head -60
 ```
 
 Expected: the const block gains `FrameType_Synth FrameType = 4`, and `String()`
@@ -176,7 +176,7 @@ a frame-level reader can tell them apart, not so they land in different places.
 - [ ] **Step 7: Run the test**
 
 ```bash
-cd /home/kforfk/workspace/objtrsf && go test ./exec/ -run TestCommandExecutionStreamDeliversSynthOnStdout -v
+cd /home/user/workspace/objtrsf && go test ./exec/ -run TestCommandExecutionStreamDeliversSynthOnStdout -v
 ```
 
 Expected: PASS.
@@ -184,7 +184,7 @@ Expected: PASS.
 - [ ] **Step 8: Full objtrsf suite**
 
 ```bash
-cd /home/kforfk/workspace/objtrsf && go build ./... && go vet ./... && go test ./...
+cd /home/user/workspace/objtrsf && go build ./... && go vet ./... && go test ./...
 ```
 
 Expected: all green. `exec/exec.go:255`'s inbound `default:` still warns on an
@@ -194,7 +194,7 @@ it is correct as it stands.
 - [ ] **Step 9: Commit and land**
 
 ```bash
-cd /home/kforfk/workspace/objtrsf
+cd /home/user/workspace/objtrsf
 git add exec/frame/frame.bgn exec/frame/frame.go exec/exec_stream.go exec/exec_stream_synth_test.go
 git commit   # message: the four points below
 git fetch origin main && git merge-base --is-ancestor origin/main HEAD

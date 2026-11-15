@@ -22,7 +22,7 @@ Non-goal (do NOT implement): per-resource gating, task lineage. P1 records/valid
 
 ## Hard preconditions (apply to every task)
 
-- **Worktree routing trap:** This session's cwd is a harness worktree. `git`/`Edit`/`Write` with absolute paths under `/home/kforfk/workspace/remote-agent-harness/<rel>` route to the PARENT repo, not this worktree. Operate with paths relative to this worktree root (cwd), and verify `git rev-parse --abbrev-ref HEAD` shows `harness/0f0d4dd6...` before committing. (See implementation-pitfalls Pitfall 8.)
+- **Worktree routing trap:** This session's cwd is a harness worktree. `git`/`Edit`/`Write` with absolute paths under `/home/user/workspace/remote-agent-harness/<rel>` route to the PARENT repo, not this worktree. Operate with paths relative to this worktree root (cwd), and verify `git rev-parse --abbrev-ref HEAD` shows `harness/0f0d4dd6...` before committing. (See implementation-pitfalls Pitfall 8.)
 - **Build hygiene:** compile-check with `go build ./...` (writes no binary) or `make check`. NEVER bare `go build ./cmd/<x>/` (drops a binary into the worktree). `go test ./...` self-cleans.
 - **Schema is source of truth:** every wire byte must be in the `.bgn`. Do not carry bytes by convention.
 

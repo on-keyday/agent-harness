@@ -84,15 +84,15 @@ func TestIsUnderRoot(t *testing.T) {
 		repo string
 		want bool
 	}{
-		{"exact match", "/home/kforfk/workspace", "/home/kforfk/workspace", true},
-		{"child", "/home/kforfk/workspace", "/home/kforfk/workspace/foo", true},
-		{"deep child", "/home/kforfk/workspace", "/home/kforfk/workspace/foo/bar", true},
-		{"sibling lookalike", "/home/kforfk/workspace", "/home/kforfk/workspace-evil", false},
-		{"unrelated", "/home/kforfk/workspace", "/etc/passwd", false},
-		{"trailing slash root", "/home/kforfk/workspace/", "/home/kforfk/workspace/foo", true},
-		{"trailing slash repo", "/home/kforfk/workspace", "/home/kforfk/workspace/foo/", true},
-		{"relative repo refused", "/home/kforfk/workspace", "workspace/foo", false},
-		{"root parent", "/home/kforfk/workspace", "/home/kforfk", false},
+		{"exact match", "/home/user/workspace", "/home/user/workspace", true},
+		{"child", "/home/user/workspace", "/home/user/workspace/foo", true},
+		{"deep child", "/home/user/workspace", "/home/user/workspace/foo/bar", true},
+		{"sibling lookalike", "/home/user/workspace", "/home/user/workspace-evil", false},
+		{"unrelated", "/home/user/workspace", "/etc/passwd", false},
+		{"trailing slash root", "/home/user/workspace/", "/home/user/workspace/foo", true},
+		{"trailing slash repo", "/home/user/workspace", "/home/user/workspace/foo/", true},
+		{"relative repo refused", "/home/user/workspace", "workspace/foo", false},
+		{"root parent", "/home/user/workspace", "/home/user", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -459,10 +459,10 @@ import (
 func TestRegistryCandidatesPrefixMatch(t *testing.T) {
 	r := NewRegistry()
 	now := time.Now()
-	r.Add(&RunnerEntry{ID: "A", Hostname: "gmkhost", AllowedRoots: []string{"/home/kforfk/workspace"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
+	r.Add(&RunnerEntry{ID: "A", Hostname: "host1", AllowedRoots: []string{"/home/user/workspace"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
 	r.Add(&RunnerEntry{ID: "B", Hostname: "raspi",   AllowedRoots: []string{"/home/pi/workspace"},     MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
 
-	cs := r.Candidates("/home/kforfk/workspace/repo1", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_None})
+	cs := r.Candidates("/home/user/workspace/repo1", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_None})
 	if len(cs) != 1 || cs[0].ID != "A" {
 		t.Fatalf("expected only A, got %v", cs)
 	}
@@ -501,7 +501,7 @@ func TestRegistryCandidatesCapacityAgnostic(t *testing.T) {
 func TestRegistryCandidatesSelectorByHostname(t *testing.T) {
 	r := NewRegistry()
 	now := time.Now()
-	r.Add(&RunnerEntry{ID: "A", Hostname: "gmkhost", AllowedRoots: []string{"/x"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
+	r.Add(&RunnerEntry{ID: "A", Hostname: "host1", AllowedRoots: []string{"/x"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
 	r.Add(&RunnerEntry{ID: "B", Hostname: "raspi",   AllowedRoots: []string{"/x"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
 
 	sel := protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_ByHostname}
@@ -716,7 +716,7 @@ git commit -m "server/registry: widen OnRemove to (id, snapshot) for stranded-ta
 func TestTaskStoreAddCarriesSelectorAndBoundRunner(t *testing.T) {
 	ts := NewTaskStore(nil)
 	sel := protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_ByHostname}
-	sel.SetHostname(mustHostname(t, "gmkhost"))
+	sel.SetHostname(mustHostname(t, "host1"))
 	taskID := ts.Add(SubmitInput{
 		RepoPath: "/x/repo",
 		Prompt:   []byte("hello"),
@@ -775,7 +775,7 @@ func TestWALReplayRestoresSelectorAndBoundRunner(t *testing.T) {
 		t.Fatalf("OpenWAL: %v", err)
 	}
 	sel := protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_ByHostname}
-	sel.SetHostname(mustHostname(t, "gmkhost"))
+	sel.SetHostname(mustHostname(t, "host1"))
 	if err := wal.Write(WALEvent{
 		Type:          "task_queued",
 		TaskID:        "abc",
@@ -822,7 +822,7 @@ type WALEvent struct {
 JSON serialization: `RunnerSelector` is a wire-format generated struct, so MarshalJSON / UnmarshalJSON probably won't produce nice output. Implement custom `MarshalJSON` / `UnmarshalJSON` on `WALEvent` that wraps the selector as `{kind, runner_id?, hostname?, ip?}` for legibility AND replay correctness. The selector is small; aim for the JSON shape:
 
 ```json
-{"kind":"by_hostname","hostname":"gmkhost"}
+{"kind":"by_hostname","hostname":"host1"}
 ```
 
 If JSON marshalling becomes unwieldy, fall back to encoding the selector as base64'd wire bytes — same data, less readable, but mechanical. Either works; pick whichever is cheaper to implement and document the choice in the source comment.
@@ -978,7 +978,7 @@ func TestHandleSubmitAmbiguousRunner(t *testing.T) {
 func TestHandleSubmitPinnedNotFound(t *testing.T) {
 	srv := newTestServer(t)
 	now := time.Now()
-	srv.registry.Add(&RunnerEntry{ID: "A", Hostname: "gmkhost", AllowedRoots: []string{"/x"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now, Conn: stubConn{}})
+	srv.registry.Add(&RunnerEntry{ID: "A", Hostname: "host1", AllowedRoots: []string{"/x"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now, Conn: stubConn{}})
 
 	sel := protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_ByHostname}
 	sel.SetHostname(mustHostname(t, "raspi")) // hostname not present
@@ -1139,7 +1139,7 @@ func TestHandleOpenInteractiveAmbiguous(t *testing.T) {
 func TestHandleOpenInteractivePinnedNotFound(t *testing.T) {
 	srv := newTestServer(t)
 	now := time.Now()
-	srv.registry.Add(&RunnerEntry{ID: "A", Hostname: "gmkhost", AllowedRoots: []string{"/x"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now, Conn: stubConn{}})
+	srv.registry.Add(&RunnerEntry{ID: "A", Hostname: "host1", AllowedRoots: []string{"/x"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now, Conn: stubConn{}})
 	sel := protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_ByHostname}
 	sel.SetHostname(mustHostname(t, "raspi"))
 	resp := srv.handleOpenInteractive(&protocol.OpenInteractiveRequest{
@@ -1663,14 +1663,14 @@ func TestSessionGetWorktreeManagerCachesPerRepo(t *testing.T) {
 }
 
 func TestSessionRepoAllowedDelegatesToProtocol(t *testing.T) {
-	s := &Session{AllowedRoots: []string{"/home/kforfk/workspace"}}
-	if !s.repoAllowed("/home/kforfk/workspace/foo") {
-		t.Fatal("expected /home/kforfk/workspace/foo allowed")
+	s := &Session{AllowedRoots: []string{"/home/user/workspace"}}
+	if !s.repoAllowed("/home/user/workspace/foo") {
+		t.Fatal("expected /home/user/workspace/foo allowed")
 	}
 	if s.repoAllowed("/etc/passwd") {
 		t.Fatal("/etc/passwd must not be allowed")
 	}
-	if s.repoAllowed("/home/kforfk/workspace-evil") {
+	if s.repoAllowed("/home/user/workspace-evil") {
 		t.Fatal("sibling lookalike must not be allowed")
 	}
 }
@@ -2144,7 +2144,7 @@ git commit -m "cmd/agent-runner: --roots CSV + --max-tasks; emit hostname"
 func TestSubmitEncodesSelectorByHostname(t *testing.T) {
 	// Use a Client backed by a fake objproto Connection that captures wire bytes.
 	cli := newFakeClient(t)
-	sel := SelectorOpts{Host: "gmkhost"}
+	sel := SelectorOpts{Host: "host1"}
 	if _, err := cli.Submit(context.Background(), "/x/repo", "prompt", sel); err != nil {
 		t.Fatal(err)
 	}
@@ -2152,7 +2152,7 @@ func TestSubmitEncodesSelectorByHostname(t *testing.T) {
 	if req.Selector.Kind != protocol.RunnerSelectorKind_ByHostname {
 		t.Fatalf("kind=%v want ByHostname", req.Selector.Kind)
 	}
-	if string(req.Selector.Hostname().Hostname) != "gmkhost" {
+	if string(req.Selector.Hostname().Hostname) != "host1" {
 		t.Fatal("hostname mismatch")
 	}
 }
@@ -2265,13 +2265,13 @@ git commit -m "cli/interactive: encode RunnerSelector; share SelectorOpts with s
 ```go
 func TestLsRendersHostRootsTasks(t *testing.T) {
 	rs := []protocol.RunnerInfo{
-		{Hostname: []byte("gmkhost"), Status: protocol.RunnerStatus_Idle, MaxTasks: 4,
+		{Hostname: []byte("host1"), Status: protocol.RunnerStatus_Idle, MaxTasks: 4,
 			ActiveTasks: nil, AllowedRoots: []protocol.AllowedRoot{{Path: []byte("/x")}, {Path: []byte("/y")}}},
 		{Hostname: []byte("raspi"), Status: protocol.RunnerStatus_Busy, MaxTasks: 1,
 			ActiveTasks: []protocol.ActiveTaskRef{{}}, AllowedRoots: []protocol.AllowedRoot{{Path: []byte("/p")}}},
 	}
 	out := RenderRunners(rs)
-	if !strings.Contains(out, "host=gmkhost") || !strings.Contains(out, "tasks=0/4") {
+	if !strings.Contains(out, "host=host1") || !strings.Contains(out, "tasks=0/4") {
 		t.Fatalf("missing host or tasks column: %q", out)
 	}
 	if !strings.Contains(out, "roots=/x,/y") {
@@ -2394,7 +2394,7 @@ git commit -m "tui: multi-task display, submit pin selector, interactive Candida
 - [ ] **Step 1: Update the runner select dropdown to show host + tasks/max**
 
 ```html
-<option value="A">gmkhost — 1/4 — /x,/y</option>
+<option value="A">host1 — 1/4 — /x,/y</option>
 ```
 
 - [ ] **Step 2: Submit form gains optional pin field**
@@ -2544,7 +2544,7 @@ func TestIntegrationPinByHostnameSuccess(t *testing.T) {
 	srv, cleanup := startServer(t)
 	defer cleanup()
 	repo := tempRepo(t)
-	r1 := startRunner(t, srv, runnerOpts{MaxTasks: 1, Roots: []string{repo}, Hostname: "gmkhost"})
+	r1 := startRunner(t, srv, runnerOpts{MaxTasks: 1, Roots: []string{repo}, Hostname: "host1"})
 	defer r1.Close()
 	r2 := startRunner(t, srv, runnerOpts{MaxTasks: 1, Roots: []string{repo}, Hostname: "raspi"})
 	defer r2.Close()
@@ -2566,7 +2566,7 @@ func TestIntegrationPinNotFound(t *testing.T) {
 	srv, cleanup := startServer(t)
 	defer cleanup()
 	repo := tempRepo(t)
-	r := startRunner(t, srv, runnerOpts{MaxTasks: 1, Roots: []string{repo}, Hostname: "gmkhost"})
+	r := startRunner(t, srv, runnerOpts{MaxTasks: 1, Roots: []string{repo}, Hostname: "host1"})
 	defer r.Close()
 	c := dialClient(t, srv)
 	defer c.Close()

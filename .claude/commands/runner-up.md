@@ -17,7 +17,7 @@ Arguments: $ARGUMENTS
 
 2. **Resolve server-cid**:
    - If `server-cid=<cid>` is present in $ARGUMENTS, use it verbatim.
-   - Else: read `$HARNESS_SERVER_CID` and rewrite the trailing `-<digits>` to `-*` so the runner reconnects across server restarts. Example: `ws:192.168.3.234:8549-12982` → `ws:192.168.3.234:8549-*`.
+   - Else: read `$HARNESS_SERVER_CID` and rewrite the trailing `-<digits>` to `-*` so the runner reconnects across server restarts. Example: `ws:192.0.2.234:8549-12982` → `ws:192.0.2.234:8549-*`.
    - If env unset AND no flag given, abort with a clear error.
    - **A comma-separated list is a valid value** and is forwarded verbatim (see Notes). Rewrite the `-<digits>` suffix of every entry, not just the first.
 
@@ -369,7 +369,7 @@ Arguments: $ARGUMENTS
    - `harness-cli ls` — confirm a new RUNNERS row with matching roots (and matching `host=` if `--hostname` was set) appears. If not visible immediately, retry once after ~2s.
    - `tail -n 30 "$HARNESS_REPO_PATH/bin/.run/agent-runner-<tag>.log"` — check there are no `FATAL` / `dial tcp` / `connection refused` errors. A `runner key is not enrolled` line means step 4b is still open; the slot keeps retrying and comes up once the key is enrolled.
 
-7. **Report** to the user: slot tag, reported hostname, RunnerID from ls (e.g. `ws:192.168.3.14:NNNNN-NNNNN`), `tasks=0/N`, roots. If `--hostname` was injected, remind the user that this slot now requires `--host <label>` to pin from CLI/WebUI.
+7. **Report** to the user: slot tag, reported hostname, RunnerID from ls (e.g. `ws:192.0.2.14:NNNNN-NNNNN`), `tasks=0/N`, roots. If `--hostname` was injected, remind the user that this slot now requires `--host <label>` to pin from CLI/WebUI.
 
 ## Notes
 

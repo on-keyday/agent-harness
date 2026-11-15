@@ -144,11 +144,11 @@ func TestUnenrollInUseNeedsForceAndUndoRestores(t *testing.T) {
 	pub, _, _ := ed25519.GenerateKey(nil)
 	f.enroll(t, op, pub, "gmk")
 	runnerCID := tcid("ws:127.0.0.1:9901-1")
-	f.h.Registry.Add(&RunnerEntry{ID: runnerCID, Identity: testRunnerID("ws:127.0.0.1:9901-1"), Hostname: "gmkhost", Key: pub, Conn: &fakeConn{id: runnerCID}})
+	f.h.Registry.Add(&RunnerEntry{ID: runnerCID, Identity: testRunnerID("ws:127.0.0.1:9901-1"), Hostname: "host1", Key: pub, Conn: &fakeConn{id: runnerCID}})
 	prefix := hex.EncodeToString(pub)[:12]
 
 	st, body := f.unenroll(t, op, prefix, false)
-	if st != protocol.RunnerKeyStatus_InUse || body == nil || len(body.Runners) != 1 || string(body.Runners[0].Hostname) != "gmkhost" {
+	if st != protocol.RunnerKeyStatus_InUse || body == nil || len(body.Runners) != 1 || string(body.Runners[0].Hostname) != "host1" {
 		t.Fatalf("unforced unenroll of a key in use: %v body=%+v", st, body)
 	}
 	if _, ok := f.keys.Lookup(pub); !ok {
@@ -192,7 +192,7 @@ func TestRunnerKeysListsUsers(t *testing.T) {
 	op := keyVerbConn()
 	pub, _, _ := ed25519.GenerateKey(nil)
 	f.enroll(t, op, pub, "gmk")
-	f.h.Registry.Add(&RunnerEntry{ID: tcid("ws:127.0.0.1:9902-1"), Identity: testRunnerID("a"), Hostname: "gmkhost", Key: pub, Conn: &fakeConn{id: tcid("ws:127.0.0.1:9902-1")}})
+	f.h.Registry.Add(&RunnerEntry{ID: tcid("ws:127.0.0.1:9902-1"), Identity: testRunnerID("a"), Hostname: "host1", Key: pub, Conn: &fakeConn{id: tcid("ws:127.0.0.1:9902-1")}})
 
 	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_RunnerKeys, RequestId: 3}}
 	req.SetRunnerKeys(protocol.RunnerKeysRequest{})
@@ -205,7 +205,7 @@ func TestRunnerKeysListsUsers(t *testing.T) {
 	if err := body.DecodeExact(op.sendStreamBytes(t, resp.RunnerKeys().StreamId)); err != nil {
 		t.Fatal(err)
 	}
-	if len(body.Keys) != 1 || string(body.Keys[0].Label) != "gmk" || len(body.Keys[0].Runners) != 1 || string(body.Keys[0].Runners[0].Hostname) != "gmkhost" {
+	if len(body.Keys) != 1 || string(body.Keys[0].Label) != "gmk" || len(body.Keys[0].Runners) != 1 || string(body.Keys[0].Runners[0].Hostname) != "host1" {
 		t.Fatalf("keys %+v", body.Keys)
 	}
 	if string(body.Keys[0].EnrolledBy) != "operator" {

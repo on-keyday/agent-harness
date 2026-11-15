@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- **Work in the harness worktree** `/home/kforfk/workspace/remote-agent-harness/.harness-worktrees/0f0d4dd6b7d3b64354cf4ff249b87403/` (branch `harness/0f0d4dd6...`). Do **NOT** use parent-repo absolute paths `/home/kforfk/workspace/remote-agent-harness/<rel>` — they route to the parent checkout and silently diverge (Pitfall 8). Verify with `git rev-parse --abbrev-ref HEAD` before committing.
+- **Work in the harness worktree** `/home/user/workspace/remote-agent-harness/.harness-worktrees/0f0d4dd6b7d3b64354cf4ff249b87403/` (branch `harness/0f0d4dd6...`). Do **NOT** use parent-repo absolute paths `/home/user/workspace/remote-agent-harness/<rel>` — they route to the parent checkout and silently diverge (Pitfall 8). Verify with `git rev-parse --abbrev-ref HEAD` before committing.
 - **Read `.claude/skills/implementation-pitfalls/SKILL.md` in full before writing code** (every task).
 - **Schema lives in ONE place**: all `.bgn` additions in Task 1 only. No "also add a field in Task N" (`feedback_no_split_schemas`, `feedback_no_schema_invisible_bytes`).
 - **Verify with make targets, not ad-hoc `go build ./...`**: `make check`, `make wasm-check`, `make vet`, `make test` (`feedback_verify_with_make_targets_not_adhoc`). Compile-check individual packages with `go build -o /dev/null ./cmd/<x>` or `go vet ./<pkg>/...` — never bare `go build ./cmd/<x>/` (drops a binary in the worktree).

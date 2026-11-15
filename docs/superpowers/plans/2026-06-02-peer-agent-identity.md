@@ -15,7 +15,7 @@
 ## Execution context (all tasks)
 
 - **Work in the worktree**: edit/build/commit under
-  `/home/kforfk/workspace/remote-agent-harness/.harness-worktrees/0f0d4dd6b7d3b64354cf4ff249b87403/`.
+  `/home/user/workspace/remote-agent-harness/.harness-worktrees/0f0d4dd6b7d3b64354cf4ff249b87403/`.
   Editing via the parent-repo absolute path routes to the parent checkout (Pitfall 8). Run `git` from the worktree cwd.
 - **Push to origin/main** (this session's established flow): after committing locally, cherry-pick the new commit onto `origin/main` in an isolated `git worktree add --detach /tmp/wt-push-main origin/main`, verify `git merge-base --is-ancestor origin/main $TIP`, `git push origin $TIP:main`, then `git worktree remove`. Do NOT force-push.
 - **Codegen dependency**: Task 1 runs `make protoregen`, which POSTs to a brgen api server at `http://localhost:8181`. If it isn't running, that's a hard blocker — **surface it to the user (they author brgen) rather than hand-editing the generated serialization in `message.go`.** All later tasks depend on Task 1's regenerated accessors.

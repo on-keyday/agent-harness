@@ -12,7 +12,7 @@
 
 - Go 1.25.7. **No new module dependencies** — bubbles/bubbletea/lipgloss/runewidth only.
 - `gofmt` every file you touch, and touch **only** files the task lists (a blanket `gofmt -w tui/*.go` reformats unrelated committed files and pollutes the diff).
-- Work inside the harness worktree at `/home/kforfk/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd`. Absolute paths under `/home/kforfk/workspace/remote-agent-harness/<rel>` route to the PARENT checkout.
+- Work inside the harness worktree at `/home/user/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd`. Absolute paths under `/home/user/workspace/remote-agent-harness/<rel>` route to the PARENT checkout.
 - Verification is per-task and scoped: `go test ./tui/` for a TUI task, `go test ./cli/` for a cli task, `-run TestX` for a targeted regression. `make check` + `make vet` + `make wasm-check` + `go test ./...` + `make test-integration` run **once**, at the end, before landing. Do not re-run a suite that already passed.
 - Landing (once, after Task 7): FF-push to `origin/main`, `git -C <main checkout> merge --ff-only origin/main`, then `make build` in the main checkout.
 - Specs: `docs/superpowers/specs/2026-07-31-tui-raw-connect-multipane-design.md` (A) and `docs/superpowers/specs/2026-07-31-http-request-builder-design.md` (B). Read the **Problem** section of each, not just Decisions.

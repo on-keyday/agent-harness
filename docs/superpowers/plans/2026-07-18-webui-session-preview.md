@@ -13,8 +13,8 @@
 ## Global Constraints
 
 - **Worktree only**: ALL file operations use absolute paths under
-  `/home/kforfk/workspace/remote-agent-harness/.harness-worktrees/5b65231c141da46b2239912efd108196/`.
-  NEVER touch `/home/kforfk/workspace/remote-agent-harness/<rel>` directly — those paths route to the parent repo checkout where the user is doing unrelated work. Before the first edit run `git rev-parse --abbrev-ref HEAD` from the worktree and confirm it prints `harness/5b65231c141da46b2239912efd108196`; abort if not.
+  `/home/user/workspace/remote-agent-harness/.harness-worktrees/5b65231c141da46b2239912efd108196/`.
+  NEVER touch `/home/user/workspace/remote-agent-harness/<rel>` directly — those paths route to the parent repo checkout where the user is doing unrelated work. Before the first edit run `git rev-parse --abbrev-ref HEAD` from the worktree and confirm it prints `harness/5b65231c141da46b2239912efd108196`; abort if not.
 - **Read `.claude/skills/implementation-pitfalls/SKILL.md` in full before writing code** (worktree copy).
 - **Build hygiene**: compile-check with `go build ./...` / `GOOS=js GOARCH=wasm go build -o /dev/null ./cmd/harness-webui-wasm/`. NEVER bare `go build ./cmd/<x>/` (drops a binary in the worktree root). `make webui-build` writing `webui/static/main.wasm` + refreshed `wasm_exec.js` is expected and fine (gitignored / vendored respectively — do not commit `main.wasm`).
 - **Public repo**: no LAN IPs, internal hostnames, or private paths in code, comments, or commits.

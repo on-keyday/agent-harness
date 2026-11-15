@@ -15,9 +15,9 @@
 ## 実装環境の前提（重要・全タスク共通）
 
 - **作業ディレクトリは worktree 固定**: すべての編集とコミットを
-  `/home/kforfk/workspace/remote-agent-harness/.harness-worktrees/0f0d4dd6b7d3b64354cf4ff249b87403/`
+  `/home/user/workspace/remote-agent-harness/.harness-worktrees/0f0d4dd6b7d3b64354cf4ff249b87403/`
   配下で行う。spec/plan は既にこの worktree ブランチ（`harness/0f0d4dd…`）に乗っている。
-  親リポジトリの絶対パス `/home/kforfk/workspace/remote-agent-harness/webui/...` で編集すると
+  親リポジトリの絶対パス `/home/user/workspace/remote-agent-harness/webui/...` で編集すると
   **親リポの main checkout にルーティングされ worktree に反映されない**（既知の落とし穴 Pitfall 8）。
   git は worktree を cwd にして実行する。
 - **ビルド不要**: 本計画は HTML/CSS/JS のみ。WASM は変更しないので `make webui-build` は不要。

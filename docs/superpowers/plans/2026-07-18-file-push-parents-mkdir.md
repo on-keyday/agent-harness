@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- **Work in the parent repo `/home/kforfk/workspace/remote-agent-harness/`, NOT in any `.harness-worktrees/<hash>/` directory.** Verify with `git rev-parse --abbrev-ref HEAD` (must print `main`) before writing code. Use absolute paths under the parent repo for all tool calls. (Pitfall 8: absolute paths inside a harness worktree silently route to the parent.)
+- **Work in the parent repo `/home/user/workspace/remote-agent-harness/`, NOT in any `.harness-worktrees/<hash>/` directory.** Verify with `git rev-parse --abbrev-ref HEAD` (must print `main`) before writing code. Use absolute paths under the parent repo for all tool calls. (Pitfall 8: absolute paths inside a harness worktree silently route to the parent.)
 - **Read `.claude/skills/implementation-pitfalls/SKILL.md` in full before writing code.**
 - **Build hygiene:** compile-check with `go build ./...` (writes NO binary). NEVER bare `go build ./cmd/<x>/` (drops a stray executable into the repo root). `git status` must be as clean after your checks as before.
 - **Never hand-edit `runner/protocol/message.go`** — it is generated. Schema changes go in `message.bgn` + `make protoregen ARGS='runner/protocol/message.bgn'`.

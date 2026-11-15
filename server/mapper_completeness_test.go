@@ -203,7 +203,7 @@ func TestToRunnerInfoMapsEveryField(t *testing.T) {
 	e := RunnerEntry{
 		ID:               tcid("ws:127.0.0.1:8539-1"),
 		Identity:         testRunnerID("ws:127.0.0.1:8539-1"),
-		Hostname:         "gmkhost",
+		Hostname:         "host1",
 		GOOS:             "linux",
 		AllowedRoots:     []string{"/repo"},
 		MaxTasks:         8,

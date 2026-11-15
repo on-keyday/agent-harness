@@ -9,7 +9,7 @@ import "testing"
 // invisible). Caught by driving the live TUI.
 func TestToRunnerInfoEchoesAgentProfiles(t *testing.T) {
 	e := RunnerEntry{
-		Hostname:      "gmkhost",
+		Hostname:      "host1",
 		AgentBin:      "claude",
 		AgentProfiles: []string{"claude", "codex"},
 		Conn:          &fakeConn{id: buildTestCID("ws:127.0.0.1:8539-1")},

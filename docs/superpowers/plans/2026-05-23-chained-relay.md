@@ -8,7 +8,7 @@ Every implementer / reviewer subagent prompt for this plan **MUST** include the 
 
 ### Clause 1: Working directory + branch
 
-> **Work in the parent repo at `/home/kforfk/workspace/remote-agent-harness/`, NOT in any harness worktree under `.harness-worktrees/`.** Verify with `git -C /home/kforfk/workspace/remote-agent-harness rev-parse --abbrev-ref HEAD` — must report `feature/chained-relay-spec` (or whatever the active impl branch is per the controller). All file paths in your tool calls should be absolute under `/home/kforfk/workspace/remote-agent-harness/...`. Do not `cd` into a harness worktree.
+> **Work in the parent repo at `/home/user/workspace/remote-agent-harness/`, NOT in any harness worktree under `.harness-worktrees/`.** Verify with `git -C /home/user/workspace/remote-agent-harness rev-parse --abbrev-ref HEAD` — must report `feature/chained-relay-spec` (or whatever the active impl branch is per the controller). All file paths in your tool calls should be absolute under `/home/user/workspace/remote-agent-harness/...`. Do not `cd` into a harness worktree.
 
 ### Clause 2: Required reading
 
@@ -26,7 +26,7 @@ The defensive posture: **be explicit about the parent repo path everywhere**, an
 You are implementing Task <N> of docs/superpowers/plans/2026-05-23-chained-relay.md.
 
 Before you start:
-1. Verify cwd is /home/kforfk/workspace/remote-agent-harness/ (parent repo). Do NOT operate in any harness worktree.
+1. Verify cwd is /home/user/workspace/remote-agent-harness/ (parent repo). Do NOT operate in any harness worktree.
 2. Run: git rev-parse --abbrev-ref HEAD — expect feature/chained-relay-spec.
 3. Read .claude/skills/implementation-pitfalls/SKILL.md in full. Note the entries about worktree routing, sibling-code grep, peer.Conn.Close semantics, and the controller dispatch checklist.
 

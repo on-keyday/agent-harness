@@ -63,7 +63,7 @@ func TestRunnerRowsCarryTheIdentity(t *testing.T) {
 func TestRunnerColumnSetAndRowsStayInStep(t *testing.T) {
 	m := NewRunners()
 	r := protocol.RunnerInfo{Id: protocol.RunnerID{Id: [16]byte{0xAB, 0xCD}}, Status: protocol.RunnerStatus_Idle}
-	r.SetHostname([]byte("gmkhost"))
+	r.SetHostname([]byte("host1"))
 	m.SetRows([]protocol.RunnerInfo{r})
 
 	for _, w := range []int{40, 120, 40, 200, 71, 72} {
@@ -111,7 +111,7 @@ func TestRunnersTableCursorNeverStaysNegative(t *testing.T) {
 	rs := make([]protocol.RunnerInfo, 0, 3)
 	for i := 0; i < 3; i++ {
 		r := protocol.RunnerInfo{Id: protocol.RunnerID{Id: [16]byte{byte(i + 1)}}}
-		r.SetHostname([]byte("gmkhost"))
+		r.SetHostname([]byte("host1"))
 		rs = append(rs, r)
 	}
 

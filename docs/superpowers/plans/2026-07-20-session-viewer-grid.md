@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- **Work in the harness worktree** `/home/kforfk/workspace/remote-agent-harness/.harness-worktrees/5b65231c141da46b2239912efd108196` on branch `harness/5b65231c141da46b2239912efd108196`. Do NOT write to `/home/kforfk/workspace/remote-agent-harness/<rel>` (that routes to the PARENT checkout). Verify `git rev-parse --abbrev-ref HEAD` before writing. The controller (not the implementer) runs all `git commit`s from the worktree cwd.
+- **Work in the harness worktree** `/home/user/workspace/remote-agent-harness/.harness-worktrees/5b65231c141da46b2239912efd108196` on branch `harness/5b65231c141da46b2239912efd108196`. Do NOT write to `/home/user/workspace/remote-agent-harness/<rel>` (that routes to the PARENT checkout). Verify `git rev-parse --abbrev-ref HEAD` before writing. The controller (not the implementer) runs all `git commit`s from the worktree cwd.
 - **PTY size is never touched by the grid.** The control client is the sole size authority. No task may send a `TerminalWindowSize` frame from an observer, resize a session's PTY, or aggregate a min-size. Panes render the session's REAL grid locally (WebUI scale, TUI crop).
 - **Read-only.** Observer streams use `protocol.AttachMode_View`; no stdin path from a pane.
 - **Reuse the long-lived client.** WebUI panes share the one wasm `*cli.Client` via `currentClient()`. TUI grid uses `a.client` threaded through free `Do*`-style helpers, never a fresh Dial.

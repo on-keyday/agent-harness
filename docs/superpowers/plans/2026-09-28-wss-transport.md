@@ -6,13 +6,13 @@
 
 **Architecture:** objtrsf stops deciding the scheme per endpoint (`cfg.TLS != nil`) and decides it per connection. A dial uses the scheme named by the destination CID's transport, and a received packet carries the transport of the connection it arrived on. The harness then adds `--tls-cert` / `--tls-key` to `harness-server`, adds one client helper that returns a skip-verify `tls.Config`, and passes that helper to the two native dial sites.
 
-**Tech Stack:** Go (`crypto/tls`, `crypto/x509`, `net/http/httptest`, `golang.org/x/net/websocket`), objtrsf (a separate module at `/home/kforfk/workspace/objtrsf`), Python 3 (`scripts/dummy-harness.py`), openssl (E2E certificate only), Playwright MCP (WebUI check).
+**Tech Stack:** Go (`crypto/tls`, `crypto/x509`, `net/http/httptest`, `golang.org/x/net/websocket`), objtrsf (a separate module at `/home/user/workspace/objtrsf`), Python 3 (`scripts/dummy-harness.py`), openssl (E2E certificate only), Playwright MCP (WebUI check).
 
 **Spec:** `docs/superpowers/specs/2026-09-28-wss-transport-design.md`
 
 ## Global Constraints
 
-- Two repositories. **objtrsf**: `/home/kforfk/workspace/objtrsf`, module `github.com/on-keyday/objtrsf`, currently on `main` at `370cf26`. **harness**: the task worktree `/home/kforfk/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd` on branch `harness/70fbad4a6eb6f1e992be8a669f1bcefd`. Use absolute paths under that worktree for every harness tool call. A bare `/home/kforfk/workspace/remote-agent-harness/<rel>` path writes to the PARENT checkout (implementation-pitfalls, Pitfall 8). Check `git rev-parse --abbrev-ref HEAD` before each commit.
+- Two repositories. **objtrsf**: `/home/user/workspace/objtrsf`, module `github.com/on-keyday/objtrsf`, currently on `main` at `370cf26`. **harness**: the task worktree `/home/user/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd` on branch `harness/70fbad4a6eb6f1e992be8a669f1bcefd`. Use absolute paths under that worktree for every harness tool call. A bare `/home/user/workspace/remote-agent-harness/<rel>` path writes to the PARENT checkout (implementation-pitfalls, Pitfall 8). Check `git rev-parse --abbrev-ref HEAD` before each commit.
 - Read `.claude/skills/implementation-pitfalls/SKILL.md` in full before writing code.
 - Native clients use `InsecureSkipVerify: true`. objproto's PSK handshake and AEAD provide peer authentication and confidentiality. The reason is written ONCE, in the doc comment of `cli.ClientTLSConfig`, and is not restated at call sites.
 - A `wss:` dial never falls back to plaintext. With no TLS config it fails with a log line and `CannotSend`.
@@ -44,10 +44,10 @@ harness:
 ### Task 1: objtrsf — the scheme follows the CID transport
 
 **Files:**
-- Modify: `/home/kforfk/workspace/objtrsf/transport/websocket.go`
-- Modify: `/home/kforfk/workspace/objtrsf/transport/websocket_wasm.go`
-- Modify: `/home/kforfk/workspace/objtrsf/transport/websocket_common.go:19-20`
-- Create: `/home/kforfk/workspace/objtrsf/transport/websocket_tls_test.go`
+- Modify: `/home/user/workspace/objtrsf/transport/websocket.go`
+- Modify: `/home/user/workspace/objtrsf/transport/websocket_wasm.go`
+- Modify: `/home/user/workspace/objtrsf/transport/websocket_common.go:19-20`
+- Create: `/home/user/workspace/objtrsf/transport/websocket_tls_test.go`
 
 **Interfaces:**
 - Consumes: nothing new.
@@ -59,7 +59,7 @@ harness:
 - [ ] **Step 1: Branch**
 
 ```bash
-cd /home/kforfk/workspace/objtrsf && git status --short && git switch -c wss-scheme-per-connection
+cd /home/user/workspace/objtrsf && git status --short && git switch -c wss-scheme-per-connection
 ```
 Expected: no status output, then `Switched to a new branch`.
 
@@ -205,7 +205,7 @@ func TestWSSWithoutTLSConfigNeverDialsPlaintext(t *testing.T) {
 
 - [ ] **Step 3: Run the tests and confirm they fail for the stated reasons**
 
-Run: `cd /home/kforfk/workspace/objtrsf && go test ./transport/ -run 'WSS|WSAndWSS' -count=1 -v`
+Run: `cd /home/user/workspace/objtrsf && go test ./transport/ -run 'WSS|WSAndWSS' -count=1 -v`
 Expected:
 - `TestWSSRoundTripLabelsBothEnds` FAILs with `server-side transports = [ws], want [wss]`.
 - `TestOneEndpointDialsWSAndWSS` FAILs on the ws handshake (the endpoint's TLS config turns it into a wss dial against a plaintext server).
@@ -386,13 +386,13 @@ Replace lines 19-20 with:
 
 - [ ] **Step 7: Run the tests and the whole module**
 
-Run: `cd /home/kforfk/workspace/objtrsf && go test ./transport/ -run 'WSS|WSAndWSS' -count=1 -v && go test ./... -count=1 && go vet ./... && GOOS=js GOARCH=wasm go build ./...`
+Run: `cd /home/user/workspace/objtrsf && go test ./transport/ -run 'WSS|WSAndWSS' -count=1 -v && go test ./... -count=1 && go vet ./... && GOOS=js GOARCH=wasm go build ./...`
 Expected: all three new tests PASS, then `ok` for every package, no vet output, and the wasm build exits 0.
 
 - [ ] **Step 8: Commit**
 
 ```bash
-cd /home/kforfk/workspace/objtrsf && git add transport/websocket.go transport/websocket_wasm.go transport/websocket_common.go transport/websocket_tls_test.go && git commit -m "transport: choose ws/wss per connection from the CID transport
+cd /home/user/workspace/objtrsf && git add transport/websocket.go transport/websocket_wasm.go transport/websocket_common.go transport/websocket_tls_test.go && git commit -m "transport: choose ws/wss per connection from the CID transport
 
 The WS leg picked its scheme from cfg.TLS and tagged every received packet
 with one endpoint-wide name. objproto keys connections by the full
@@ -421,32 +421,32 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 - [ ] **Step 1: Check the other consumers are unaffected**
 
-Run: `grep -rn -E 'TLS:|"wss"' /home/kforfk/workspace/kcdn_ansible/ksdk/cmd /home/kforfk/workspace/kcdn_ansible/kscale/client /home/kforfk/workspace/kcdn_ansible/kscale/cmd --include=*.go | grep -v _test`
+Run: `grep -rn -E 'TLS:|"wss"' /home/user/workspace/kcdn_ansible/ksdk/cmd /home/user/workspace/kcdn_ansible/kscale/client /home/user/workspace/kcdn_ansible/kscale/cmd --include=*.go | grep -v _test`
 Expected: only `kscale/client/endpoint.go`, which sets `TLS` exactly when `cid.Transport == "wss"`. That is compatible with the new meaning. Any other hit: stop and report it.
 
 - [ ] **Step 2: Fast-forward objtrsf main and push**
 
 ```bash
-cd /home/kforfk/workspace/objtrsf && git fetch -q origin && git switch main && git merge --ff-only wss-scheme-per-connection && git merge-base --is-ancestor origin/main HEAD && git push origin HEAD:main && git log --oneline -1
+cd /home/user/workspace/objtrsf && git fetch -q origin && git switch main && git merge --ff-only wss-scheme-per-connection && git merge-base --is-ancestor origin/main HEAD && git push origin HEAD:main && git log --oneline -1
 ```
 Expected: the push succeeds, and the last line shows Task 1's commit.
 
 - [ ] **Step 3: Bump the harness**
 
 ```bash
-cd /home/kforfk/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd && GOPROXY=direct go get github.com/on-keyday/objtrsf@main && go mod tidy && git diff --stat
+cd /home/user/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd && GOPROXY=direct go get github.com/on-keyday/objtrsf@main && go mod tidy && git diff --stat
 ```
 Expected: only `go.mod` and `go.sum` change, and the objtrsf pseudo-version names Task 1's commit.
 
 - [ ] **Step 4: Verify that nothing regresses before any harness change**
 
-Run: `cd /home/kforfk/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd && make wasm-check check vet test`
+Run: `cd /home/user/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd && make wasm-check check vet test`
 Expected: exit 0. No harness caller sets `cfg.TLS`, so ws behaviour must not change.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/kforfk/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd && git rev-parse --abbrev-ref HEAD && git add go.mod go.sum && git commit -m "deps: objtrsf with per-connection ws/wss scheme
+cd /home/user/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd && git rev-parse --abbrev-ref HEAD && git add go.mod go.sum && git commit -m "deps: objtrsf with per-connection ws/wss scheme
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
@@ -612,7 +612,7 @@ func TestWSS_CLIRunnerAndAgentCID(t *testing.T) {
 
 - [ ] **Step 2: Run it and confirm it fails to compile for the right reason**
 
-Run: `cd /home/kforfk/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd && go vet -tags integration ./integration/`
+Run: `cd /home/user/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd && go vet -tags integration ./integration/`
 Expected: FAIL with `unknown field TLS in struct literal of type server.Config`.
 
 - [ ] **Step 3: Add `Config.TLS` and the TLS listen in `server/server.go`**
@@ -690,12 +690,12 @@ func ClientTLSConfig() *tls.Config {
 
 `cli` is already imported there (`cli.WebSocketPath`). Leave `cli/dial_endpoint_js.go` and `runner/listen.go` unchanged (spec §3 table). Then confirm that the sites are exhaustive:
 
-Run: `cd /home/kforfk/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd && git grep -n 'WebSocketConfig{' -- '*.go' ':!*_test.go'`
+Run: `cd /home/user/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd && git grep -n 'WebSocketConfig{' -- '*.go' ':!*_test.go'`
 Expected: exactly the 8 sites in spec §3's table. `cli/dial_endpoint_native.go` and the 2 `runner/connect.go` sites now carry `TLS:`. Any site not in the table: stop and report it.
 
 - [ ] **Step 6: Run the integration test and the suites**
 
-Run: `cd /home/kforfk/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd && go test -tags integration ./integration/ -run 'TestWSS_|TestUDPRunner_|TestDualStackServer_|TestServerCandidate' -count=1 -v -timeout 300s`
+Run: `cd /home/user/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd && go test -tags integration ./integration/ -run 'TestWSS_|TestUDPRunner_|TestDualStackServer_|TestServerCandidate' -count=1 -v -timeout 300s`
 Expected: `TestWSS_CLIRunnerAndAgentCID` PASSes, and so do the ws/udp neighbours (the regression check).
 
 Then run: `make wasm-check check vet test`
@@ -704,7 +704,7 @@ Expected: exit 0.
 - [ ] **Step 7: Commit**
 
 ```bash
-cd /home/kforfk/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd && git rev-parse --abbrev-ref HEAD && git add cli/tls_client.go cli/dial_endpoint_native.go runner/connect.go server/server.go integration/wss_e2e_test.go && git commit -m "wss: server TLS listener and a skip-verify client config
+cd /home/user/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd && git rev-parse --abbrev-ref HEAD && git add cli/tls_client.go cli/dial_endpoint_native.go runner/connect.go server/server.go integration/wss_e2e_test.go && git commit -m "wss: server TLS listener and a skip-verify client config
 
 server.Config.TLS serves the WS/WebUI listener over TLS. The CLI, TUI and
 runner pass cli.ClientTLSConfig(), which objtrsf consults only for a wss:
@@ -807,7 +807,7 @@ func TestLoadListenTLS_ValidPair(t *testing.T) {
 
 - [ ] **Step 2: Run them and confirm they fail**
 
-Run: `cd /home/kforfk/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd && go test ./cmd/harness-server/ -run LoadListenTLS -count=1`
+Run: `cd /home/user/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd && go test ./cmd/harness-server/ -run LoadListenTLS -count=1`
 Expected: FAIL with `undefined: loadListenTLS`.
 
 - [ ] **Step 3: Implement**
@@ -868,7 +868,7 @@ Expected: PASS, then exit 0.
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/kforfk/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd && git rev-parse --abbrev-ref HEAD && git add cmd/harness-server/main.go cmd/harness-server/main_test.go && git commit -m "harness-server: --tls-cert / --tls-key
+cd /home/user/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd && git rev-parse --abbrev-ref HEAD && git add cmd/harness-server/main.go cmd/harness-server/main_test.go && git commit -m "harness-server: --tls-cert / --tls-key
 
 Both or neither; either one without --listen is an error; the pair is loaded
 before the listener starts so a bad certificate stops startup.
@@ -977,7 +977,7 @@ After the `# bin/harness-server --listen :8539 --udp-listen :8540 …` example l
 
 - [ ] **Step 4: Find other text that lists the transports**
 
-Run: `cd /home/kforfk/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd && git grep -n -E '\bws(s)?:[A-Za-z0-9<$]|ws, wss|ws or udp|ws/udp' -- '*.md' 'runner/agentskills/**' '.claude/skills/**' ':!docs/superpowers/**'`
+Run: `cd /home/user/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd && git grep -n -E '\bws(s)?:[A-Za-z0-9<$]|ws, wss|ws or udp|ws/udp' -- '*.md' 'runner/agentskills/**' '.claude/skills/**' ':!docs/superpowers/**'`
 For each hit that ENUMERATES the accepted transports (as opposed to showing one example CID), add `wss` with a pointer to `--tls-cert`. Example CIDs like `ws:HOSTNAME:8539-*` stay as they are. Record each file you change in the commit message.
 
 - [ ] **Step 5: Walk the surface-parity checklist**
@@ -987,7 +987,7 @@ Invoke the `surface-parity-checklist` skill and walk its numbered items against 
 - [ ] **Step 6: Commit**
 
 ```bash
-cd /home/kforfk/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd && git rev-parse --abbrev-ref HEAD && git add scripts/dummy-harness.py README.md && git add -u && git status --short && git commit -m "docs, dummy-harness: wss / --tls
+cd /home/user/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd && git rev-parse --abbrev-ref HEAD && git add scripts/dummy-harness.py README.md && git add -u && git status --short && git commit -m "docs, dummy-harness: wss / --tls
 
 <list the files changed in Step 4 and the checklist verdicts from Step 5>
 
@@ -1004,7 +1004,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - [ ] **Step 1: Stand up a TLS dummy**
 
 ```bash
-cd /home/kforfk/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd && make build && scripts/dummy-harness.sh up --detach --name wss --agent fake --tls
+cd /home/user/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd && make build && scripts/dummy-harness.sh up --detach --name wss --agent fake --tls
 ```
 Expected: `dummy-harness: up  name=wss  agent=fake  port=<P>  tls=True …`. `up` only returns after `harness-cli ls` over `wss:` shows the runner, so this line alone proves CLI and runner over wss.
 
@@ -1046,7 +1046,7 @@ Expected: exit 0. The server-flake family in memory (`project_flaky_test_open_in
 
 - [ ] **Step 7: Land (Mode A) and build**
 
-Use the `landing-to-main` skill. The harness feature set is Tasks 2-5's commits plus the spec and plan commits. Rebase onto current `main` if it moved, fast-forward local `main` in `/home/kforfk/workspace/remote-agent-harness`, and `git push origin main` (never force). Then run `make build` in the main checkout.
+Use the `landing-to-main` skill. The harness feature set is Tasks 2-5's commits plus the spec and plan commits. Rebase onto current `main` if it moved, fast-forward local `main` in `/home/user/workspace/remote-agent-harness`, and `git push origin main` (never force). Then run `make build` in the main checkout.
 
 - [ ] **Step 8: Report**
 

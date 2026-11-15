@@ -134,7 +134,7 @@ review step for it.
 - [ ] **Step 8: Review against Review Focus 1–4 and the Global
   Constraints.** For each item, quote the sentence in `SKILL.md` that
   handles it. Then grep the file for local paths and host names; there
-  must be none. `grep -nE '/home/|/tmp/|gmkhost|\.harness-worktrees' runner/agentskills/codebase-tour/SKILL.md`
+  must be none. `grep -nE '/home/|/tmp/|host1|\.harness-worktrees' runner/agentskills/codebase-tour/SKILL.md`
   must print nothing.
 
 - [ ] **Step 9: Commit.**

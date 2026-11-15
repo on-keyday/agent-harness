@@ -261,7 +261,7 @@ func TestRewriteProxyViaForLocalDial(t *testing.T) {
 		// Already loopback IPv4 → unchanged
 		{"ws:127.0.0.1:8540-*", "ws:127.0.0.1:8540-*"},
 		// Concrete IP → unchanged
-		{"ws:192.168.3.14:8540-*", "ws:192.168.3.14:8540-*"},
+		{"ws:192.0.2.14:8540-*", "ws:192.0.2.14:8540-*"},
 		// Concrete IPv6 → unchanged
 		{"ws:[fe80::1]:8540-*", "ws:[fe80::1]:8540-*"},
 		// Hostname → unchanged (DNS resolves at dial time)

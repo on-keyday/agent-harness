@@ -14,7 +14,7 @@
 
 ## Global Constraints
 
-- **Repository:** all work is in `/home/kforfk/workspace/objtrsf`, NOT in the harness worktree. That checkout is on `main` and clean at `7db84f6`; cut a branch before the first commit.
+- **Repository:** all work is in `/home/user/workspace/objtrsf`, NOT in the harness worktree. That checkout is on `main` and clean at `7db84f6`; cut a branch before the first commit.
 - **objtrsf has no Makefile and no regen script.** Verification is `go build ./... && go vet ./... && go test ./...` run from the objtrsf root. Regeneration uses the harness's `scripts/protoregen.sh <abs path to .bgn>`, which writes `<name>.go` beside the input.
 - **Regen churn is a constant of ebm2go.** Any added `fn`, `format`, enum arm, or field renumbers global temp counters, so the generated `.go` rewrites in bulk. Do not investigate it and do not stage any ritual around it. What is checked is the ordinary thing: build / vet / test green, plus the new symbols exist with the expected values.
 - **Do not change `trsf/throughput_test.go`.** Its `mock` rung never reaches objproto and is the free control: it must not move for anything in this plan.
@@ -45,9 +45,9 @@
 Note `trsf/mtu_probe_deadlock_test.go` and its comment: the `mtuProbesOutstanding == 0` term in `setLossDetectionTimer` exists **because** a lone probe otherwise armed no timer and its loss could never be detected. An exempt datagram falls into that same hole, which is what Step 1's test pins.
 
 **Files:**
-- Modify: `/home/kforfk/workspace/objtrsf/trsf/ack_handler.go`
-- Modify: `/home/kforfk/workspace/objtrsf/trsf/conn.go:908` (the probe construction site)
-- Test: `/home/kforfk/workspace/objtrsf/trsf/datagram_accounting_test.go` (create)
+- Modify: `/home/user/workspace/objtrsf/trsf/ack_handler.go`
+- Modify: `/home/user/workspace/objtrsf/trsf/conn.go:908` (the probe construction site)
+- Test: `/home/user/workspace/objtrsf/trsf/datagram_accounting_test.go` (create)
 
 **Interfaces:**
 - Consumes: nothing from earlier tasks.
@@ -56,14 +56,14 @@ Note `trsf/mtu_probe_deadlock_test.go` and its comment: the `mtuProbesOutstandin
 - [ ] **Step 1: Cut a branch**
 
 ```bash
-cd /home/kforfk/workspace/objtrsf
+cd /home/user/workspace/objtrsf
 git checkout -b feat/datagram-frame
 git log --oneline -1   # expect 7db84f6
 ```
 
 - [ ] **Step 2: Write the failing tests**
 
-Create `/home/kforfk/workspace/objtrsf/trsf/datagram_accounting_test.go`:
+Create `/home/user/workspace/objtrsf/trsf/datagram_accounting_test.go`:
 
 ```go
 package trsf
@@ -162,7 +162,7 @@ func TestExemptPacketAckDoesNotUnderflowBytesInFlight(t *testing.T) {
 - [ ] **Step 3: Run the tests to verify they fail**
 
 ```bash
-cd /home/kforfk/workspace/objtrsf
+cd /home/user/workspace/objtrsf
 go test ./trsf -run 'TestLoneExemptPacketArmsLossTimer|TestExemptPacket' -v
 ```
 
@@ -332,7 +332,7 @@ At `trsf/conn.go:908`, the probe now states all three:
 - [ ] **Step 11: Run the new tests**
 
 ```bash
-cd /home/kforfk/workspace/objtrsf
+cd /home/user/workspace/objtrsf
 go test ./trsf -run 'TestLoneExemptPacketArmsLossTimer|TestExemptPacket' -v
 ```
 
@@ -341,7 +341,7 @@ Expected: all three PASS.
 - [ ] **Step 12: Run the whole suite — the probe tests are the regression gate**
 
 ```bash
-cd /home/kforfk/workspace/objtrsf
+cd /home/user/workspace/objtrsf
 go build ./... && go vet ./... && go test ./...
 ```
 
@@ -350,7 +350,7 @@ Expected: PASS, and specifically `TestLoneMTUProbeArmsLossTimer` and `TestLoneLo
 - [ ] **Step 13: Commit**
 
 ```bash
-cd /home/kforfk/workspace/objtrsf
+cd /home/user/workspace/objtrsf
 git add trsf/ack_handler.go trsf/conn.go trsf/datagram_accounting_test.go
 git commit -m "refactor(trsf): IsMTUProbe was three concepts, and one of them has a second user
 
@@ -375,8 +375,8 @@ The send side excludes exempt bytes from `RecordSend` and `detectLost` excludes 
 At one MTU probe per 30s reprobe period this is unmeasurable, which is why it has stood. It stops being harmless the moment Task 5's consumer exists: uncontrolled datagrams at rate would have every acknowledgement inflate the window of the controlled streams sharing the connection — a flow that ignores congestion would also be enlarging everyone else's share. This is a real behaviour change for MTU probes, which is why it is its own task and its own commit.
 
 **Files:**
-- Modify: `/home/kforfk/workspace/objtrsf/trsf/ack_handler.go` (`detectAck`)
-- Test: `/home/kforfk/workspace/objtrsf/trsf/datagram_accounting_test.go` (append)
+- Modify: `/home/user/workspace/objtrsf/trsf/ack_handler.go` (`detectAck`)
+- Test: `/home/user/workspace/objtrsf/trsf/datagram_accounting_test.go` (append)
 
 **Interfaces:**
 - Consumes: `SentPacket.CongestionExempt` and the `exemptSize` accumulator from Task 1.
@@ -407,7 +407,7 @@ func TestExemptAckDoesNotGrowCongestionWindow(t *testing.T) {
 - [ ] **Step 2: Run it to verify it fails**
 
 ```bash
-cd /home/kforfk/workspace/objtrsf
+cd /home/user/workspace/objtrsf
 go test ./trsf -run TestExemptAckDoesNotGrowCongestionWindow -v
 ```
 
@@ -429,7 +429,7 @@ Add a comment saying the send and loss sides already exclude these, and that ACK
 - [ ] **Step 4: Run the test and the whole suite**
 
 ```bash
-cd /home/kforfk/workspace/objtrsf
+cd /home/user/workspace/objtrsf
 go test ./trsf -run TestExemptAckDoesNotGrowCongestionWindow -v
 go build ./... && go vet ./... && go test ./...
 ```
@@ -439,7 +439,7 @@ Expected: PASS, everything green. If an MTU-probe test now fails, do not weaken 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/kforfk/workspace/objtrsf
+cd /home/user/workspace/objtrsf
 git add trsf/ack_handler.go trsf/datagram_accounting_test.go
 git commit -m "fix(trsf): RecordACK counted probe bytes that RecordSend never did
 
@@ -457,9 +457,9 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ## Task 3: The wire — a transport-owned `datagram` kind
 
 **Files:**
-- Modify: `/home/kforfk/workspace/objtrsf/trsf/wire/stream.bgn`
-- Regenerate: `/home/kforfk/workspace/objtrsf/trsf/wire/stream.go`
-- Test: `/home/kforfk/workspace/objtrsf/trsf/wire/datagram_wire_test.go` (create)
+- Modify: `/home/user/workspace/objtrsf/trsf/wire/stream.bgn`
+- Regenerate: `/home/user/workspace/objtrsf/trsf/wire/stream.go`
+- Test: `/home/user/workspace/objtrsf/trsf/wire/datagram_wire_test.go` (create)
 
 **Interfaces:**
 - Consumes: nothing.
@@ -506,8 +506,8 @@ Add the kind to `fn isStreamRelated` (line 116). Note what this does to the name
 - [ ] **Step 2: Regenerate**
 
 ```bash
-cd /home/kforfk/workspace/remote-agent-harness
-./scripts/protoregen.sh /home/kforfk/workspace/objtrsf/trsf/wire/stream.bgn
+cd /home/user/workspace/remote-agent-harness
+./scripts/protoregen.sh /home/user/workspace/objtrsf/trsf/wire/stream.bgn
 ```
 
 Expected: `trsf/wire/stream.go` rewritten. The diff will be large and mechanical — do not investigate it.
@@ -515,7 +515,7 @@ Expected: `trsf/wire/stream.go` rewritten. The diff will be large and mechanical
 - [ ] **Step 3: Check the new symbols exist with the expected values**
 
 ```bash
-cd /home/kforfk/workspace/objtrsf
+cd /home/user/workspace/objtrsf
 grep -n 'ApplicationPayloadKind_Datagram\|func (t \*StreamAppPacket) Datagram\|type DatagramPacket' trsf/wire/stream.go
 go build ./...
 ```
@@ -524,7 +524,7 @@ Expected: `ApplicationPayloadKind_Datagram` present with value 7; `DatagramPacke
 
 - [ ] **Step 4: Write the round-trip test**
 
-Create `/home/kforfk/workspace/objtrsf/trsf/wire/datagram_wire_test.go`:
+Create `/home/user/workspace/objtrsf/trsf/wire/datagram_wire_test.go`:
 
 ```go
 package wire
@@ -572,7 +572,7 @@ func TestDatagramIsRoutedToTheRunLoop(t *testing.T) {
 - [ ] **Step 5: Run the tests**
 
 ```bash
-cd /home/kforfk/workspace/objtrsf
+cd /home/user/workspace/objtrsf
 go test ./trsf/wire -run 'TestDatagram' -v
 go build ./... && go vet ./... && go test ./...
 ```
@@ -582,7 +582,7 @@ Expected: both new tests PASS; whole suite green.
 - [ ] **Step 6: Commit**
 
 ```bash
-cd /home/kforfk/workspace/objtrsf
+cd /home/user/workspace/objtrsf
 git add trsf/wire/stream.bgn trsf/wire/stream.go trsf/wire/datagram_wire_test.go
 git commit -m "feat(trsf)!: a transport-owned datagram kind
 
@@ -602,9 +602,9 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ## Task 4: Receiving a datagram
 
 **Files:**
-- Modify: `/home/kforfk/workspace/objtrsf/trsf/conn.go` (`handlePacket`, `Streams` struct, `InternalState`)
-- Modify: `/home/kforfk/workspace/objtrsf/trsf/api.go` (`AutoReceive` guard, `Transport` interface)
-- Test: `/home/kforfk/workspace/objtrsf/trsf/datagram_test.go` (create)
+- Modify: `/home/user/workspace/objtrsf/trsf/conn.go` (`handlePacket`, `Streams` struct, `InternalState`)
+- Modify: `/home/user/workspace/objtrsf/trsf/api.go` (`AutoReceive` guard, `Transport` interface)
+- Test: `/home/user/workspace/objtrsf/trsf/datagram_test.go` (create)
 
 **Interfaces:**
 - Consumes: `wire.ApplicationPayloadKind_Datagram`, `wire.DatagramPacket`, `StreamAppPacket.Datagram()` from Task 3.
@@ -612,7 +612,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 - [ ] **Step 1: Write the failing test**
 
-Create `/home/kforfk/workspace/objtrsf/trsf/datagram_test.go`:
+Create `/home/user/workspace/objtrsf/trsf/datagram_test.go`:
 
 ```go
 package trsf
@@ -681,7 +681,7 @@ func TestReceivedDatagramIsQueuedAndAckEliciting(t *testing.T) {
 - [ ] **Step 2: Run it to verify it fails**
 
 ```bash
-cd /home/kforfk/workspace/objtrsf
+cd /home/user/workspace/objtrsf
 go test ./trsf -run TestReceivedDatagramIsQueuedAndAckEliciting -v
 ```
 
@@ -795,7 +795,7 @@ an `unroutedTransportKind atomic.Uint64` field, a matching `UnroutedTransportKin
 - [ ] **Step 8: Run the tests**
 
 ```bash
-cd /home/kforfk/workspace/objtrsf
+cd /home/user/workspace/objtrsf
 go test ./trsf -run TestReceivedDatagramIsQueuedAndAckEliciting -v
 go build ./... && go vet ./... && go test ./...
 ```
@@ -805,7 +805,7 @@ Expected: new test PASS; whole suite green. Any other implementer of `Transport`
 - [ ] **Step 9: Commit**
 
 ```bash
-cd /home/kforfk/workspace/objtrsf
+cd /home/user/workspace/objtrsf
 git add trsf/conn.go trsf/api.go trsf/datagram_test.go
 git commit -m "feat(trsf): receive datagrams, acknowledged, on a bounded queue
 
@@ -829,9 +829,9 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ## Task 5: Sending a datagram, in both congestion modes
 
 **Files:**
-- Modify: `/home/kforfk/workspace/objtrsf/trsf/conn.go` (send queue, run-loop drain, `MaxDatagramSize`, counters)
-- Modify: `/home/kforfk/workspace/objtrsf/trsf/api.go` (`Transport` interface)
-- Test: `/home/kforfk/workspace/objtrsf/trsf/datagram_test.go` (append)
+- Modify: `/home/user/workspace/objtrsf/trsf/conn.go` (send queue, run-loop drain, `MaxDatagramSize`, counters)
+- Modify: `/home/user/workspace/objtrsf/trsf/api.go` (`Transport` interface)
+- Test: `/home/user/workspace/objtrsf/trsf/datagram_test.go` (append)
 
 **Interfaces:**
 - Consumes: `SentPacket.CongestionExempt` / `PathEvidence` (Task 1), the wire arm (Task 3), the counter pattern (Task 4).
@@ -909,7 +909,7 @@ func fillCongestionWindow(t *testing.T, s *Streams) {
 - [ ] **Step 2: Run them to verify they fail**
 
 ```bash
-cd /home/kforfk/workspace/objtrsf
+cd /home/user/workspace/objtrsf
 go test ./trsf -run 'TestMaxDatagramSize|TestControlledDatagram|TestUncontrolledDatagram' -v
 ```
 
@@ -1056,7 +1056,7 @@ Add the five counters to `InternalState` and populate them in `GetInternalState`
 - [ ] **Step 7: Run the tests**
 
 ```bash
-cd /home/kforfk/workspace/objtrsf
+cd /home/user/workspace/objtrsf
 go test ./trsf -run 'TestMaxDatagramSize|TestControlledDatagram|TestUncontrolledDatagram|TestReceivedDatagram' -v
 ```
 
@@ -1065,7 +1065,7 @@ Expected: all PASS.
 - [ ] **Step 8: Run the whole suite and confirm the control did not move**
 
 ```bash
-cd /home/kforfk/workspace/objtrsf
+cd /home/user/workspace/objtrsf
 go build ./... && go vet ./... && go test ./...
 go test ./trsf -run '^$' -bench Throughput -benchtime 1x -count 4
 ```
@@ -1075,7 +1075,7 @@ Expected: suite green. In the benchmark, the `mock` rung must be unchanged — i
 - [ ] **Step 9: Commit**
 
 ```bash
-cd /home/kforfk/workspace/objtrsf
+cd /home/user/workspace/objtrsf
 git add trsf/conn.go trsf/api.go trsf/datagram_test.go
 git commit -m "feat(trsf): send datagrams, congestion controlled or not
 
@@ -1101,7 +1101,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - [ ] **Run the wire-skew check.** This changes the transport kind range, which sits below the handshake layer: an old peer cannot decode the packet at all rather than rejecting it at the PSK layer. From the harness repo:
 
 ```bash
-cd /home/kforfk/workspace/remote-agent-harness
+cd /home/user/workspace/remote-agent-harness
 ./scripts/wire-skew-check.sh
 ```
 

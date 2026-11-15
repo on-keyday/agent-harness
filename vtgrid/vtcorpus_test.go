@@ -403,7 +403,7 @@ func appendInt(b []byte, n int) []byte {
 // meets it to relax the rule.
 func TestLocalIdentifierPatterns(t *testing.T) {
 	mustFlag := []string{
-		"connect 192.168.3.14 ok",
+		"connect 192.168.77.14 ok", // local-identifier-ok: a fixture the guard must flag
 		"inside 10.1.2.3 subnet",
 		"172.16.0.1 and 172.31.255.254",
 		"user@somehost:~$ ",

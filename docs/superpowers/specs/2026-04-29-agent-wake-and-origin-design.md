@@ -219,7 +219,7 @@ harness-cli agent subscriptions
   "from": {
     "runner_id": "ws:1.2.3.4:1234-1",
     "task_id": "57b2dbd3...",
-    "hostname": "gmkhost"
+    "hostname": "host1"
   }
 }
 ```

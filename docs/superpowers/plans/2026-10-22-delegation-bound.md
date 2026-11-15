@@ -22,7 +22,7 @@
 - Flags `--delegate-caps` (caps grammar, `parseCapsFlag`) and `--delegate-scope` (the `--scope` grammar, `parseScopeFlag`, `descendants` and `-self` forms included); display keys `delegate=` and `delegate-scope=` (D15).
 - Ceiling refusal text, verbatim: `scope id <id> is outside what you may delegate (see whoami: delegate-scope)`.
 - Rollout server first, then every client, no skew guard (D18). Run `scripts/wire-skew-check.sh` before landing, with `TMPDIR` under the worktree's `.superpowers/` (the shared `/tmp` is near quota).
-- Work in `/home/kforfk/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd`. Run `make test` and `go test ./cli/...` with `env -u HARNESS_SERVER_PUBKEY -u HARNESS_SERVER_CID -u HARNESS_AUTH_TICKET -u HARNESS_TASK_ID`.
+- Work in `/home/user/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd`. Run `make test` and `go test ./cli/...` with `env -u HARNESS_SERVER_PUBKEY -u HARNESS_SERVER_CID -u HARNESS_AUTH_TICKET -u HARNESS_TASK_ID`.
 
 ## Spec names → current code
 

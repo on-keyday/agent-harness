@@ -15,15 +15,15 @@ into one (runner, profile) row per advertised profile
 inline in `OpenInteractiveResponse` (`:1446-1463`). Every task-control message
 is one datagram over UDP, dropped with no error at either end when it exceeds
 about 1170 bytes. Measured by encoding the response with eleven profile names,
-cid `ws:192.168.3.14:52826-39936` and hostname `gmkhost` (a throwaway test in
+cid `ws:192.0.2.14:52826-39936` and hostname `host1` (a throwaway test in
 `runner/protocol`, same method as
 `2026-10-16-board-row-responses-streamed-design.md`):
 
 | matched root | runners | rows | bytes |
 | --- | --- | --- | --- |
-| `/home/kforfk/workspace/mimml` | 1 | 11 | 935 |
-| `/home/kforfk/workspace/remote-agent-harness` | 1 | 11 | 1100 |
-| `/home/kforfk/workspace/sisaku-security/rule-review` | 1 | 11 | **1177** |
+| `/home/user/workspace/mimml` | 1 | 11 | 935 |
+| `/home/user/workspace/remote-agent-harness` | 1 | 11 | 1100 |
+| `/home/user/workspace/sisaku-security/rule-review` | 1 | 11 | **1177** |
 | same three roots | 2 | 22 | **1843–2327** |
 
 One runner is enough to lose the response. `inlineRowsAllowed`
@@ -39,7 +39,7 @@ does not expand profiles: with no `--agent` it takes the one matching runner's
 default profile (`:1088-1091`), and when several runners match it answers
 `ambiguous: <hostname>, <hostname>` in `error_msg` (`:1077-1085`, resume
 `:1200-1208`). Same input, different outcome by path. The string carries
-hostnames only, which on one host read `gmkhost, gmkhost` and cannot be used to
+hostnames only, which on one host read `host1, host1` and cannot be used to
 pin a runner.
 
 **4. A picked runner is pinned by connection.** Pickers retry with
@@ -275,11 +275,11 @@ the new server it decoded zero candidates and its old formatter panicked on
   `1` opened `bash` there — `ls --json` shows the task `from=tui` assigned to
   that runner, and the result line read `pinned runner: dummy-amb … (bash)`.
   The command line's `submit --task echo-from-tui` opened the same picker;
-  `1`, `2` submitted to `gmkhost`/`bash` with the prompt intact.
+  `1`, `2` submitted to `host1`/`bash` with the prompt intact.
 - WebUI (Playwright): Compose's open with the default agent showed one block
   per runner with an agent button each; clicking `bash` under `dummy-amb`
   opened it there. The command input's `submit --task echo-webui` opened the
-  same modal and the pick submitted to `gmkhost`/`bash`. At 390px the modal is
+  same modal and the pick submitted to `host1`/`bash`. At 390px the modal is
   390 wide with no horizontal scroll. Screenshots (not committed):
   `webui-ambiguous-picker-1280.png`, `webui-ambiguous-picker-390.png` in the
   worktree root.

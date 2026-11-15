@@ -174,8 +174,8 @@ Root mechanism:
 **Mitigation — when controlling a harness task on this repo**:
 
 1. **Decide upfront where work lands**, and stick to it for the entire task:
-   - **Parent repo** (default): explicitly tell every subagent to operate in `/home/kforfk/workspace/remote-agent-harness/` and verify branch. See "Subagent dispatch checklist" below.
-   - **Fresh non-harness worktree**: user creates a worktree outside `.harness-worktrees/` (e.g. `/home/kforfk/workspace/remote-agent-harness-impl/`) and you operate there. Avoids routing entirely.
+   - **Parent repo** (default): explicitly tell every subagent to operate in `/home/user/workspace/remote-agent-harness/` and verify branch. See "Subagent dispatch checklist" below.
+   - **Fresh non-harness worktree**: user creates a worktree outside `.harness-worktrees/` (e.g. `/home/user/workspace/remote-agent-harness-impl/`) and you operate there. Avoids routing entirely.
    - **The harness worktree itself**: only OK for read-only work (verifying state, running tests). Do NOT commit from inside — commits route to parent unpredictably.
 
 2. **Verify before claiming "commits are on the right branch"**:
@@ -476,7 +476,7 @@ between them is untested by construction.**
 When dispatching an implementer or reviewer subagent in this project, include in the prompt:
 
 ### Hard preconditions (every subagent prompt — non-optional)
-- [ ] **Parent repo, not harness worktree**: `Work in /home/kforfk/workspace/remote-agent-harness/, NOT in any .harness-worktrees/<hash>/ directory. Verify branch with git rev-parse --abbrev-ref HEAD before writing code. Use absolute paths under the parent repo for all tool calls.` Past incident: 148 commits diverged silently because writes via absolute path routed to parent while the worktree HEAD stayed on an unrelated `harness/<hash>` branch.
+- [ ] **Parent repo, not harness worktree**: `Work in /home/user/workspace/remote-agent-harness/, NOT in any .harness-worktrees/<hash>/ directory. Verify branch with git rev-parse --abbrev-ref HEAD before writing code. Use absolute paths under the parent repo for all tool calls.` Past incident: 148 commits diverged silently because writes via absolute path routed to parent while the worktree HEAD stayed on an unrelated `harness/<hash>` branch.
 - [ ] **Read this file first**: `Read .claude/skills/implementation-pitfalls/SKILL.md in full before writing code.` The catalog is short; each entry was triggered by a prior incident. Subagents that skip it tend to recreate the same failure mode.
 
 ### Implementer prompt augmentations

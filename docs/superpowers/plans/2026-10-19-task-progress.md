@@ -20,7 +20,7 @@
 - No compat shim or skew guard (D16).
 - Operator output never elides a zero. Gate on existence (`progress_at != 0`, `live_terminal`), not on value.
 - Repo is public: no hostnames, IPs or private paths in code, tests or docs.
-- Work in `/home/kforfk/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd` on branch `harness/70fbad4a6eb6f1e992be8a669f1bcefd`. Use absolute paths under that directory. Compile-check with `make check` / `go build ./...`. Never bare `go build ./cmd/x/`.
+- Work in `/home/user/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd` on branch `harness/70fbad4a6eb6f1e992be8a669f1bcefd`. Use absolute paths under that directory. Compile-check with `make check` / `go build ./...`. Never bare `go build ./cmd/x/`.
 - Read `.claude/skills/implementation-pitfalls/SKILL.md` in full before writing code.
 
 ## Review Focus

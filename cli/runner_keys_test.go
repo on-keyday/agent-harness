@@ -33,13 +33,13 @@ func TestFormatRunnerEnroll(t *testing.T) {
 func TestFormatRunnerKeysNeverElidesZero(t *testing.T) {
 	rows := []RunnerKeyRow{
 		{Key: testKey(1), Label: "gmk", EnrolledAt: time.Date(2026, 10, 27, 9, 0, 0, 0, time.UTC), EnrolledBy: "operator",
-			Runners: []RunnerKeyUser{{ID: protocol.RunnerID{Id: [16]byte{0xaa, 0xbb, 0xcc, 0xdd}}, Hostname: "gmkhost"}}},
+			Runners: []RunnerKeyUser{{ID: protocol.RunnerID{Id: [16]byte{0xaa, 0xbb, 0xcc, 0xdd}}, Hostname: "host1"}}},
 		{Key: testKey(2), Label: "", EnrolledAt: time.Date(2026, 10, 27, 10, 0, 0, 0, time.UTC), EnrolledBy: "task:00ff"},
 	}
 	got := FormatRunnerKeys(rows)
 	for _, want := range []string{
 		"0101010101010101 label=gmk enrolled=2026-10-27T09:00:00Z by=operator runners=1",
-		"  aabbccdd gmkhost",
+		"  aabbccdd host1",
 		"0202020202020202 label= enrolled=2026-10-27T10:00:00Z by=task:00ff runners=0",
 		"keys=2",
 	} {
@@ -57,12 +57,12 @@ func TestFormatRunnerKeysNeverElidesZero(t *testing.T) {
 func TestFormatRunnerKeysJSON(t *testing.T) {
 	rows := []RunnerKeyRow{
 		{Key: testKey(1), Label: "gmk", EnrolledAt: time.Date(2026, 10, 27, 9, 0, 0, 0, time.UTC), EnrolledBy: "operator",
-			Runners: []RunnerKeyUser{{ID: protocol.RunnerID{Id: [16]byte{0xaa, 0xbb, 0xcc, 0xdd}}, Hostname: "gmkhost"}}},
+			Runners: []RunnerKeyUser{{ID: protocol.RunnerID{Id: [16]byte{0xaa, 0xbb, 0xcc, 0xdd}}, Hostname: "host1"}}},
 		{Key: testKey(2), EnrolledAt: time.Date(2026, 10, 27, 10, 0, 0, 0, time.UTC), EnrolledBy: "task:00ff"},
 	}
 	lines := strings.Split(strings.TrimSuffix(FormatRunnerKeysJSON(rows), "\n"), "\n")
 	want := []string{
-		`{"key":"` + strings.Repeat("01", 32) + `","label":"gmk","enrolled_at":"2026-10-27T09:00:00Z","enrolled_by":"operator","runners":[{"id":"aabbccdd000000000000000000000000","hostname":"gmkhost"}]}`,
+		`{"key":"` + strings.Repeat("01", 32) + `","label":"gmk","enrolled_at":"2026-10-27T09:00:00Z","enrolled_by":"operator","runners":[{"id":"aabbccdd000000000000000000000000","hostname":"host1"}]}`,
 		`{"key":"` + strings.Repeat("02", 32) + `","label":"","enrolled_at":"2026-10-27T10:00:00Z","enrolled_by":"task:00ff","runners":[]}`,
 	}
 	if len(lines) != len(want) {
@@ -80,10 +80,10 @@ func TestFormatRunnerKeysJSON(t *testing.T) {
 
 func TestFormatRunnerUnenroll(t *testing.T) {
 	k := testKey(0xcd)
-	res := RunnerUnenrollResult{Key: k, Label: "gmk", Runners: []RunnerKeyUser{{ID: protocol.RunnerID{Id: [16]byte{1, 2, 3, 4}}, Hostname: "gmkhost"}}}
+	res := RunnerUnenrollResult{Key: k, Label: "gmk", Runners: []RunnerKeyUser{{ID: protocol.RunnerID{Id: [16]byte{1, 2, 3, 4}}, Hostname: "host1"}}}
 
 	got, ok := FormatRunnerUnenroll(protocol.RunnerKeyStatus_InUse, res)
-	if ok || !strings.Contains(got, "refused: 1 runner(s) use cdcdcdcdcdcdcdcd (pass --force to cut them off):") || !strings.Contains(got, "  01020304 gmkhost") {
+	if ok || !strings.Contains(got, "refused: 1 runner(s) use cdcdcdcdcdcdcdcd (pass --force to cut them off):") || !strings.Contains(got, "  01020304 host1") {
 		t.Errorf("in_use: ok=%v\n%s", ok, got)
 	}
 	got, ok = FormatRunnerUnenroll(protocol.RunnerKeyStatus_Ok, res)

@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- **Work in the checkout that holds this plan**, `.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd/`. A bare absolute path under `/home/kforfk/workspace/remote-agent-harness/<rel>` resolves to the PARENT checkout, which would split edits from commits (Pitfall 8). Verify with `git rev-parse --abbrev-ref HEAD` before writing code.
+- **Work in the checkout that holds this plan**, `.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd/`. A bare absolute path under `/home/user/workspace/remote-agent-harness/<rel>` resolves to the PARENT checkout, which would split edits from commits (Pitfall 8). Verify with `git rev-parse --abbrev-ref HEAD` before writing code.
 - **Read `.claude/skills/implementation-pitfalls/SKILL.md` in full before writing code.**
 - **Verify with make targets**: `make check`, `make wasm-check`, `make vet`, `make test`. `go build ./...` misses the integration-tagged callers `make vet` catches.
 - **Build hygiene**: never bare `go build ./cmd/<x>/` — it drops an executable into the worktree. Use `go build ./...` or `-o /dev/null`.

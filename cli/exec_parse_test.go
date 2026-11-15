@@ -55,7 +55,7 @@ func TestScanExec_StartPrecededByBareCR(t *testing.T) {
 	// '\r' too.
 	s := sent("T")
 	buf := []byte(
-		`[kforfk@host ~]$ printf '__HEXEC_T_S__\n'; echo hi; printf '__HEXEC_T_E__%s\n' "$?"` +
+		`[user@host ~]$ printf '__HEXEC_T_S__\n'; echo hi; printf '__HEXEC_T_E__%s\n' "$?"` +
 			"\r" + // echoed Enter: bare CR, NO LF
 			"__HEXEC_T_S__\r\n" +
 			"hi\r\n" +

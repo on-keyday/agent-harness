@@ -20,7 +20,7 @@
 - Under exact, the request carries no settings; anything else → `resume_exact_mismatch`, never ignored (D10).
 - An attached open (`detached = 0`) requires `exec_control` over the target, operators included (D7).
 - `stream_id` of `OpenInteractiveResponse` is present only when `attached == 1`; 0 is a valid stream id and never a sentinel there.
-- Work in THIS worktree (`/home/kforfk/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd`), on branch `harness/70fbad4a6eb6f1e992be8a669f1bcefd`. Verify with `git rev-parse --abbrev-ref HEAD` before the first edit. Do not use absolute paths under the parent checkout.
+- Work in THIS worktree (`/home/user/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd`), on branch `harness/70fbad4a6eb6f1e992be8a669f1bcefd`. Verify with `git rev-parse --abbrev-ref HEAD` before the first edit. Do not use absolute paths under the parent checkout.
 - Read `.claude/skills/implementation-pitfalls/SKILL.md` in full before the first edit.
 - Compile-check with `make check` / `go build ./...`; never a bare `go build ./cmd/<x>/` (it drops a binary in the worktree).
 - Every commit ends with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.

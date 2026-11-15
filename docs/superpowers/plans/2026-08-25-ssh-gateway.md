@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- **Where the work lands.** objtrsf tasks: `/home/kforfk/workspace/objtrsf` on branch `main`. Harness tasks: `/home/kforfk/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd` on branch `harness/70fbad4a6eb6f1e992be8a669f1bcefd`. Confirm with `git rev-parse --abbrev-ref HEAD` before the first commit of every task. A bare absolute path under `/home/kforfk/workspace/remote-agent-harness/` routes to the PARENT checkout, not this worktree.
+- **Where the work lands.** objtrsf tasks: `/home/user/workspace/objtrsf` on branch `main`. Harness tasks: `/home/user/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd` on branch `harness/70fbad4a6eb6f1e992be8a669f1bcefd`. Confirm with `git rev-parse --abbrev-ref HEAD` before the first commit of every task. A bare absolute path under `/home/user/workspace/remote-agent-harness/` routes to the PARENT checkout, not this worktree.
 - **Task 1 must be landed and pushed before Task 2 starts.** Everything after Task 2 depends on the bumped `go.mod`. No `replace` directive at any point.
 - Every file in `cli/sshgw` starts with `//go:build !js`. Package `cli` is compiled for `js/wasm`; `make wasm-check` is what catches a miss.
 - No `.bgn` change, no `server/` change, no `runner/` change (D9).
@@ -27,7 +27,7 @@
 
 ### Task 1: Export the pump and the terminal resets from objtrsf
 
-**Repo:** `/home/kforfk/workspace/objtrsf` (branch `main`)
+**Repo:** `/home/user/workspace/objtrsf` (branch `main`)
 
 **Files:**
 - Create: `exec/terminal_modes.go`
@@ -87,7 +87,7 @@ func TestWriteTerminalReset_IsExactlyTheTwoConsts(t *testing.T) {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd /home/kforfk/workspace/objtrsf && go test ./exec/ -run TestWriteTerminalReset -v`
+Run: `cd /home/user/workspace/objtrsf && go test ./exec/ -run TestWriteTerminalReset -v`
 Expected: FAIL — `undefined: WriteTerminalReset`, `undefined: ScreenModeReset`, `undefined: InputModeReset`.
 
 - [ ] **Step 3: Create the consts and the writer**
@@ -167,7 +167,7 @@ func WriteTerminalReset(w io.Writer) {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd /home/kforfk/workspace/objtrsf && go test ./exec/ -run TestWriteTerminalReset -v`
+Run: `cd /home/user/workspace/objtrsf && go test ./exec/ -run TestWriteTerminalReset -v`
 Expected: PASS (both tests).
 
 - [ ] **Step 5: Point RemoteShell at the new symbols**
@@ -203,7 +203,7 @@ func (w *CommandExecutionStream) PumpTerminalIO(in io.Reader, out io.Writer) err
 Update the one production call site (the tail of `RemoteShell`) and the 8 call sites in `exec/exec_shell_test.go`:
 
 ```bash
-cd /home/kforfk/workspace/objtrsf
+cd /home/user/workspace/objtrsf
 grep -rn "pumpTerminalIO" exec/
 ```
 
@@ -211,16 +211,16 @@ Expected after the edit: every hit is `PumpTerminalIO`, except prose inside comm
 
 - [ ] **Step 7: Run the full objtrsf suite**
 
-Run: `cd /home/kforfk/workspace/objtrsf && go build ./... && go test ./exec/ -v`
+Run: `cd /home/user/workspace/objtrsf && go build ./... && go test ./exec/ -v`
 Expected: PASS, including `TestPumpTerminalIO_RemoteEndEndsSession`, `TestPumpTerminalIO_DetachEndsWhenPeerCloses`, `TestPumpTerminalIO_SwallowIsBounded` and the rest — this task is a rename plus an extraction, so a behaviour change here is a bug in the task.
 
-Then: `cd /home/kforfk/workspace/objtrsf && go test ./...`
+Then: `cd /home/user/workspace/objtrsf && go test ./...`
 Expected: PASS.
 
 - [ ] **Step 8: Commit and push**
 
 ```bash
-cd /home/kforfk/workspace/objtrsf
+cd /home/user/workspace/objtrsf
 git add exec/terminal_modes.go exec/terminal_modes_test.go exec/exec_shell.go exec/exec_shell_test.go
 git commit -m "feat(exec): export the terminal pump and the mode resets
 
@@ -257,7 +257,7 @@ Expected: fast-forward push (objtrsf landing policy is local-trunk FF; see `land
 - [ ] **Step 1: Bump the dependency**
 
 ```bash
-cd /home/kforfk/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd
+cd /home/user/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd
 go get github.com/on-keyday/objtrsf@<SHA from Task 1 Step 8>
 grep objtrsf go.mod
 ```

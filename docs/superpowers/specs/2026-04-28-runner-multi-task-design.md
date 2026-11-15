@@ -46,8 +46,8 @@ Operating modes after the change:
 | Configuration | Flag | Behavior |
 | --- | --- | --- |
 | Legacy compat | `--max-tasks 1` (default) | Identical to current single-task behavior |
-| Personal multi-repo on one box | `--max-tasks 4 --roots /home/kforfk/workspace` | One runner serves any repo under workspace, up to 4 concurrent |
-| Heterogeneous | gmkhost (`--max-tasks 4`) + Pi (`--max-tasks 1 --roots /home/pi/workspace`) | Each runner declares capability; scheduler narrows by `allowed_roots` prefix |
+| Personal multi-repo on one box | `--max-tasks 4 --roots /home/user/workspace` | One runner serves any repo under workspace, up to 4 concurrent |
+| Heterogeneous | host1 (`--max-tasks 4`) + Pi (`--max-tasks 1 --roots /home/pi/workspace`) | Each runner declares capability; scheduler narrows by `allowed_roots` prefix |
 
 ## Wire protocol changes (`runner/protocol/message.bgn`)
 
@@ -144,7 +144,7 @@ format SubmitResponse:
     status :SubmitStatus
     task_id :TaskID                 # zero on non-ok
     error_msg_len :u16
-    error_msg :[error_msg_len]u8    # human-readable, e.g. "matches: gmkhost, raspi"
+    error_msg :[error_msg_len]u8    # human-readable, e.g. "matches: host1, raspi"
 
 enum OpenInteractiveStatus:
     :u8
@@ -350,8 +350,8 @@ func (s *Session) handleAssign(parentCtx context.Context, req *protocol.AssignTa
         return
     }
     // repoAllowed must use a directory-boundary prefix check, not naive
-    // strings.HasPrefix, otherwise /home/kforfk/workspace-evil would falsely
-    // match a root of /home/kforfk/workspace. Implementation:
+    // strings.HasPrefix, otherwise /home/user/workspace-evil would falsely
+    // match a root of /home/user/workspace. Implementation:
     //   filepath.Rel(root, repo) returns a path that does not start with ".."
     //   and is not absolute. (Both root and repo are filepath.Clean'd up front.)
 
@@ -460,10 +460,10 @@ Specifying two or more of `--runner`, `--host`, `--ip` is a client-side validati
 
 ```
 RUNNERS
-  Idle    host=gmkhost  tasks=0/4  roots=/home/kforfk/workspace,/home/kforfk/projects  id=ws:192.168.3.14:33994-1
-  Busy    host=raspi    tasks=1/1  roots=/home/pi/workspace                            id=ws:192.168.3.99:54012-2
+  Idle    host=host1  tasks=0/4  roots=/home/user/workspace,/home/user/projects  id=ws:192.0.2.14:33994-1
+  Busy    host=raspi    tasks=1/1  roots=/home/pi/workspace                            id=ws:192.0.2.99:54012-2
 TASKS
-  ...                       host=gmkhost  ...
+  ...                       host=host1  ...
 ```
 
 `tasks=N/M` shows `len(ActiveTasks)/MaxTasks`. The `host=` column on tasks resolves from `BoundRunnerID` to hostname for legibility.

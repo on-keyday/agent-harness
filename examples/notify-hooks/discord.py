@@ -122,7 +122,7 @@ def build_payload(ev: dict) -> dict:
     text = (ev.get("text") or "").strip()
     origin = ev.get("origin") or ""
 
-    # Source line, e.g. "gmkhost · task 0f0d4dd6 · remote-agent-harness", or
+    # Source line, e.g. "host1 · task 0f0d4dd6 · remote-agent-harness", or
     # "external" for an out-of-worker ping.
     if origin == "worker":
         bits = []

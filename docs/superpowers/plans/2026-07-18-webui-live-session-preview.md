@@ -13,8 +13,8 @@
 ## Global Constraints
 
 - **Worktree only**: ALL file operations use absolute paths under
-  `/home/kforfk/workspace/remote-agent-harness/.harness-worktrees/5b65231c141da46b2239912efd108196/`.
-  NEVER touch `/home/kforfk/workspace/remote-agent-harness/<rel>` (routes to the parent checkout). Before the first edit run `git rev-parse --abbrev-ref HEAD` from the worktree and confirm `harness/5b65231c141da46b2239912efd108196`; abort if not.
+  `/home/user/workspace/remote-agent-harness/.harness-worktrees/5b65231c141da46b2239912efd108196/`.
+  NEVER touch `/home/user/workspace/remote-agent-harness/<rel>` (routes to the parent checkout). Before the first edit run `git rev-parse --abbrev-ref HEAD` from the worktree and confirm `harness/5b65231c141da46b2239912efd108196`; abort if not.
 - **Read `.claude/skills/implementation-pitfalls/SKILL.md` in full before writing code** (worktree copy).
 - **Build hygiene**: compile-check ONLY with `go build ./...` / `GOOS=js GOARCH=wasm go build ./cli/... ./cmd/harness-webui-wasm/`. NEVER bare `go build ./cmd/<x>/`. `make webui-build` writing `webui/static/main.wasm` is fine; never commit `main.wasm`; restore `webui/static/wasm_exec.js` via `git checkout --` if only version-refreshed.
 - **Public repo**: no LAN IPs, internal hostnames, or private paths anywhere.

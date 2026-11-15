@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Work in this worktree (`/home/kforfk/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd`), branch `workspace-keep-forward`. Use paths under the worktree; a bare `/home/kforfk/workspace/remote-agent-harness/<rel>` path hits the PARENT checkout.
+- Work in this worktree (`/home/user/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd`), branch `workspace-keep-forward`. Use paths under the worktree; a bare `/home/user/workspace/remote-agent-harness/<rel>` path hits the PARENT checkout.
 - Read `.claude/skills/implementation-pitfalls/SKILL.md` before the first task.
 - No `.bgn`, server, runner or WebUI change.
 - `cli/workspace` compiles for `js/wasm`: it must not import `cli/sshgw` or anything `//go:build !js`.

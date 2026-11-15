@@ -123,7 +123,7 @@ func TestBoardSubscribersView_JoinedSurvivesNarrowWidth(t *testing.T) {
 	m := NewBoardModal()
 	m.Open()
 	m.SetSize(80, 24)
-	m.ApplySubscribers("grp", []cli.BoardSubscriberRow{{TaskHex: memberTask, Hostname: "gmkhost", AgentProfile: "bash",
+	m.ApplySubscribers("grp", []cli.BoardSubscriberRow{{TaskHex: memberTask, Hostname: "host1", AgentProfile: "bash",
 		Patterns: []cli.BoardSubscriberPattern{{Name: "chat.aaaa1111"}, {Name: "grp", Joined: true}}}})
 	for _, line := range strings.Split(m.View(), "\n") {
 		if strings.Contains(line, "aaaa1111 ") {

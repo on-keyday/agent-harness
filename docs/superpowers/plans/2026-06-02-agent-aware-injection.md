@@ -15,7 +15,7 @@
 ## Execution context (all tasks)
 
 - **Work in the worktree**: edit/build/commit under
-  `/home/kforfk/workspace/remote-agent-harness/.harness-worktrees/0f0d4dd6b7d3b64354cf4ff249b87403/`.
+  `/home/user/workspace/remote-agent-harness/.harness-worktrees/0f0d4dd6b7d3b64354cf4ff249b87403/`.
   Editing via the parent-repo absolute path routes to the parent checkout (Pitfall 8).
 - **Push to origin/main**: after committing locally, cherry-pick the new commit(s) onto `origin/main` in an isolated `git worktree add --detach /tmp/wt-push-main origin/main`, verify `git merge-base --is-ancestor origin/main $TIP`, `git push origin $TIP:main`, `git worktree remove`. Never force-push.
 - **Keep `HarnessInjectedPaths` in sync with the writers** — `runner/agentinjected.go`'s own comment warns that a new injected file not listed there makes worktrees look "dirty" and stops cleanup. Task 3 covers this.

@@ -21,7 +21,7 @@ its reasoning.
 
 ## Global Constraints
 
-- Work only in this worktree. A bare `/home/kforfk/workspace/remote-agent-harness/<rel>`
+- Work only in this worktree. A bare `/home/user/workspace/remote-agent-harness/<rel>`
   path resolves to the PARENT checkout. Confirm with
   `git rev-parse --abbrev-ref HEAD` before writing.
 - Never run bare `git stash` / `git stash pop`: the stash stack is shared with

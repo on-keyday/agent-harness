@@ -62,10 +62,10 @@ func TestNotifyEventTextLine(t *testing.T) {
 	ev := protocol.NotifyEvent{Ts: 1717800000, Level: protocol.NotifyLevel_Warn, Origin: protocol.NotifyOrigin_Worker, TextLen: 2, Text: []byte("hi")}
 	ev.SetWorker(protocol.WorkerInfo{
 		TaskIdLen: uint16(len("0f0d4dd6b7d3b64354cf4ff249b87403")), TaskId: []byte("0f0d4dd6b7d3b64354cf4ff249b87403"),
-		HostnameLen: uint16(len("gmkhost")), Hostname: []byte("gmkhost"),
+		HostnameLen: uint16(len("host1")), Hostname: []byte("host1"),
 	})
 	got := notifyEventTextLine(&ev)
-	for _, want := range []string{"[warn]", "hi", "gmkhost", "0f0d4dd6b7d3b64354cf4ff249b87403"} {
+	for _, want := range []string{"[warn]", "hi", "host1", "0f0d4dd6b7d3b64354cf4ff249b87403"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("text line missing %q: %q", want, got)
 		}

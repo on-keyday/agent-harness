@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- **Paths.** Work in `/home/kforfk/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd/` on branch `ip-link-forward`. A path without `.harness-worktrees/<hash>/` is the PARENT checkout. Check `git rev-parse --abbrev-ref HEAD` says `ip-link-forward` before the first edit of each task.
+- **Paths.** Work in `/home/user/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd/` on branch `ip-link-forward`. A path without `.harness-worktrees/<hash>/` is the PARENT checkout. Check `git rev-parse --abbrev-ref HEAD` says `ip-link-forward` before the first edit of each task.
 - **Read first:** `.claude/skills/implementation-pitfalls/SKILL.md` in full.
 - **Test env.** Inside a harness task, every `go test` runs as `env -u HARNESS_SERVER_PUBKEY -u HARNESS_SERVER_CID -u HARNESS_AUTH_TICKET -u HARNESS_TASK_ID go test ...`. Without it two UDP-forward tests fail with "signature does not verify". Written below as `$GT` (e.g. `$GT ./server/ -run X -count=1`).
 - **No stray binaries.** Compile-check with `go build ./...` or `make check`. Never `go build ./cmd/<x>/` in the tree.

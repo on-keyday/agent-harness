@@ -32,7 +32,7 @@ over budget. The measurement is a throwaway test in `runner/protocol`:
 rows := make([]DeliveredMessage, n)
 for i := range rows {
 	rows[i].SetTopic([]byte("chat.70fbad4a"))
-	rows[i].SetFromHostname([]byte("gmkhost"))
+	rows[i].SetFromHostname([]byte("host1"))
 	rows[i].SetFromAgentProfile([]byte("claude"))
 }
 var out AgentInboxAdvanceResponse

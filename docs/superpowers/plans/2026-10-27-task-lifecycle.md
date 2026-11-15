@@ -14,7 +14,7 @@
 
 ## Global Constraints
 
-- Work in `/home/kforfk/workspace/remote-agent-harness/.harness-worktrees/5b65231c141da46b2239912efd108196` on branch `harness/5b65231c141da46b2239912efd108196`, rebased on `main` @ `8fbeb114`. Use absolute paths under that directory. Never bare `go build ./cmd/x/`; compile-check with `make check` / `go build ./...`.
+- Work in `/home/user/workspace/remote-agent-harness/.harness-worktrees/5b65231c141da46b2239912efd108196` on branch `harness/5b65231c141da46b2239912efd108196`, rebased on `main` @ `8fbeb114`. Use absolute paths under that directory. Never bare `go build ./cmd/x/`; compile-check with `make check` / `go build ./...`.
 - Read `.claude/skills/implementation-pitfalls/SKILL.md` in full before writing code.
 - Every `.bgn` enum addition is APPENDED; enums are positional.
 - `lifecycle_set` takes no capability and writes only `lookupPrincipal(cid)`'s task. A zero principal gets `no_principal` (D12).

@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- **Work in the checkout that holds this plan**: `.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd/`. A bare absolute path under `/home/kforfk/workspace/remote-agent-harness/<rel>` is the PARENT checkout (implementation-pitfalls, Pitfall 8). Check with `git rev-parse --abbrev-ref HEAD` before writing code.
+- **Work in the checkout that holds this plan**: `.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd/`. A bare absolute path under `/home/user/workspace/remote-agent-harness/<rel>` is the PARENT checkout (implementation-pitfalls, Pitfall 8). Check with `git rev-parse --abbrev-ref HEAD` before writing code.
 - **Read `.claude/skills/implementation-pitfalls/SKILL.md` in full before writing code.**
 - `board_peer = 0x80000`; `all = 0xfffff` (D12).
 - A `tree.` topic is `tree.<32 lowercase hex>.<suffix>`; anything else under `tree.` is a free-form name.

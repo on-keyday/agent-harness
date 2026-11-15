@@ -114,7 +114,7 @@ fi
 # Upstream widens the gateway address to a /24, which is contained on a docker
 # bridge (172.17.0.0/24 is the bridge itself). podman rootless defaults to
 # pasta, which gives the container the HOST's interface configuration — a live
-# run had the container on 192.168.3.14/24 with `default via 192.168.3.1`, so
+# run had the container on 192.0.2.14/24 with `default via 192.0.2.1`, so
 # the same line allowlisted the entire LAN in both directions. Keep the gateway
 # alone; the harness server is allowlisted by its own /32 above.
 HOST_IP=$(ip route | awk '/^default/ {print $3; exit}')

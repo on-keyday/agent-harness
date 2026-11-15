@@ -13,7 +13,7 @@ import (
 
 func runnerInfoWith(label string, key byte) protocol.RunnerInfo {
 	r := protocol.RunnerInfo{MaxTasks: 1}
-	r.SetHostname([]byte("gmkhost"))
+	r.SetHostname([]byte("host1"))
 	if key != 0 {
 		for i := range r.Key {
 			r.Key[i] = key

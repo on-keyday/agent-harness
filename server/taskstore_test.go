@@ -610,7 +610,7 @@ func mustHostname(t *testing.T, s string) protocol.Hostname {
 func TestTaskStoreAddCarriesSelectorAndBoundRunner(t *testing.T) {
 	ts := NewTaskStore()
 	sel := protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_ByHostname}
-	sel.SetHostname(mustHostname(t, "gmkhost"))
+	sel.SetHostname(mustHostname(t, "host1"))
 	taskID := ts.Create("/x/repo", "hello", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified,
 		protocol.TaskID{}, "runner-A", sel, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}},
 		"")

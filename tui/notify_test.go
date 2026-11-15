@@ -27,15 +27,15 @@ func TestRenderNotifyEvent_WorkerShowsTaskIDAndCorrectTime(t *testing.T) {
 	ev.SetWorker(protocol.WorkerInfo{
 		TaskIdLen:   uint16(len(taskID)),
 		TaskId:      []byte(taskID),
-		HostnameLen: uint16(len("gmkhost")),
-		Hostname:    []byte("gmkhost"),
+		HostnameLen: uint16(len("host1")),
+		Hostname:    []byte("host1"),
 	})
 	got := renderNotifyEvent(ev)
 
 	if !strings.Contains(got, taskID) {
 		t.Fatalf("render missing full task id %q: %q", taskID, got)
 	}
-	if !strings.Contains(got, "gmkhost") {
+	if !strings.Contains(got, "host1") {
 		t.Fatalf("render missing hostname: %q", got)
 	}
 	wantTime := time.Unix(ts, 0).Local().Format("15:04:05")

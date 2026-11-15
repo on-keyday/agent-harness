@@ -35,7 +35,7 @@ const fxTrustDialog = `
 ──────────────────────────────────────────────────────────
  Accessing workspace:
 
- /home/kforfk/workspace
+ /home/user/workspace
 
  Quick safety check: Is this a project you created or one you trust?
 
@@ -86,9 +86,9 @@ const fxShellModePromptBox = `
   ! for shell mode`
 
 // A plain shell — no agent UI at all.
-const fxBashPrompt = `[kforfk@host workspace]$ echo hi
+const fxBashPrompt = `[user@host workspace]$ echo hi
 hi
-[kforfk@host workspace]$ `
+[user@host workspace]$ `
 
 func lines(s string) []string { return strings.Split(strings.TrimPrefix(s, "\n"), "\n") }
 

@@ -29,7 +29,7 @@ func TestEmitBoardMessageJSON(t *testing.T) {
 			Seq:              7,
 			InReplyTo:        3,
 			FromTaskHex:      "deadbeef",
-			FromHostname:     "gmkhost",
+			FromHostname:     "host1",
 			FromAgentProfile: "claude",
 			ReplyToTopic:     "chat.xyz",
 			ReceivedAtMs:     1_700_000_000_000,
@@ -70,7 +70,7 @@ func TestEmitBoardMessageJSON(t *testing.T) {
 		if rec.ShownTo.Shown != 1 || rec.ShownTo.Total != 2 {
 			t.Fatalf("shown_to wrong: %+v (want shown=1 total=2)", rec.ShownTo)
 		}
-		if rec.From.TaskID != "deadbeef" || rec.From.Hostname != "gmkhost" || rec.From.Agent != "claude" {
+		if rec.From.TaskID != "deadbeef" || rec.From.Hostname != "host1" || rec.From.Agent != "claude" {
 			t.Fatalf("from block wrong: %+v", rec.From)
 		}
 		if rec.Retracted {

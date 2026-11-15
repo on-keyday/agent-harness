@@ -22,7 +22,7 @@ func TestBoardReadBodyRoundTrip(t *testing.T) {
 	rows := make([]BoardMessageRow, 2)
 	for i := range rows {
 		rows[i] = BoardMessageRow{Seq: uint64(3 + i), FromTask: ft, ReceivedAtUnixMs: 1700}
-		rows[i].SetFromHostname([]byte("gmkhost"))
+		rows[i].SetFromHostname([]byte("host1"))
 	}
 	rows[0].SetBody([]byte("hello"))
 	// rows[1] keeps an empty body: a zero-length message must not swallow the
@@ -38,7 +38,7 @@ func TestBoardReadBodyRoundTrip(t *testing.T) {
 	if len(out.Msgs) != 2 {
 		t.Fatalf("rows: got %d, want 2", len(out.Msgs))
 	}
-	if m := out.Msgs[0]; m.Seq != 3 || string(m.Body) != "hello" || string(m.FromHostname) != "gmkhost" || m.FromTask.Id[0] != 0xAB {
+	if m := out.Msgs[0]; m.Seq != 3 || string(m.Body) != "hello" || string(m.FromHostname) != "host1" || m.FromTask.Id[0] != 0xAB {
 		t.Fatalf("row 0 round-trip mismatch: %+v", m)
 	}
 	if m := out.Msgs[1]; m.Seq != 4 || len(m.Body) != 0 {

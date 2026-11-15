@@ -372,7 +372,7 @@ func TestIntegrationPinByHostnameSuccess(t *testing.T) {
 	serverCID := startServer(t)
 	repo := tempRepo(t)
 
-	startRunner(t, serverCID, runnerOpts{MaxTasks: 1, Roots: []string{repo}, Hostname: "gmkhost"})
+	startRunner(t, serverCID, runnerOpts{MaxTasks: 1, Roots: []string{repo}, Hostname: "host1"})
 	startRunner(t, serverCID, runnerOpts{MaxTasks: 1, Roots: []string{repo}, Hostname: "raspi"})
 
 	c := dialClient(t, serverCID)
@@ -404,7 +404,7 @@ func TestIntegrationPinNotFound(t *testing.T) {
 	serverCID := startServer(t)
 	repo := tempRepo(t)
 
-	startRunner(t, serverCID, runnerOpts{MaxTasks: 1, Roots: []string{repo}, Hostname: "gmkhost"})
+	startRunner(t, serverCID, runnerOpts{MaxTasks: 1, Roots: []string{repo}, Hostname: "host1"})
 
 	c := dialClient(t, serverCID)
 

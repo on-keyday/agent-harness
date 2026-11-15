@@ -17,7 +17,7 @@
 - A legacy WAL record replays as `unknown`; WAL keys are `omitempty`.
 - `authority_actor` is zeroed for a caller whose visible set does not contain it (V18); the UI then says the actor is hidden. Operators see every actor.
 - `.bgn` changes: server first, then every client (V/D18 style rollout); run `scripts/wire-skew-check.sh` before landing.
-- Work in `/home/kforfk/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd`. Run `make test` and `go test ./cli/...` with `env -u HARNESS_SERVER_PUBKEY -u HARNESS_SERVER_CID -u HARNESS_AUTH_TICKET -u HARNESS_TASK_ID`.
+- Work in `/home/user/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd`. Run `make test` and `go test ./cli/...` with `env -u HARNESS_SERVER_PUBKEY -u HARNESS_SERVER_CID -u HARNESS_AUTH_TICKET -u HARNESS_TASK_ID`.
 
 ## Decisions this plan adds (spec silent)
 

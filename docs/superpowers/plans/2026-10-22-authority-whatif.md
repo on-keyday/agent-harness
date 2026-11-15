@@ -18,7 +18,7 @@
 - Reach diffs use Phase 3's rules: per exercised bit through `actionReach` (exec_resize inside exec_view), bits naming no task left out of the display (`cli.ReachBits`), visibility as the `view` entry.
 - Over a partial listing (an agent caller) the result is stated as computed over that listing, as Phase 3 does.
 - Nothing touches the wire.
-- Work in `/home/kforfk/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd`; test env scrub `env -u HARNESS_SERVER_PUBKEY -u HARNESS_SERVER_CID -u HARNESS_AUTH_TICKET -u HARNESS_TASK_ID`.
+- Work in `/home/user/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd`; test env scrub `env -u HARNESS_SERVER_PUBKEY -u HARNESS_SERVER_CID -u HARNESS_AUTH_TICKET -u HARNESS_TASK_ID`.
 
 ## Decisions this plan adds (spec silent)
 

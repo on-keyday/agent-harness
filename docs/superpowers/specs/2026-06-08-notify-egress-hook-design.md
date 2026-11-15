@@ -207,7 +207,7 @@ exactly the caller-provided bytes.
 | `HARNESS_TASK_ID`                       | `0f0d4dd6…`                   | task_id          |
 | `HARNESS_RUNNER_ID`                     | `ws:…:55538-13478`            | runner_id        |
 | `HARNESS_REPO_PATH`                     | `…/remote-agent-harness`      | repo             |
-| `HARNESS_HOSTNAME`                      | `gmkhost`                     | hostname         |
+| `HARNESS_HOSTNAME`                      | `host1`                     | hostname         |
 
 - `HARNESS_TASK_ID` present → `origin = worker`, fill `WorkerInfo` from env.
 - absent → `origin = external`, omit `WorkerInfo`.
@@ -243,7 +243,7 @@ hook-invocation trust boundary is the server's PSK auth, independent of origin.
     "task_id":  "0f0d4dd6…",                 // worker origin only
     "runner_id":"ws:…:55538-13478",          // worker origin only
     "repo":     "/…/remote-agent-harness",   // worker origin only
-    "hostname": "gmkhost",                    // worker origin only
+    "hostname": "host1",                    // worker origin only
     "conn_id":  "ws:…-NNNN",                 // server-injected: caller's conn
     "ts":       1717800000                    // server-injected: receive unix ts
   }
@@ -365,7 +365,7 @@ keyboard phone ping):
    preceding any option prompt the operator answers elsewhere).
 3. **Approval gate reached** — `warn` "waiting on bash-command approval".
 4. **Failure / crash** — `error` "make check failed on lint runner",
-   "gmkhost OOM".
+   "host1 OOM".
 
 Operator origin:
 

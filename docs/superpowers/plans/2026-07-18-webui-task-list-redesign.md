@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- **Work in THIS harness worktree**: `/home/kforfk/workspace/remote-agent-harness/.harness-worktrees/5b65231c141da46b2239912efd108196/`. All tool calls use absolute paths under this directory. Verify `git rev-parse --abbrev-ref HEAD` prints `harness/5b65231c141da46b2239912efd108196` before the first edit. Paths under `/home/kforfk/workspace/remote-agent-harness/<rel>` (without `.harness-worktrees/...`) route to the PARENT checkout — never use them.
+- **Work in THIS harness worktree**: `/home/user/workspace/remote-agent-harness/.harness-worktrees/5b65231c141da46b2239912efd108196/`. All tool calls use absolute paths under this directory. Verify `git rev-parse --abbrev-ref HEAD` prints `harness/5b65231c141da46b2239912efd108196` before the first edit. Paths under `/home/user/workspace/remote-agent-harness/<rel>` (without `.harness-worktrees/...`) route to the PARENT checkout — never use them.
 - **Dark theme only**: palette is `#1e1e1e`/`#111` backgrounds, `#d4d4d4` text, `#888` muted, `#2d5` green accent (active state = `background:#2d5; color:#000`, see `.tab-btn.is-active`). No UA-default light styles.
 - **Mobile from the first cut**: no horizontal page scroll at 390px width.
 - **Build hygiene**: compile-check Go with `make wasm-check` (writes no artifact). `make webui-build` writes only the gitignored `webui/static/main.wasm` + `wasm_exec.js`. Never bare `go build ./cmd/<x>/` (drops a binary into the worktree root).

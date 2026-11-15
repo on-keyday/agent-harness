@@ -15,7 +15,7 @@
 ## Execution context (all tasks)
 
 - **Work in the worktree**: edit/build/commit under
-  `/home/kforfk/workspace/remote-agent-harness/.harness-worktrees/0f0d4dd6b7d3b64354cf4ff249b87403/`.
+  `/home/user/workspace/remote-agent-harness/.harness-worktrees/0f0d4dd6b7d3b64354cf4ff249b87403/`.
   The parent-repo absolute path routes to the parent checkout (Pitfall 8).
 - **Push to origin/main**: commit locally, then cherry-pick onto `origin/main` in an isolated `git worktree add --detach /tmp/wt-push-main origin/main`, verify `git merge-base --is-ancestor origin/main $TIP`, `git push origin $TIP:main`, `git worktree remove`. Never force-push.
 - **Deploy note**: the TUI binary (`bin/harness-tui`) is what the human runs; this reaches the user after a `make build`. No runner/server restart needed for the TUI itself.

@@ -255,7 +255,7 @@ func TestParseSessionNewWithIP(t *testing.T) {
 }
 
 func TestParseSessionNewDetachAndHost(t *testing.T) {
-	got, err := ParseCommand(`session new --detach --host gmkhost-pdf2md`, "/cwd")
+	got, err := ParseCommand(`session new --detach --host host1-pdf2md`, "/cwd")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,7 +263,7 @@ func TestParseSessionNewDetachAndHost(t *testing.T) {
 	if !a.Detach {
 		t.Errorf("Detach=false want true")
 	}
-	if a.Host != "gmkhost-pdf2md" {
+	if a.Host != "host1-pdf2md" {
 		t.Errorf("Host=%q", a.Host)
 	}
 }
@@ -410,7 +410,7 @@ func TestParseFileDeleteSingle(t *testing.T) {
 }
 
 func TestParseServerDialRunner(t *testing.T) {
-	got, err := ParseCommand(`server dial-runner ws:192.168.3.10:8540-*`, "/cwd")
+	got, err := ParseCommand(`server dial-runner ws:192.0.2.10:8540-*`, "/cwd")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -418,7 +418,7 @@ func TestParseServerDialRunner(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected ServerDialRunnerAction, got %T", got)
 	}
-	if a.RunnerCID != "ws:192.168.3.10:8540-*" {
+	if a.RunnerCID != "ws:192.0.2.10:8540-*" {
 		t.Errorf("RunnerCID: got %q", a.RunnerCID)
 	}
 }
@@ -455,7 +455,7 @@ func TestParseFileUsageErrors(t *testing.T) {
 }
 
 func TestParseServerDialRunnerWithVia(t *testing.T) {
-	got, err := ParseCommand(`server dial-runner ws:192.168.3.10:8540-* --via ws:192.168.3.14:52036-51357`, "/cwd")
+	got, err := ParseCommand(`server dial-runner ws:192.0.2.10:8540-* --via ws:192.0.2.14:52036-51357`, "/cwd")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -463,16 +463,16 @@ func TestParseServerDialRunnerWithVia(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected ServerDialRunnerAction, got %T", got)
 	}
-	if a.RunnerCID != "ws:192.168.3.10:8540-*" {
+	if a.RunnerCID != "ws:192.0.2.10:8540-*" {
 		t.Errorf("RunnerCID: got %q", a.RunnerCID)
 	}
-	if a.Via != "ws:192.168.3.14:52036-51357" {
+	if a.Via != "ws:192.0.2.14:52036-51357" {
 		t.Errorf("Via: got %q", a.Via)
 	}
 }
 
 func TestParseServerDialRunnerWithoutVia(t *testing.T) {
-	got, err := ParseCommand(`server dial-runner ws:192.168.3.10:8540-*`, "/cwd")
+	got, err := ParseCommand(`server dial-runner ws:192.0.2.10:8540-*`, "/cwd")
 	if err != nil {
 		t.Fatal(err)
 	}

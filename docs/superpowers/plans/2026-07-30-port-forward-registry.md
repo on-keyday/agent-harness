@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- **Work in this worktree only:** `/home/kforfk/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd`. Before writing code, run `git rev-parse --show-toplevel` and confirm it prints exactly that path. **Never** use paths of the form `/home/kforfk/workspace/remote-agent-harness/<rel>` — they resolve to the parent checkout and your work will silently land on another branch.
+- **Work in this worktree only:** `/home/user/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd`. Before writing code, run `git rev-parse --show-toplevel` and confirm it prints exactly that path. **Never** use paths of the form `/home/user/workspace/remote-agent-harness/<rel>` — they resolve to the parent checkout and your work will silently land on another branch.
 - **Read `.claude/skills/implementation-pitfalls/SKILL.md` in full before writing code.**
 - **`.bgn` is the single source of truth.** Any byte on the wire must be described in `runner/protocol/message.bgn`. Never hand-edit `runner/protocol/message.go` — regenerate with `make protoregen`.
 - **The runner protocol does not change.** `RunnerOpenPortForwardRequest`, `ClosePortForwardRequest`, `RemoteForwardConn`, `RemoteForwardBindResult` keep their exact current layout. If a change would alter any of them, stop and report instead of proceeding.

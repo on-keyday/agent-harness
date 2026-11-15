@@ -47,7 +47,7 @@ Date: 2026-04-25
 Submit popup (overlay on `s`):
 ```
 ┌─ New task ─────────────────────────────────────────────────────────────┐
-│ Repo: /home/kforfk/workspace/remote-agent-harness  (autodetected from cwd) │
+│ Repo: /home/user/workspace/remote-agent-harness  (autodetected from cwd) │
 │                                                                         │
 │ Prompt:                                                                  │
 │ ┌──────────────────────────────────────────────────────────────────────┐ │

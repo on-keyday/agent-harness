@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 >
-> **Project preconditions (every subagent):** Work in `/home/kforfk/workspace/remote-agent-harness/`, NOT in any `.harness-worktrees/<hash>/`. Verify branch with `git rev-parse --abbrev-ref HEAD` before writing. Read `.claude/skills/implementation-pitfalls/SKILL.md` in full first. Build-check with `go build ./...` / `go vet ./...` (never bare `go build ./cmd/<x>/` — it drops a binary into the worktree).
+> **Project preconditions (every subagent):** Work in `/home/user/workspace/remote-agent-harness/`, NOT in any `.harness-worktrees/<hash>/`. Verify branch with `git rev-parse --abbrev-ref HEAD` before writing. Read `.claude/skills/implementation-pitfalls/SKILL.md` in full first. Build-check with `go build ./...` / `go vet ./...` (never bare `go build ./cmd/<x>/` — it drops a binary into the worktree).
 
 **Spec:** `docs/superpowers/specs/2026-06-14-x11-forwarding.md` (problem statement + decisions taken + out-of-scope; reviewers must read its Problem statement, per Pitfall 1).
 

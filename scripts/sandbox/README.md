@@ -113,10 +113,10 @@ worth knowing before you type the name you expected to work.
 **What each agent actually writes, measured through a real runner slot:**
 
 - **bash**, **claude**, **opencode** and **pi** write into the task worktree,
-  owned by the host user (`kforfk:kforfk`) — this is what `--userns=keep-id`
+  owned by the host user (`user:user`) — this is what `--userns=keep-id`
   buys, verified end to end. pi measured 2026-10-17 the same way as opencode
   below, with no prompt to answer. opencode measured 2026-08-19: asked for a file in the cwd, it wrote one
-  containing `node` and the worktree path, and the host saw it as `kforfk:kforfk`.
+  containing `node` and the worktree path, and the host saw it as `user:user`.
   It needs `--auto` (its own auto-approve-permissions flag) to act without a
   prompt in one-shot mode; the `sandbox-opencode` preset passes it.
 - **codex** previously failed to start tools because the single-file bridge
@@ -166,7 +166,7 @@ as root), yet its worktree edits must land on disk **owned by the host user** so
 you can inspect/prune them. Under rootless *docker* those two are mutually
 exclusive (only container-root writes host-owned files). podman's
 `--userns=keep-id` maps the host uid into the container unchanged, satisfying
-both at once. Verified on this host: in-container `uid=1000(kforfk)`, files
+both at once. Verified on this host: in-container `uid=1000(user)`, files
 created in a bind mount are owned by `1000:1000` on the host.
 
 ## Prerequisites

@@ -59,7 +59,7 @@ directory, one that could not already read it through a command (B-D2).
 
 ## Facts
 
-Measured 2026-11-14 on the gmkhost runner host by reading file names, table
+Measured 2026-11-14 on the host1 runner host by reading file names, table
 schemas and JSON keys, not conversation content. Agent versions: claude
 2.1.325, codex-cli 0.165.0, agy 1.5.8, opencode 1.18.18, pi 1.4.0.
 
@@ -119,7 +119,7 @@ schemas and JSON keys, not conversation content. Agent versions: claude
   in the same directory. `exec_view` shows only what reached the terminal:
   the live screen, the replay ring and A1's PTY record.
 
-Measured for the plan (Task 0), 2026-11-14, gmkhost:
+Measured for the plan (Task 0), 2026-11-14, host1:
 
 - **B-F8 — what moves each store.**
   - claude: `CLAUDE_CONFIG_DIR`, as in B-F1.
@@ -145,7 +145,7 @@ Measured for the plan (Task 0), 2026-11-14, gmkhost:
   Windows task's `assigned_to` names a runner identity no connected runner
   has: the Windows slots are up, under other identities. Reaching one would
   need a new session there, which this session's grant (no `spawn`) cannot
-  open. gmkhost slots keep their identity across a systemd restart: a task
+  open. host1 slots keep their identity across a systemd restart: a task
   placed before the restart still takes an `exec`. For B this means **a task
   whose runner re-registered under a new identity answers `runner_offline`**
   (B-D6), though its files are still on the host. The Windows and sandbox

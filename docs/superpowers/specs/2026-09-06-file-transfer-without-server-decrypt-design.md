@@ -734,7 +734,7 @@ does not have it. The direct path now exists and has been measured on the live
 fleet. **It loses to the splice as well**, and the reason retires the hop-count
 argument entirely.
 
-udp client (gmkhost) → udp runner on a Windows host across the LAN, interleaved,
+udp client (host1) → udp runner on a Windows host across the LAN, interleaved,
 no failures in any run:
 
 | size | n | splice | forwarded | direct | verdict |
@@ -865,7 +865,7 @@ document kept reaching for.
 
 | station | signal | PHY rate | note |
 | --- | --- | --- | --- |
-| client (Linux, gmkhost) | −58 dBm | tx 720.6 / rx 612.5 Mbit/s | Wi-Fi 6, 80 MHz, 2 streams; tx failed 12 |
+| client (Linux, host1) | −58 dBm | tx 720.6 / rx 612.5 Mbit/s | Wi-Fi 6, 80 MHz, 2 streams; tx failed 12 |
 | **server (Raspberry Pi)** | −60 dBm | **433.3 Mbit/s both ways** | one spatial stream (80 MHz / MCS9 exactly); tx failed 18413 |
 | runner (Windows laptop) | −61 dBm | 907 / 961 Mbit/s | |
 

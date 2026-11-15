@@ -522,7 +522,7 @@ func TestHandleOpenInteractiveAmbiguous(t *testing.T) {
 func TestHandleOpenInteractivePinnedNotFound(t *testing.T) {
 	h := newTestHandler(t)
 	now := time.Now()
-	h.Registry.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "gmkhost", AllowedRoots: []string{"/x"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
+	h.Registry.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "host1", AllowedRoots: []string{"/x"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
 
 	sel := protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_ByHostname}
 	sel.SetHostname(mustHostname(t, "raspi")) // hostname not present

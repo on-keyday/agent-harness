@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Work in this worktree: `/home/kforfk/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd`. Every absolute path you pass to a tool must start with it; a bare `/home/kforfk/workspace/remote-agent-harness/<rel>` writes the PARENT checkout.
+- Work in this worktree: `/home/user/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd`. Every absolute path you pass to a tool must start with it; a bare `/home/user/workspace/remote-agent-harness/<rel>` writes the PARENT checkout.
 - Read `.claude/skills/implementation-pitfalls/SKILL.md` in full before writing code.
 - `agent send`, `agent dispatch` and `AgentSendRequest` keep their wire format and CLI surface. `--no-wake` must not appear on any `agent` verb.
 - No change to the runner, `TaskWakeRequest`, or `wakeMarker`.

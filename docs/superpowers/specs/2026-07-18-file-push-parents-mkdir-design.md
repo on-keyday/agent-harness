@@ -152,7 +152,7 @@ users).
 
 ## Landing / deployment
 
-- Work in the parent repo `/home/kforfk/workspace/remote-agent-harness/`
+- Work in the parent repo `/home/user/workspace/remote-agent-harness/`
   (NOT the harness worktree), Mode A local-trunk FF push.
 - `make build` after landing.
 - Deployment order (Pitfall 10): server restart FIRST, then `/restart-all`

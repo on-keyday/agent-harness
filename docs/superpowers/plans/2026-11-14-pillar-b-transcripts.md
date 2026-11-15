@@ -38,7 +38,7 @@ Windows runners, gated by a new `transcript_read` bit.
   - Regenerate with `make protoregen`.
   - **Runner-decoded** (`RunnerRequest` gains a kind): run
     `scripts/wire-skew-check.sh <deployed sha>`. Restart the server first,
-    then the runners. Restart gmkhost slots with
+    then the runners. Restart host1 slots with
     `systemctl --user restart harness-agent-runner-<tag>`, never `restart.py`:
     Task 4 changes `scripts/agent_presets.py`, and `restart.py` would run the
     old argv (memory: restart.py freezes preset changes). The operator's own
@@ -455,7 +455,7 @@ func TranscriptSessionRow(s protocol.TranscriptSession) string // "<agent> <id> 
   - a task holding only `exec_view` is refused.
   - Screenshots go to `a1-shots/` and are reported.
 - [ ] **Step 3: Live, Windows:** one claude or codex session on a Windows
-  runner, `transcript ls`/`get` from the gmkhost CLI.
+  runner, `transcript ls`/`get` from the host1 CLI.
 - [ ] **Step 4:** `env -u HARNESS_SERVER_PUBKEY -u HARNESS_SERVER_CID -u
   HARNESS_AUTH_TICKET -u HARNESS_TASK_ID make test`, `make wasm-check`,
   `scripts/wire-skew-check.sh <deployed sha>` → all green.

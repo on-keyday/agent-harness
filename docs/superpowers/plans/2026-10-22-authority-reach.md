@@ -18,7 +18,7 @@
 - The listing a client holds is what its caller may see; a global set is shown as `global`, never as "every listed task", and text says `(+ tasks you cannot list)` (spec § Phase 3).
 - Arrows and creator-edge labels of the tree stay as they are (V4).
 - Nothing in this phase touches the wire.
-- Work in `/home/kforfk/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd`. Run `make test` / `go test ./cli/...` with `env -u HARNESS_SERVER_PUBKEY -u HARNESS_SERVER_CID -u HARNESS_AUTH_TICKET -u HARNESS_TASK_ID`.
+- Work in `/home/user/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd`. Run `make test` / `go test ./cli/...` with `env -u HARNESS_SERVER_PUBKEY -u HARNESS_SERVER_CID -u HARNESS_AUTH_TICKET -u HARNESS_TASK_ID`.
 
 ## Decisions this plan adds (spec silent or overtaken)
 

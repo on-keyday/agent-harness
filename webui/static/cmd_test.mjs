@@ -805,11 +805,11 @@ test("tree node progress: cut line, full tooltip, cleared marker", () => {
 // runner. The model is what the row shows; the DOM is a projection of it.
 test("a runner row: agents as a list, roots one per line, load and status", () => {
   eq(page.runnerRowModel({
-    status: "Busy", hostname: "gmkhost", goos: "linux", tasks: 8, maxTasks: 8,
+    status: "Busy", hostname: "host1", goos: "linux", tasks: 8, maxTasks: 8,
     agentProfiles: ["claude", "codex"], skillsInjected: true, roots: ["/a", "/b"],
     id: "0123456789abcdef0123456789abcdef", cid: "ws:h:1-2", keyLabel: "gmk", link: "dial:3fa9c012",
   }), {
-    status: "Busy", host: "gmkhost", os: "linux", load: "8/8", full: true,
+    status: "Busy", host: "host1", os: "linux", load: "8/8", full: true,
     agents: ["claude", "codex"], skills: true, roots: ["/a", "/b"],
     id: "01234567", cid: "ws:h:1-2", key: "gmk", link: "dial:3fa9c012",
   });

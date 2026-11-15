@@ -14,7 +14,7 @@ func TestRunnerTableKeyColumnSwapsWithRows(t *testing.T) {
 	var rs []protocol.RunnerInfo
 	for i := 0; i < 3; i++ {
 		r := protocol.RunnerInfo{Id: protocol.RunnerID{Id: [16]byte{byte(i + 1)}}}
-		r.SetHostname([]byte("gmkhost"))
+		r.SetHostname([]byte("host1"))
 		r.SetKeyLabel([]byte("gmk"))
 		rs = append(rs, r)
 	}

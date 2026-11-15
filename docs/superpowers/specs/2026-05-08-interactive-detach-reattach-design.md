@@ -5,7 +5,7 @@ Date: 2026-05-08
 
 ## 1. Goal
 
-`harness-cli interactive` (PTY claude session) は client 切断時に runner 側 SIGHUP→SIGTERM→SIGKILL ladder で claude を kill する設計のため、user は対話継続のためにターミナルを開きっぱなしにする必要がある。3 ホスト分散構成 (Windows client / Raspberry Pi server / gmkhost runner) では Windows PC の起動継続が運用負荷になっている。
+`harness-cli interactive` (PTY claude session) は client 切断時に runner 側 SIGHUP→SIGTERM→SIGKILL ladder で claude を kill する設計のため、user は対話継続のためにターミナルを開きっぱなしにする必要がある。3 ホスト分散構成 (Windows client / Raspberry Pi server / host1 runner) では Windows PC の起動継続が運用負荷になっている。
 
 本 spec は v1 design (`2026-04-25-parallel-agent-harness-design.md` §11) で v2 ロードマップとして言及されていた **Session multiplexer (B 型)** を実装する。tmux 的な detach / reattach を interactive PTY セッションに与える。
 
@@ -457,7 +457,7 @@ yes "loud line: $(date -u +%s.%N)" | head -c 5000000
 
 ### 11.4 Manual smoke
 
-実構成 (Pi server / gmkhost runner / Windows client) で 1 セッションを通す:
+実構成 (Pi server / host1 runner / Windows client) で 1 セッションを通す:
 
 1. Windows から `session new`、claude と数往復。
 2. Windows のターミナルを閉じる (= ネット切断)。

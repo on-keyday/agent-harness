@@ -6,7 +6,7 @@
 
 **Architecture:** `MTUTracker` gains one downward transition fed by two detectors — non-probe packet loss (works while traffic flows) and a validation probe at the current size (works while idle) — plus a wake deadline so the machine runs at all on an idle connection. `sendStream`'s retransmit branch gains the ability to re-split a chunk captured at a larger budget, without which lowering the estimate changes nothing for data already in flight.
 
-**Tech Stack:** Go. Two repositories: `github.com/on-keyday/objtrsf` (checkout at `/home/kforfk/workspace/objtrsf`) for Tasks 1–5, this harness repo for Tasks 6–7. `scripts/netem-lab` for the end-to-end arms.
+**Tech Stack:** Go. Two repositories: `github.com/on-keyday/objtrsf` (checkout at `/home/user/workspace/objtrsf`) for Tasks 1–5, this harness repo for Tasks 6–7. `scripts/netem-lab` for the end-to-end arms.
 
 **Spec:** `docs/superpowers/specs/2026-09-17-plpmtud-downward-detection-design.md`
 
@@ -24,8 +24,8 @@
 ### Task 1: `MTUTracker` — separated loss counters and the fallback transition
 
 **Files:**
-- Modify: `/home/kforfk/workspace/objtrsf/trsf/mtu/plpmtud.go`
-- Test: `/home/kforfk/workspace/objtrsf/trsf/mtu/plpmtud_test.go`
+- Modify: `/home/user/workspace/objtrsf/trsf/mtu/plpmtud.go`
+- Test: `/home/user/workspace/objtrsf/trsf/mtu/plpmtud_test.go`
 
 **Interfaces:**
 - Consumes: nothing.
@@ -155,7 +155,7 @@ func TestTwoFallbacksInARowLeaveAConsistentState(t *testing.T) {
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `cd /home/kforfk/workspace/objtrsf && go test ./trsf/mtu/ -run 'Fallback|LateACK|LateLoss' -v`
+Run: `cd /home/user/workspace/objtrsf && go test ./trsf/mtu/ -run 'Fallback|LateACK|LateLoss' -v`
 Expected: FAIL to compile — `tr.fallBackToBase undefined`, `tr.Fallbacks undefined`.
 
 - [ ] **Step 3: Split the counter and add the fallback**
@@ -228,13 +228,13 @@ In the tests above, change `tr.fallBackToBase()` to `tr.FallBackToBase()`.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `cd /home/kforfk/workspace/objtrsf && go test ./trsf/... -run 'Fallback|LateACK|LateLoss|MTUD' -v`
+Run: `cd /home/user/workspace/objtrsf && go test ./trsf/... -run 'Fallback|LateACK|LateLoss|MTUD' -v`
 Expected: PASS, including the pre-existing `TestMTUD`.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/kforfk/workspace/objtrsf
+cd /home/user/workspace/objtrsf
 git add trsf/mtu/plpmtud.go trsf/mtu/plpmtud_test.go
 git commit -m "feat(mtu): one place where the estimate can go down
 
@@ -253,8 +253,8 @@ out and announce it as an increase."
 ### Task 2: `MTUTracker` — the data-loss verdict, with T from the RTT estimate
 
 **Files:**
-- Modify: `/home/kforfk/workspace/objtrsf/trsf/mtu/plpmtud.go`
-- Test: `/home/kforfk/workspace/objtrsf/trsf/mtu/plpmtud_test.go`
+- Modify: `/home/user/workspace/objtrsf/trsf/mtu/plpmtud.go`
+- Test: `/home/user/workspace/objtrsf/trsf/mtu/plpmtud_test.go`
 
 **Interfaces:**
 - Consumes: `fallBackToBase()` from Task 1.
@@ -392,7 +392,7 @@ func TestBlackHoleTimeoutScalesWithSRTTBetweenFloorAndCap(t *testing.T) {
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `cd /home/kforfk/workspace/objtrsf && go test ./trsf/mtu/ -run 'Healthy|LargeLost|LargeACKInside|NoACKs|AtOrBelowBase|BlackHoleTimeout' -v`
+Run: `cd /home/user/workspace/objtrsf && go test ./trsf/mtu/ -run 'Healthy|LargeLost|LargeACKInside|NoACKs|AtOrBelowBase|BlackHoleTimeout' -v`
 Expected: FAIL to compile — `NewMTUTracker` takes 3 arguments, and `OnLargePacketACKed`, `OnLargePacketLost`, `OnSmallPacketACKed`, `blackHoleTimeout` are undefined.
 
 - [ ] **Step 3: Implement the verdict**
@@ -535,13 +535,13 @@ Update `newTestTracker` from Task 1 to pass `nil` as well.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `cd /home/kforfk/workspace/objtrsf && go test ./trsf/... -v -run 'Healthy|LargeLost|LargeACKInside|NoACKs|AtOrBelowBase|BlackHoleTimeout|Fallback|LateACK|LateLoss|MTUD'`
+Run: `cd /home/user/workspace/objtrsf && go test ./trsf/... -v -run 'Healthy|LargeLost|LargeACKInside|NoACKs|AtOrBelowBase|BlackHoleTimeout|Fallback|LateACK|LateLoss|MTUD'`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/kforfk/workspace/objtrsf
+cd /home/user/workspace/objtrsf
 git add trsf/mtu/plpmtud.go trsf/mtu/plpmtud_test.go trsf/conn.go
 git commit -m "feat(mtu): a black hole is nothing large getting through, not three losses
 
@@ -562,8 +562,8 @@ stretches away from detection precisely during a black hole."
 ### Task 3: `MTUTracker` — validation probes, `NextDeadline`, and BASE unusable
 
 **Files:**
-- Modify: `/home/kforfk/workspace/objtrsf/trsf/mtu/plpmtud.go`
-- Test: `/home/kforfk/workspace/objtrsf/trsf/mtu/plpmtud_test.go`
+- Modify: `/home/user/workspace/objtrsf/trsf/mtu/plpmtud.go`
+- Test: `/home/user/workspace/objtrsf/trsf/mtu/plpmtud_test.go`
 
 **Interfaces:**
 - Consumes: `fallBackToBase()`, `blackHoleTimeout()`.
@@ -694,7 +694,7 @@ func TestTrackerInvariantsHoldForAnyConfiguredBounds(t *testing.T) {
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `cd /home/kforfk/workspace/objtrsf && go test ./trsf/mtu/ -run 'Validation|NextDeadline|ConvergedAtMax|BaseUnusable|Invariants' -v`
+Run: `cd /home/user/workspace/objtrsf && go test ./trsf/mtu/ -run 'Validation|NextDeadline|ConvergedAtMax|BaseUnusable|Invariants' -v`
 Expected: FAIL — `NextDeadline` and `BaseUnusable` undefined; the validation tests fail because `Probe` returns -1 once converged at or above max.
 
 - [ ] **Step 3: Implement validation and the deadline**
@@ -858,13 +858,13 @@ Add the fields `validating bool` and `baseUnusable atomic.Uint64`, and clear `va
 
 - [ ] **Step 4: Run the whole package**
 
-Run: `cd /home/kforfk/workspace/objtrsf && go test ./trsf/... -count=1`
+Run: `cd /home/user/workspace/objtrsf && go test ./trsf/... -count=1`
 Expected: PASS. If `TestPeakGoroutines` fails, check the printed peak — near the limit is host load and not this change; five hundred is a real regression.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/kforfk/workspace/objtrsf
+cd /home/user/workspace/objtrsf
 git add trsf/mtu/plpmtud.go trsf/mtu/plpmtud_test.go
 git commit -m "feat(mtu): validate the size in use, and say when the base itself will not cross
 
@@ -890,9 +890,9 @@ parked)."
 ### Task 4: Wire the tracker into `Streams`
 
 **Files:**
-- Modify: `/home/kforfk/workspace/objtrsf/trsf/conn.go` (`nextWakeDeadline` at :653, `NewStreams` at :1256, `GetInternalState` at :341, the stream-data `SentPacket` construction around :940-1000)
-- Modify: `/home/kforfk/workspace/objtrsf/trsf/api.go` (the `InternalState` struct)
-- Test: `/home/kforfk/workspace/objtrsf/trsf/mtu_wiring_test.go` (create)
+- Modify: `/home/user/workspace/objtrsf/trsf/conn.go` (`nextWakeDeadline` at :653, `NewStreams` at :1256, `GetInternalState` at :341, the stream-data `SentPacket` construction around :940-1000)
+- Modify: `/home/user/workspace/objtrsf/trsf/api.go` (the `InternalState` struct)
+- Test: `/home/user/workspace/objtrsf/trsf/mtu_wiring_test.go` (create)
 
 **Interfaces:**
 - Consumes: `NextDeadline`, `OnLargePacketACKed`, `OnSmallPacketACKed`, `OnLargePacketLost`, `Fallbacks`, `BaseUnusable`.
@@ -962,7 +962,7 @@ If `newTestPacketNumberIssuer` does not exist, use whatever `throughput_test.go`
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cd /home/kforfk/workspace/objtrsf && go test ./trsf/ -run 'IdleConnection|IdleStreamTransport|InternalStateCarriesTheMTU' -v`
+Run: `cd /home/user/workspace/objtrsf && go test ./trsf/ -run 'IdleConnection|IdleStreamTransport|InternalStateCarriesTheMTU' -v`
 Expected: FAIL — `InternalState.MTUFallbacks` undefined, and `nextWakeDeadline` returns nothing for an idle connection.
 
 - [ ] **Step 3: Wire it**
@@ -1024,13 +1024,13 @@ Feed the detector from the stream-data `SentPacket` callbacks. In `conn.go` wher
 
 - [ ] **Step 4: Run the tests**
 
-Run: `cd /home/kforfk/workspace/objtrsf && go test ./trsf/... -count=1`
+Run: `cd /home/user/workspace/objtrsf && go test ./trsf/... -count=1`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/kforfk/workspace/objtrsf
+cd /home/user/workspace/objtrsf
 git add trsf/conn.go trsf/api.go trsf/mtu_wiring_test.go
 git commit -m "feat(trsf): give the MTU tracker a wake deadline and real packet evidence
 
@@ -1052,8 +1052,8 @@ constructed ten lines after NewMTUTracker was called."
 ### Task 5: Re-split a retransmit that no longer fits
 
 **Files:**
-- Modify: `/home/kforfk/workspace/objtrsf/trsf/send_stream.go:265-282`
-- Test: `/home/kforfk/workspace/objtrsf/trsf/send_stream_split_test.go` (create)
+- Modify: `/home/user/workspace/objtrsf/trsf/send_stream.go:265-282`
+- Test: `/home/user/workspace/objtrsf/trsf/send_stream_split_test.go` (create)
 
 **Interfaces:**
 - Consumes: nothing from earlier tasks.
@@ -1216,7 +1216,7 @@ func TestSplitReplacesTheOriginalInSentRanges(t *testing.T) {
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `cd /home/kforfk/workspace/objtrsf && go test ./trsf/ -run 'Retransmit|Split|BudgetTooSmall|EofOnly' -v`
+Run: `cd /home/user/workspace/objtrsf && go test ./trsf/ -run 'Retransmit|Split|BudgetTooSmall|EofOnly' -v`
 Expected: FAIL — the first fragment comes back at 1200 bytes against a 600 budget.
 
 - [ ] **Step 3: Implement the split**
@@ -1315,13 +1315,13 @@ Re-verify the head's encoded size: `n` is derived from the header width for the 
 
 - [ ] **Step 4: Run the tests**
 
-Run: `cd /home/kforfk/workspace/objtrsf && go test ./trsf/... -count=1`
+Run: `cd /home/user/workspace/objtrsf && go test ./trsf/... -count=1`
 Expected: PASS, including the throughput rungs' correctness assertions.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/kforfk/workspace/objtrsf
+cd /home/user/workspace/objtrsf
 git add trsf/send_stream.go trsf/send_stream_split_test.go
 git commit -m "fix(trsf): a retransmission can be re-split to the current budget
 
@@ -1342,7 +1342,7 @@ was never acknowledged."
 ### Task 6: Land `objtrsf`, bump the harness, carry the counters
 
 **Files:**
-- Modify: `/home/kforfk/workspace/remote-agent-harness/.harness-worktrees/<this-worktree>/go.mod`, `go.sum`
+- Modify: `/home/user/workspace/remote-agent-harness/.harness-worktrees/<this-worktree>/go.mod`, `go.sum`
 - Modify: `runner/protocol/message.bgn` (the `TrsfCounterKey` enum)
 - Modify: `runner/protocol/trsf_row.go` (the `add(...)` block around :24-30)
 - Regenerate: `runner/protocol/message.go`
@@ -1355,11 +1355,11 @@ was never acknowledged."
 - [ ] **Step 1: Land objtrsf and bump**
 
 ```bash
-cd /home/kforfk/workspace/objtrsf
+cd /home/user/workspace/objtrsf
 go test ./... -count=1
 git log --oneline -6
 # FF-push to trunk per the recorded policy for this repo, then:
-cd /home/kforfk/workspace/remote-agent-harness/.harness-worktrees/<this-worktree>
+cd /home/user/workspace/remote-agent-harness/.harness-worktrees/<this-worktree>
 go get github.com/on-keyday/objtrsf@<new-sha>
 go mod tidy
 ```
@@ -1486,7 +1486,7 @@ RC=$(... exec cli -- harness-cli --server-cid "$CID" conns | awk '$2=="runner"{p
 `mock` is **not** a free control here: unlike the datagram frame, this change is inside `trsf` itself including the run loop's wake computation, so both rungs can legitimately move.
 
 ```bash
-cd /home/kforfk/workspace/objtrsf
+cd /home/user/workspace/objtrsf
 git stash list   # ensure a clean tree; use a WIP commit, never a bare stash
 go test -c ./trsf -o /tmp/trsf-BEFORE.test   # built at the pre-Task-1 commit
 go test -c ./trsf -o /tmp/trsf-AFTER.test

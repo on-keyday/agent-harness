@@ -260,17 +260,17 @@ func TestRegistryOnRemovePassesSnapshot(t *testing.T) {
 func TestRegistryCandidatesSelectorByHostname(t *testing.T) {
 	r := NewRegistry()
 	now := time.Now()
-	r.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "gmkhost", AllowedRoots: []string{"/x/repo"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now})
+	r.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "host1", AllowedRoots: []string{"/x/repo"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now})
 	r.Add(&RunnerEntry{ID: tcid("B"), Identity: testRunnerID("B"), Hostname: "raspi", AllowedRoots: []string{"/x/repo"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now})
 
 	sel := protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_ByHostname}
 	h := protocol.Hostname{}
-	h.SetName([]byte("gmkhost"))
+	h.SetName([]byte("host1"))
 	sel.SetHostname(h)
 
 	cs := r.Candidates("/x/repo", sel)
 	if len(cs) != 1 || cs[0].ID != tcid("A") {
-		t.Fatalf("expected only A (gmkhost), got %v", cs)
+		t.Fatalf("expected only A (host1), got %v", cs)
 	}
 }
 

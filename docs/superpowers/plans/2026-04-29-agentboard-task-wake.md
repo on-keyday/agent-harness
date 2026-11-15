@@ -935,7 +935,7 @@ Expected: PASS (excluding the pre-existing `TestSubmitFakeClaudeE2E` failure not
 
 - [ ] **Step 2: Smoke against a live setup**
 
-If two agent-runners are running on this server (e.g. gmkhost and LAPTOP-7BRPQ9US):
+If two agent-runners are running on this server (e.g. host1 and LAPTOP-7BRPQ9US):
 
 ```bash
 # Terminal A (host-A's task):

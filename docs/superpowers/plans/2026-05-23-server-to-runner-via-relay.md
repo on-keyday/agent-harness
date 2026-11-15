@@ -254,7 +254,7 @@ func TestRelayPOC(t *testing.T) {
 - [ ] **Step 2: Run the POC**
 
 ```bash
-cd /home/kforfk/workspace/remote-agent-harness
+cd /home/user/workspace/remote-agent-harness
 go test -tags integration ./integration/ -run TestRelayPOC -v -count=1
 ```
 

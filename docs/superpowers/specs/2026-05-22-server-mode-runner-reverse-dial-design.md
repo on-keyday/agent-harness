@@ -165,7 +165,7 @@ agent-runner [--listen <host:port>] [--udp-listen <host:port>] \
 
 ```
 harness-cli server dial-runner <runner-cid> [--server-cid <server-cid>]
-  # runner-cid: 既存 --server-cid と同じ書式 (例: ws:192.168.3.10:8540-*, udp:192.168.3.10:8541-*)
+  # runner-cid: 既存 --server-cid と同じ書式 (例: ws:192.0.2.10:8540-*, udp:192.0.2.10:8541-*)
   # --server-cid は既存の HARNESS_SERVER_CID env と同じ解決ルール (admin が CLI を打つ先)。
   # stdout: "ok" or "error: <DialRunnerStatus>"
 ```

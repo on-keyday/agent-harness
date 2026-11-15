@@ -349,7 +349,7 @@ harness-cli server dial-runner <target-cid> [--via <proxy-cid>] [--server-cid <s
 例:
 ```
 # ls で見えた id をそのまま via に渡す
-harness-cli --server-cid ws:A:8549-* server dial-runner ws:C:8540-* --via ws:192.168.3.14:52036-51357
+harness-cli --server-cid ws:A:8549-* server dial-runner ws:C:8540-* --via ws:192.0.2.14:52036-51357
 ```
 
 ### TUI / WebUI

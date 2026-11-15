@@ -22,7 +22,7 @@ Arguments: $ARGUMENTS
    - `ps -p <pid> -o args=` to confirm it's alive and extract its `--roots` argument. If the process is dead but the pid file exists → flag as stale, proceed with `down` for cleanup only.
 
 3. **Self-kill protection** (HARD ABORT if matched):
-   - This task is itself being served by the runner identified by `$HARNESS_RUNNER_ID` (e.g. `ws:192.168.3.14:NNNNN-NNNNN`).
+   - This task is itself being served by the runner identified by `$HARNESS_RUNNER_ID` (e.g. `ws:192.0.2.14:NNNNN-NNNNN`).
    - Cross-check the target slot's pid / roots against `$HARNESS_RUNNER_ID` and `$HARNESS_REPO_PATH`. If the target runner serves the current task, **abort** and explain that downing it would SIGTERM this very claude process.
    - When in doubt, prompt the user before proceeding.
 

@@ -13,7 +13,7 @@ Companion measurement: `docs/superpowers/specs/2026-09-06-direct-client-runner-d
 
 ## Global Constraints
 
-- **Work in the parent repo** `/home/kforfk/workspace/remote-agent-harness/`, not in a `.harness-worktrees/<hash>/` directory. Absolute paths under the parent route to the parent checkout (Pitfall 8).
+- **Work in the parent repo** `/home/user/workspace/remote-agent-harness/`, not in a `.harness-worktrees/<hash>/` directory. Absolute paths under the parent route to the parent checkout (Pitfall 8).
 - **Schema lives in one task.** Every `.bgn` addition this feature needs is Task 1. No later task edits `message.bgn` (`feedback_no_split_schemas`).
 - **Regenerate with `make protoregen`**, never by hand-editing `runner/protocol/message.go`.
 - **Verify with make targets**: `make check`, `make vet`, `make test` — not ad-hoc `go build ./...` (`feedback_verify_with_make_targets_not_adhoc`).

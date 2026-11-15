@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- The work happens in the harness worktree `/home/kforfk/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd`, on branch `harness/70fbad4a6eb6f1e992be8a669f1bcefd`. Use that absolute path for every edit; a bare `/home/kforfk/workspace/remote-agent-harness/<rel>` path writes to the PARENT checkout.
+- The work happens in the harness worktree `/home/user/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd`, on branch `harness/70fbad4a6eb6f1e992be8a669f1bcefd`. Use that absolute path for every edit; a bare `/home/user/workspace/remote-agent-harness/<rel>` path writes to the PARENT checkout.
 - Read `.claude/skills/implementation-pitfalls/SKILL.md` in full before writing code.
 - Compile-check with `go build ./...` or `go vet`; never a bare `go build ./cmd/<x>/` (drops a binary in the tree). Verify with `make vet` and `make test` at the end of every task.
 - Over UDP a control message larger than ~1170 bytes is dropped silently; the ambiguous responses must be fixed-size (§1).
@@ -104,9 +104,9 @@ import "testing"
 func candidateFixture(host string, id byte, profiles ...string) RunnerCandidate {
 	var c RunnerCandidate
 	c.RunnerId.Id[0] = id
-	c.SetCid([]byte("ws:192.168.3.14:52826-39936"))
+	c.SetCid([]byte("ws:192.0.2.14:52826-39936"))
 	c.SetHostname([]byte(host))
-	c.SetMatchedRoot([]byte("/home/kforfk/workspace/sisaku-security/rule-review"))
+	c.SetMatchedRoot([]byte("/home/user/workspace/sisaku-security/rule-review"))
 	c.ActiveTasks, c.MaxTasks = 2, 8
 	names := make([]AgentProfileName, len(profiles))
 	for i, p := range profiles {
@@ -122,8 +122,8 @@ var elevenProfiles = []string{"claude", "codex", "agy", "opencode", "pi", "bash"
 func TestRunnerCandidatesBodyRoundTrip(t *testing.T) {
 	var body RunnerCandidatesBody
 	body.SetCandidates([]RunnerCandidate{
-		candidateFixture("gmkhost", 1, elevenProfiles...),
-		candidateFixture("gmkhost", 2, elevenProfiles...),
+		candidateFixture("host1", 1, elevenProfiles...),
+		candidateFixture("host1", 2, elevenProfiles...),
 	})
 	raw, err := body.EncodeCopy(nil)
 	if err != nil {
@@ -629,8 +629,8 @@ Rewrite `cmd/harness-cli/session_ambiguous_test.go`:
 ```go
 func TestFormatAmbiguousCandidates(t *testing.T) {
 	out := formatAmbiguousCandidates([]cli.RunnerCandidate{
-		{RunnerID: strings.Repeat("a", 32), Cid: "ws:h:1-1", Hostname: "gmkhost", MatchedRoot: "/r", MaxTasks: 8, Profiles: []string{"claude", "codex"}},
-		{Cid: "ws:h:2-2", Hostname: "gmkhost", MatchedRoot: "/r", MaxTasks: 8, Profiles: []string{"claude"}},
+		{RunnerID: strings.Repeat("a", 32), Cid: "ws:h:1-1", Hostname: "host1", MatchedRoot: "/r", MaxTasks: 8, Profiles: []string{"claude", "codex"}},
+		{Cid: "ws:h:2-2", Hostname: "host1", MatchedRoot: "/r", MaxTasks: 8, Profiles: []string{"claude"}},
 	})
 	for _, want := range []string{"2 runners", "--runner " + strings.Repeat("a", 32), "--agent <claude|codex>", "--runner ws:h:2-2"} {
 		if !strings.Contains(out, want) {

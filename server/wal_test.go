@@ -68,7 +68,7 @@ func TestWALReplayRestoresSelectorAndBoundRunner(t *testing.T) {
 	}
 	sel := protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_ByHostname}
 	var hn protocol.Hostname
-	hn.SetName([]byte("gmkhost"))
+	hn.SetName([]byte("host1"))
 	sel.SetHostname(hn)
 	if err := wal.Write(WALEvent{
 		Type:          "task_created",
@@ -98,7 +98,7 @@ func TestWALReplayRestoresSelectorAndBoundRunner(t *testing.T) {
 	}
 	// Verify the hostname payload survived the round-trip.
 	hn2 := e.Selector.Hostname()
-	if hn2 == nil || string(hn2.Name) != "gmkhost" {
+	if hn2 == nil || string(hn2.Name) != "host1" {
 		t.Fatalf("Hostname lost in round-trip: %+v", hn2)
 	}
 }
@@ -144,7 +144,7 @@ func TestWALEventJSONRoundTripCopiesEveryField(t *testing.T) {
 	// above does rather than leaving it half-set.
 	sel := protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_ByHostname}
 	var hn protocol.Hostname
-	hn.SetName([]byte("gmkhost"))
+	hn.SetName([]byte("host1"))
 	sel.SetHostname(hn)
 	in := WALEvent{
 		Type:          "task_created",

@@ -425,8 +425,8 @@ the flags that pin it:
 
 ```
 ambiguous runner: 2 runners match this repo; re-run with the flags shown:
-  gmkhost            [1/8]  /path/to/repo  --runner <32-hex id> --agent <claude|codex>
-  gmkhost            [0/8]  /path/to/repo  --runner <32-hex id> --agent <claude>
+  host1            [1/8]  /path/to/repo  --runner <32-hex id> --agent <claude|codex>
+  host1            [0/8]  /path/to/repo  --runner <32-hex id> --agent <claude>
 ```
 
 Re-run with one line's `--runner` and one of its `--agent` names. Pass

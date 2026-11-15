@@ -47,7 +47,7 @@ func TestBuildSelectorAny(t *testing.T) {
 
 // TestBuildSelectorByHostname verifies hostname selector construction.
 func TestBuildSelectorByHostname(t *testing.T) {
-	sel, err := buildSelector(SelectorOpts{Host: "gmkhost"})
+	sel, err := buildSelector(SelectorOpts{Host: "host1"})
 	if err != nil {
 		t.Fatalf("buildSelector host: %v", err)
 	}
@@ -55,7 +55,7 @@ func TestBuildSelectorByHostname(t *testing.T) {
 		t.Errorf("expected ByHostname, got %v", sel.Kind)
 	}
 	h := sel.Hostname()
-	if h == nil || string(h.Name) != "gmkhost" {
+	if h == nil || string(h.Name) != "host1" {
 		t.Errorf("hostname mismatch: %v", h)
 	}
 }

@@ -16,7 +16,7 @@
 - The types MOVE (V9): `server.Scope` / `server.ScopeOverride` become `authority.Scope` / `authority.ScopeOverride` at every use. No type alias, no wrapper type left in `server`.
 - No behaviour change, on any surface: same decisions on every gated request, same WAL bytes, same `ls` / `whoami` / tree / caps-audit output. A changed output is a defect of this plan, not a fix.
 - The WAL projection (`applyToWAL`, `scopeFromWAL`, including the legacy `board_observe` → global-visibility migration) stays in `server`.
-- Work in the worktree `/home/kforfk/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd`; absolute paths under the bare repo root route to the parent checkout.
+- Work in the worktree `/home/user/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd`; absolute paths under the bare repo root route to the parent checkout.
 - Compile checks with `go build ./...` / `go vet ./...` (no binaries in the tree). Run `make test` with the task env scrubbed: `env -u HARNESS_SERVER_PUBKEY -u HARNESS_SERVER_CID -u HARNESS_AUTH_TICKET -u HARNESS_TASK_ID make test` — two integration tests fail otherwise for reasons unrelated to any diff.
 
 ## Review Focus

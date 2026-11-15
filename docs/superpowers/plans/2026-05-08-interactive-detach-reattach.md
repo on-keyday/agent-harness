@@ -1749,13 +1749,13 @@ go test -tags integration ./integration/... -v
 
 ### Manual smoke (3-host config)
 
-`project_deployment_topology` 通り Pi server / gmkhost runner / Windows client。
+`project_deployment_topology` 通り Pi server / host1 runner / Windows client。
 
 1. server 起動 (Pi):
    ```bash
    bin/harness-server --listen :8539 --data-dir ./harness-data
    ```
-2. runner 起動 (gmkhost):
+2. runner 起動 (host1):
    ```bash
    bin/agent-runner --server-cid 'ws:RASPI:8539-*' --roots /repo --max-tasks 4
    ```
@@ -1764,7 +1764,7 @@ go test -tags integration ./integration/... -v
    harness-cli session new --repo /repo
    ```
 4. claude と数往復、Windows ターミナルを閉じる。
-5. 別端末 (例: gmkhost で SSH したシェル) から:
+5. 別端末 (例: host1 で SSH したシェル) から:
    ```bash
    harness-cli session ls
    harness-cli session attach <id>

@@ -136,7 +136,7 @@ the response's candidates into `[]cli.RunnerCandidate` and return
 **TUI** (`tui/`): a new small picker model (following the existing
 `popup` / `boardModal` / `filepicker` conventions). When
 `InteractiveReadyMsg.Err` is an `*AmbiguousRunnerError`, open the picker
-listing candidates as e.g. `gmkhost  [2/8]  /home/.../harness   ws:...-30218`.
+listing candidates as e.g. `host1  [2/8]  /home/.../harness   ws:...-30218`.
 On selection, re-issue the same resume/open command pinned to
 `SelectorOpts{Runner: chosen.Cid}`.
 

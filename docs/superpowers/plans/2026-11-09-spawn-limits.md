@@ -21,7 +21,7 @@
 - Refusal status `spawn_limit` with `error_msg` (D12), text verbatim from Task 3.
 - Flags `--spawn-depth N|unbounded`, `--max-descendants N|unbounded` (D15).
 - Prune is not touched (D10).
-- Work in `/home/kforfk/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd`. Run tests with `env -u HARNESS_SERVER_PUBKEY -u HARNESS_SERVER_CID -u HARNESS_AUTH_TICKET -u HARNESS_TASK_ID`.
+- Work in `/home/user/workspace/remote-agent-harness/.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd`. Run tests with `env -u HARNESS_SERVER_PUBKEY -u HARNESS_SERVER_CID -u HARNESS_AUTH_TICKET -u HARNESS_TASK_ID`.
 
 ## Decisions this plan adds (spec silent or amended)
 

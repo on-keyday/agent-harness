@@ -5,9 +5,9 @@ import "testing"
 func candidateFixture(host string, id byte, profiles ...string) RunnerCandidate {
 	var c RunnerCandidate
 	c.RunnerId.Id[0] = id
-	c.SetCid([]byte("ws:192.168.3.14:52826-39936"))
+	c.SetCid([]byte("ws:192.0.2.14:52826-39936"))
 	c.SetHostname([]byte(host))
-	c.SetMatchedRoot([]byte("/home/kforfk/workspace/sisaku-security/rule-review"))
+	c.SetMatchedRoot([]byte("/home/user/workspace/sisaku-security/rule-review"))
 	c.ActiveTasks, c.MaxTasks = 2, 8
 	names := make([]AgentProfileName, len(profiles))
 	for i, p := range profiles {
@@ -23,8 +23,8 @@ var elevenProfiles = []string{"claude", "codex", "agy", "opencode", "pi", "bash"
 func TestRunnerCandidatesBodyRoundTrip(t *testing.T) {
 	var body RunnerCandidatesBody
 	body.SetCandidates([]RunnerCandidate{
-		candidateFixture("gmkhost", 1, elevenProfiles...),
-		candidateFixture("gmkhost", 2, elevenProfiles...),
+		candidateFixture("host1", 1, elevenProfiles...),
+		candidateFixture("host1", 2, elevenProfiles...),
 	})
 	raw, err := body.EncodeCopy(nil)
 	if err != nil {

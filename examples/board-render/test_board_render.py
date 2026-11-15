@@ -38,7 +38,7 @@ def record(**overrides) -> dict:
         "from": {
             "runner_id": "r1",
             "task_id": "70fbad4a6eb6f1e992be8a669f1bcefd",
-            "hostname": "gmkhost",
+            "hostname": "host1",
             "agent": "claude",
         },
     }
@@ -54,7 +54,7 @@ def render(*records) -> tuple[str, list[str], int]:
 class HeaderTest(unittest.TestCase):
     def test_header_composition(self) -> None:
         out, _, _ = render(record())
-        self.assertIn("#1 chat.abc12345  from=claude@gmkhost task=70fbad4a", out)
+        self.assertIn("#1 chat.abc12345  from=claude@host1 task=70fbad4a", out)
 
     def test_server_originated_agent_is_a_question_mark(self) -> None:
         rec = record()
@@ -75,7 +75,7 @@ class HeaderTest(unittest.TestCase):
 
     def test_agent_kind_renders_as_before(self) -> None:
         out, _, _ = render(record(sender_kind="agent"))
-        self.assertIn("from=claude@gmkhost task=70fbad4a", out)
+        self.assertIn("from=claude@host1 task=70fbad4a", out)
 
     def test_in_reply_to_appended_when_nonzero(self) -> None:
         out, _, _ = render(record(in_reply_to=41))
@@ -135,13 +135,13 @@ class NestingTest(unittest.TestCase):
         out, _, _ = render(record(seq=5, in_reply_to=99))
         self.assertIn("#5 chat.abc12345", out)
         headers = [l for l in out.split("\n") if l.strip().startswith("#")]
-        self.assertEqual(headers, ["#5 chat.abc12345  from=claude@gmkhost task=70fbad4a  in-reply-to=#99"])
+        self.assertEqual(headers, ["#5 chat.abc12345  from=claude@host1 task=70fbad4a  in-reply-to=#99"])
 
     def test_reply_to_later_seq_is_also_orphaned(self) -> None:
         out, _, _ = render(record(seq=7, in_reply_to=9), record(seq=9))
         self.assertIn("#7 chat.abc12345", out)
         headers = [l for l in out.split("\n") if l.strip().startswith("#")]
-        self.assertEqual(headers[0], "#7 chat.abc12345  from=claude@gmkhost task=70fbad4a  in-reply-to=#9")
+        self.assertEqual(headers[0], "#7 chat.abc12345  from=claude@host1 task=70fbad4a  in-reply-to=#9")
 
 
 class SanitizationTest(unittest.TestCase):

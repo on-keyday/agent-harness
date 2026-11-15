@@ -32,7 +32,7 @@
   "                         │                                                                                                                                                                                       ▕",
   " ● remote-agent-harness  │  一方 「herdr 内では idle が取れない」は私の未検証の推測です。取るには私が idle の間に外から撮るしかないので、バックグラウンドで撮っておきます。                                      ▕",
   "   claude                │                                                                                                                                                                                       ▕",
-  "                         │● Bash(D=/tmp/claude-1000/-home-kforfk-workspace-remote-agent-harness/e2d8c019-4621-40ed-8f17-469d6484049d/scratchpad                                                                  ▕",
+  "                         │● Bash(D=/tmp/claude-1000/-home-user-workspace-remote-agent-harness/e2d8c019-4621-40ed-8f17-469d6484049d/scratchpad                                                                  ▕",
   "                         │      for i in 1 2 3 4 5; do…)                                                                                                                                                         ▕",
   "                         │  ⎿  Running in the background (↓ to manage)                                                                                                                                           ▕",
   "                         │  ⎿  Allowed by auto mode classifier                                                                                                                                                   ▕",

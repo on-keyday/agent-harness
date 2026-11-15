@@ -101,8 +101,8 @@ import "testing"
 
 func TestOpenInteractiveResponseCandidatesRoundTrip(t *testing.T) {
 	var c RunnerCandidate
-	c.SetCid([]byte("ws:192.168.3.14:34184-30218"))
-	c.SetHostname([]byte("gmkhost-codex"))
+	c.SetCid([]byte("ws:192.0.2.14:34184-30218"))
+	c.SetHostname([]byte("host1-codex"))
 	c.SetMatchedRoot([]byte("/home/x/repo"))
 	c.ActiveTasks = 2
 	c.MaxTasks = 8
@@ -122,8 +122,8 @@ func TestOpenInteractiveResponseCandidatesRoundTrip(t *testing.T) {
 	if got.Status != OpenInteractiveStatus_AmbiguousRunner || len(got.Candidates) != 1 {
 		t.Fatalf("status=%v candidates=%d", got.Status, len(got.Candidates))
 	}
-	if string(got.Candidates[0].Cid) != "ws:192.168.3.14:34184-30218" ||
-		string(got.Candidates[0].Hostname) != "gmkhost-codex" ||
+	if string(got.Candidates[0].Cid) != "ws:192.0.2.14:34184-30218" ||
+		string(got.Candidates[0].Hostname) != "host1-codex" ||
 		got.Candidates[0].ActiveTasks != 2 || got.Candidates[0].MaxTasks != 8 {
 		t.Fatalf("candidate mismatch: %+v", got.Candidates[0])
 	}
@@ -309,7 +309,7 @@ import (
 func TestCandidatesFromResponse(t *testing.T) {
 	var c protocol.RunnerCandidate
 	c.SetCid([]byte("ws:10.0.0.2:1-1"))
-	c.SetHostname([]byte("gmkhost-codex"))
+	c.SetHostname([]byte("host1-codex"))
 	c.SetMatchedRoot([]byte("/home/x/repo"))
 	c.ActiveTasks = 3
 	c.MaxTasks = 8
@@ -320,7 +320,7 @@ func TestCandidatesFromResponse(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("len=%d want 1", len(got))
 	}
-	if got[0].Cid != "ws:10.0.0.2:1-1" || got[0].Hostname != "gmkhost-codex" ||
+	if got[0].Cid != "ws:10.0.0.2:1-1" || got[0].Hostname != "host1-codex" ||
 		got[0].MatchedRoot != "/home/x/repo" || got[0].ActiveTasks != 3 || got[0].MaxTasks != 8 {
 		t.Fatalf("mapping mismatch: %+v", got[0])
 	}
@@ -709,10 +709,10 @@ import (
 
 func TestFormatAmbiguousCandidates(t *testing.T) {
 	out := formatAmbiguousCandidates([]cli.RunnerCandidate{
-		{Cid: "ws:10.0.0.1:1-1", Hostname: "gmkhost", MatchedRoot: "/repo", ActiveTasks: 1, MaxTasks: 8},
-		{Cid: "ws:10.0.0.2:1-1", Hostname: "gmkhost-codex", MatchedRoot: "/repo", ActiveTasks: 0, MaxTasks: 8},
+		{Cid: "ws:10.0.0.1:1-1", Hostname: "host1", MatchedRoot: "/repo", ActiveTasks: 1, MaxTasks: 8},
+		{Cid: "ws:10.0.0.2:1-1", Hostname: "host1-codex", MatchedRoot: "/repo", ActiveTasks: 0, MaxTasks: 8},
 	})
-	for _, want := range []string{"ws:10.0.0.1:1-1", "gmkhost-codex", "--runner", "/repo"} {
+	for _, want := range []string{"ws:10.0.0.1:1-1", "host1-codex", "--runner", "/repo"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output missing %q:\n%s", want, out)
 		}
@@ -927,7 +927,7 @@ function pickRunnerAndRetry(candidates, baseReq) {
 Run: `make webui-build`
 Expected: builds `webui/static/main.wasm` + refreshes `wasm_exec.js`.
 
-- [ ] **Step 7: Playwright verification.** With two runners registered on the same repo roots (e.g. the live `gmkhost` + `gmkhost-codex` on `remote-agent-harness`), open the WebUI, start an interactive session with host = "(any)", and confirm: (a) the runner-picker modal appears listing both candidates with `[active/max]` + cid; (b) clicking one opens the session on that runner; (c) `session ls` / tasks show the task bound to the chosen runner. Screenshot desktop + 390px width (dark theme). Capture before/after.
+- [ ] **Step 7: Playwright verification.** With two runners registered on the same repo roots (e.g. the live `host1` + `host1-codex` on `remote-agent-harness`), open the WebUI, start an interactive session with host = "(any)", and confirm: (a) the runner-picker modal appears listing both candidates with `[active/max]` + cid; (b) clicking one opens the session on that runner; (c) `session ls` / tasks show the task bound to the chosen runner. Screenshot desktop + 390px width (dark theme). Capture before/after.
 
 - [ ] **Step 8: Commit**
 
@@ -964,7 +964,7 @@ Expected: all `ok`. If `server` fails on `TestHandleOpenPortForward_RemoteRegist
 Run: `make build`
 Expected: emits `bin/agent-runner`, `bin/harness-cli`, `bin/harness-server`, `bin/harness-tui` + wasm.
 
-- [ ] **Step 5: TUI smoke (live).** Resume a terminal interactive task on `remote-agent-harness` from the TUI with `r` while both `gmkhost` and `gmkhost-codex` runners are up; confirm the picker appears, selection pins, and the session attaches. (The resume ladder from 98a8286 first tries the last-runner pin; force the picker by resuming a task whose last runner has since been differentiated, or by using `S` for a fresh Any open.)
+- [ ] **Step 5: TUI smoke (live).** Resume a terminal interactive task on `remote-agent-harness` from the TUI with `r` while both `host1` and `host1-codex` runners are up; confirm the picker appears, selection pins, and the session attaches. (The resume ladder from 98a8286 first tries the last-runner pin; force the picker by resuming a task whose last runner has since been differentiated, or by using `S` for a fresh Any open.)
 
 **Landing:** after all tasks pass, land via the `landing-to-main` skill (Mode A: FF-push the task branch to `origin/main`, advance local main, `make build` in the main checkout). Do not land partial work.
 

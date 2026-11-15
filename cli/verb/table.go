@@ -883,7 +883,7 @@ var Verbs = []VerbSpec{
 			{Name: "label", Type: FlagString, Default: "", Field: "Label",
 				Help: "a name for the key, shown by `runner keys` and on runner rows (empty keeps an enrolled key's label)"},
 		},
-		Examples: []string{"runner enroll 3f9c01ab7e2d4c5a9b8f6e1d0c2b3a4958675a4b3c2d1e0f9a8b7c6d5e4f3a2b --label gmkhost"},
+		Examples: []string{"runner enroll 3f9c01ab7e2d4c5a9b8f6e1d0c2b3a4958675a4b3c2d1e0f9a8b7c6d5e4f3a2b --label host1"},
 	},
 	{
 		Path:           []string{"runner", "keys"},
