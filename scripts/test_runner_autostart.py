@@ -79,5 +79,45 @@ class RegisterLinuxTest(unittest.TestCase):
         self.assertIn("disabled", err)
 
 
+class PathDriftTest(unittest.TestCase):
+    """A registered unit carries the PATH of the shell that registered it, as a
+    literal Environment=PATH= line; restarting the unit restores it verbatim.
+    All 12 units once had a stale opencode install ahead of /usr/bin, so every
+    runner-spawned opencode stayed the old build after the new one was
+    installed. path_drift names what a unit's PATH resolves differently."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        t = Path(self._tmp.name)
+        self.old, self.new = t / "old", t / "new"
+        for d in (self.old, self.new):
+            d.mkdir()
+            exe = d / "tool"
+            exe.write_text("#!/bin/sh\n")
+            exe.chmod(0o755)
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def test_same_resolution_is_clean(self) -> None:
+        self.assertEqual(ra.path_drift(f"{self.new}", f"{self.new}", ["tool"]), [])
+
+    def test_a_shadowing_entry_is_named_with_both_paths(self) -> None:
+        problems = ra.path_drift(f"{self.old}:{self.new}", f"{self.new}", ["tool"])
+        self.assertEqual(len(problems), 1)
+        self.assertIn(str(self.old / "tool"), problems[0])
+        self.assertIn(str(self.new / "tool"), problems[0])
+
+    def test_a_missing_directory_alone_is_not_a_problem(self) -> None:
+        # lookup skips it, so it changes nothing; reporting it buried the real
+        # findings under dead plugin-cache entries on the first live run
+        gone = Path(self._tmp.name) / "gone"
+        self.assertEqual(ra.path_drift(f"{gone}:{self.new}", f"{self.new}", ["tool"]), [])
+
+    def test_a_tool_found_only_by_the_shell_is_reported(self) -> None:
+        problems = ra.path_drift("/nonexistent-dir-xyz", f"{self.new}", ["tool"])
+        self.assertTrue(any("not found" in p for p in problems), problems)
+
+
 if __name__ == "__main__":
     unittest.main()

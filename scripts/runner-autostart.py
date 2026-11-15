@@ -71,6 +71,7 @@ import argparse
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -380,6 +381,55 @@ def _unregister_linux(tag: str, stop_first: bool) -> int:
     return 0
 
 
+def path_drift(unit_path: str, shell_path: str, names: list[str]) -> list[str]:
+    """What a unit's frozen PATH resolves differently from *shell_path*.
+
+    register snapshots the registering shell's PATH into the unit as a literal,
+    and a unit restart restores it verbatim, so a tool moved or reinstalled
+    after registration keeps resolving to the old copy for that runner.
+    A PATH entry that no longer exists is not reported: lookup skips it.
+    """
+    problems: list[str] = []
+    for name in names:
+        in_unit = shutil.which(name, path=unit_path)
+        in_shell = shutil.which(name, path=shell_path)
+        if in_unit == in_shell:
+            continue
+        if in_unit is None:
+            problems.append(f"{name}: not found under the unit's PATH (the shell has {in_shell})")
+        elif in_shell is None:
+            problems.append(f"{name}: the unit resolves {in_unit}; not found in this shell")
+        else:
+            problems.append(f"{name}: the unit resolves {in_unit}, this shell {in_shell}")
+    return problems
+
+
+def _check_path_linux() -> int:
+    """Compare every registered unit's frozen PATH with this shell's."""
+    import agent_presets
+    names = sorted({p["bin"] for p in agent_presets.KNOWN_AGENT_PRESETS.values()
+                    if "/" not in p["bin"] and "\\" not in p["bin"]})  # bare names only
+    # harness-agent-runner*.service, not -*: the untagged unit is one of them.
+    units = sorted(u for u in _systemd_unit_dir().glob(f"{_PREFIX}*.service") if u.is_file())
+    shell_path = os.environ.get("PATH", "")
+    bad = 0
+    for u in units:
+        frozen = next((l[len("Environment=PATH="):] for l in u.read_text().splitlines()
+                       if l.startswith("Environment=PATH=")), None)
+        if frozen is None:
+            continue
+        for problem in path_drift(frozen, shell_path, names):
+            print(f"{u.name}: {problem}")
+            bad += 1
+    if bad:
+        print("fix: re-register the slot from a shell with the right PATH "
+              "(scripts/runner-autostart.py register --tag ... same flags), or edit the "
+              "unit's Environment=PATH= line, then daemon-reload and restart it")
+        return 1
+    print(f"{len(units)} unit(s): PATH resolves {', '.join(names)} as this shell does")
+    return 0
+
+
 def _status_linux(tag: str | None) -> int:
     if tag is None:
         units = sorted(_systemd_unit_dir().glob(f"{_PREFIX}*.service"))
@@ -432,6 +482,12 @@ def main(argv: list[str]) -> int:
     )
     p_status.add_argument("--tag", default=None)
 
+    sub.add_parser(
+        "check-path",
+        help="Linux: report registered units whose frozen PATH resolves an agent "
+        "binary differently from this shell",
+    )
+
     args, rest = ap.parse_known_args(argv)
 
     if args.cmd == "register":
@@ -446,6 +502,11 @@ def main(argv: list[str]) -> int:
         if os.name == "nt":
             return _unregister_windows(args.tag, stop_first)
         return _unregister_linux(args.tag, stop_first)
+    if args.cmd == "check-path":
+        if os.name == "nt":
+            sys.stderr.write("check-path is Linux-only (Windows tasks use the user's PATH)\n")
+            return 2
+        return _check_path_linux()
     if args.cmd == "status":
         if os.name == "nt":
             return _status_windows(args.tag)
