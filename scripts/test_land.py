@@ -42,7 +42,7 @@ class LandTest(unittest.TestCase):
         subprocess.run(["git", *GIT_ID, "clone", "-q", str(self.origin), str(self.main)],
                        check=True, capture_output=True)
         g(self.main, "checkout", "-q", "-b", "main")
-        commit(self.main, "README", "x\n")
+        commit(self.main, "go.mod", "module example.com/m\n")
         g(self.main, "push", "-q", "origin", "main")
         g(self.main, "worktree", "add", "-q", "-b", "harness/x", str(self.wt))
         self.head = commit(self.wt, "server/a.go", "package server\n")
@@ -64,7 +64,9 @@ class LandTest(unittest.TestCase):
         return g(self.origin, "rev-parse", "main")
 
     def test_lands_fast_forwards_the_main_checkout_and_builds_there(self) -> None:
-        rc, out, err = self.run_land()
+        deps = {"harness-server": {"example.com/m/server"}, "agent-runner": set()}
+        with mock.patch.object(land, "go_deps", side_effect=lambda root, cmd: deps[cmd]):
+            rc, out, err = self.run_land()
         self.assertEqual(rc, 0, err)
         self.assertEqual(self.origin_main(), self.head)
         self.assertEqual(g(self.main, "rev-parse", "HEAD"), self.head)
@@ -100,11 +102,43 @@ class LandTest(unittest.TestCase):
 
 
 class RestartHintsTest(unittest.TestCase):
-    def test_only_running_parts_need_a_restart(self) -> None:
-        self.assertEqual(land.restart_hints(["cli/x.go", "docs/a.md"]), [])
-        hints = land.restart_hints(["server/a.go", "runner/b.go", "webui/static/main.js"])
-        self.assertEqual(len(hints), 3)
+    """What needs a restart is decided by which daemon BUILDS a changed package
+    (go list -deps), not by path prefix: runner/protocol, appwire and pubsub
+    are in both daemons, agentboard only in the server, and the shipped skills
+    under runner/agentskills are read from disk on every task."""
 
+    M = "example.com/m"
+    SERVER = {M + "/server", M + "/runner/protocol", M + "/agentboard"}
+    RUNNER = {M + "/runner", M + "/runner/protocol", M + "/runner/agentskills"}
+
+    def hints(self, paths):
+        return land.restart_hints(paths, self.M, self.SERVER, self.RUNNER)
+
+    def test_nothing_running_changed(self) -> None:
+        self.assertEqual(self.hints(["cli/x.go", "docs/a.md", "scripts/land.py"]), [])
+
+    def test_a_package_both_daemons_build_needs_both(self) -> None:
+        h = self.hints(["runner/protocol/message.go"])
+        self.assertTrue(any("server" in x for x in h) and any("runner" in x for x in h), h)
+
+    def test_a_server_only_package_needs_only_the_server(self) -> None:
+        h = self.hints(["agentboard/board.go"])
+        self.assertEqual(len(h), 1)
+        self.assertIn("server", h[0])
+
+    def test_shipped_skill_text_needs_no_restart(self) -> None:
+        self.assertEqual(self.hints(["runner/agentskills/harness-cli/SKILL.md"]), [])
+
+    def test_webui_assets_are_embedded_in_the_server(self) -> None:
+        h = self.hints(["webui/static/main.js"])
+        self.assertTrue(any("server" in x for x in h), h)
+
+    def test_a_dependency_bump_needs_both(self) -> None:
+        self.assertEqual(len(self.hints(["go.mod"])), 2)
+
+    def test_unknown_deps_say_so(self) -> None:
+        h = land.restart_hints(["server/a.go"], self.M, None, None)
+        self.assertTrue(h and "could not" in h[0], h)
 
 if __name__ == "__main__":
     unittest.main()

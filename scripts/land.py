@@ -50,18 +50,41 @@ def main_checkout(cwd: Path) -> Path:
     raise LandError("git worktree list printed no worktree")
 
 
-# Path prefixes that decide what a landing needs restarted. Anything else (CLI,
-# TUI, docs, scripts) takes effect with the rebuilt bin/ alone.
-RESTART_HINTS = (
-    (("server/",), "the server (server/ changed)"),
-    (("runner/", "cmd/agent-runner/"), "the runner slots (runner/ changed)"),
-    (("webui/", "cmd/harness-webui-wasm/"), "the server or a WebUI reload (webui/ changed; embedded in the server)"),
-)
+def go_deps(root: Path, cmd: str) -> set[str] | None:
+    """Import paths of every package `./cmd/<cmd>` builds, or None if unknown."""
+    p = subprocess.run(["go", "list", "-deps", f"./cmd/{cmd}"], cwd=str(root),
+                       capture_output=True, text=True)
+    return set(p.stdout.split()) if p.returncode == 0 else None
 
 
-def restart_hints(paths: list[str]) -> list[str]:
-    return [what for prefixes, what in RESTART_HINTS
-            if any(p.startswith(prefixes) for p in paths)]
+def restart_hints(paths: list[str], module: str,
+                  server_deps: set[str] | None, runner_deps: set[str] | None) -> list[str]:
+    """Which running daemons the landed paths reach.
+
+    Decided by which daemon BUILDS a changed Go package, not by its directory
+    name: runner/protocol, appwire and pubsub are in both, agentboard only in
+    the server. webui/ is embedded in the server. A dependency bump (go.mod /
+    go.sum) can change either. Shipped skill text under runner/agentskills is
+    read from disk on every task (--agentskills-dir), so it needs nothing.
+    """
+    if server_deps is None or runner_deps is None:
+        return ["could not compute which daemons the change reaches (go list failed); check by hand"]
+    server = runner = False
+    for p in paths:
+        if p in ("go.mod", "go.sum"):
+            server = runner = True
+        elif p.startswith("webui/"):
+            server = True
+        elif p.endswith(".go"):
+            pkg = module + "/" + p.rsplit("/", 1)[0] if "/" in p else module
+            server |= pkg in server_deps
+            runner |= pkg in runner_deps
+    out = []
+    if server:
+        out.append("restart the server (a package it builds changed)")
+    if runner:
+        out.append("restart the runner slots (a package agent-runner builds changed)")
+    return out
 
 
 def run_step(name: str, argv: list[str], cwd: Path) -> None:
@@ -99,10 +122,13 @@ def land(cwd: Path, *, dry_run: bool = False) -> int:
         print("land: origin/main is already HEAD; nothing to push")
     run_step("fast-forward main checkout", ["git", "merge", "--ff-only", "-q", head], main)
     run_step("build", build, main)
-    hints = restart_hints(paths)
+    module = next((l.split()[1] for l in (root / "go.mod").read_text().splitlines()
+                   if l.startswith("module ")), "") if (root / "go.mod").is_file() else ""
+    hints = restart_hints(paths, module, go_deps(root, "harness-server"),
+                          go_deps(root, "agent-runner")) if paths else []
     print(f"land: landed {head[:12]} and built {main}/bin")
     for h in hints:
-        print(f"land: restart {h}")
+        print(f"land: {h}")
     if not hints and paths:
         print("land: no running part changed; nothing to restart")
     return 0
