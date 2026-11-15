@@ -361,10 +361,11 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // Declared here (not beside the snapshot poller) because initCaps →
   // initScope → the spawn checklist reads it before the poller section runs.
   let lastTasks = [];        // latest snapshot; re-render source for filter events
-  // Each open grid cell's lifecycle badge element, by task id. Declared up here
-  // with lastTasks because renderTaskList (which repaints them) runs from the
-  // first refreshSnapshot, before the grid's own section of this file.
-  const gridLife = new Map();
+  // The lifecycle badge of each open session pane — the single preview
+  // ("preview") and every grid cell ("grid:<id>") — as pane key → { id, el }.
+  // Declared up here with lastTasks because renderTaskList (which repaints
+  // them) runs from the first refreshSnapshot, before the panes' own sections.
+  const paneLife = new Map();
 
   // sessionReq builds the ONE request object shape the
   // harness.startInteractive wasm bridge consumes. Every session request goes
@@ -5671,6 +5672,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   //     (cropPane, wireCropBody).
   const sessionPreviewModal    = document.getElementById("session-preview-modal");
   const sessionPreviewTitle    = document.getElementById("session-preview-title");
+  const sessionPreviewLife     = document.getElementById("session-preview-life");
   const sessionPreviewBody     = document.getElementById("session-preview-body");
   const sessionPreviewPause    = document.getElementById("session-preview-pause");
   const sessionPreviewReattach = document.getElementById("session-preview-reattach");
@@ -6111,7 +6113,11 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     // The hint rides in the title because the affordance is invisible
     // otherwise: a pane you can type into looks exactly like one you cannot,
     // and the previous read-only version taught exactly the wrong reflex.
-    sessionPreviewTitle.textContent = `🔍 ${id.slice(0, 12)}… · クリックで入力`;
+    const label = gridCellLabel(id, (lastTasks || []).find((t) => t.id === id));
+    sessionPreviewTitle.textContent = `🔍 ${label.text} · クリックで入力`;
+    sessionPreviewTitle.title = label.title;
+    paneLife.set(key, { id, el: sessionPreviewLife });
+    paintPaneLifecycle();
     const p = {
       taskId: id, live: false, epoch: 0, term: null,
       bodyEl: sessionPreviewBody, scaleBox: null, spacer: null, noteEl: null,
@@ -6147,6 +6153,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     stopPane("preview");            // close = disconnect immediately
     if (p) disposePaneTerm(p);
     previewPanes.delete("preview");
+    paneLife.delete("preview");
     previewKeys.reset();            // a Ctrl armed here must not carry to the next session
   });
   sessionPreviewPause.addEventListener("click", () => {
@@ -6204,15 +6211,17 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // dialog. openSessionGrid calls this directly and never closes/reopens
   // the dialog when it's already showing.
   function teardownGridPanes() {
-    for (const key of gridKeys) stopGridPane(key);
+    for (const key of gridKeys) {
+      stopGridPane(key);
+      paneLife.delete(key);
+    }
     gridKeys = [];
-    gridLife.clear();
   }
 
-  // paintGridLifecycle repaints each grid cell's lifecycle badge from the
+  // paintPaneLifecycle repaints each session pane's lifecycle badge from the
   // latest snapshot, in the task row's colors (taskLifecycleModel).
-  function paintGridLifecycle() {
-    for (const [id, el] of gridLife) {
+  function paintPaneLifecycle() {
+    for (const { id, el } of paneLife.values()) {
       const b = taskLifecycleModel((lastTasks || []).find((t) => t.id === id) || {});
       el.textContent = b ? b.text : "";
       el.style.color = !b ? "" : b.attention ? taskStatusColor("Failed") : b.quiet ? "#888" : taskStatusColor("");
@@ -6326,11 +6335,11 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       label.textContent = cellLabel.text;
       label.title = cellLabel.title;
       // The lifecycle badge (work / wait / ready / err) sits outside the label,
-      // so the label's ellipsis cuts the repo name before it; paintGridLifecycle
+      // so the label's ellipsis cuts the repo name before it; paintPaneLifecycle
       // repaints it from every task snapshot.
       const life = document.createElement("span");
       life.className = "grid-cell-life";
-      gridLife.set(id, life);
+      paneLife.set(key, { id, el: life });
       const attach = document.createElement("button");
       attach.type = "button";
       attach.className = "grid-cell-btn";
@@ -6402,7 +6411,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       startPane(key, p);   // p.live flips true synchronously before the first await
       paintPauseBtn(pause, p);
     }
-    paintGridLifecycle();
+    paintPaneLifecycle();
     if (!gridModal.open) gridModal.showModal();
   }
 
@@ -6443,6 +6452,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
 
   function dismissPane(key, cell) {
     stopGridPane(key);
+    paneLife.delete(key);
     gridKeys = gridKeys.filter((k) => k !== key);
     cell.remove();
   }
@@ -6528,7 +6538,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
 
   function renderTaskList(tasks) {
     lastTasks = tasks || [];
-    paintGridLifecycle();
+    paintPaneLifecycle();
     // The spawn scope checklist renders from the same snapshot; rebuild it
     // here so new/finished tasks appear without a manual refresh. The
     // re-grant dialog's list is deliberately NOT rebuilt mid-open — its

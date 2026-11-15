@@ -1221,12 +1221,14 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
   white-space: nowrap;
   font-family: monospace;
 }
-.grid-cell-life {
+.grid-cell-life,
+.preview-life {
   flex: 0 0 auto;
   font-family: monospace;
   margin-left: 6px;
 }
-.grid-cell-life:empty {
+.grid-cell-life:empty,
+.preview-life:empty {
   display: none;
 }
 .grid-cell-btn {
