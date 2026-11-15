@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -650,12 +651,37 @@ func (a *App) onBackgroundOpen(msg tea.KeyMsg) (tea.Cmd, bool) {
 			repo = rs[0]
 		}
 	}
+	// In the Schedules table `N` is a new schedule: same letter, the table it
+	// is pressed in says which new thing.
+	if a.focus == focusSchedules {
+		a.bgform.OpenSchedule(repo)
+		return nil, true
+	}
 	if repo == "" {
 		a.cmdresult.Append(WarnStyle.Render("background: no repo — wait for a runner to register, or use `session new --background --repo ...`"))
 		return nil, true
 	}
 	a.bgform.OpenNew(repo, "")
 	return nil, true
+}
+
+// resolveTaskPrefix is the schedule form's task field: a full id or a unique
+// prefix of a listed task.
+func (a *App) resolveTaskPrefix(s string) (string, error) {
+	q := strings.ToLower(strings.TrimSpace(s))
+	var hits []string
+	for id := range a.tasksByID {
+		if strings.HasPrefix(id, q) {
+			hits = append(hits, id)
+		}
+	}
+	switch len(hits) {
+	case 1:
+		return hits[0], nil
+	case 0:
+		return "", fmt.Errorf("no listed task has id %s", q)
+	}
+	return "", fmt.Errorf("%s matches %d tasks; type more of the id", q, len(hits))
 }
 
 // `E` switches the selected running session's run mode (A-D19): to

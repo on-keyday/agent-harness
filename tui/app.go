@@ -1185,6 +1185,9 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return a, nil
 	case RecordResultMsg:
+		if a.bgform.Pending() && a.bgform.IsSchedule() && msg.Verb == "schedule "+verb.SubNew {
+			a.bgform.Answered(msg.Err)
+		}
 		if msg.Err != nil {
 			if msg.Line != "" {
 				a.cmdresult.Append(ErrorStyle.Render(msg.Line))

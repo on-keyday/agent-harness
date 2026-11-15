@@ -18,9 +18,10 @@ import (
 type bgFormPurpose int
 
 const (
-	bgOpenNew bgFormPurpose = iota // a new background session
-	bgResume                       // a background resume of an ended task
-	bgSwitch                       // a running session switched to background
+	bgOpenNew  bgFormPurpose = iota // a new background session
+	bgResume                        // a background resume of an ended task
+	bgSwitch                        // a running session switched to background
+	bgSchedule                      // a new schedule (schedule new)
 )
 
 // The form's fields after the prompt, in Tab order.
@@ -33,10 +34,18 @@ const (
 	bgFieldQueue
 	bgFieldRecord
 	bgFieldPty
+	// The schedule form's own (bgSchedule only).
+	bgFieldCron
+	bgFieldZone
+	bgFieldRepo
+	bgFieldTarget
+	bgFieldOneshot
+	bgFieldConv
 	bgFieldCount
 )
 
-var bgFieldLabels = [bgFieldCount]string{"agent", "deadline", "turn end", "quiet", "blocked", "queue timeout", "record", "pty"}
+var bgFieldLabels = [bgFieldCount]string{"agent", "deadline", "turn end", "quiet", "blocked", "queue timeout", "record", "pty",
+	"cron", "zone", "repo", "task", "one-shot", "conversation"}
 
 // defaultBgDeadline is the deadline the form starts with: the front-end
 // prefill G41 allows (the server has no default).
@@ -94,11 +103,18 @@ func NewBgForm() BgFormModel {
 	// --pty / --no-pty (A-D33): left as default the open says nothing and the
 	// server takes the mode's default (a PTY here: the form opens no one-shot).
 	m.fields[bgFieldPty].Placeholder = "default (default|on|off)"
+	m.fields[bgFieldCron].Placeholder = "0 9 * * *  or  @daily"
+	m.fields[bgFieldZone].Placeholder = "the server's zone (or e.g. Asia/Tokyo)"
+	m.fields[bgFieldTarget].Placeholder = "new task (or a task id / its prefix to bind)"
+	m.fields[bgFieldOneshot].Placeholder = "no (no|yes)"
+	m.fields[bgFieldConv].Placeholder = "no (no|yes): each firing resumes the conversation"
+	m.fields[bgFieldRepo].CharLimit = 4096
 	return m
 }
 
 func (m *BgFormModel) IsOpen() bool     { return m.open }
 func (m *BgFormModel) IsSwitch() bool   { return m.purpose == bgSwitch }
+func (m *BgFormModel) IsSchedule() bool { return m.purpose == bgSchedule }
 func (m *BgFormModel) ResumeID() string { return m.resumeID }
 func (m *BgFormModel) SwitchID() string { return m.switchID }
 func (m *BgFormModel) Repo() string     { return m.repo }
@@ -158,6 +174,14 @@ func (m *BgFormModel) OpenResume(t protocol.TaskInfo, idHex string, resumeConver
 	}
 }
 
+// OpenSchedule starts a new schedule: its first firing creates a task on
+// repo, or the task field names one to bind.
+func (m *BgFormModel) OpenSchedule(repo string) {
+	m.reset(bgSchedule)
+	m.fields[bgFieldRepo].SetValue(repo)
+	m.setFocus(bgFieldCron)
+}
+
 // OpenSwitch asks for the conditions of a running session going background;
 // it has no prompt (the run is under way) and no agent.
 func (m *BgFormModel) OpenSwitch(idHex string) {
@@ -182,6 +206,10 @@ func msDuration(ms uint64) string {
 func (m *BgFormModel) order() []int {
 	if m.purpose == bgSwitch {
 		return []int{bgFieldDeadline, bgFieldTurnEnd, bgFieldQuiet, bgFieldBlocked}
+	}
+	if m.purpose == bgSchedule {
+		return []int{bgFieldCron, bgFieldZone, bgFieldRepo, bgFieldTarget, -1, bgFieldAgent, bgFieldDeadline, bgFieldTurnEnd,
+			bgFieldQuiet, bgFieldBlocked, bgFieldQueue, bgFieldRecord, bgFieldPty, bgFieldOneshot, bgFieldConv}
 	}
 	return []int{-1, bgFieldAgent, bgFieldDeadline, bgFieldTurnEnd, bgFieldQuiet, bgFieldBlocked, bgFieldQueue, bgFieldRecord, bgFieldPty}
 }
@@ -288,6 +316,84 @@ func (m *BgFormModel) Values() (cli.RunModeFlags, string, error) {
 	return f, agent, nil
 }
 
+// ScheduleArgs is the schedule form as the argument line of `schedule new`,
+// so the shared declaration parses it and builds the request
+// (cli.ScheduleSpecOptsFromAction): the form adds no second builder. resolve
+// turns the task field (an id or a prefix) into a full id.
+func (m *BgFormModel) ScheduleArgs(resolve func(string) (string, error)) ([]string, error) {
+	val := func(i int) string { return strings.TrimSpace(m.fields[i].Value()) }
+	cron := val(bgFieldCron)
+	if cron == "" {
+		return nil, fmt.Errorf("cron: a schedule needs one (e.g. @daily, 0 9 * * *)")
+	}
+	prompt := m.prompt.Value()
+	switch {
+	case strings.TrimSpace(prompt) == "":
+		return nil, fmt.Errorf("prompt: a schedule's firings need one")
+	case len(prompt) > protocol.PromptMax:
+		return nil, fmt.Errorf("prompt: %d bytes, over the %d-byte cap", len(prompt), protocol.PromptMax)
+	}
+	args := []string{"--cron", cron}
+	if z := val(bgFieldZone); z != "" {
+		args = append(args, "--tz", z)
+	}
+	agent := val(bgFieldAgent)
+	if t := val(bgFieldTarget); t != "" {
+		id, err := resolve(t)
+		if err != nil {
+			return nil, fmt.Errorf("task: %w", err)
+		}
+		args = append(args, "--task", id)
+	} else {
+		if val(bgFieldRepo) == "" {
+			return nil, fmt.Errorf("repo: a new task needs one")
+		}
+		if agent == "" {
+			return nil, fmt.Errorf("agent: a new task names one")
+		}
+		args = append(args, "--repo", val(bgFieldRepo))
+	}
+	if agent != "" {
+		args = append(args, "--agent", agent)
+	}
+	args = append(args, "--prompt", prompt)
+	for _, f := range []struct {
+		i    int
+		flag string
+	}{{bgFieldDeadline, "--deadline"}, {bgFieldTurnEnd, "--turn-end"}, {bgFieldQuiet, "--quiet"}, {bgFieldBlocked, "--blocked"}, {bgFieldQueue, "--queue-timeout"}} {
+		if v := val(f.i); v != "" {
+			args = append(args, f.flag, v)
+		}
+	}
+	for _, f := range []struct {
+		i       int
+		on, off string
+	}{{bgFieldRecord, "--record", "--no-record"}, {bgFieldPty, "--pty", "--no-pty"}} {
+		switch v := val(f.i); v {
+		case "", "default":
+		case "on":
+			args = append(args, f.on)
+		case "off":
+			args = append(args, f.off)
+		default:
+			return nil, fmt.Errorf("%s: %q: want default, on or off", bgFieldLabels[f.i], v)
+		}
+	}
+	for _, f := range []struct {
+		i    int
+		flag string
+	}{{bgFieldOneshot, "--oneshot"}, {bgFieldConv, "--resume-conversation"}} {
+		switch v := val(f.i); v {
+		case "", "no":
+		case "yes":
+			args = append(args, f.flag)
+		default:
+			return nil, fmt.Errorf("%s: %q: want no or yes", bgFieldLabels[f.i], v)
+		}
+	}
+	return args, nil
+}
+
 // Submitted marks the form's request as sent; Answered takes the server's
 // answer: success closes the form, a refusal keeps it open with the reason.
 func (m *BgFormModel) Submitted()    { m.pending, m.errMsg = true, "" }
@@ -310,12 +416,17 @@ func (m *BgFormModel) View() string {
 		fmt.Fprintf(&sb, "Resume %s in background\n\n", shortTaskID(m.resumeID))
 	case bgSwitch:
 		fmt.Fprintf(&sb, "Switch %s to background\n\n", shortTaskID(m.switchID))
+	case bgSchedule:
+		sb.WriteString("new schedule — each firing resumes its task in background\n\n")
 	}
-	if m.purpose != bgSwitch {
+	if m.purpose != bgSwitch && m.purpose != bgSchedule {
 		sb.WriteString("prompt:\n" + m.prompt.View() + "\n")
 	}
 	for _, i := range m.order() {
 		if i < 0 {
+			if m.purpose == bgSchedule {
+				sb.WriteString("prompt:\n" + m.prompt.View() + "\n")
+			}
 			continue
 		}
 		fmt.Fprintf(&sb, "%-14s %s\n", bgFieldLabels[i]+":", m.fields[i].View())
@@ -326,7 +437,11 @@ func (m *BgFormModel) View() string {
 	case m.errMsg != "":
 		sb.WriteString("\n" + ErrorStyle.Render(m.errMsg))
 	}
-	sb.WriteString("\nTab/Shift+Tab move · Ctrl+J start · Esc cancel")
+	if m.purpose == bgSchedule {
+		sb.WriteString("\nTab/Shift+Tab move · Ctrl+J create schedule · Esc cancel")
+	} else {
+		sb.WriteString("\nTab/Shift+Tab move · Ctrl+J start · Esc cancel")
+	}
 	return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1).Render(sb.String())
 }
 

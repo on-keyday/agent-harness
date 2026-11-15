@@ -1189,6 +1189,20 @@ func (a *App) inBgForm(msg tea.KeyMsg) tea.Cmd {
 		if a.bgform.Pending() {
 			return nil // one request at a time
 		}
+		if a.bgform.IsSchedule() {
+			// The form becomes the `schedule new` line the command line would
+			// parse, so the one request builder is the verb's.
+			args, err := a.bgform.ScheduleArgs(a.resolveTaskPrefix)
+			if err == nil {
+				var v verb.ScheduleSpecAction
+				if v, err = verb.ParseCmdScheduleNew(verb.TUI, args, nil); err == nil {
+					a.bgform.Submitted()
+					return tuiVerbs{a}.ScheduleNew(v)
+				}
+			}
+			a.bgform.Answered(err)
+			return nil
+		}
 		flags, agent, err := a.bgform.Values()
 		if err != nil {
 			a.bgform.Answered(err)
@@ -1196,8 +1210,8 @@ func (a *App) inBgForm(msg tea.KeyMsg) tea.Cmd {
 		}
 		// The form stays open until the answer (SessionStartedMsg /
 		// SessionModeResultMsg), so a refusal does not lose what was typed.
-		a.bgform.Submitted()
 		f := a.bgform
+		a.bgform.Submitted()
 		if f.IsSwitch() {
 			return DoSessionMode(a.client, f.SwitchID(), true, flags.Conditions())
 		}
