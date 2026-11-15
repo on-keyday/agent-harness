@@ -111,5 +111,38 @@ class PopenDetachedTest(unittest.TestCase):
                 self.assertEqual(code, [], f"{name} spawns detached by hand; use daemon.popen_detached")
 
 
+class StaleBinTest(unittest.TestCase):
+    """bin/ is what a runner and a dummy harness execute, and only `make build`
+    refreshes it: a bare `go build` or a forgotten build after landing leaves a
+    runner on old code while every check on the source passes. daemon_up warns
+    when the revision stamped into bin/ is not the checkout's HEAD."""
+
+    HEAD = "a" * 40
+
+    def _version(self, out: str):
+        return mock.patch.object(daemon.subprocess, "run",
+                                 return_value=mock.Mock(returncode=0, stdout=out))
+
+    def test_matching_stamp_says_nothing(self) -> None:
+        with self._version(f"harness-cli {self.HEAD}  committed 2026-11-15T00:00:00Z\n"):
+            self.assertIsNone(daemon.stale_bin_warning(head=self.HEAD))
+
+    def test_older_stamp_names_both_revisions(self) -> None:
+        old = "b" * 40
+        with self._version(f"harness-cli {old}  committed 2026-11-14T00:00:00Z\n"):
+            msg = daemon.stale_bin_warning(head=self.HEAD)
+        self.assertIn(old[:12], msg)
+        self.assertIn(self.HEAD[:12], msg)
+        self.assertIn("make build", msg)
+
+    def test_unstamped_binary_is_reported(self) -> None:
+        with self._version("harness-cli (no revision stamped)\n"):
+            self.assertIn("make build", daemon.stale_bin_warning(head=self.HEAD))
+
+    def test_unknown_head_says_nothing(self) -> None:
+        with self._version(f"harness-cli {'b' * 40}\n"):
+            self.assertIsNone(daemon.stale_bin_warning(head=None))
+
+
 if __name__ == "__main__":
     unittest.main()

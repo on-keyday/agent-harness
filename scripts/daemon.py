@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -135,6 +136,39 @@ def verify_owner(pid: int, bin_name: str) -> bool:
     expected = bin_basename(bin_name)
     actual = _proc_basename(p)
     return actual == expected
+
+
+_REV = re.compile(r"\b[0-9a-f]{40}\b")
+
+
+def stale_bin_warning(head: str | None = "") -> str | None:
+    """A warning when bin/ was not built from this checkout's HEAD, else None.
+
+    bin/ is what runners and dummy harnesses execute, and only `make build`
+    refreshes it, stamping every binary with the revision it was built from.
+    The stamp is read from bin/harness-cli (built in the same `make build` as
+    the rest). *head* defaults to `git rev-parse HEAD` here; None (or no git)
+    means unknown, and nothing is said.
+    """
+    if head == "":
+        try:
+            head = subprocess.run(["git", "-C", str(_ROOT), "rev-parse", "HEAD"],
+                                  capture_output=True, text=True, timeout=10).stdout.strip() or None
+        except (OSError, subprocess.SubprocessError):
+            head = None
+    if not head:
+        return None
+    try:
+        out = subprocess.run([str(bin_path("harness-cli")), "version"],
+                             capture_output=True, text=True, timeout=10).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    m = _REV.search(out)
+    if m and m.group(0) == head:
+        return None
+    built = m.group(0)[:12] if m else "an unstamped build"
+    return (f"bin/ was built from {built}, but this checkout is at {head[:12]}: "
+            f"run 'make build' first, or this starts the old code")
 
 
 def _binary_is_executable(path: Path) -> bool:
@@ -298,6 +332,8 @@ def daemon_up(slot: str, bin_name: str, *args: str) -> int:
         sys.stderr.write(f"[{slot}] binary missing or not executable: {bp}\n")
         sys.stderr.write("        run 'make build' first\n")
         raise FileNotFoundError(str(bp))
+    if warning := stale_bin_warning():
+        sys.stderr.write(f"[{slot}] warning: {warning}\n")
 
     # Clean up any stale shutdown sentinel from a previous unclean exit
     # before injecting --shutdown-file. Otherwise the freshly spawned
