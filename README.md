@@ -270,6 +270,9 @@ bin/harness-cli --server-cid 'ws:HOSTNAME:8539-*' \
 # 4. Inspect / control
 bin/harness-cli ls
 bin/harness-cli ls --tree               # order tasks under whoever spawned them
+bin/harness-cli ls --order state        # created|activity|live|state|repo; live/state/repo
+                                        # print an `== label (n) ==` line per group, and
+                                        # with --json each row carries its "group"
 bin/harness-cli session snapshot <task-id>  # its screen while it runs (a one-shot's raw output)
 bin/harness-cli transcript ls <task-id>     # afterwards: the agent's own transcript (5e)
 bin/harness-cli watch                   # stream task / runner status events
@@ -2008,6 +2011,15 @@ always carries the fleet summary
 appear when present). The tasks table's `Run` column (a background task's
 deadline or end reason) appears only while some listed task has a Run cell.
 
+`o` cycles the tasks table's order: `created` (newest first, the order it
+opens in) → `activity` (latest output or end) → `live` (live tasks, then
+finished) → `state` (needs you / ready / working / no report / queued /
+finished) → `repo`. The last three put a `── label (n) ──` row before each
+group, which the cursor skips; the result pane names the mode on each
+switch, and in a mode that reorders on every poll the cursor stays on its
+task. The creator tree (`T`) is its own order, so `o` does nothing there.
+These are the same rules as `ls --order` and the WebUI's order select.
+
 ```
  Runners:← [Tasks] Schedules:→ | runners 3: 1 idle 2 busy
 ┌───────────────────────────────────────────────────────┐
@@ -2293,7 +2305,11 @@ into the browser tab the same way the TUI does into its terminal.
 
 The page is organised into tabs (端末 / タスク / ファイル / 通知):
 
-- **Tasks** — runners + task list, the creator tree (🌳) with the
+- **Tasks** — runners + task list (ordered by the select beside the
+  Active / Finished / All chips: 最近の動き, the default, 作成順,
+  動いているもの優先, 状態ごと or リポジトリごと — the last three under group
+  headers, by the same rules as `ls --order`; the choice is kept in this
+  browser), the creator tree (🌳) with the
   capability audit folded under it (権限の棚卸し), the compose form
   (with a `--caps` selector and effective-set readout, a
   「one-shot で開く」 checkbox for `--oneshot`, and a PTY select —
