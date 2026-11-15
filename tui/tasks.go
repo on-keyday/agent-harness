@@ -3,6 +3,7 @@ package tui
 import (
 	"encoding/hex"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -540,7 +541,7 @@ func (m TasksModel) Update(msg tea.Msg) (TasksModel, tea.Cmd) {
 }
 
 func (m TasksModel) View() string {
-	return m.table.View()
+	return colorStateBadgesWithin(m.table.View(), selectedRowOpen)
 }
 
 // originCell renders the From column as lowercase "cli" / "tui" / "webui",
@@ -663,16 +664,85 @@ func runCell(t protocol.TaskInfo) string {
 }
 
 // lifeCell is the Life column: the lifecycle badge (cli.LifecycleBadge), blank
-// for a finished task. `wait` is marked by case — WAIT:3m — not by an ANSI
-// style: bubbles truncates cells by width and a style can be cut mid-sequence
-// (see aboutCell).
+// for a finished task. A live task whose agent never reported a lifecycle (no
+// hooks) shows its program's own report instead (cli.ProgramBadge), and lc:-
+// only when there is neither. `wait` is also marked by case — WAIT:3m. The
+// colour is added after the table renders (colorStateBadges): a style inside a
+// cell is cut mid-sequence by bubbles' width truncation (see aboutCell).
 func lifeCell(t protocol.TaskInfo) string {
 	b := cli.LifecycleBadge(&t)
+	if b == "lc:-" {
+		if p := cli.ProgramBadge(&t); p != "" {
+			return p
+		}
+	}
 	if rest, ok := strings.CutPrefix(b, "wait:"); ok {
 		return "WAIT:" + rest
 	}
 	return b
 }
+
+// The three tiers every surface colours the state badges by: busy (no look
+// needed), ready (waiting for the next prompt), attention (asks for the
+// operator). Foreground-only, ended with the default-foreground code rather
+// than a full reset, so a selected row's highlight survives the badge.
+const (
+	stateBusyColor      = "\x1b[38;5;214m"
+	stateReadyColor     = "\x1b[38;5;42m"
+	stateAttentionColor = "\x1b[38;5;203m"
+	stateColorReset     = "\x1b[39m"
+)
+
+var stateBadge = regexp.MustCompile(`(^|[\s│|])((work|ready|WAIT|err):[0-9]+[smh]|p:(working|idle|done|blocked|error))\b`)
+
+// colorStateBadges colours each lifecycle / program badge in already-rendered
+// text. It runs on the table's (or a pane header's) final string, after any
+// truncation, so a cut can never split an escape sequence.
+func colorStateBadges(s string) string { return colorStateBadgesWithin(s, "") }
+
+// colorStateBadgesWithin is colorStateBadges for a table whose selected row is
+// drawn with the style that opens with sel: on a line holding sel the badge
+// ends by re-opening sel, so the rest of that row keeps its highlight instead of
+// dropping to the default colour.
+func colorStateBadgesWithin(s, sel string) string {
+	if sel == "" || !strings.Contains(s, sel) {
+		return colorLine(s, stateColorReset)
+	}
+	lines := strings.Split(s, "\n")
+	for i, l := range lines {
+		reset := stateColorReset
+		if strings.Contains(l, sel) {
+			reset = sel
+		}
+		lines[i] = colorLine(l, reset)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func colorLine(s, reset string) string {
+	return stateBadge.ReplaceAllStringFunc(s, func(m string) string {
+		sub := stateBadge.FindStringSubmatch(m)
+		lead, badge := sub[1], sub[2]
+		color := stateReadyColor
+		switch {
+		case sub[3] == "work" || sub[4] == "working":
+			color = stateBusyColor
+		case sub[3] == "WAIT" || sub[3] == "err" || sub[4] == "blocked" || sub[4] == "error":
+			color = stateAttentionColor
+		}
+		return lead + color + badge + reset
+	})
+}
+
+// selectedRowOpen is the SGR sequence bubbles' default Selected style opens a
+// row with ("" when the terminal profile renders no colour).
+var selectedRowOpen = func() string {
+	r := table.DefaultStyles().Selected.Render("\x00")
+	if i := strings.IndexByte(r, 0); i > 0 {
+		return r[:i]
+	}
+	return ""
+}()
 
 // actCell is the Act column: the busy/idle badge from the live session's
 // output age, blank for a task without a live session (the server leaves

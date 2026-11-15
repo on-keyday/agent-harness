@@ -175,6 +175,17 @@ func ProgramStr(t *protocol.TaskInfo) string {
 	return s
 }
 
+// ProgramBadge is the list badge for the program's own report: p:<wire word>
+// (p:working, p:idle, p:blocked, ...), "" when the task has no live terminal or
+// its program never reported (ProgramStr's rule). The TUI shows it where the
+// lifecycle badge would be, for an agent with no hooks.
+func ProgramBadge(t *protocol.TaskInfo) string {
+	if !t.LiveTerminal() || t.ProgramState == protocol.ProgramState_None {
+		return ""
+	}
+	return "p:" + ProgramWord(t.ProgramState)
+}
+
 // ProgramDetail is the detail views' program line: `blocked (question) — q?`,
 // each part only when present; "" when the program never reported.
 func ProgramDetail(t *protocol.TaskInfo) string {

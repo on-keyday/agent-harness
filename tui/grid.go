@@ -93,16 +93,14 @@ type GridModel struct {
 // SetLifecycle replaces the panes' lifecycle badges (gridLifecycleBadges).
 func (m *GridModel) SetLifecycle(badges map[string]string) { m.life = badges }
 
-// gridLifecycleBadges is the lifecycle badge of each task that has reported
-// one, by task id. A task that never reported gets none: in a pane header
-// `lc:-` would only take room from the repo name.
+// gridLifecycleBadges is each task's state badge, by task id: its lifecycle
+// badge, or for an agent with no hooks its program's report (lifeCell, the task
+// table's rule). A task with neither gets none: in a pane header `lc:-` would
+// only take room from the repo name.
 func gridLifecycleBadges(tasks []protocol.TaskInfo) map[string]string {
 	out := make(map[string]string, len(tasks))
 	for i := range tasks {
-		if tasks[i].LifecycleAt == 0 {
-			continue
-		}
-		if b := cli.LifecycleBadge(&tasks[i]); b != "" {
+		if b := lifeCell(tasks[i]); b != "" && b != "lc:-" {
 			out[FormatTaskID(tasks[i].Id)] = b
 		}
 	}
@@ -675,6 +673,8 @@ func (m GridModel) renderPane(idx, w, h int) string {
 	// still rendered taller/wider than the cell, the pane can never exceed its
 	// border-inclusive budget (w+2 × h+3), so the grid total stays within the
 	// terminal and lipgloss.Place cannot clip the header row.
+	// Coloured last, after every truncation, so no cut can split the sequence.
+	head = colorStateBadges(head)
 	return style.Width(w).Height(h + 1).MaxWidth(w + 2).MaxHeight(h + 3).Render(head + "\n" + body)
 }
 

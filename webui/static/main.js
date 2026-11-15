@@ -6214,13 +6214,13 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     gridKeys = [];
   }
 
-  // paintPaneLifecycle repaints each session pane's lifecycle badge from the
-  // latest snapshot, in the task row's colors (taskLifecycleModel).
+  // paintPaneLifecycle repaints each session pane's state badge from the latest
+  // snapshot (paneStateBadge), in the task row's colours.
   function paintPaneLifecycle() {
     for (const { id, el } of paneLife.values()) {
-      const b = taskLifecycleModel((lastTasks || []).find((t) => t.id === id) || {});
+      const b = paneStateBadge((lastTasks || []).find((t) => t.id === id) || {});
       el.textContent = b ? b.text : "";
-      el.style.color = !b ? "" : b.attention ? taskStatusColor("Failed") : b.quiet ? "#888" : taskStatusColor("");
+      el.style.color = stateBadgeColor(b);
     }
   }
 
@@ -6585,15 +6585,14 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       repoEl.textContent = repoTail(t.repoPath);
       line1.append(dot, statusEl);
       // What the task's hooks report, then what its program reports (OSC
-      // 7501), side by side so a disagreement is on the row (D3, D28). Red for
-      // the states that ask for the operator, gray for the ones that do not
-      // need a look (work, prog working), the default task color for the ones
-      // waiting for the next prompt (ready, prog idle / done).
+      // 7501), side by side so a disagreement is on the row (D3, D28), coloured
+      // by tier (stateBadgeColor): red asks for the operator, yellow is busy,
+      // green waits for the next prompt.
       for (const b of [taskLifecycleModel(t), taskProgramModel(t)]) {
         if (!b) continue;
         const el = document.createElement("span");
         el.className = "task-lifecycle";
-        el.style.color = b.attention ? taskStatusColor("Failed") : b.quiet ? "#888" : taskStatusColor("");
+        el.style.color = stateBadgeColor(b);
         el.textContent = b.text;
         if (b.tooltip) el.title = b.tooltip;
         line1.appendChild(el);

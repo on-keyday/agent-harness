@@ -161,14 +161,14 @@ func TestGridModel_PaneHeaderShowsTheLifecycleBadge(t *testing.T) {
 	m.SetLifecycle(map[string]string{"aaaaaaaa11": "ready:3m"})
 	m.open = true
 	m.SetSize(120, 40)
-	view := m.View()
+	view := stripANSI(m.View())
 	if !strings.Contains(view, "aaaaaaaa alpha ready:3m") {
 		t.Errorf("pane header lacks the lifecycle badge:\n%s", view)
 	}
 	if strings.Contains(view, "lc:-") {
 		t.Errorf("a task with no lifecycle report shows lc:-:\n%s", view)
 	}
-	narrow := strings.SplitN(m.renderPane(0, 18, 5), "\n", 3)[1]
+	narrow := stripANSI(strings.SplitN(m.renderPane(0, 18, 5), "\n", 3)[1])
 	if !strings.Contains(narrow, "ready:3m") || !strings.Contains(narrow, "aaaaaaaa") {
 		t.Errorf("narrow header must keep the id and the badge: %q", narrow)
 	}
@@ -184,5 +184,25 @@ func TestGridLifecycleBadges_OnlyReportedLiveTasks(t *testing.T) {
 	}
 	if _, ok := got[FormatTaskID(silent.Id)]; ok {
 		t.Errorf("a task with no report got a badge: %q", got[FormatTaskID(silent.Id)])
+	}
+}
+
+// A pane whose agent has no hooks shows its program's report, and the header's
+// badge is coloured like the task table's.
+func TestGridModel_PaneHeaderFallsBackToProgramAndIsColoured(t *testing.T) {
+	silent := mkGridTask(3, protocol.TaskKind_Interactive, protocol.TaskStatus_Running, 1)
+	silent.SetLiveTerminal(true)
+	silent.ProgramState = protocol.ProgramState_Blocked
+	got := gridLifecycleBadges([]protocol.TaskInfo{silent})
+	if got[FormatTaskID(silent.Id)] != "p:blocked" {
+		t.Fatalf("program fallback = %q, want p:blocked", got[FormatTaskID(silent.Id)])
+	}
+	m := NewGridModel()
+	m.panes = []gridPane{NewPaneStreamer("aaaaaaaa11", 24, 80)}
+	m.SetLifecycle(map[string]string{"aaaaaaaa11": "ready:3m"})
+	m.open = true
+	head := strings.SplitN(m.renderPane(0, 40, 5), "\n", 3)[1]
+	if !strings.Contains(head, stateReadyColor+"ready:3m"+stateColorReset) {
+		t.Errorf("header badge not coloured: %q", head)
 	}
 }

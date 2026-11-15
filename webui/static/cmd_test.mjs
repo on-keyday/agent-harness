@@ -769,6 +769,26 @@ test("task lifecycle badge: words, age, attention", () => {
   eq(page.taskLifecycleModel({ lifecycle: "", lifecycleAt: "0", lifecycleAgeMs: 0, status: "Failed" }), null);
 });
 
+// The state badges are coloured by tier, the same three as the TUI: busy
+// (work, prog working) yellow, waiting for the next prompt (ready, prog idle /
+// done) green, asking for the operator (wait, err, prog blocked / error) red.
+test("stateBadgeColor: busy yellow, ready green, attention red", () => {
+  eq(page.stateBadgeColor(page.taskLifecycleModel({ lifecycle: "working", lifecycleAt: "5", lifecycleAgeMs: 1, status: "Running" })), "#e5c07b");
+  eq(page.stateBadgeColor(page.taskLifecycleModel({ lifecycle: "idle", lifecycleAt: "5", lifecycleAgeMs: 1, status: "Running" })), "#98c379");
+  eq(page.stateBadgeColor(page.taskLifecycleModel({ lifecycle: "waiting", lifecycleAt: "5", lifecycleAgeMs: 1, status: "Running" })), "#f14c4c");
+  eq(page.stateBadgeColor(page.taskProgramModel({ liveTerminal: true, programState: "done", programKind: "", programMsg: "" })), "#98c379");
+  eq(page.stateBadgeColor(null), "");
+});
+
+// A pane header shows the lifecycle badge, or for an agent with no hooks its
+// program's report -- the TUI's Life cell rule.
+test("paneStateBadge: lifecycle first, program when there is none", () => {
+  const prog = { liveTerminal: true, programState: "working", programKind: "", programMsg: "", status: "Running", lifecycleAt: "0" };
+  eq(page.paneStateBadge(prog).text, "prog working");
+  eq(page.paneStateBadge({ ...prog, lifecycle: "idle", lifecycleAt: "5", lifecycleAgeMs: 60000 }).text, "ready:1m");
+  eq(page.paneStateBadge({ status: "Running", lifecycleAt: "0" }), null);
+});
+
 // await-progress needs no live session (a oneshot writes progress too), so
 // the sheet offers it on every task that can still write: any non-terminal one.
 test("task sheet: await-progress offered on any live task, oneshot included", () => {

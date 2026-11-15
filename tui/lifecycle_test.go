@@ -160,3 +160,58 @@ func TestTaskDetail_Program(t *testing.T) {
 		t.Errorf("a program that never reported printed a line:\n%s", d)
 	}
 }
+
+// An agent with no hooks never reports a lifecycle; its program's own report
+// (OSC 7501) takes the Life cell instead of lc:-, so the column still says
+// whether it is working.
+func TestLifeCellFallsBackToTheProgramBadge(t *testing.T) {
+	ti := lifecycleRow(protocol.LifecycleState_Unset, 0)
+	ti.LifecycleAt = 0
+	ti.SetLiveTerminal(true)
+	ti.ProgramState = protocol.ProgramState_Idle
+	if got := lifeCell(ti); got != "p:idle" {
+		t.Errorf("no lifecycle, program idle = %q, want p:idle", got)
+	}
+	ti.LifecycleAt, ti.Lifecycle, ti.LifecycleAgeMs = 3, protocol.LifecycleState_Working, 1000
+	if got := lifeCell(ti); got != "work:1s" {
+		t.Errorf("a lifecycle report wins: got %q", got)
+	}
+}
+
+// The badges are coloured AFTER the table is rendered (a style inside a cell
+// is cut by bubbles' width truncation): work / p:working yellow, ready /
+// p:idle / p:done green, WAIT / err / p:blocked / p:error red.
+func TestColorStateBadges(t *testing.T) {
+	in := "│ abcd │ work:5s  │ ready:12m │ WAIT:3m │ p:idle │ err:1s │ p:blocked │ worker:5s"
+	out := colorStateBadges(in)
+	for badge, color := range map[string]string{
+		"work:5s": stateBusyColor, "ready:12m": stateReadyColor, "WAIT:3m": stateAttentionColor,
+		"p:idle": stateReadyColor, "err:1s": stateAttentionColor, "p:blocked": stateAttentionColor,
+	} {
+		if !strings.Contains(out, color+badge+stateColorReset) {
+			t.Errorf("%s not coloured %q in %q", badge, color, out)
+		}
+	}
+	if strings.Contains(out, stateBusyColor+"worker") {
+		t.Errorf("a word that only starts like a badge was coloured: %q", out)
+	}
+	if plain := stripANSI(out); plain != in {
+		t.Errorf("colouring changed the text: %q", plain)
+	}
+}
+
+// On the selected row the badge must hand the colour back to the row's
+// highlight, not to the terminal default: ending it with a bare
+// default-foreground left every cell after it in the plain colour.
+func TestColorStateBadgesRestoresTheSelectedRowStyle(t *testing.T) {
+	sel := "\x1b[1;38;5;212m"
+	in := sel + " Detachd  abcd  work:5s  idle:5s\x1b[0m\n plain  efgh  ready:1m  idle:1m"
+	out := colorStateBadgesWithin(in, sel)
+	lines := strings.Split(out, "\n")
+	if !strings.Contains(lines[0], stateBusyColor+"work:5s"+sel) {
+		t.Errorf("selected row not restored to its highlight: %q", lines[0])
+	}
+	if !strings.Contains(lines[1], stateReadyColor+"ready:1m"+stateColorReset) {
+		t.Errorf("plain row should end with the default foreground: %q", lines[1])
+	}
+}

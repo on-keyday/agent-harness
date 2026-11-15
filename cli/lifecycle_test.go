@@ -328,3 +328,24 @@ func TestReportLifecycle_AgyOutput(t *testing.T) {
 		t.Errorf("agy idle stdout = %q, want %q", got, `{}`)
 	}
 }
+
+// ProgramBadge is the short program badge the TUI shows where the lifecycle
+// badge would be, for an agent with no hooks: p:<wire word>, "" without a live
+// terminal or a report (ProgramStr's rule).
+func TestProgramBadge(t *testing.T) {
+	var ti protocol.TaskInfo
+	ti.Status = protocol.TaskStatus_Running
+	ti.SetLiveTerminal(true)
+	ti.ProgramState = protocol.ProgramState_Working
+	if got := ProgramBadge(&ti); got != "p:working" {
+		t.Errorf("working = %q, want p:working", got)
+	}
+	ti.ProgramState = protocol.ProgramState_Blocked
+	if got := ProgramBadge(&ti); got != "p:blocked" {
+		t.Errorf("blocked = %q, want p:blocked", got)
+	}
+	ti.SetLiveTerminal(false)
+	if got := ProgramBadge(&ti); got != "" {
+		t.Errorf("no live terminal = %q, want blank", got)
+	}
+}

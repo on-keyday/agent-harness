@@ -73,6 +73,21 @@ function taskProgramModel(t) {
   };
 }
 
+// stateBadgeColor is a lifecycle / program badge's colour, by the three tiers
+// the TUI uses too: asking for the operator (wait, err, prog blocked / error)
+// red, busy (work, prog working) yellow, waiting for the next prompt (ready,
+// prog idle / done) green. "" for no badge.
+function stateBadgeColor(b) {
+  if (!b) return "";
+  return b.attention ? "#f14c4c" : b.quiet ? "#e5c07b" : "#98c379";
+}
+
+// paneStateBadge is a session pane header's badge: the lifecycle badge, or for
+// an agent with no hooks its program's report (the TUI's Life cell rule).
+function paneStateBadge(t) {
+  return taskLifecycleModel(t) || taskProgramModel(t);
+}
+
 // treeNodeProgress is what a task-tree node shows of the task's progress: a
 // fourth line cut to the node's slot (a node is 132px wide), and tooltip lines
 // with the full text, its age and the window title. Built on taskNowModel, so
