@@ -101,20 +101,6 @@ const form = (over) => ({
   spawnDepth: "", maxDescendants: "", ...over,
 });
 
-test("Compose with a cron routes to scheduleCreate and never opens a session", async () => {
-  assert.equal(page.composeIsSchedule(form()), true);
-  assert.equal(page.composeIsSchedule(form({ cron: "   " })), false, "blank cron is a plain open");
-  assert.equal(page.composeIsSchedule(form({ cron: "" })), false);
-  const ctx = recordingCtx(page, { scheduleCreate: "schedule new X: cron=\"0 9 * * *\" tz=Asia/Tokyo" });
-  const act = page.composeSubmitAction(form());
-  assert.equal(act.action, "create-schedule");
-  const text = await ctx.harness.scheduleCreate(act.tokens);
-  assert.match(text, /^schedule new /);
-  assert.equal(named(ctx.calls, "scheduleCreate").length, 1);
-  assert.equal(named(ctx.calls, "openSession").length, 0);
-  assert.equal(named(ctx.calls, "startInteractive").length, 0);
-});
-
 test("Compose's tokens are a line the shared declaration parses, carrying the background fields", async () => {
   const f = form({
     host: "box", agentArgs: ["--a b", "c"], oneshot: true, record: "on", pty: "off", resumeConversation: true,
@@ -257,40 +243,6 @@ test("a failed Run now / Delete names the verb and the schedule, without cli's o
   assert.equal(
     page.scheduleFailureLine("schedule rm", ID, new Error("schedule: not connected; call harness.connect first")),
     "schedule rm 01234567: schedule: not connected; call harness.connect first");
-});
-
-test("composeSubmitAction routes and labels both directions", () => {
-  const c = page.composeSubmitAction(form());
-  assert.equal(c.action, "create-schedule");
-  assert.equal(c.label, "Create schedule");
-  eq(c.tokens, page.composeScheduleTokens(form()));
-  const o = page.composeSubmitAction(form({ cron: " " }));
-  assert.equal(o.action, "open-session");
-  assert.equal(o.label, "Open interactive session");
-  assert.equal(o.tokens, undefined);
-  assert.throws(() => page.composeSubmitAction(form({ stream: true })), /event-stream/);
-});
-
-test("a cron ticks Background and clearing it (or a created schedule) restores what it was", () => {
-  const bg = { checked: false };
-  const st = page.composeCronState();
-  page.composeCronSync(st, "0 9 * * *", bg);
-  assert.equal(bg.checked, true);
-  page.composeCronSync(st, "0 9 * * 1", bg); // typing more keeps the saved value
-  page.composeCronSync(st, "", bg);          // what a successful create does
-  assert.equal(bg.checked, false, "restored to before the auto-tick");
-  const on = { checked: true }, st2 = page.composeCronState();
-  page.composeCronSync(st2, "@daily", on);
-  page.composeCronSync(st2, "", on);
-  assert.equal(on.checked, true, "an operator's own tick survives");
-});
-
-test("cron plus Task id disables caps-on-resume with a note instead of ignoring it", () => {
-  let s = page.composeCapsOnResumeState({ cron: "@daily", task: ID });
-  assert.equal(s.disabled, true);
-  assert.match(s.note, /schedule/);
-  assert.equal(page.composeCapsOnResumeState({ cron: "@daily", task: "" }).disabled, false);
-  assert.equal(page.composeCapsOnResumeState({ cron: "", task: ID }).disabled, false);
 });
 
 test("only the latest load renders", () => {

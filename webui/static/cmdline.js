@@ -192,9 +192,10 @@ async function runSessionNew(tokens, ctx) {
   // b.flags.repo is already the ladder's answer: typed flag first, the
   // dropdown second.
   const repo = b.flags.repo || dropdownRepo;
-  const resumeTaskId = b.flags.resume || ctx.resumeTaskID();
+  // Only a typed --resume resumes: 新規作成 has no task id to inherit.
+  const resumeTaskId = b.flags.resume || "";
   if (!repo && !resumeTaskId) {
-    throw new Error("session new: no runner selected (pick a repo from the dropdown, type --repo, or fill in Resume task id)");
+    throw new Error("session new: no runner selected (pick a repo from the dropdown, type --repo, or type --resume)");
   }
   // The three selectors are mutually exclusive, and the bridge refuses two.
   // The dropdown's host is the fallback for NONE typed, not for --host alone:

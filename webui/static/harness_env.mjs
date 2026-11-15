@@ -164,7 +164,6 @@ export function recordingCtx(page, overrides = {}) {
     composeRepo: () => overrides.repo ?? "/dropdown/repo",
     composeHost: () => overrides.host ?? "",
     composeAgent: () => overrides.agent ?? "",
-    resumeTaskID: () => overrides.resumeTaskID ?? "",
     agentArgs: () => overrides.agentArgs ?? [],
     sessionReq: (o) => { calls.push(["sessionReq", o]); return o; },
     setParentMessage: (id, swap, r) => { calls.push(["setParentMessage", id, swap, r]); return "reparented"; },

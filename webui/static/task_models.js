@@ -497,11 +497,6 @@ function scheduleZoneOptions(zones) {
   return [{ value: "", label: "(server's zone)" }, ...(zones || []).map((z) => ({ value: z, label: z }))];
 }
 
-// composeIsSchedule: a filled cron turns Compose's Submit into a schedule.
-function composeIsSchedule(f) {
-  return String(f.cron || "").trim() !== "";
-}
-
 // composeScheduleTokens serializes Compose's form to the argument line of
 // `schedule new`, so the PARSER stays in Go (cli/verb) and the form cannot
 // accept what the CLI refuses. A foreground-only option is refused here with a
@@ -572,39 +567,66 @@ function scheduleFailureLine(verbName, id, err) {
   return `${verbName} ${String(id).slice(0, 8)}: ${msg.startsWith(verbName + ": ") ? msg.slice(verbName.length + 2) : msg}`;
 }
 
-// composeSubmitAction is what Compose's button does now and says: a filled
-// cron creates a schedule (the tokens `schedule new` parses), otherwise it
-// opens a session. Throws what composeScheduleTokens refuses.
-function composeSubmitAction(f) {
-  if (composeIsSchedule(f)) {
-    return { action: "create-schedule", label: "Create schedule", tokens: composeScheduleTokens(f) };
-  }
-  return { action: "open-session", label: "Open interactive session" };
+// The 新規作成 (Compose) form's tabs. The tab alone decides what the button
+// does, and the button names it: no field's content changes the action.
+const COMPOSE_TABS = ["interactive", "oneshot", "background", "schedule"];
+
+// The fields every tab reads, and each tab's own. Keys are composeForm()'s;
+// the authority panel and the PTY record are shared and always read.
+const COMPOSE_SHARED_FIELDS = ["repo", "host", "agent", "agentArgs", "prompt", "record",
+  "caps", "scope", "scopeFor", "delegateCaps", "delegateScope", "spawnDepth", "maxDescendants"];
+const COMPOSE_COND_FIELDS = ["deadline", "turnEnd", "quiet", "blocked", "queueTimeout"];
+const COMPOSE_TAB_DEFS = {
+  interactive: { label: "session を開く", action: "open-session", fields: ["stream", "pty"] },
+  oneshot: { label: "one-shot を実行", action: "open-session", fields: ["pty"] },
+  background: { label: "background で投入", action: "open-session", fields: [...COMPOSE_COND_FIELDS, "oneshot", "stream", "pty"] },
+  schedule: { label: "schedule を作る", action: "create-schedule",
+    fields: [...COMPOSE_COND_FIELDS, "cron", "tz", "task", "oneshot", "pty", "resumeConversation"] },
+};
+
+// composeTabModel is a tab's button label, its action and the fields it reads.
+function composeTabModel(tab) {
+  const d = COMPOSE_TAB_DEFS[tab] || COMPOSE_TAB_DEFS.interactive;
+  return { label: d.label, action: d.action, fields: [...COMPOSE_SHARED_FIELDS, ...d.fields] };
 }
 
-// composeCronState / composeCronSync: a cron ticks Background (a schedule is
-// always a background run); clearing the cron -- typed, or by a successful
-// create -- puts Background back to what it was before the cron ticked it, so
-// a second click cannot silently create a duplicate.
-function composeCronState() { return { saved: null }; }
-function composeCronSync(st, cron, bg) {
-  const filled = String(cron || "").trim() !== "";
-  if (filled && st.saved === null) {
-    st.saved = !!bg.checked;
-    bg.checked = true;
-  } else if (!filled && st.saved !== null) {
-    bg.checked = st.saved;
-    st.saved = null;
+// composeFormFor is raw (composeForm()) with every field the tab does not read
+// reset to its empty value: what a hidden tab holds is never sent.
+function composeFormFor(tab, raw) {
+  const read = new Set(composeTabModel(tab).fields);
+  const out = { ...raw };
+  for (const k of Object.keys(out)) {
+    if (read.has(k)) continue;
+    const v = out[k];
+    out[k] = typeof v === "boolean" ? false : Array.isArray(v) ? [] : k === "pty" || k === "record" ? "default" : "";
   }
+  return out;
 }
 
-// composeCapsOnResumeState: with a cron and a Task id the form creates a
-// schedule bound to that task, which stores the authority outright (S-D16), so
-// "apply caps/scope on resume" has nothing to mean; it is disabled and says so
-// rather than being ignored.
-function composeCapsOnResumeState(f) {
-  const off = composeIsSchedule(f) && !!f.task;
-  return { disabled: off, note: off ? "schedule: 権限は常に schedule に保存されるため無効" : "" };
+// composeTargetOptions is the schedule tab's target select: 新規に作る (the
+// first firing creates the task), each listed task a schedule can bind (ended,
+// or live in background), and "id で指定" for a pasted id.
+function composeTargetOptions(tasks) {
+  const ended = new Set(["Succeeded", "Failed", "Cancelled"]);
+  const out = [{ value: "", label: "新規に作る" }];
+  for (const t of tasks || []) {
+    if (!ended.has(t.status) && t.runMode !== "background") continue;
+    const about = paneAboutText(t);
+    out.push({ value: t.id, label: `${t.id.slice(0, 8)} ${repoTail(t.repoPath || "")}${about ? " " + about : ""}` });
+  }
+  out.push({ value: "#id", label: "id で指定" });
+  return out;
+}
+
+// resolveTaskIdInput reads a pasted task id: a full id or a unique prefix
+// (any case, spaces trimmed) names one task.
+function resolveTaskIdInput(input, tasks) {
+  const q = String(input || "").trim().toLowerCase();
+  if (!q) return { kind: "empty" };
+  const hits = (tasks || []).filter((t) => t.id.startsWith(q));
+  if (hits.length === 1) return { kind: "one", task: hits[0] };
+  if (hits.length > 1) return { kind: "many", tasks: hits };
+  return { kind: "none" };
 }
 
 // latestLoad lets only the newest of overlapping async loads render.

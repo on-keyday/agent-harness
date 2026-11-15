@@ -994,3 +994,49 @@ test("resumeRegrantFlags: what was given is what is re-granted", () => {
   eq(f({ caps: "all", scope: "global" }), { resumeCapsOverride: false, scopePresent: false });
   eq(f({ resumeTaskId: ID, resumeExact: true, caps: "all" }), { resumeCapsOverride: false, scopePresent: false });
 });
+
+// Compose's tabs: the tab alone decides the action, and names it.
+test("composeTabModel: one action per tab, named on its button", () => {
+  eq(["interactive", "oneshot", "background", "schedule"].map((t) => page.composeTabModel(t).label),
+    ["session を開く", "one-shot を実行", "background で投入", "schedule を作る"]);
+  eq(page.composeTabModel("schedule").action, "create-schedule");
+  eq(page.composeTabModel("background").action, "open-session");
+});
+
+const raw = (over) => ({
+  cron: "@daily", tz: "Asia/Tokyo", repo: "/r", task: ID, host: "", agent: "claude", agentArgs: ["--x"],
+  prompt: "p", oneshot: true, record: "on", pty: "off", resumeConversation: true, stream: true,
+  deadline: "1h", turnEnd: "quiet", quiet: "2m", blocked: "3m", queueTimeout: "4m",
+  caps: "none", scope: "subtree", ...over,
+});
+
+// Review Focus 1: a field of a tab not shown is not sent.
+test("composeFormFor: what another tab holds is not read", () => {
+  const i = page.composeFormFor("interactive", raw());
+  eq([i.cron, i.task, i.oneshot, i.deadline, i.resumeConversation], ["", "", false, "", false]);
+  eq([i.stream, i.pty, i.prompt, i.agentArgs, i.record, i.caps], [true, "off", "p", ["--x"], "on", "none"]);
+  const o = page.composeFormFor("oneshot", raw());
+  eq([o.stream, o.oneshot, o.pty, o.cron], [false, false, "off", ""]);
+  const b = page.composeFormFor("background", raw());
+  eq([b.oneshot, b.stream, b.deadline, b.turnEnd, b.cron, b.task], [true, true, "1h", "quiet", "", ""]);
+  const s = page.composeFormFor("schedule", raw());
+  eq([s.cron, s.tz, s.task, s.oneshot, s.resumeConversation, s.stream, s.deadline], ["@daily", "Asia/Tokyo", ID, true, true, false, "1h"]);
+});
+
+test("composeTargetOptions: tasks a schedule can bind, after 新規に作る", () => {
+  const ended = { id: "a".repeat(32), status: "Succeeded", repoPath: "/w/one", runMode: "foreground" };
+  const bg = { id: "b".repeat(32), status: "Running", repoPath: "/w/two", runMode: "background" };
+  const fg = { id: "c".repeat(32), status: "Running", repoPath: "/w/three", runMode: "foreground" };
+  const opts = page.composeTargetOptions([ended, bg, fg]);
+  eq(opts.map((o) => o.value), ["", "a".repeat(32), "b".repeat(32), "#id"]);
+  assert.match(opts[1].label, /^aaaaaaaa one/);
+});
+
+test("resolveTaskIdInput: a full id or a unique prefix names one task", () => {
+  const ts = [{ id: "ab12" + "0".repeat(28) }, { id: "ab34" + "0".repeat(28) }, { id: "cd00" + "0".repeat(28) }];
+  eq(page.resolveTaskIdInput("cd00" + "0".repeat(28), ts), { kind: "one", task: ts[2] });
+  eq(page.resolveTaskIdInput(" CD ", ts), { kind: "one", task: ts[2] });
+  eq(page.resolveTaskIdInput("ab", ts), { kind: "many", tasks: [ts[0], ts[1]] });
+  eq(page.resolveTaskIdInput("ef", ts), { kind: "none" });
+  eq(page.resolveTaskIdInput("  ", ts), { kind: "empty" });
+});

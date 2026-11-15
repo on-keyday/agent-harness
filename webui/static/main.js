@@ -474,7 +474,6 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   const agentArgs    = document.getElementById("agent-args-input");
   // Single unified task-id field, shared by reattach (target a detached
   // session) and resume (reuse a terminal task's worktree via Open).
-  const taskIdInput  = document.getElementById("task-id-input");
   const runnerList   = document.getElementById("runner-list");
   const taskList     = document.getElementById("task-list");
 
@@ -1073,12 +1072,6 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     return tokenize(raw);
   };
 
-  // currentResumeTaskID returns the trimmed resume input, or "" when blank.
-  // The wasm bridge translates "" to "no resume" before serializing.
-  const currentResumeTaskID = () => {
-    if (!taskIdInput) return "";
-    return taskIdInput.value.trim();
-  };
 
   // File picker DOM refs + state need to exist BEFORE refreshSnapshot()
   // is first awaited, because the very first invocation calls
@@ -3439,7 +3432,6 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     composeRepo: () => runnerSelect.value || "",
     composeHost: () => (hostSelect ? hostSelect.value || "" : ""),
     composeAgent: () => (agentSelect ? agentSelect.value || "" : ""),
-    resumeTaskID: () => currentResumeTaskID(),
     agentArgs: () => currentAgentArgs(),
     sessionReq: (o) => sessionReq(o),
     openSession: (req) => openSession(req, "session"),
@@ -4220,13 +4212,11 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   const resumeConvBox  = document.getElementById("resume-conversation");
   // Background run (pillar A, A-D15): the prompt and the conditions.
   const composePrompt = document.getElementById("compose-prompt");
-  const composeBgBox  = document.getElementById("compose-background");
   // session new --oneshot (A3, A-D29): the profile's print-mode argv in the
   // session, which ends when it answers.
   const composeOneshotBox = document.getElementById("compose-oneshot");
   const composeBg     = document.getElementById("compose-bg");
   const bgInput = (id) => document.getElementById(id);
-  if (composeBgBox) composeBgBox.addEventListener("change", () => { composeBg.hidden = !composeBgBox.checked; });
 
   // parseDurationMs reads Go's duration grammar ("90s", "5m", "1h30m");
   // blank is 0, which the server reads as "its default" (none for a deadline).
@@ -4246,15 +4236,15 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
 
   // composeRunMode is Compose's run-mode half of a session request; throws on
   // a malformed duration.
-  function composeRunMode() {
-    const r = { prompt: composePrompt ? composePrompt.value : "" };
-    if (!composeBgBox || !composeBgBox.checked) return r;
+  function composeRunMode(tab, f) {
+    const r = { prompt: f.prompt };
+    if (tab !== "background") return r;
     r.runMode = "background";
-    r.deadlineMs = parseDurationMs("deadline", bgInput("bg-deadline").value);
-    r.quietMs = parseDurationMs("quiet", bgInput("bg-quiet").value);
-    r.blockedMs = parseDurationMs("blocked", bgInput("bg-blocked").value);
-    r.queueTimeoutMs = parseDurationMs("queue timeout", bgInput("bg-queue").value);
-    r.turnEnd = bgInput("bg-turn-end").value;
+    r.deadlineMs = parseDurationMs("deadline", f.deadline);
+    r.quietMs = parseDurationMs("quiet", f.quiet);
+    r.blockedMs = parseDurationMs("blocked", f.blocked);
+    r.queueTimeoutMs = parseDurationMs("queue timeout", f.queueTimeout);
+    r.turnEnd = f.turnEnd;
     // The PTY size (A-D7): the terminal's own, as a foreground open gets it.
     r.rows = term.rows;
     r.cols = term.cols;
@@ -4288,14 +4278,13 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     bgInput("bg-quiet").value = msDurationStr(c.quietMs);
     bgInput("bg-blocked").value = msDurationStr(c.blockedMs);
     bgInput("bg-queue").value = msDurationStr(c.queueTimeoutMs);
-    if (composeBgBox) { composeBgBox.checked = true; composeBg.hidden = false; }
+    setComposeTab("background");
     const boxes = composeBoxesFromTask(t);
     if (spawnStreamBox) spawnStreamBox.checked = boxes.stream;
     if (composeOneshotBox) composeOneshotBox.checked = boxes.oneshot;
     const ptySelect = document.getElementById("compose-pty");
     if (ptySelect) ptySelect.value = boxes.pty;
     if (resumeConvBox) resumeConvBox.checked = !!resumeConversation;
-    if (taskIdInput) taskIdInput.value = t.id;
     setActiveTab("tasks");
     document.getElementById("compose").scrollIntoView({ behavior: "smooth", block: "start" });
   }
@@ -4317,31 +4306,72 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       composeZone.appendChild(opt);
     }
   }
-  // A schedule is always a background run, so the conditions block is the
-  // part of the form it reads: show it as soon as a cron is typed.
-  const composeCronSt = composeCronState();
+  // The tabs. Each shows the fields it reads (data-field, composeTabModel)
+  // and names its action on the button; the tab is remembered per browser.
+  const COMPOSE_TAB_KEY = "composeTab";
   const openBtn = document.getElementById("open-detachable");
-  const capsOnResumeBox = document.getElementById("caps-on-resume");
-  const capsOnResumeNote = document.getElementById("caps-on-resume-note");
-  const syncComposeSchedule = () => {
-    const cron = composeCron ? composeCron.value : "";
-    if (composeBgBox) {
-      composeCronSync(composeCronSt, cron, composeBgBox);
-      if (composeBg) composeBg.hidden = !composeBgBox.checked;
+  const composeTarget = document.getElementById("compose-target");
+  const composeTargetId = document.getElementById("compose-target-id");
+  const composeTargetNote = document.getElementById("compose-target-note");
+  let composeTab = "interactive";
+  try {
+    const saved = localStorage.getItem(COMPOSE_TAB_KEY);
+    if (COMPOSE_TABS.includes(saved)) composeTab = saved;
+  } catch (_) { /* storage blocked */ }
+  function setComposeTab(tab) {
+    composeTab = COMPOSE_TABS.includes(tab) ? tab : "interactive";
+    try { localStorage.setItem(COMPOSE_TAB_KEY, composeTab); } catch (_) { /* storage blocked */ }
+    const m = composeTabModel(composeTab);
+    const read = new Set(m.fields);
+    for (const b of document.querySelectorAll(".compose-tab")) b.classList.toggle("is-active", b.dataset.tab === composeTab);
+    for (const el of document.querySelectorAll("#compose [data-field]")) el.hidden = !read.has(el.dataset.field);
+    // A target task's repo is the one used: the dropdown would only mislead.
+    const bound = composeTab === "schedule" && composeTarget && composeTarget.value !== "";
+    runnerSelect.disabled = bound;
+    openBtn.textContent = m.label;
+  }
+  for (const b of document.querySelectorAll(".compose-tab")) b.addEventListener("click", () => setComposeTab(b.dataset.tab));
+  setComposeTab(composeTab);
+  // The schedule target select: rebuilt from each snapshot, keeping the pick.
+  // It looks the select up itself: the first snapshot renders before this
+  // block runs, and a const read here would be in its temporal dead zone.
+  function renderComposeTargets(tasks) {
+    const composeTarget = document.getElementById("compose-target");
+    if (!composeTarget) return;
+    const keep = composeTarget.value;
+    composeTarget.innerHTML = "";
+    for (const o of composeTargetOptions(tasks)) {
+      const opt = document.createElement("option");
+      opt.value = o.value;
+      opt.textContent = o.label;
+      composeTarget.appendChild(opt);
     }
-    // The button says what it will do.
-    openBtn.textContent = composeSubmitAction({ cron, stream: false, repo: "x" }).label;
-    const cr = composeCapsOnResumeState({ cron, task: currentResumeTaskID() });
-    if (capsOnResumeBox) capsOnResumeBox.disabled = cr.disabled;
-    if (capsOnResumeNote) { capsOnResumeNote.textContent = cr.note; capsOnResumeNote.hidden = !cr.note; }
-  };
-  if (composeCron) composeCron.addEventListener("input", syncComposeSchedule);
-  if (taskIdInput) taskIdInput.addEventListener("input", syncComposeSchedule);
+    if ([...composeTarget.options].some((o) => o.value === keep)) composeTarget.value = keep;
+  }
+  if (composeTarget) composeTarget.addEventListener("change", () => {
+    composeTargetId.hidden = composeTarget.value !== "#id";
+    setComposeTab(composeTab);
+  });
+  // composeTargetTask is the target's task id: "" for a new task, else the
+  // picked or pasted one (a pasted id must name exactly one listed task).
+  function composeTargetTask() {
+    if (!composeTarget || composeTarget.value === "") return "";
+    if (composeTarget.value !== "#id") return composeTarget.value;
+    const r = resolveTaskIdInput(composeTargetId.value, lastTasks);
+    if (r.kind === "one") return r.task.id;
+    throw new Error(r.kind === "many" ? `対象: "${composeTargetId.value.trim()}" matches ${r.tasks.length} tasks; type more of the id`
+      : r.kind === "empty" ? "対象: paste a task id" : `対象: no listed task has id ${composeTargetId.value.trim()}`);
+  }
+  // The 権限 section's summary: what the panel holds, without opening it.
+  function renderComposeAuthoritySummary() {
+    const sum = document.getElementById("compose-authority-summary");
+    if (sum) sum.textContent = `権限  caps: ${capsLabelFor(spawnCaps)} · scope: ${spawnScope || "subtree"}`;
+  }
   const composeForm = () => ({
     cron: composeCron ? composeCron.value : "",
     tz: composeZone ? composeZone.value : "",
     repo: runnerSelect.value || "",
-    task: currentResumeTaskID(),
+    task: composeTab === "schedule" ? composeTargetTask() : "",
     host: hostSelect ? (hostSelect.value || "") : "",
     agent: agentSelect ? (agentSelect.value || "") : "",
     agentArgs: currentAgentArgs(),
@@ -4365,25 +4395,20 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     maxDescendants: spawnLimits.max,
   });
 
-  const composeRequest = () => sessionReq({
-    repo: runnerSelect.value || "",
-    host: hostSelect ? (hostSelect.value || "") : "",
-    agent: agentSelect ? (agentSelect.value || "") : "",
-    agentArgs: currentAgentArgs(),
-    resumeTaskId: currentResumeTaskID(),
-    // Compose was the one surface with no way to say this. The task sheet
-    // offers all four combinations as buttons and the command input takes
-    // --resume-conversation, so a Compose resume silently meant "keep the
-    // worktree, drop the conversation" with nothing on screen saying so.
-    resumeConversation: !!(resumeConvBox && resumeConvBox.checked),
-    // A checkbox, not a typed flag: this decomposes into a control the form
-    // already has a kind for, which is what checklist 34a asks.
-    eventStream: !!(spawnStreamBox && spawnStreamBox.checked),
-    ...composeRunMode(),
-    record: composeRecordOption((document.getElementById("compose-record") || {}).value),
-    oneshot: !!(composeOneshotBox && composeOneshotBox.checked),
-    pty: composePtyOption((document.getElementById("compose-pty") || {}).value),
-  });
+  // composeRequest is a session tab's request, from the fields that tab reads
+  // (composeFormFor). 新規作成 never resumes: a resume is the task sheet's.
+  const composeRequest = () => {
+    const tab = composeTab;
+    const f = composeFormFor(tab, composeForm());
+    return sessionReq({
+      repo: f.repo, host: f.host, agent: f.agent, agentArgs: f.agentArgs,
+      eventStream: f.stream,
+      ...composeRunMode(tab, f),
+      record: composeRecordOption(f.record),
+      oneshot: tab === "oneshot" || f.oneshot,
+      pty: composePtyOption(f.pty),
+    });
+  };
 
   // --- Cap chips (session-default capability set for new-session spawns) ---
   // capDefs / spawnCaps declared early in the IIFE (before connect) so the
@@ -4445,7 +4470,8 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
 
   function renderCaps() {
     buildCapChips(document.getElementById("caps-row"),
-      () => spawnCaps, (v) => { spawnCaps = v; });
+      () => spawnCaps, (v) => { spawnCaps = v; renderComposeAuthoritySummary(); });
+    renderComposeAuthoritySummary();
   }
 
   function initCaps() {
@@ -4769,6 +4795,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       if (sf.length > 0) line += "  +" + sf.join(" ");
       echo.textContent = line;
     }
+    renderComposeAuthoritySummary();
   }
 
   // setSpawnDefaults applies a parsed `caps set-defaults` to the compose
@@ -5533,15 +5560,11 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // detachable, takeover-able session (the one-shot/non-detachable variant
   // was removed; a session you cannot re-enter had no upside).
   const openInteractive = async (label) => {
-    // A filled cron: this Submit creates a schedule, it opens no session.
-    if (composeCron && composeIsSchedule({ cron: composeCron.value })) {
+    // The tab decides the action; the button already says which.
+    if (composeTabModel(composeTab).action === "create-schedule") {
       try {
-        const act = composeSubmitAction(composeForm());
-        appendCmdOutput(await window.harness.scheduleCreate(act.tokens), true);
-        // Created: clear the cron so a second click cannot make a duplicate,
-        // and give Background back what the cron took.
-        composeCron.value = "";
-        syncComposeSchedule();
+        const tokens = composeScheduleTokens(composeFormFor("schedule", composeForm()));
+        appendCmdOutput(await window.harness.scheduleCreate(tokens), true);
         refreshSnapshot();
         refreshSchedulesDialog();
       } catch (e) {
@@ -5556,8 +5579,8 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       alert(e.message);
       return;
     }
-    if (!req.repo && !req.resumeTaskId) {
-      alert("select a repo or fill in Resume task id");
+    if (!req.repo) {
+      alert("select a repo");
       return;
     }
     const open = async (r) => {
@@ -5647,7 +5670,6 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     reattachQuick.addEventListener("click", () => reattachTo(reattachQuick.dataset.taskId));
   }
 
-  document.getElementById("reattach").addEventListener("click", () => reattachTo(taskIdInput.value.trim()));
 
   // --- Session preview: LIVE view of interactive session(s), typable. A
   //     cowrite attach stream stays open per pane while shown; bytes flow
@@ -6550,6 +6572,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
 
   function renderTaskList(tasks) {
     lastTasks = tasks || [];
+    renderComposeTargets(lastTasks);
     paintPaneLifecycle();
     // The spawn scope checklist renders from the same snapshot; rebuild it
     // here so new/finished tasks appear without a manual refresh. The
