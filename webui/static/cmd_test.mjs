@@ -982,3 +982,15 @@ test("a far-side close names the End reason when one came", () => {
   assert.equal(page.interactiveClosedNotice("", { status: "Failed" }).kind, "セッション終了 (Failed)");
   assert.equal(page.interactiveClosedNotice("", null).kind, "セッション終了");
 });
+
+// A resume re-grants exactly what was typed (or set in the resume dialog):
+// caps when caps came, scope when scope or scope-for came, nothing otherwise.
+test("resumeRegrantFlags: what was given is what is re-granted", () => {
+  const f = (o) => page.resumeRegrantFlags({ resumeTaskId: "", resumeExact: false, caps: null, scope: null, scopeFor: null, ...o });
+  eq(f({ resumeTaskId: ID, caps: "exec_view" }), { resumeCapsOverride: true, scopePresent: false });
+  eq(f({ resumeTaskId: ID, scope: "none" }), { resumeCapsOverride: false, scopePresent: true });
+  eq(f({ resumeTaskId: ID, scopeFor: ["cancel=none"] }), { resumeCapsOverride: false, scopePresent: true });
+  eq(f({ resumeTaskId: ID }), { resumeCapsOverride: false, scopePresent: false });
+  eq(f({ caps: "all", scope: "global" }), { resumeCapsOverride: false, scopePresent: false });
+  eq(f({ resumeTaskId: ID, resumeExact: true, caps: "all" }), { resumeCapsOverride: false, scopePresent: false });
+});

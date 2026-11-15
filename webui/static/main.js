@@ -324,7 +324,6 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // but the DOM is always ready by then, which is what renderCaps() touches).
   let capDefs = [];          // [{name:string, bit:number}] — populated by initCaps()
   let spawnCaps = 0;         // bitmask; read by openInteractive on spawn
-  let applyCapsOnResume = false; // mirrors #caps-on-resume checkbox; default OFF
   let spawnScope = "";       // serialized scope grammar for spawns; "" = the subtree default
   // The delegation bound a FRESH spawn carries: what the new task may hand to
   // the tasks it creates. A resume re-grants it only from a typed
@@ -373,7 +372,8 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // hand-copied per call site (it was: five sites, and two of them dropped the
   // "override only applies on resume" guard — harmless only because those two
   // always had a resumeTaskId, i.e. a latent footgun). Callers pass just what
-  // varies; spawnCaps / applyCapsOnResume are read from the live closure here.
+  // varies; spawnCaps is read from the live closure here. A resume re-grants
+  // what the caller passed (resumeRegrantFlags), never the panel's leftovers.
   //   resumeCapsOverride is forced false for a NEW task (no resumeTaskId): the
   //   override re-grants caps on RESUME and is a no-op / misleading otherwise.
   // Keys here MUST match cmd/harness-webui-wasm/main.go's opts.Get("…") names.
@@ -411,14 +411,12 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       caps: caps !== null ? caps : spawnCaps,
       scope: scope !== null ? scope : spawnScope,
       scopeFor: scopeFor !== null ? scopeFor : overrideSpecsFrom("spawn"),
-      // One checkbox gates BOTH halves of the resume re-grant: silently
-      // applying the Compose scope picker's leftover state to a resumed
-      // task would be the exact invisible rewrite scope_present exists to
-      // prevent.
-      resumeCapsOverride: resumeTaskId && !resumeExact ? applyCapsOnResume : false,
-      scopePresent: resumeTaskId && !resumeExact ? applyCapsOnResume : false,
+      // A resume re-grants only what the caller gave: silently applying the
+      // Compose panel's leftover state to a resumed task would be the exact
+      // invisible rewrite scope_present exists to prevent.
+      ...resumeRegrantFlags({ resumeTaskId, resumeExact, caps, scope, scopeFor }),
       // The bound: a typed flag wins over the panel, and only a typed flag
-      // re-grants it on a resume — the caps-on-resume checkbox names caps and
+      // re-grants it on a resume — the resume dialog's override names caps and
       // scope, and widening what it silently rewrites is item 26's failure.
       delegateCaps: delegateCaps !== null ? delegateCaps : spawnDeleg.caps,
       delegateScope: delegateScope !== null ? delegateScope : scopeStateSpec(spawnDeleg),
@@ -4455,13 +4453,6 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     capDefs = window.harness.capList();
     spawnCaps = 0;  // default-deny: no bits on until the operator picks some
     renderCaps();
-    const capsOnResumeCb = document.getElementById("caps-on-resume");
-    if (capsOnResumeCb) {
-      capsOnResumeCb.checked = false; // explicit default OFF
-      capsOnResumeCb.addEventListener("change", () => {
-        applyCapsOnResume = capsOnResumeCb.checked;
-      });
-    }
     initScope();
     // Built on open as well as now: a section first opened on an empty server
     // would otherwise list no tasks (checklist item 34a).

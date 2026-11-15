@@ -103,6 +103,18 @@ function paneStateBadge(t) {
   return taskLifecycleModel(t) || taskProgramModel(t);
 }
 
+// resumeRegrantFlags decides what a resume re-grants: caps when the caller
+// gave caps, the scope when it gave a scope or a scope-for, nothing otherwise.
+// null means "not given" (a typed flag, or the resume dialog's open override);
+// a new task and an exact resume re-grant nothing.
+function resumeRegrantFlags({ resumeTaskId, resumeExact, caps, scope, scopeFor }) {
+  const on = !!resumeTaskId && !resumeExact;
+  return {
+    resumeCapsOverride: on && caps !== null && caps !== undefined,
+    scopePresent: on && ((scope !== null && scope !== undefined) || (scopeFor !== null && scopeFor !== undefined)),
+  };
+}
+
 // orderedRowsModel lays the task list out from harness.orderTasks' groups
 // ([{group, ids}], ordered by Go's cli.OrderTasks): a {head} row before each
 // labelled group, counting the rows under it, then a {task} row per task.
