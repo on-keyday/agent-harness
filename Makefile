@@ -91,6 +91,7 @@ test: js-test scripts-test
 # Offline wrapper/preset regressions belong to the ordinary development path.
 scripts-test:
 	bash -n scripts/sandbox/agent-in-podman.sh scripts/sandbox/agent-launch.sh
+	python3 -m unittest discover -s examples/memory-viewer -p '*_test.py'
 	python3 scripts/test_agent_presets.py
 	python3 scripts/test_stop_build_start.py
 	python3 scripts/test_tour_draw.py

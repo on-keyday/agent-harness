@@ -21,6 +21,11 @@ const claudeMdMinimal = `This task runs inside a harness-managed worktree.
   ` + "`.claude/skills/harness-cli/SKILL.md`" + ` / ` + "`.agents/skills/harness-cli/SKILL.md`" + `.
 - Your inbound agentboard topic is ` + "`chat.<first-8-hex-of-HARNESS_TASK_ID>`" + `;
   the server subscribes you to it. There is no board-wide discovery topic.
+- If ` + "`HARNESS_MEMORY_DIR`" + ` is set, it names selected memory for this task.
+  Start at its ` + "`MEMORY.md`" + ` or ` + "`_index.md`" + ` and open relevant notes as needed.
+  Re-check facts that matter against current code or their cited evidence.
+  Report new learning with its evidence; ` + "`harness-cli skill memory-maintenance`" + `
+  describes how one writer verifies and integrates it after the task.
 
 Harness-injected files in this worktree are NOT your work — do not commit them
 as your own: this file (CLAUDE.md/AGENTS.md/GEMINI.md), ` + "`.claude/`" + `,

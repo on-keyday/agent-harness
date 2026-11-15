@@ -1,7 +1,8 @@
 # memory-viewer
 
 A browser viewer and maintenance check for Claude Code's per-project
-auto-memory (`~/.claude/projects/*/memory/`). One file, standard library only.
+auto-memory (`~/.claude/projects/*/memory/`) and Markdown knowledge wikis.
+One file, standard library only.
 Its UI and its comments are in Japanese.
 
 It is in this repo because it drives `harness-cli` the way an outside tool has
@@ -16,11 +17,44 @@ against, which are now the files next to it.
 python3 examples/memory-viewer/memviewer.py --check           # findings, as text
 python3 examples/memory-viewer/memviewer.py --serve           # browser, on 8765; --port 0 picks a free one
 python3 examples/memory-viewer/memviewer.py -o out.html       # one self-contained page
+python3 examples/memory-viewer/memviewer.py --memory-dir /path/to/wiki --check
 ```
 
 `--check` exits 1 when it found something, so it works in a script. `--serve`
 re-reads the corpus on every request but bakes the page template at process
 start: an edit to `memviewer.py` needs a restart, not a reload.
+
+## Entry indexes and reachability
+
+`--memory-dir DIR` selects a memory directory directly, replacing the default
+scan of all Claude projects; repeat it to inspect several selected directories.
+It works with `--check`, `--serve`, and `-o`. This also supports stores outside
+Claude's default config directory. An invalid directory is an error.
+
+The entry index is `MEMORY.md`, `_index.md`, or `INDEX.md`, in that order.
+Markdown index rows (`- [title](file.md) — when to read`) and wiki rows
+(`[[slug]] — when to read`) are supported. Notes and topic indexes may be nested;
+`SKILL.md` and `_schema.md` describe the store and are not counted as notes.
+A small `MEMORY.md` can link to a full `_index.md` catalog in the same directory.
+
+Reachability starts at the entry index and follows wiki links, relative
+Markdown links, and index paths written in bold/code. Only `MEMORY.md` has
+the automatic startup budget (the configured byte limit and first 200 lines).
+Other indexes are read on demand in full. An unlinked topic index or a cycle
+of notes without an entry path does not make its notes reachable. The check
+describes discovery through the index; a separate text search may still find
+an unreachable note.
+
+The graph's inbound-link count remains a separate metric: an indexed note
+with no inbound wiki links can still be useful. Do not use that count as a
+deletion rule. Similar descriptions are review candidates, using English word
+overlap and Japanese character trigrams, not evidence of semantic equivalence.
+
+For evidence-based updates, conflict handling, incremental maintenance and
+handoffs to sandboxed tasks, see the bundled
+[`memory-maintenance` skill](../../runner/agentskills/memory-maintenance/SKILL.md)
+(`harness-cli skill memory-maintenance`). The viewer reads notes and reports
+findings; a designated maintainer performs any consolidation.
 
 ## The harness-cli part
 
