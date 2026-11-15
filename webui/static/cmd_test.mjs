@@ -769,14 +769,16 @@ test("task lifecycle badge: words, age, attention", () => {
   eq(page.taskLifecycleModel({ lifecycle: "", lifecycleAt: "0", lifecycleAgeMs: 0, status: "Failed" }), null);
 });
 
-// The state badges are coloured by tier, the same three as the TUI: busy
-// (work, prog working) yellow, waiting for the next prompt (ready, prog idle /
-// done) green, asking for the operator (wait, err, prog blocked / error) red.
-test("stateBadgeColor: busy yellow, ready green, attention red", () => {
-  eq(page.stateBadgeColor(page.taskLifecycleModel({ lifecycle: "working", lifecycleAt: "5", lifecycleAgeMs: 1, status: "Running" })), "#e5c07b");
-  eq(page.stateBadgeColor(page.taskLifecycleModel({ lifecycle: "idle", lifecycleAt: "5", lifecycleAgeMs: 1, status: "Running" })), "#98c379");
+// The state badges are coloured by tier: busy (work, prog working) gray,
+// waiting for the next prompt (ready, prog idle / done) the default task blue,
+// asking for the operator (wait, err, prog blocked / error) the Failed red. Not
+// yellow / green: those are the Detached / Running status colours on the same
+// row, and a badge in them read as a status (operator, 2026-11-16).
+test("stateBadgeColor: busy gray, ready blue, attention red", () => {
+  eq(page.stateBadgeColor(page.taskLifecycleModel({ lifecycle: "working", lifecycleAt: "5", lifecycleAgeMs: 1, status: "Running" })), "#888");
+  eq(page.stateBadgeColor(page.taskLifecycleModel({ lifecycle: "idle", lifecycleAt: "5", lifecycleAgeMs: 1, status: "Running" })), "#61afef");
   eq(page.stateBadgeColor(page.taskLifecycleModel({ lifecycle: "waiting", lifecycleAt: "5", lifecycleAgeMs: 1, status: "Running" })), "#f14c4c");
-  eq(page.stateBadgeColor(page.taskProgramModel({ liveTerminal: true, programState: "done", programKind: "", programMsg: "" })), "#98c379");
+  eq(page.stateBadgeColor(page.taskProgramModel({ liveTerminal: true, programState: "done", programKind: "", programMsg: "" })), "#61afef");
   eq(page.stateBadgeColor(null), "");
 });
 

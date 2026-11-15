@@ -75,11 +75,14 @@ function taskProgramModel(t) {
 
 // stateBadgeColor is a lifecycle / program badge's colour, by the three tiers
 // the TUI uses too: asking for the operator (wait, err, prog blocked / error)
-// red, busy (work, prog working) yellow, waiting for the next prompt (ready,
-// prog idle / done) green. "" for no badge.
+// the Failed red, busy (work, prog working) gray, waiting for the next prompt
+// (ready, prog idle / done) the default task blue (taskStatusColor's values).
+// Not yellow / green as in the TUI: those are the Detached / Running status
+// colours on the same row here, and a badge in them read as a status. "" for
+// no badge.
 function stateBadgeColor(b) {
   if (!b) return "";
-  return b.attention ? "#f14c4c" : b.quiet ? "#e5c07b" : "#98c379";
+  return b.attention ? "#f14c4c" : b.quiet ? "#888" : "#61afef";
 }
 
 // paneAboutText is a session pane header's About text, mirroring the TUI's

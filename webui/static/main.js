@@ -6596,8 +6596,8 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       line1.append(dot, statusEl);
       // What the task's hooks report, then what its program reports (OSC
       // 7501), side by side so a disagreement is on the row (D3, D28), coloured
-      // by tier (stateBadgeColor): red asks for the operator, yellow is busy,
-      // green waits for the next prompt.
+      // by tier (stateBadgeColor): red asks for the operator, gray is busy, the
+      // default blue waits for the next prompt.
       for (const b of [taskLifecycleModel(t), taskProgramModel(t)]) {
         if (!b) continue;
         const el = document.createElement("span");
