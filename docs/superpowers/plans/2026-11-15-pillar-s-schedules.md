@@ -165,9 +165,12 @@ func loadZone(name string) (*time.Location, string, error)
     `ScheduleListRequest {}`.
   - `enum ScheduleStatus :u8`: `ok`, `no_such_schedule`, `invalid_cron`,
     `invalid_zone`, `no_candidate`, `deadline_required`, `prompt_required`,
-    `profile_required`, `profile_unavailable`, `stream_refused`,
+    `profile_required`, `profile_unavailable`,
     `task_not_reachable`, `task_running_foreground`, `self_refused`,
-    `spawn_limit`, `prompt_too_large`, `internal_error`.
+    `spawn_limit`, `prompt_too_large`, `internal_error`, then (Task 4, Ruling
+    R16) `repo_required`, `repo_conflict`, `scope_not_permitted`,
+    `record_not_permitted`, `turn_end_unsupported`, `task_already_bound`,
+    `not_ready`. (`stream_refused` was in the first list and is removed.)
   - `ScheduleResponse { status; message_len :u16; message; id :ScheduleID;
     stream_id :u64 }` (stream_id non-zero for list/show).
   - Stream bodies: `ScheduleRow` (everything `schedule ls` prints: id, cron,
@@ -379,8 +382,10 @@ func (st *TaskStore) CheckSpawnLimits(creator protocol.TaskID) error
   - **Unbind** (S-D15): a foreground resume or `session mode … foreground`
     of a bound task needs `schedule` too; it sets State `Unbound` and appends
     `unbound` with the caller and time.
-  - **Create checks** (S-D12): `checkBackgroundRun`, plus `--stream` →
-    `stream_refused`, plus `CheckSpawnLimits` when no `--task`.
+  - **Create checks** (S-D12): `checkBackgroundRun`, plus `CheckSpawnLimits`
+    when no `--task`. (`--stream` cannot be expressed: `ScheduleSpec` has no
+    stream field, so `stream_refused` was removed and the CLI does not offer
+    `--stream` on schedule verbs — Ruling R16.)
 
 - [ ] **Step 1: Failing tests:** `TestScheduleNeedsBit`, `TestScheduleOutOfReachIsNoSuch`,
   `TestScheduleSelfRefused` (each verb, the caller holding `schedule` with
@@ -407,7 +412,7 @@ func (st *TaskStore) CheckSpawnLimits(creator protocol.TaskID) error
 **Files:**
 - Create: `cli/schedule.go`, `cli/schedule_test.go`
 - Modify: `cli/verb/spawn.go` (a `spawnSchedule` kind: `spawnFlags` minus
-  `resume`, `exact`, `x11`, `x11-display`, `detach`, `foreground`,
+  `resume`, `exact`, `x11`, `x11-display`, `detach`, `stream`, `foreground`,
   `background`, `ip`, `host` stays; plus `--cron`, `--tz`, `--task`),
   `cli/verb/table.go` (six rows, `CmdlineSurfaces: CLI | TUI | WebUI`,
   `WebUIDispatch` per row), `cmd/harness-cli/` dispatch, `cli/list.go`
