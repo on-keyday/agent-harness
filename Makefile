@@ -96,6 +96,7 @@ scripts-test:
 	python3 scripts/test_stop_build_start.py
 	python3 scripts/test_tour_draw.py
 	python3 -m unittest discover -s scripts/sandbox -p 'test_*.py'
+	python3 scripts/kvm-runner/test_kvm_runner.py
 
 # Explicit network/container check, kept out of make test: latest vendor
 # releases and registries must not determine whether a local unit test passes.

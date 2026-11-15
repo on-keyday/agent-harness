@@ -311,6 +311,27 @@ def missing_shares(args, wanted: list[Path]) -> list[Path]:
     return [d for d in wanted if f"<source dir='{d}'/>" not in xml]
 
 
+# virtiofs needs the guest's memory shareable with virtiofsd (access
+# mode=shared). Without an explicit source, libvirt backs that memory with a
+# FILE under ~/.config/libvirt/qemu/ram, so every page the guest dirties is
+# written back to disk: one guest wrote 66 TB in 4.5 days at ~600 MB/s while
+# looking CPU-starved from inside. memfd is shared and stays in RAM.
+MEMORY_BACKING_ARGS = ["--memorybacking", "source.type=memfd,access.mode=shared"]
+
+
+def with_memfd_backing(xml: str) -> str:
+    """Return domain XML whose <memoryBacking> is shared and memfd-sourced."""
+    if "<memoryBacking>" not in xml:
+        return xml.replace("</currentMemory>",
+                           "</currentMemory>\n  <memoryBacking>\n"
+                           "    <source type='memfd'/>\n"
+                           "    <access mode='shared'/>\n  </memoryBacking>", 1)
+    if re.search(r"<memoryBacking>.*?<source\b.*?</memoryBacking>", xml, re.S):
+        return xml
+    return xml.replace("<memoryBacking>",
+                       "<memoryBacking>\n    <source type='memfd'/>", 1)
+
+
 def attach_shares(args, missing: list[Path]) -> int:
     """Add the given virtiofs shares to a domain that already exists."""
     if not missing:
@@ -330,13 +351,9 @@ def attach_shares(args, missing: list[Path]) -> int:
         if line.strip() == "</devices>":
             lines.append(devs)
         lines.append(line)
-    out = "".join(lines)
-    if "<memoryBacking>" not in out:
-        # virtiofs cannot attach without it, and there is no virsh subcommand
-        # for this element — it has to go in with the device.
-        out = out.replace("</currentMemory>",
-                          "</currentMemory>\n  <memoryBacking>\n"
-                          "    <access mode='shared'/>\n  </memoryBacking>", 1)
+    # virtiofs cannot attach without a shared memoryBacking, and there is no
+    # virsh subcommand for that element: it goes in with the device.
+    out = with_memfd_backing("".join(lines))
     dom = VM_DIR / args.name / "domain-shares.xml"
     dom.parent.mkdir(parents=True, exist_ok=True)
     dom.write_text(out)
@@ -455,9 +472,7 @@ def cmd_up(args) -> int:
                     f"type=mount,accessmode=passthrough,driver.type=virtiofs,"
                     f"source.dir={src},target.dir={src}"]
     if fs_args:
-        # virtiofs needs the guest's memory to be shareable with virtiofsd;
-        # without this libvirt refuses the domain outright.
-        fs_args += ["--memorybacking", "access.mode=shared"]
+        fs_args += MEMORY_BACKING_ARGS
 
     vi = ["virt-install", "--connect", CONNECT,
          "--name", args.name,
