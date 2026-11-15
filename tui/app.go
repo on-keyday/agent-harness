@@ -533,6 +533,7 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// unconditionally (v1 has no dirty-flag gating — 10Hz over ≤9 small
 		// crops is cheap) and re-arm only while the grid stays open.
 		if a.grid.IsOpen() {
+			a.grid.SetLifecycle(gridLifecycleBadges(a.gridPaneTasks()))
 			var cmd tea.Cmd
 			a.grid, cmd = a.grid.Update(msg)
 			return a, cmd
@@ -2379,6 +2380,19 @@ func (a *App) refreshTasksTable() {
 	if a.capsAuditModal.IsOpen() {
 		a.capsAuditModal.SetTasks(a.auditTasks())
 	}
+}
+
+// gridPaneTasks is the current, locally aged row of each task the grid shows.
+func (a *App) gridPaneTasks() []protocol.TaskInfo {
+	now := time.Now()
+	ids := a.grid.PaneTaskIDs()
+	out := make([]protocol.TaskInfo, 0, len(ids))
+	for _, id := range ids {
+		if t, ok := a.tasksByID[id]; ok {
+			out = append(out, a.agedTask(id, t, now))
+		}
+	}
+	return out
 }
 
 // openGrid is the ONE way this TUI opens the session viewer: the keys and the

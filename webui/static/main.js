@@ -361,6 +361,10 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // Declared here (not beside the snapshot poller) because initCaps →
   // initScope → the spawn checklist reads it before the poller section runs.
   let lastTasks = [];        // latest snapshot; re-render source for filter events
+  // Each open grid cell's lifecycle badge element, by task id. Declared up here
+  // with lastTasks because renderTaskList (which repaints them) runs from the
+  // first refreshSnapshot, before the grid's own section of this file.
+  const gridLife = new Map();
 
   // sessionReq builds the ONE request object shape the
   // harness.startInteractive wasm bridge consumes. Every session request goes
@@ -6202,6 +6206,17 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   function teardownGridPanes() {
     for (const key of gridKeys) stopGridPane(key);
     gridKeys = [];
+    gridLife.clear();
+  }
+
+  // paintGridLifecycle repaints each grid cell's lifecycle badge from the
+  // latest snapshot, in the task row's colors (taskLifecycleModel).
+  function paintGridLifecycle() {
+    for (const [id, el] of gridLife) {
+      const b = taskLifecycleModel((lastTasks || []).find((t) => t.id === id) || {});
+      el.textContent = b ? b.text : "";
+      el.style.color = !b ? "" : b.attention ? taskStatusColor("Failed") : b.quiet ? "#888" : taskStatusColor("");
+    }
   }
 
   // stopGridPane stops one cell's stream, whichever kind it is: a PTY cell is a
@@ -6256,8 +6271,9 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     const status = document.createElement("div");
     status.className = "chat-status";
     body.append(log, approval, row, status);
+    const base = label.textContent; // gridCellLabel's id + repo
     const paintLabel = (req) => {
-      label.textContent = id.slice(0, 8) + " ‹stream›" + (req ? " ⚑" : "");
+      label.textContent = base + " ‹stream›" + (req ? " ⚑" : "");
     };
     paintLabel(null);
     const view = createStreamView({ log, approval, status }, () => id, paintLabel);
@@ -6309,6 +6325,12 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       const cellLabel = gridCellLabel(id, row);
       label.textContent = cellLabel.text;
       label.title = cellLabel.title;
+      // The lifecycle badge (work / wait / ready / err) sits outside the label,
+      // so the label's ellipsis cuts the repo name before it; paintGridLifecycle
+      // repaints it from every task snapshot.
+      const life = document.createElement("span");
+      life.className = "grid-cell-life";
+      gridLife.set(id, life);
       const attach = document.createElement("button");
       attach.type = "button";
       attach.className = "grid-cell-btn";
@@ -6332,7 +6354,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       dismiss.textContent = "✕";
       dismiss.title = "閉じる";
       dismiss.addEventListener("click", () => dismissPane(key, cell));
-      head.append(label, attach, notify, dismiss);
+      head.append(label, life, attach, notify, dismiss);
       const body = document.createElement("div");
       body.className = "grid-cell-body";
       cell.append(head, body);
@@ -6380,6 +6402,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       startPane(key, p);   // p.live flips true synchronously before the first await
       paintPauseBtn(pause, p);
     }
+    paintGridLifecycle();
     if (!gridModal.open) gridModal.showModal();
   }
 
@@ -6487,13 +6510,6 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     return terms.every((term) => keys.some((k) => k.includes(term)));
   }
 
-  // repoTail returns the last path segment for display ("/a/b/repo" -> "repo",
-  // "C:/x/y" -> "y"); full path stays available via the row's title attr.
-  function repoTail(p) {
-    const parts = (p || "").split(/[\\/]/).filter(Boolean);
-    return parts.length ? parts[parts.length - 1] : (p || "-");
-  }
-
   // taskStatusColor returns the dot/label color for a status. Terminal states
   // are muted so live rows pop; unknown (Pending/Assigned/...) falls back to
   // blue. Function declaration (not a const map) so the initial
@@ -6512,6 +6528,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
 
   function renderTaskList(tasks) {
     lastTasks = tasks || [];
+    paintGridLifecycle();
     // The spawn scope checklist renders from the same snapshot; rebuild it
     // here so new/finished tasks appear without a manual refresh. The
     // re-grant dialog's list is deliberately NOT rebuilt mid-open — its

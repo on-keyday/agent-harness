@@ -434,13 +434,21 @@ function cropDefault(narrow, choice) {
   return choice === null || choice === undefined ? !!narrow : !!choice;
 }
 
+// repoTail is a repo path's last element for display ("/a/b/repo" -> "repo",
+// "C:/x/y" -> "y", "-" for none), the name the task rows and the grid cells
+// show; the full path stays in their title attribute.
+function repoTail(p) {
+  const parts = (p || "").split(/[\\/]/).filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : (p || "-");
+}
+
 // gridCellLabel is a grid cell's header: the id's first 8 hex and the repo's
 // last path element, as tui/grid.go renderPane shows them; the full id and
 // path go in the tooltip. task is the snapshot row, or undefined.
 function gridCellLabel(id, task) {
   const repo = (task && task.repoPath) || "";
-  const base = repo.replace(/\/+$/, "").split("/").pop();
-  if (!base) return { text: id.slice(0, 8), title: id };
+  if (!repo) return { text: id.slice(0, 8), title: id };
+  const base = repoTail(repo);
   return { text: `${id.slice(0, 8)} ${base}`, title: `${id} ${repo}` };
 }
 

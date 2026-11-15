@@ -146,3 +146,43 @@ func TestGridModel_NarrowPaneKeepsTheIDAndCutsTheRepo(t *testing.T) {
 		t.Errorf("narrow header should cut the repo name with an ellipsis: %q", head)
 	}
 }
+
+// The header carries the agent's lifecycle badge (work / wait / ready / err,
+// cli.LifecycleBadge) so a tiled screen says which sessions want a look, and
+// it outlives the repo name in a narrow cell. A task that never reported a
+// lifecycle shows none rather than `lc:-`.
+func TestGridModel_PaneHeaderShowsTheLifecycleBadge(t *testing.T) {
+	m := NewGridModel()
+	m.panes = []gridPane{
+		NewPaneStreamer("aaaaaaaa11", 24, 80),
+		NewPaneStreamer("bbbbbbbb22", 24, 80),
+	}
+	m.repos = map[string]string{"aaaaaaaa11": "/w/alpha", "bbbbbbbb22": "/w/beta"}
+	m.SetLifecycle(map[string]string{"aaaaaaaa11": "ready:3m"})
+	m.open = true
+	m.SetSize(120, 40)
+	view := m.View()
+	if !strings.Contains(view, "aaaaaaaa alpha ready:3m") {
+		t.Errorf("pane header lacks the lifecycle badge:\n%s", view)
+	}
+	if strings.Contains(view, "lc:-") {
+		t.Errorf("a task with no lifecycle report shows lc:-:\n%s", view)
+	}
+	narrow := strings.SplitN(m.renderPane(0, 18, 5), "\n", 3)[1]
+	if !strings.Contains(narrow, "ready:3m") || !strings.Contains(narrow, "aaaaaaaa") {
+		t.Errorf("narrow header must keep the id and the badge: %q", narrow)
+	}
+}
+
+func TestGridLifecycleBadges_OnlyReportedLiveTasks(t *testing.T) {
+	working := mkGridTask(1, protocol.TaskKind_Interactive, protocol.TaskStatus_Running, 1)
+	working.Lifecycle, working.LifecycleAt, working.LifecycleAgeMs = protocol.LifecycleState_Working, 1, 5000
+	silent := mkGridTask(2, protocol.TaskKind_Interactive, protocol.TaskStatus_Running, 1)
+	got := gridLifecycleBadges([]protocol.TaskInfo{working, silent})
+	if got[FormatTaskID(working.Id)] != "work:5s" {
+		t.Errorf("working badge = %q, want work:5s", got[FormatTaskID(working.Id)])
+	}
+	if _, ok := got[FormatTaskID(silent.Id)]; ok {
+		t.Errorf("a task with no report got a badge: %q", got[FormatTaskID(silent.Id)])
+	}
+}

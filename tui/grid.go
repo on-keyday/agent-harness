@@ -85,6 +85,28 @@ type GridModel struct {
 	scope string
 	// repos is each pane's task repo, by task id, for the pane header.
 	repos map[string]string
+	// life is each pane's lifecycle badge (cli.LifecycleBadge), by task id,
+	// refreshed by the App on every grid tick (SetLifecycle).
+	life map[string]string
+}
+
+// SetLifecycle replaces the panes' lifecycle badges (gridLifecycleBadges).
+func (m *GridModel) SetLifecycle(badges map[string]string) { m.life = badges }
+
+// gridLifecycleBadges is the lifecycle badge of each task that has reported
+// one, by task id. A task that never reported gets none: in a pane header
+// `lc:-` would only take room from the repo name.
+func gridLifecycleBadges(tasks []protocol.TaskInfo) map[string]string {
+	out := make(map[string]string, len(tasks))
+	for i := range tasks {
+		if tasks[i].LifecycleAt == 0 {
+			continue
+		}
+		if b := cli.LifecycleBadge(&tasks[i]); b != "" {
+			out[FormatTaskID(tasks[i].Id)] = b
+		}
+	}
+	return out
 }
 
 func NewGridModel() GridModel { return GridModel{} }
@@ -230,6 +252,15 @@ func (m GridModel) attachFocused(mode protocol.AttachMode) (GridModel, tea.Cmd) 
 	cmd := DoAttachSession(m.client, id, mode)
 	m.Close()
 	return m, cmd
+}
+
+// PaneTaskIDs is the task id of every pane, in pane order.
+func (m GridModel) PaneTaskIDs() []string {
+	ids := make([]string, len(m.panes))
+	for i, p := range m.panes {
+		ids[i] = p.TaskID()
+	}
+	return ids
 }
 
 func (m GridModel) FocusedTaskID() string {
@@ -583,6 +614,9 @@ func (m GridModel) renderPane(idx, w, h int) string {
 		id = id[:8]
 	}
 	tail := p.Badge()
+	if b := m.life[p.TaskID()]; b != "" {
+		tail += " " + b
+	}
 	if err := p.Err(); err != nil {
 		tail += " (ended)"
 	}
