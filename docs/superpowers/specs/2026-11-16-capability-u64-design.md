@@ -32,6 +32,12 @@ one, so the runners need no restart for this change; harness-cli, the TUI and
 the server ship together, and the WebUI is embedded in the server.
 `scripts/wire-skew-check.sh` runs on landing as usual.
 
+A skew between them misreads every field after the first Capability (4 bytes
+read as 8, or the reverse). `make build` on landing replaces the
+`bin/harness-cli` that agents on the build host call, so the server upgrade
+has to follow the landing at once: land only when the server can be
+restarted right away.
+
 ## WebUI (my call)
 
 JavaScript's bitwise operators work on signed 32-bit integers, so `mask & bit`
