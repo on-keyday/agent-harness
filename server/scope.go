@@ -23,7 +23,7 @@ func applyScopeToWAL(s authority.Scope, ev *WALEvent) {
 	ev.ScopeOverrides = nil
 	for _, o := range s.Overrides {
 		ev.ScopeOverrides = append(ev.ScopeOverrides, WALScopeOverride{
-			Caps: uint32(o.Caps), Base: uint8(o.Base), ExcludeSelf: o.ExcludeSelf, IDs: o.IDs,
+			Caps: uint64(o.Caps), Base: uint8(o.Base), ExcludeSelf: o.ExcludeSelf, IDs: o.IDs,
 		})
 	}
 }
@@ -69,7 +69,7 @@ func scopeFromWAL(ev WALEvent) authority.Scope {
 // scopeFromWAL's board_observe migration deliberately has no counterpart: it
 // exists for records older than the visibility axis, and every bound is newer.
 func applyDelegationToWAL(caps protocol.Capability, s authority.Scope, ev *WALEvent) {
-	ev.DelegateCaps = uint32(caps)
+	ev.DelegateCaps = uint64(caps)
 	ev.DelegateScopeBase = uint8(s.Base)
 	ev.DelegateScopeVisBase = uint8(s.VisBase)
 	ev.DelegateScopeVisBasePresent = s.VisBasePresent

@@ -27,7 +27,7 @@ import (
 // mask so a capability RENAME never invalidates a record — the same reason
 // Kind and OriginKind are numbers rather than names.
 type WALScopeOverride struct {
-	Caps        uint32   `json:"caps"`
+	Caps        uint64   `json:"caps"`
 	Base        uint8    `json:"base,omitempty"`
 	ExcludeSelf bool     `json:"exclude_self,omitempty"`
 	IDs         []string `json:"ids,omitempty"`
@@ -58,7 +58,7 @@ type WALEvent struct {
 	CreatorTaskID string `json:"creator_task_id,omitempty"`
 	// Capabilities is the bitmask stored at task_created time. Legacy WAL
 	// entries without this field default to 0 (Capability_None).
-	Capabilities uint32 `json:"capabilities,omitempty"`
+	Capabilities uint64 `json:"capabilities,omitempty"`
 	// ScopeBase / ScopeIDs are the task's TaskScope (see server/scope.go),
 	// written on task_created and task_caps_changed. A legacy entry has
 	// neither key, so ScopeBase reads back as 0 — which is ScopeBase_Subtree,
@@ -77,7 +77,7 @@ type WALEvent struct {
 	// The delegation bound (TaskEntry.DelegateCaps / DelegateScope), on the
 	// same two events as the scope. A legacy record carries none of these keys,
 	// and every zero is the default bound.
-	DelegateCaps                uint32   `json:"delegate_caps,omitempty"`
+	DelegateCaps                uint64   `json:"delegate_caps,omitempty"`
 	DelegateScopeBase           uint8    `json:"delegate_scope_base,omitempty"`
 	DelegateScopeVisBase        uint8    `json:"delegate_scope_vis_base,omitempty"`
 	DelegateScopeVisBasePresent bool     `json:"delegate_scope_vis_base_present,omitempty"`
@@ -197,7 +197,7 @@ type walEventJSON struct {
 	OriginKind    uint8    `json:"origin_kind,omitempty"`
 	ResumedByKind uint8    `json:"resumed_by_kind,omitempty"`
 	CreatorTaskID string   `json:"creator_task_id,omitempty"`
-	Capabilities  uint32   `json:"capabilities,omitempty"`
+	Capabilities  uint64   `json:"capabilities,omitempty"`
 	ScopeBase     uint8    `json:"scope_base,omitempty"`
 	ScopeIDs      []string `json:"scope_ids,omitempty"`
 	// Mirrors of the axes on WALEvent. This shadow struct is the reason
@@ -208,7 +208,7 @@ type walEventJSON struct {
 	ScopeExcludeSelf            bool               `json:"scope_exclude_self,omitempty"`
 	ScopeVisIDs                 []string           `json:"scope_vis_ids,omitempty"`
 	ScopeOverrides              []WALScopeOverride `json:"scope_overrides,omitempty"`
-	DelegateCaps                uint32             `json:"delegate_caps,omitempty"`
+	DelegateCaps                uint64             `json:"delegate_caps,omitempty"`
 	DelegateScopeBase           uint8              `json:"delegate_scope_base,omitempty"`
 	DelegateScopeVisBase        uint8              `json:"delegate_scope_vis_base,omitempty"`
 	DelegateScopeVisBasePresent bool               `json:"delegate_scope_vis_base_present,omitempty"`

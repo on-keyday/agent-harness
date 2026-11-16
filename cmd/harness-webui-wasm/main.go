@@ -678,7 +678,7 @@ func capsFromOpts(opts js.Value) (protocol.Capability, error) {
 	cv := opts.Get("caps")
 	switch cv.Type() {
 	case js.TypeNumber:
-		return protocol.Capability(uint32(cv.Int())), nil
+		return protocol.Capability(uint64(cv.Int())), nil
 	case js.TypeString:
 		c, err := cli.ParseCaps(cv.String())
 		if err != nil {
@@ -723,7 +723,7 @@ func scopeFromOpts(opts js.Value) (protocol.TaskScope, error) {
 func boundFromOpts(opts js.Value) (bound cli.SessionOpts, err error) {
 	switch cv := opts.Get("delegateCaps"); cv.Type() {
 	case js.TypeNumber:
-		bound.DelegateCaps = protocol.Capability(uint32(cv.Int()))
+		bound.DelegateCaps = protocol.Capability(uint64(cv.Int()))
 	case js.TypeString:
 		if bound.DelegateCaps, err = cli.ParseCaps(cv.String()); err != nil {
 			return bound, fmt.Errorf("delegate-caps: %w", err)
@@ -854,7 +854,7 @@ func harnessSetCaps(this js.Value, args []js.Value) any {
 				sc.TaskID = tv.String()
 			}
 			if cv := opts.Get("caps"); cv.Type() == js.TypeNumber {
-				sc.Caps = cli.CapsPtr(protocol.Capability(uint32(cv.Int())))
+				sc.Caps = cli.CapsPtr(protocol.Capability(uint64(cv.Int())))
 			}
 			if sv := opts.Get("scope"); sv.Type() == js.TypeString && sv.String() != "" {
 				parsed, perr := cli.ParseScope(sv.String())
@@ -873,7 +873,7 @@ func harnessSetCaps(this js.Value, args []js.Value) any {
 			// The bound's halves, each written only when the key is given, as
 			// caps and scope are.
 			if cv := opts.Get("delegateCaps"); cv.Type() == js.TypeNumber {
-				sc.DelegateCaps = cli.CapsPtr(protocol.Capability(uint32(cv.Int())))
+				sc.DelegateCaps = cli.CapsPtr(protocol.Capability(uint64(cv.Int())))
 			}
 			if sv := opts.Get("delegateScope"); sv.Type() == js.TypeString && sv.String() != "" {
 				parsed, perr := cli.ParseScope(sv.String())
@@ -987,7 +987,7 @@ func harnessCapList(this js.Value, args []js.Value) any {
 		if c == protocol.Capability_None || c == protocol.Capability_All {
 			continue
 		}
-		out = append(out, map[string]any{"name": c.String(), "bit": float64(uint32(c))})
+		out = append(out, map[string]any{"name": c.String(), "bit": float64(uint64(c))})
 	}
 	return js.ValueOf(out)
 }
@@ -1056,7 +1056,7 @@ func tierClassOf(caps protocol.Capability) string {
 func harnessCapsAuditOrder(this js.Value, args []js.Value) any {
 	var out []any
 	for _, c := range verb.AuditOrder() {
-		out = append(out, map[string]any{"name": c.String(), "bit": float64(uint32(c)), "tier": verb.CapTierOf(c).Label()})
+		out = append(out, map[string]any{"name": c.String(), "bit": float64(uint64(c)), "tier": verb.CapTierOf(c).Label()})
 	}
 	return js.ValueOf(out)
 }
@@ -1432,7 +1432,7 @@ func harnessParseAuthority(this js.Value, args []js.Value) any {
 		if err != nil {
 			return js.ValueOf(map[string]any{"error": err.Error()})
 		}
-		out["caps"] = float64(uint32(c))
+		out["caps"] = float64(uint64(c))
 		out["capsLabel"] = cli.CapsLabel(c)
 	}
 	if v := o.Get("scope"); v.Type() == js.TypeString && v.String() != "" {
@@ -1484,7 +1484,7 @@ func harnessParseAuthority(this js.Value, args []js.Value) any {
 		if err != nil {
 			return js.ValueOf(map[string]any{"error": err.Error()})
 		}
-		out["delegateCaps"] = float64(uint32(c))
+		out["delegateCaps"] = float64(uint64(c))
 		out["delegateCapsLabel"] = cli.CapsLabel(c)
 	}
 	if v := o.Get("delegateScope"); v.Type() == js.TypeString && v.String() != "" {
@@ -1769,7 +1769,7 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					// dialog seeds its chips/radios/checklist from these —
 					// back-parsing label forms like "all,-spawn" would mean
 					// re-implementing ParseCaps in JS.
-					"capsBits": float64(uint32(t.Capabilities)),
+					"capsBits": float64(uint64(t.Capabilities)),
 					// The tree node's capability mark, rendered once in Go
 					// (cli.TierMark, the TUI's too) so the page holds no copy
 					// of the tier table.
@@ -1798,7 +1798,7 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					// The delegation bound: labels for the row and sheet, raw
 					// values in the scope's own shape for the dialogs' prefill.
 					"delegateCaps":             cli.CapsLabel(t.DelegateCaps),
-					"delegateCapsBits":         float64(uint32(t.DelegateCaps)),
+					"delegateCapsBits":         float64(uint64(t.DelegateCaps)),
 					"delegateScope":            cli.ScopeLabel(t.DelegateScope),
 					"delegateScopeBase":        t.DelegateScope.Base.String(),
 					"delegateScopeExcludeSelf": t.DelegateScope.ExcludeSelf(),

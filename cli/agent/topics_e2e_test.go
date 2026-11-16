@@ -35,13 +35,13 @@ func TestAgentCLI_E2E_Topics(t *testing.T) {
 		{
 			Type:           "task_created",
 			TaskID:         hex.EncodeToString(tidA.Id[:]),
-			Capabilities:   uint32(protocol.Capability_BoardObserve | protocol.Capability_BoardPeer),
+			Capabilities:   uint64(protocol.Capability_BoardObserve | protocol.Capability_BoardPeer),
 			ScopeOverrides: boardPeerGlobal(),
 		},
 		{
 			Type:           "task_created",
 			TaskID:         hex.EncodeToString(tidB.Id[:]),
-			Capabilities:   uint32(protocol.Capability_BoardObserve | protocol.Capability_BoardPeer),
+			Capabilities:   uint64(protocol.Capability_BoardObserve | protocol.Capability_BoardPeer),
 			ScopeOverrides: boardPeerGlobal(),
 		},
 	})
@@ -99,7 +99,7 @@ func TestAgentCLI_E2E_Topics_NoBoardObserve(t *testing.T) {
 		{
 			Type:           "task_created",
 			TaskID:         hex.EncodeToString(tidC.Id[:]),
-			Capabilities:   uint32(protocol.Capability_None | protocol.Capability_BoardPeer),
+			Capabilities:   uint64(protocol.Capability_None | protocol.Capability_BoardPeer),
 			ScopeOverrides: boardPeerGlobal(),
 		},
 	})

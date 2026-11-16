@@ -55,7 +55,7 @@ func TestAttachModeCapImplication(t *testing.T) {
 func TestUnknownAttachModeRequiresControl(t *testing.T) {
 	unknown := protocol.AttachMode(200)
 	if got := authority.AttachModeCap(unknown); got != protocol.Capability_ExecControl {
-		t.Errorf("unknown mode requires %#x, want exec_control (%#x)", uint32(got), uint32(protocol.Capability_ExecControl))
+		t.Errorf("unknown mode requires %#x, want exec_control (%#x)", uint64(got), uint64(protocol.Capability_ExecControl))
 	}
 	if hasAnyCap(protocol.Capability_ExecView|protocol.Capability_ExecCowrite, authority.AttachModeCap(unknown)) {
 		t.Error("an unknown attach mode was satisfied by the weaker bits — it must fail closed")
@@ -148,7 +148,7 @@ func TestAttachSessionGateIsWiredPerMode(t *testing.T) {
 		// to ask for rather than only that one was missing.
 		if !hasAnyCap(pd.RequiredCap, protocol.Capability_ExecControl) {
 			t.Errorf("mode=%s: RequiredCap = %#x, want it to name exec_control among the alternatives",
-				c.name, uint32(pd.RequiredCap))
+				c.name, uint64(pd.RequiredCap))
 		}
 	}
 
@@ -158,7 +158,7 @@ func TestAttachSessionGateIsWiredPerMode(t *testing.T) {
 	resp := send(t, protocol.AttachMode_View, 2)
 	if resp.Kind == protocol.TaskControlKind_PermissionDenied {
 		t.Fatalf("mode=view with exec_view was denied (RequiredCap %#x) — the grant buys nothing",
-			uint32(resp.PermissionDenied().RequiredCap))
+			uint64(resp.PermissionDenied().RequiredCap))
 	}
 	if resp.Attach() == nil {
 		t.Fatalf("mode=view: expected an AttachSession response, got kind %v", resp.Kind)

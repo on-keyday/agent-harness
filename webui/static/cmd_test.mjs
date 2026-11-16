@@ -1161,3 +1161,16 @@ test("findTaskFresh: refreshes once when the listing lacks the task", async () =
   const none = async () => { refreshed++; };
   eq(await page.findTaskFresh(lookup, none), null);
 });
+
+// JavaScript's & | ^ are 32-bit signed: from bit 31 a cap mask needs BigInt
+// arithmetic, which these do while the masks stay Numbers.
+test("capHas / capOr / capXor are exact past bit 31", () => {
+  const b31 = 2 ** 31, b40 = 2 ** 40, low = 0x5;
+  eq(page.capHas(b31 + low, b31), true);
+  eq(page.capHas(low, b31), false);
+  eq(page.capHas(b40 + b31, b40 + b31), true);
+  eq(page.capOr(b40, b31), b40 + b31);
+  eq(page.capXor(b40 + b31, b31), b40);
+  eq(page.capXor(b40, b31), b40 + b31);
+  eq(page.capOr(0, 0), 0);
+});

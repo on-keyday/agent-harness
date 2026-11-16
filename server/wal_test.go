@@ -156,7 +156,7 @@ func TestWALEventJSONRoundTripCopiesEveryField(t *testing.T) {
 		OriginKind:    uint8(protocol.ClientKind_Tui),
 		ResumedByKind: uint8(protocol.ClientKind_Cli),
 		CreatorTaskID: "ffeeddccbbaa99887766554433221100",
-		Capabilities:  uint32(protocol.Capability_Spawn),
+		Capabilities:  uint64(protocol.Capability_Spawn),
 		ScopeBase:     uint8(protocol.ScopeBase_None),
 		ScopeIDs:      []string{"00112233445566778899aabbccddeeff"},
 		// The axes added later. Non-zero on purpose: the pre-change reading is
@@ -167,7 +167,7 @@ func TestWALEventJSONRoundTripCopiesEveryField(t *testing.T) {
 		ScopeExcludeSelf:    true,
 		ScopeVisIDs:         []string{"ffeeddccbbaa99887766554433221100"},
 		ScopeOverrides: []WALScopeOverride{{
-			Caps: uint32(protocol.Capability_Cancel), Base: uint8(protocol.ScopeBase_None),
+			Caps: uint64(protocol.Capability_Cancel), Base: uint8(protocol.ScopeBase_None),
 			ExcludeSelf: true, IDs: []string{"00112233445566778899aabbccddeeff"},
 		}},
 		AgentProfile:                "codex",
@@ -184,7 +184,7 @@ func TestWALEventJSONRoundTripCopiesEveryField(t *testing.T) {
 		AuthoritySource:             uint8(protocol.AuthoritySource_Cascade),
 		AuthorityActor:              "00112233445566778899aabbccddeeff",
 		AuthorityAt:                 1234567892,
-		DelegateCaps:                uint32(protocol.Capability_FileRead),
+		DelegateCaps:                uint64(protocol.Capability_FileRead),
 		DelegateScopeBase:           uint8(protocol.ScopeBase_None),
 		DelegateScopeVisBase:        uint8(protocol.ScopeBase_Global),
 		DelegateScopeVisBasePresent: true,
@@ -278,7 +278,7 @@ func TestLegacyBoardObserveRecordGainsGlobalVisibility(t *testing.T) {
 	ev := WALEvent{
 		Type:         "task_created",
 		TaskID:       "aa112233445566778899aabbccddeeff",
-		Capabilities: uint32(protocol.Capability_BoardObserve | protocol.Capability_Cancel),
+		Capabilities: uint64(protocol.Capability_BoardObserve | protocol.Capability_Cancel),
 		ScopeBase:    uint8(protocol.ScopeBase_None),
 	}
 	s := scopeFromWAL(ev)
@@ -299,7 +299,7 @@ func TestLegacyBoardObserveRecordGainsGlobalVisibility(t *testing.T) {
 func TestMigrationDoesNotOverwriteAnExplicitRank(t *testing.T) {
 	ev := WALEvent{
 		Type:                "task_caps_changed",
-		Capabilities:        uint32(protocol.Capability_BoardObserve),
+		Capabilities:        uint64(protocol.Capability_BoardObserve),
 		ScopeBase:           uint8(protocol.ScopeBase_Subtree),
 		ScopeVisBasePresent: true,
 		ScopeVisBase:        uint8(protocol.ScopeBase_Subtree),
@@ -359,10 +359,10 @@ func TestWALReplay_OldAllMaskLacksBoardPersist(t *testing.T) {
 		t.Fatal("replayed task missing")
 	}
 	if e.Capabilities&protocol.Capability_BoardPersist != 0 {
-		t.Fatalf("caps %#x gained board_persist on replay", uint32(e.Capabilities))
+		t.Fatalf("caps %#x gained board_persist on replay", uint64(e.Capabilities))
 	}
 	if e.Capabilities&protocol.Capability_RunnerEnroll == 0 {
-		t.Fatalf("caps %#x lost runner_enroll, which the old all mask held", uint32(e.Capabilities))
+		t.Fatalf("caps %#x lost runner_enroll, which the old all mask held", uint64(e.Capabilities))
 	}
 }
 
@@ -377,10 +377,10 @@ func TestWALReplay_OldAllMaskLacksBoardMember(t *testing.T) {
 		t.Fatal("replayed task missing")
 	}
 	if e.Capabilities&protocol.Capability_BoardMember != 0 {
-		t.Fatalf("caps %#x gained board_member on replay", uint32(e.Capabilities))
+		t.Fatalf("caps %#x gained board_member on replay", uint64(e.Capabilities))
 	}
 	if e.Capabilities&protocol.Capability_BoardPersist == 0 {
-		t.Fatalf("caps %#x lost board_persist, which the old all mask held", uint32(e.Capabilities))
+		t.Fatalf("caps %#x lost board_persist, which the old all mask held", uint64(e.Capabilities))
 	}
 }
 
@@ -396,10 +396,10 @@ func TestWALReplay_OldAllMaskLacksRecordBits(t *testing.T) {
 		t.Fatal("replayed task missing")
 	}
 	if e.Capabilities&(protocol.Capability_RecordDelete|protocol.Capability_RecordPersist) != 0 {
-		t.Fatalf("caps %#x gained a record bit on replay", uint32(e.Capabilities))
+		t.Fatalf("caps %#x gained a record bit on replay", uint64(e.Capabilities))
 	}
 	if e.Capabilities&protocol.Capability_BoardMember == 0 {
-		t.Fatalf("caps %#x lost board_member, which the old all mask held", uint32(e.Capabilities))
+		t.Fatalf("caps %#x lost board_member, which the old all mask held", uint64(e.Capabilities))
 	}
 }
 
@@ -414,9 +414,9 @@ func TestWALReplay_OldAllMaskLacksTranscriptRead(t *testing.T) {
 		t.Fatal("replayed task missing")
 	}
 	if e.Capabilities&protocol.Capability_TranscriptRead != 0 {
-		t.Fatalf("caps %#x gained transcript_read on replay", uint32(e.Capabilities))
+		t.Fatalf("caps %#x gained transcript_read on replay", uint64(e.Capabilities))
 	}
 	if e.Capabilities&protocol.Capability_RecordPersist == 0 {
-		t.Fatalf("caps %#x lost record_persist, which the old all mask held", uint32(e.Capabilities))
+		t.Fatalf("caps %#x lost record_persist, which the old all mask held", uint64(e.Capabilities))
 	}
 }

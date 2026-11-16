@@ -33,7 +33,7 @@ type CapabilityDeniedError struct {
 // bit was required when the mask is a set of alternatives.
 func (e *CapabilityDeniedError) Error() string {
 	label := CapsLabel(e.RequiredCap)
-	if bits.OnesCount32(uint32(e.RequiredCap)) > 1 {
+	if bits.OnesCount64(uint64(e.RequiredCap)) > 1 {
 		return fmt.Sprintf("permission denied: %s requires any of %s",
 			e.RequestedKind.String(), label)
 	}

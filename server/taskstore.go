@@ -336,7 +336,7 @@ func (s *TaskStore) createLockedID(id, repo, prompt string, kind protocol.TaskKi
 			BoundRunnerID: boundRunnerID,
 			Selector:      selector,
 			ExtraArgs:     extraArgs,
-			Capabilities:  uint32(g.Caps),
+			Capabilities:  uint64(g.Caps),
 			AgentProfile:  agentProfile,
 		}
 		s.tasks[id].runSpecToWAL(&ev)
@@ -442,7 +442,7 @@ func (s *TaskStore) writeCapsChangedLocked(e *TaskEntry) {
 	id := e.ID
 	ev := WALEvent{
 		Type: "task_caps_changed", TaskID: id,
-		Capabilities: uint32(e.Capabilities),
+		Capabilities: uint64(e.Capabilities),
 	}
 	applyScopeToWAL(e.Scope, &ev)
 	applyDelegationToWAL(e.DelegateCaps, e.DelegateScope, &ev)

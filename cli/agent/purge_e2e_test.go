@@ -31,7 +31,7 @@ func TestAgentCLI_E2E_Purge_Granted(t *testing.T) {
 		{
 			Type:           "task_created",
 			TaskID:         hex.EncodeToString(tid.Id[:]),
-			Capabilities:   uint32(protocol.Capability_BoardPurge | protocol.Capability_BoardPeer),
+			Capabilities:   uint64(protocol.Capability_BoardPurge | protocol.Capability_BoardPeer),
 			ScopeOverrides: boardPeerGlobal(),
 		},
 	})
@@ -85,7 +85,7 @@ func TestAgentCLI_E2E_Purge_Denied(t *testing.T) {
 		{
 			Type:           "task_created",
 			TaskID:         hex.EncodeToString(tid.Id[:]),
-			Capabilities:   uint32(protocol.Capability_Spawn | protocol.Capability_Prune | protocol.Capability_BoardPeer),
+			Capabilities:   uint64(protocol.Capability_Spawn | protocol.Capability_Prune | protocol.Capability_BoardPeer),
 			ScopeOverrides: boardPeerGlobal(),
 		},
 	})
@@ -128,7 +128,7 @@ func TestAgentCLI_E2E_Purge_Seq(t *testing.T) {
 		{
 			Type:           "task_created",
 			TaskID:         hex.EncodeToString(tid.Id[:]),
-			Capabilities:   uint32(protocol.Capability_BoardPurge | protocol.Capability_BoardPeer),
+			Capabilities:   uint64(protocol.Capability_BoardPurge | protocol.Capability_BoardPeer),
 			ScopeOverrides: boardPeerGlobal(),
 		},
 	})
@@ -190,7 +190,7 @@ func TestAgentCLI_E2E_Retained_NoCap(t *testing.T) {
 		{
 			Type:           "task_created",
 			TaskID:         hex.EncodeToString(tid.Id[:]),
-			Capabilities:   uint32(protocol.Capability_None | protocol.Capability_BoardPeer),
+			Capabilities:   uint64(protocol.Capability_None | protocol.Capability_BoardPeer),
 			ScopeOverrides: boardPeerGlobal(),
 			AgentProfile:   "codex",
 		},

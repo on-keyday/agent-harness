@@ -32,7 +32,7 @@ func TestGrantableCapsCoversEveryBitOfAll(t *testing.T) {
 		extra := or &^ protocol.Capability_All
 		t.Errorf("OR(GrantableCaps) = %#x, want Capability_All = %#x (missing %#x, unexpected %#x) — "+
 			"a bit reached the enum but not the list every UI enumerates from",
-			uint32(or), uint32(protocol.Capability_All), uint32(missing), uint32(extra))
+			uint64(or), uint64(protocol.Capability_All), uint64(missing), uint64(extra))
 	}
 }
 
@@ -48,7 +48,7 @@ func TestEveryGrantableCapParsesByItsPrintedName(t *testing.T) {
 			continue
 		}
 		if got != c {
-			t.Errorf("ParseCaps(%q) = %#x, want %#x", name, uint32(got), uint32(c))
+			t.Errorf("ParseCaps(%q) = %#x, want %#x", name, uint64(got), uint64(c))
 		}
 	}
 }

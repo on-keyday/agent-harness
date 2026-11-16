@@ -90,7 +90,7 @@ func TestScopeFromWALLegacyRecords(t *testing.T) {
 	if got := scopeFromWAL(WALEvent{}); got.Base != protocol.ScopeBase_Subtree || got.VisBasePresent {
 		t.Errorf("empty record = %+v, want the subtree default", got)
 	}
-	got := scopeFromWAL(WALEvent{Capabilities: uint32(protocol.Capability_BoardObserve)})
+	got := scopeFromWAL(WALEvent{Capabilities: uint64(protocol.Capability_BoardObserve)})
 	if got.VisRank() != protocol.ScopeBase_Global {
 		t.Errorf("legacy board_observe record vis = %v, want global", got.VisRank())
 	}

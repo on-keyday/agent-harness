@@ -8,10 +8,10 @@ func TestCapabilityBits(t *testing.T) {
 	// %#x of Capability_All printed 0x616c6c ("all" in ASCII) and hid the
 	// actual value behind a plausible-looking hex number.
 	if Capability_All != 0x3fffffff {
-		t.Fatalf("All = %#x, want 0x3fffffff", uint32(Capability_All))
+		t.Fatalf("All = %#x, want 0x3fffffff", uint64(Capability_All))
 	}
 	if Capability_None != 0 {
-		t.Fatalf("None = %#x, want 0", uint32(Capability_None))
+		t.Fatalf("None = %#x, want 0", uint64(Capability_None))
 	}
 	// all must be exactly the OR of the individual bits.
 	or := Capability_Spawn | Capability_Cancel | Capability_ExecControl |
@@ -25,7 +25,7 @@ func TestCapabilityBits(t *testing.T) {
 		Capability_RunnerEnroll | Capability_BoardPersist | Capability_BoardMember |
 		Capability_RecordDelete | Capability_RecordPersist | Capability_TranscriptRead | Capability_Schedule
 	if or != Capability_All {
-		t.Fatalf("OR of bits = %#x, want All = %#x", uint32(or), uint32(Capability_All))
+		t.Fatalf("OR of bits = %#x, want All = %#x", uint64(or), uint64(Capability_All))
 	}
 }
 
@@ -33,7 +33,7 @@ func TestCapabilityBits(t *testing.T) {
 // grant links, or every task holding them would gain one the day it landed.
 func TestForwardLinkBit(t *testing.T) {
 	if Capability_ForwardLink != 0x400000 {
-		t.Fatalf("forward_link = %#x, want 0x400000", uint32(Capability_ForwardLink))
+		t.Fatalf("forward_link = %#x, want 0x400000", uint64(Capability_ForwardLink))
 	}
 	if (Capability_ForwardLocal|Capability_ForwardRemote)&Capability_ForwardLink != 0 {
 		t.Fatal("forward_local|forward_remote includes forward_link")
@@ -156,7 +156,7 @@ func TestResumeConversationRoundTrip(t *testing.T) {
 // 0xffff denies the operator its own feature.
 func TestForwardTapBitIsInAll(t *testing.T) {
 	if Capability_ForwardTap != 0x10000 {
-		t.Fatalf("forward_tap bit moved: %#x", uint32(Capability_ForwardTap))
+		t.Fatalf("forward_tap bit moved: %#x", uint64(Capability_ForwardTap))
 	}
 	if Capability_All&Capability_ForwardTap == 0 {
 		t.Fatal("all does not include forward_tap; callerCaps would deny the operator")
@@ -170,7 +170,7 @@ func TestForwardTapBitIsInAll(t *testing.T) {
 // and the widened all that callerCaps hands operator connections.
 func TestExecTapBitIsInAll(t *testing.T) {
 	if Capability_ExecTap != 0x40000 {
-		t.Fatalf("exec_tap bit moved: %#x", uint32(Capability_ExecTap))
+		t.Fatalf("exec_tap bit moved: %#x", uint64(Capability_ExecTap))
 	}
 	if Capability_All&Capability_ExecTap == 0 {
 		t.Fatal("all does not include exec_tap; callerCaps would deny the operator")

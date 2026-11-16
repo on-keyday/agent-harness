@@ -717,6 +717,20 @@ function resumeDialogDefaults(t, connectedRunnerIds) {
   };
 }
 
+// capHas / capOr / capXor are the page's capability-mask arithmetic. A mask
+// is a Number from the wasm bridge (exact to 2^53, capability_width_test.go
+// holds Capability under that); JavaScript's & | ^ truncate to 32 signed bits,
+// so the bits are combined as BigInts. Every bit test on a cap mask goes
+// through these.
+// An unset mask (undefined / null) reads as 0, as it did under & | ^.
+function capBig(v) { return BigInt(v || 0); }
+function capHas(mask, bit) {
+  const b = capBig(bit);
+  return (capBig(mask) & b) === b;
+}
+function capOr(a, b) { return Number(capBig(a) | capBig(b)); }
+function capXor(a, b) { return Number(capBig(a) ^ capBig(b)); }
+
 // composeAuthoritySummary is the 新規作成 権限 section's closed line: caps,
 // scope, and the scope-for overrides when there are any.
 function composeAuthoritySummary(capsLabel, scope, scopeFor) {

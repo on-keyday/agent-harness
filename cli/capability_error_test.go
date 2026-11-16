@@ -123,7 +123,7 @@ func TestCapabilityDeniedNamesEveryAlternativeInAMask(t *testing.T) {
 			protocol.Capability_ExecCowrite |
 			protocol.Capability_ExecControl,
 	}
-	if got := uint32(err.RequiredCap); got != 12292 {
+	if got := uint64(err.RequiredCap); got != 12292 {
 		t.Fatalf("fixture mask = %d, want the 12292 the operator saw", got)
 	}
 	msg := err.Error()

@@ -227,7 +227,7 @@ func ScopesCatalog() []ScopeInfo {
 // `harness-cli caps --json`.
 type CapInfo struct {
 	Name        string `json:"name"`
-	Bit         uint32 `json:"bit"`
+	Bit         uint64 `json:"bit"`
 	Description string `json:"description"`
 }
 
@@ -237,7 +237,7 @@ func CapsCatalog() []CapInfo {
 	caps := GrantableCaps()
 	out := make([]CapInfo, len(caps))
 	for i, c := range caps {
-		out[i] = CapInfo{Name: c.String(), Bit: uint32(c), Description: CapDescription(c)}
+		out[i] = CapInfo{Name: c.String(), Bit: uint64(c), Description: CapDescription(c)}
 	}
 	return out
 }

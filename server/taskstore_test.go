@@ -983,7 +983,7 @@ func TestCreateRecordsCreatorTaskID(t *testing.T) {
 
 func TestCapabilitiesPersistAndReplay(t *testing.T) {
 	caps := protocol.Capability_Spawn | protocol.Capability_FileRead
-	ev := WALEvent{Type: "task_created", TaskID: "abc", Capabilities: uint32(caps)}
+	ev := WALEvent{Type: "task_created", TaskID: "abc", Capabilities: uint64(caps)}
 	b, err := ev.MarshalJSON()
 	if err != nil {
 		t.Fatal(err)
@@ -1010,7 +1010,7 @@ func TestTaskCapsChangedWALRoundTrip(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			ev := WALEvent{Type: "task_caps_changed", TaskID: "deadbeef", Capabilities: uint32(tc.caps)}
+			ev := WALEvent{Type: "task_caps_changed", TaskID: "deadbeef", Capabilities: uint64(tc.caps)}
 			b, err := ev.MarshalJSON()
 			if err != nil {
 				t.Fatalf("MarshalJSON: %v", err)
@@ -1097,7 +1097,7 @@ func TestTaskCapsChangedReplayEvents(t *testing.T) {
 	s3.order = append(s3.order, id3)
 	s3.mu.Unlock()
 	_ = zeroCreator
-	zeroEv := []WALEvent{{Type: "task_caps_changed", TaskID: id3, Capabilities: uint32(protocol.Capability_None)}}
+	zeroEv := []WALEvent{{Type: "task_caps_changed", TaskID: id3, Capabilities: uint64(protocol.Capability_None)}}
 	s3.ReplayEvents(zeroEv)
 	got3, _ := s3.Get(id3)
 	if got3.Capabilities != protocol.Capability_None {

@@ -116,7 +116,7 @@ func e2eRecord(t *testing.T, srv *server.Server, tid protocol.TaskID, creator pr
 		Type:         "task_created",
 		TaskID:       idHex,
 		Kind:         uint8(protocol.TaskKind_Interactive),
-		Capabilities: uint32(caps),
+		Capabilities: uint64(caps),
 		AgentProfile: "claude",
 	}
 	if creator != (protocol.TaskID{}) {
@@ -124,7 +124,7 @@ func e2eRecord(t *testing.T, srv *server.Server, tid protocol.TaskID, creator pr
 	}
 	if e, ok := srv.Tasks().Get(idHex); ok {
 		ev.AgentProfile = e.AgentProfile
-		ev.Capabilities = uint32(e.Capabilities | caps)
+		ev.Capabilities = uint64(e.Capabilities | caps)
 		if e.CreatorTaskID != (protocol.TaskID{}) {
 			ev.CreatorTaskID = hex.EncodeToString(e.CreatorTaskID.Id[:])
 		}
@@ -143,7 +143,7 @@ func e2eRecord(t *testing.T, srv *server.Server, tid protocol.TaskID, creator pr
 // fixture granting board_peer means by it (reach spec D16).
 func boardPeerGlobal() []server.WALScopeOverride {
 	return []server.WALScopeOverride{{
-		Caps: uint32(protocol.Capability_BoardPeer), Base: uint8(protocol.ScopeBase_Global),
+		Caps: uint64(protocol.Capability_BoardPeer), Base: uint8(protocol.ScopeBase_Global),
 	}}
 }
 

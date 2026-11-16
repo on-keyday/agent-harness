@@ -4366,7 +4366,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // connect (capList is synchronous; needs no active connection).
 
   function capsAllBits() {
-    return capDefs.reduce((m, c) => m | c.bit, 0);
+    return capDefs.reduce((m, c) => capOr(m, c.bit), 0);
   }
 
   function capsLabel() { return capsLabelFor(spawnCaps); }
@@ -4374,7 +4374,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     const allBits = capsAllBits();
     if (bits === allBits) return "all";
     if (bits === 0)       return "none";
-    return capDefs.filter(c => (bits & c.bit) === c.bit).map(c => c.name).join(",");
+    return capDefs.filter(c => capHas(bits, c.bit)).map(c => c.name).join(",");
   }
 
   // buildCapChips renders the quick-set buttons + one chip per granular cap
@@ -4403,10 +4403,10 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       for (const c of capDefs) {
         const btn = document.createElement("button");
         btn.type = "button";
-        btn.className = "cap-chip" + ((getBits() & c.bit) === c.bit ? " on" : "");
+        btn.className = "cap-chip" + (capHas(getBits(), c.bit) ? " on" : "");
         btn.dataset.bit = String(c.bit);
         btn.textContent = c.name;
-        btn.addEventListener("click", () => { setBits(getBits() ^ c.bit); rerender(); });
+        btn.addEventListener("click", () => { setBits(capXor(getBits(), c.bit)); rerender(); });
         row.appendChild(btn);
       }
 
@@ -4489,7 +4489,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     let caps = 0;
     for (const n of capNames) {
       const d = capDefs.find((c) => c.name === n);
-      if (d) caps |= d.bit;
+      if (d) caps = capOr(caps, d.bit);
     }
     const rest = spec.slice(eq + 1).trim();
     const ids = new Set();
@@ -4511,7 +4511,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // the chip disabling reads.
   function claimedElsewhere(which, self) {
     let m = 0;
-    for (const r of overrideRowsFor[which]) if (r !== self) m |= r.caps;
+    for (const r of overrideRowsFor[which]) if (r !== self) m = capOr(m, r.caps);
     return m;
   }
 
@@ -4550,14 +4550,14 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
         if (c.name === "all" || c.name === "none") continue;
         const btn = document.createElement("button");
         btn.type = "button";
-        const on = (row.caps & c.bit) === c.bit;
-        const blocked = (taken & c.bit) === c.bit;
+        const on = capHas(row.caps, c.bit);
+        const blocked = capHas(taken, c.bit);
         btn.className = "cap-chip" + (on ? " on" : "") + (blocked ? " disabled" : "");
         btn.textContent = c.name;
         btn.disabled = blocked;
         if (blocked) btn.title = "別の絞り込みが既にこの capability を持っています";
         btn.addEventListener("click", () => {
-          row.caps ^= c.bit;
+          row.caps = capXor(row.caps, c.bit);
           buildOverrideRows(which, containerId, onChange);
           onChange();
         });

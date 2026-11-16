@@ -4713,10 +4713,12 @@ enum ClientEndpointKind:
     in_process_ssh_gateway  # a direct-tcpip channel the ssh gateway serves
 
 # Capability is a bitmask of server-mediated capabilities bound to a task at
-# spawn time. It is a u32 power-of-two flag set; do NOT add is_defined assertions
-# to fields typed :Capability — they carry OR-combinations, not single members.
+# spawn time. It is a u64 power-of-two flag set (widened from u32 on
+# 2026-11-16; the WebUI carries masks exactly up to 53 bits, see
+# capability_width_test.go); do NOT add is_defined assertions to fields typed
+# :Capability — they carry OR-combinations, not single members.
 enum Capability:
-    :u32
+    :u64
     none           = 0x000, "none"
     # spawn authorizes CREATING a task (submit / open_interactive with a zero
     # resume_task_id). It does not authorize a resume: that is resume /

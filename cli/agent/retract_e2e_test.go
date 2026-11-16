@@ -31,7 +31,7 @@ func TestAgentCLI_E2E_Retract_NoCapabilityNeeded(t *testing.T) {
 		{
 			Type:           "task_created",
 			TaskID:         hex.EncodeToString(sender.Id[:]),
-			Capabilities:   uint32(protocol.Capability_None | protocol.Capability_BoardPeer),
+			Capabilities:   uint64(protocol.Capability_None | protocol.Capability_BoardPeer),
 			ScopeOverrides: boardPeerGlobal(),
 		},
 	})
@@ -115,8 +115,8 @@ func TestAgentCLI_E2E_Retract_NotTheAuthor(t *testing.T) {
 	e2eRegister(t, board, rid, other, otherTicket)
 
 	srv.Tasks().ReplayEvents([]server.WALEvent{
-		{Type: "task_created", TaskID: hex.EncodeToString(author.Id[:]), Capabilities: uint32(protocol.Capability_All), ScopeOverrides: boardPeerGlobal()},
-		{Type: "task_created", TaskID: hex.EncodeToString(other.Id[:]), Capabilities: uint32(protocol.Capability_All), ScopeOverrides: boardPeerGlobal()},
+		{Type: "task_created", TaskID: hex.EncodeToString(author.Id[:]), Capabilities: uint64(protocol.Capability_All), ScopeOverrides: boardPeerGlobal()},
+		{Type: "task_created", TaskID: hex.EncodeToString(other.Id[:]), Capabilities: uint64(protocol.Capability_All), ScopeOverrides: boardPeerGlobal()},
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

@@ -382,7 +382,7 @@ function renderTaskTreeGraph(nodes, grantEdges, tasks, statusColor, onSelect, op
     const p = pos.get(n.id);
     const t = byID.get(n.id);
     const markBit = opts.markBit || 0;
-    const holds = markBit !== 0 && t && (t.capsBits & markBit) === markBit;
+    const holds = markBit !== 0 && t && capHas(t.capsBits, markBit);
     // Reach mode (opts.reach, harness.reachOf): filled = acted on, outlined =
     // only seen, the rest dimmed. A global answer fills nothing — the banner
     // says global instead, since a listing is never every task.
