@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 
 	"github.com/on-keyday/agent-harness/runner/hostcmd"
 	"path/filepath"
@@ -128,54 +128,71 @@ func (s *opencodeStore) Open(dir, id, name string) (io.ReadCloser, error) {
 	if name != opencodeExportName {
 		return nil, ErrNoFile
 	}
-	cmd := hostcmd.Command(opencodeBin, "export", id)
-	cmd.Dir = nearestExisting(dir)
-	stderr := &bytes.Buffer{}
-	cmd.Stderr = stderr
-	stdout, err := cmd.StdoutPipe()
+	f, err := NewSpool()
 	if err != nil {
 		return nil, err
 	}
-	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("opencode export: %v", err)
+	// The export goes to a file, never a pipe: opencode 1.18.18 ends a piped
+	// export at 128KiB and still exits 0 (measured 2026-11-16: 131072 of
+	// 479799 bytes, every run), while a file receives all of it.
+	cmd := hostcmd.Command(opencodeBin, "export", id)
+	cmd.Dir = nearestExisting(dir)
+	cmd.Stdout = f.File
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("opencode export: %v: %s", err, strings.TrimSpace(stderr.String()))
 	}
-	return &cmdReader{cmd: cmd, r: stdout, stderr: stderr}, nil
+	// The exit status did not catch the cut, so the output is checked too: a
+	// short file is never passed off as complete.
+	if _, err := f.Seek(0, io.SeekStart); err == nil {
+		err = oneJSONValue(f)
+		if err != nil {
+			f.Close()
+			return nil, fmt.Errorf("opencode export: the output is not one complete JSON value: %v", err)
+		}
+	} else {
+		f.Close()
+		return nil, err
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		f.Close()
+		return nil, err
+	}
+	return f, nil
 }
 
-// cmdReader streams a command's stdout and reports the command's failure at
-// the end of the read and at Close, so a failed export is never a short file
-// passed off as complete.
-type cmdReader struct {
-	cmd    *exec.Cmd
-	r      io.Reader
-	stderr *bytes.Buffer
-	done   bool
-	err    error
-}
-
-func (c *cmdReader) wait() error {
-	if !c.done {
-		c.done = true
-		if err := c.cmd.Wait(); err != nil {
-			c.err = fmt.Errorf("opencode export: %v: %s", err, strings.TrimSpace(c.stderr.String()))
+// oneJSONValue reads r to its end and reports whether it held exactly one
+// complete JSON value, token by token, so a large export is never held whole.
+func oneJSONValue(r io.Reader) error {
+	dec := json.NewDecoder(r)
+	depth, seen := 0, false
+	for {
+		tok, err := dec.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		seen = true
+		if d, ok := tok.(json.Delim); ok {
+			if d == '{' || d == '[' {
+				depth++
+			} else {
+				depth--
+			}
+		}
+		if depth == 0 {
+			if _, err := dec.Token(); err != io.EOF {
+				return errors.New("more data after the value")
+			}
+			return nil
 		}
 	}
-	return c.err
-}
-
-func (c *cmdReader) Read(p []byte) (int, error) {
-	n, err := c.r.Read(p)
-	if err == io.EOF {
-		if werr := c.wait(); werr != nil {
-			return n, werr
-		}
+	if !seen {
+		return errors.New("empty")
 	}
-	return n, err
-}
-
-func (c *cmdReader) Close() error {
-	if !c.done && c.cmd.Process != nil {
-		_ = c.cmd.Process.Kill()
-	}
-	return c.wait()
+	return errors.New("it ends inside the value")
 }

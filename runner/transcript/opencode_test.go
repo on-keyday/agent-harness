@@ -13,8 +13,10 @@ import (
 )
 
 // fakeOpencode installs a shell script as the opencode binary: `session list`
-// prints list, `export <id>` prints "EXPORT <id>" (or fails for "bad"), and
-// every call appends its argv and cwd to a log.
+// prints list, `export <id>` prints {"id":"<id>"} (fails for "bad", prints a
+// cut-off value for "notjson"), and every call appends its argv and cwd to a
+// log. Like opencode 1.18.18, which ends a piped export at 128KiB and exits 0,
+// the fake prints only a fragment when its stdout is a pipe.
 func fakeOpencode(t *testing.T, list string) (logPath string) {
 	t.Helper()
 	d := t.TempDir()
@@ -27,7 +29,9 @@ JSON
 exit 0; fi
 if [ "$1" = export ]; then
   if [ "$2" = bad ]; then echo boom >&2; exit 3; fi
-  echo "EXPORT $2"; exit 0
+  if [ -p /dev/stdout ]; then printf '{"id":"%s","cu' "$2"; exit 0; fi
+  if [ "$2" = notjson ]; then printf '{"id":'; exit 0; fi
+  printf '{"id":"%s"}\n' "$2"; exit 0
 fi
 exit 9
 `
@@ -105,7 +109,7 @@ func TestOpencodeGetRunsExport(t *testing.T) {
 	if cerr := rc.Close(); err == nil {
 		err = cerr
 	}
-	if err != nil || strings.TrimSpace(string(b)) != "EXPORT ses_a" {
+	if err != nil || strings.TrimSpace(string(b)) != `{"id":"ses_a"}` {
 		t.Fatalf("read %q err %v", b, err)
 	}
 	if _, err := st.Files(dir, "ses_b"); !errors.Is(err, ErrNoSession) {
@@ -116,21 +120,32 @@ func TestOpencodeGetRunsExport(t *testing.T) {
 	}
 }
 
-// A failing export is an error at the end of the read, not a short file
-// passed off as complete.
+// A failing export is an error from Open, not a short file passed off as
+// complete.
 func TestOpencodeExportFailureIsStoreError(t *testing.T) {
 	dir := t.TempDir()
 	fakeOpencode(t, `[{"id":"bad","directory":"`+dir+`","created":1,"updated":2}]`)
 	st, _ := New("opencode", env(nil))
 	rc, err := st.Open(dir, "bad", "export.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = io.ReadAll(rc)
-	if cerr := rc.Close(); err == nil {
-		err = cerr
+	if err == nil {
+		rc.Close()
 	}
 	if err == nil || !strings.Contains(err.Error(), "boom") {
 		t.Fatalf("err %v, want the export's failure with its stderr", err)
+	}
+}
+
+// An export that exits 0 with less than one whole JSON value is an error too:
+// the exit status alone did not catch opencode's cut-off output.
+func TestOpencodeExportCutShortIsStoreError(t *testing.T) {
+	dir := t.TempDir()
+	fakeOpencode(t, `[{"id":"notjson","directory":"`+dir+`","created":1,"updated":2}]`)
+	st, _ := New("opencode", env(nil))
+	rc, err := st.Open(dir, "notjson", "export.json")
+	if err == nil {
+		rc.Close()
+	}
+	if err == nil || !strings.Contains(err.Error(), "JSON") {
+		t.Fatalf("err %v, want an incomplete-JSON error", err)
 	}
 }

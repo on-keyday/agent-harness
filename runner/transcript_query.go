@@ -9,7 +9,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 
@@ -235,22 +234,23 @@ func listTranscriptSessions(stores []transcript.Store, failures []string, dir st
 }
 
 // openSized opens one file of the session with the size that will be sent.
-// A file on disk is sent as it was when opened — sized by Stat, read no
-// further — so a live session growing meanwhile still matches its header. A
-// file produced on read (opencode's export) is spooled to a temp file first:
-// its size is known only then, and a failure surfaces here, before any ok.
+// A file is sent as it was when opened — sized by Stat, read no further — so
+// a live session growing meanwhile still matches its header. That covers a
+// file the store produced on read (opencode's export, already complete in a
+// spool when Open returns). Any other reader is spooled first: its size is
+// known only then, and a failure surfaces here, before any ok.
 func openSized(st transcript.Store, dir, id, name string) (io.ReadCloser, int64, error) {
 	rc, err := st.Open(dir, id, name)
 	if err != nil {
 		return nil, 0, err
 	}
-	if f, ok := rc.(*os.File); ok {
+	if f, ok := rc.(interface{ Stat() (os.FileInfo, error) }); ok {
 		fi, err := f.Stat()
 		if err != nil {
-			f.Close()
+			rc.Close()
 			return nil, 0, err
 		}
-		return limitedFile{io.LimitReader(f, fi.Size()), f}, fi.Size(), nil
+		return limitedFile{io.LimitReader(rc, fi.Size()), rc}, fi.Size(), nil
 	}
 	defer rc.Close()
 	return spool(rc)
@@ -258,48 +258,26 @@ func openSized(st transcript.Store, dir, id, name string) (io.ReadCloser, int64,
 
 type limitedFile struct {
 	io.Reader
-	f *os.File
+	c io.Closer
 }
 
-func (l limitedFile) Close() error { return l.f.Close() }
+func (l limitedFile) Close() error { return l.c.Close() }
 
-// spool copies r to a file and returns it rewound, with its size; the file
-// is gone once closed. It lives under the user cache dir, not the temp dir,
-// which can be tmpfs (RAM); off Windows it is unlinked at once, so a runner
-// that dies mid-transfer leaves nothing behind.
+// spool copies r to a transcript.Spool and returns it rewound, with its size.
 func spool(r io.Reader) (io.ReadCloser, int64, error) {
-	dir := os.TempDir()
-	if c, err := os.UserCacheDir(); err == nil {
-		d := filepath.Join(c, "harness-transcripts")
-		if os.MkdirAll(d, 0o700) == nil {
-			dir = d
-		}
-	}
-	tmp, err := os.CreateTemp(dir, "spool-*")
+	t, err := transcript.NewSpool()
 	if err != nil {
 		return nil, 0, err
 	}
-	t := tempFile{tmp}
-	if runtime.GOOS != "windows" {
-		_ = os.Remove(tmp.Name())
-	}
-	n, err := io.Copy(tmp, r)
+	n, err := io.Copy(t, r)
 	if err == nil {
-		_, err = tmp.Seek(0, io.SeekStart)
+		_, err = t.Seek(0, io.SeekStart)
 	}
 	if err != nil {
 		t.Close()
 		return nil, 0, err
 	}
 	return t, n, nil
-}
-
-type tempFile struct{ *os.File }
-
-func (t tempFile) Close() error {
-	err := t.File.Close()
-	_ = os.Remove(t.File.Name())
-	return err
 }
 
 // tarEntry is one file of a whole-session tar, opened and sized up front.
