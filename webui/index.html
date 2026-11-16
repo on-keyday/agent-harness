@@ -150,9 +150,9 @@
           <select id="compose-target"></select></label>
           <input id="compose-target-id" type="text" size="20" placeholder="task id (先頭だけでも可)" hidden>
           <span id="compose-target-note" class="hint"></span></span>
-        <span data-field="oneshot"><label class="caps-on-resume-toggle" title="エージェントの one-shot (print-mode) 起動で走らせ、答えたら終わる"><input type="checkbox" id="compose-oneshot"> one-shot で</label></span>
-        <span data-field="stream"><label class="caps-on-resume-toggle" title="PTY ではなく構造化イベントのセッションを開く。承認は端末のキー入力ではなくボタンで答える"><input type="checkbox" id="spawn-stream"> event-stream (チャット)</label></span>
-        <span data-field="resumeConversation"><label class="caps-on-resume-toggle" title="発火ごとにエージェントの会話も引き継ぐ (--resume-conversation)"><input type="checkbox" id="resume-conversation"> 会話も再開</label></span>
+        <span data-field="oneshot"><label class="compose-toggle" title="エージェントの one-shot (print-mode) 起動で走らせ、答えたら終わる"><input type="checkbox" id="compose-oneshot"> one-shot で</label></span>
+        <span data-field="stream"><label class="compose-toggle" title="PTY ではなく構造化イベントのセッションを開く。承認は端末のキー入力ではなくボタンで答える"><input type="checkbox" id="spawn-stream"> event-stream (チャット)</label></span>
+        <span data-field="resumeConversation"><label class="compose-toggle" title="発火ごとにエージェントの会話も引き継ぐ (--resume-conversation)"><input type="checkbox" id="resume-conversation"> 会話も再開</label></span>
         <span data-field="pty">
       <label class="limit-field" title="子プロセスに PTY を与えるか。server 既定 = 対話 session は PTY あり、one-shot は PTY なし (stdin は /dev/null、出力はバイトそのまま)。off の対話 session は stdin がパイプで、入力はエコーされない。stream には PTY がない">PTY
         <select id="compose-pty">

@@ -531,8 +531,8 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
 
 /* --- Scope picker (base radios + task checklist, inside #compose and the
    re-grant modal) --- */
-/* Own block: inline here would share the line with the caps-on-resume label
-   and break that label's checkbox onto a line of its own at 390px. */
+/* Own block: inline here would share the line with a checkbox label and
+   break that label's checkbox onto a line of its own at 390px. */
 .scope-block {
   display: block;
   margin: 0.4rem 0 0.2rem;
@@ -750,8 +750,8 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
   margin-left: 0.25rem;
   white-space: nowrap;
 }
-/* apply-caps-on-resume checkbox label (sits under the cap chips row) */
-.caps-on-resume-toggle {
+/* 新規作成's checkbox labels (one-shot, event-stream, 会話も再開) */
+.compose-toggle {
   display: inline-flex;
   align-items: center;
   gap: 0.35em;
@@ -761,7 +761,7 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
   cursor: pointer;
   user-select: none;
 }
-.caps-on-resume-toggle input[type="checkbox"] {
+.compose-toggle input[type="checkbox"] {
   accent-color: #2d5;
   cursor: pointer;
 }
@@ -771,7 +771,7 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
     font-size: 0.85rem;
     padding: 0.35rem 0.6rem;
   }
-  .caps-on-resume-toggle {
+  .compose-toggle {
     font-size: 0.9rem;
   }
 }

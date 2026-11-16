@@ -128,7 +128,7 @@ test("Compose's tokens are a line the shared declaration parses, carrying the ba
   assert.equal(b.flags["spawn-depth"], "3");
 });
 
-test("Compose: an empty zone is the server's zone, a named one is sent; Task id binds instead of --repo", () => {
+test("Compose: an empty zone is the server's zone, a named one is sent; a task target binds instead of --repo", () => {
   assert.ok(!page.composeScheduleTokens(form({ tz: "" })).includes("--tz"));
   const bound = page.composeScheduleTokens(form({ task: ID }));
   assert.ok(bound.includes("--task") && !bound.includes("--repo"));

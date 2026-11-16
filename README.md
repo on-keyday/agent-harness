@@ -1750,8 +1750,9 @@ accept the typed `caps set-parent` / `set-parent` command forms.
 On **resume** — which needs `resume`, or `resume_exact` for `--exact` — the
 task's persisted authority is kept by default; the
 two halves re-grant independently — `--caps` re-grants the mask,
-`--scope` re-grants the scope (each only when literally given; WebUI
-gates both behind the apply-on-resume checkbox). This composes with the
+`--scope` re-grants the scope (each only when literally given; in the
+WebUI, typed on the command line or set in the Resume… dialog's 権限
+override). This composes with the
 podman sandbox (see **Sandboxing** below) as a server-layer
 confinement: `--caps none` closes the control-plane escape path (an
 agent spawning an unsandboxed child) regardless of what is inside the
