@@ -178,6 +178,8 @@ type modalKeyMap struct {
 	ConnsReadServer string
 	// DetailRecordKeep opens the retention form on the d popup's records.
 	DetailRecordKeep string
+	// DetailTranscripts lists the agents' transcripts in a task's d popup.
+	DetailTranscripts string
 }
 
 var modalKeys = modalKeyMap{
@@ -224,6 +226,9 @@ var modalKeys = modalKeyMap{
 	// The same letter in the d popup, for the same act: how long a record is
 	// kept. Not a scroll key there either.
 	DetailRecordKeep: "t",
+	// s (sessions) lists the agents' transcripts, which the popup no longer
+	// asks for on opening. Not a scroll key there.
+	DetailTranscripts: "s",
 	// o (open) reads a topic by name rather than from the list, which is how
 	// a topic nothing was published to yet is reached at all.
 	BoardOpenTopic: "o",
@@ -357,7 +362,7 @@ var mainKeyBindings = []keyBinding{
 		Short: "x delete", Long: "delete the selected schedule after a y/n confirm (schedule rm): its task stays and a run in progress is not cancelled"},
 
 	// --- runners + tasks + schedules ---
-	{Keys: []string{mainKeys.Detail}, Scope: scopeRunners | scopeTasks | scopeSchedules, Do: (*App).onDetail, Short: "d detail", Long: "detail popup for the selected runner / task / schedule (a schedule's shows its history and wait statistics)"},
+	{Keys: []string{mainKeys.Detail}, Scope: scopeRunners | scopeTasks | scopeSchedules, Do: (*App).onDetail, Short: "d detail", Long: "detail popup for the selected runner / task / schedule (in a task's, s lists its agents' transcripts; a schedule's shows its history and wait statistics)"},
 
 	// --- global (every pane but the command line) ---
 	{Keys: []string{"tab", "shift+tab"}, Scope: scopeGlobal, Short: "tab focus", Long: "cycle focus: the shown table, notifications, results, command line (shift-tab reverses)"},

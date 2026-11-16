@@ -170,6 +170,10 @@ func (d *DetailPopup) WatchTranscripts(taskID, block string) {
 	d.render()
 }
 
+// TranscriptsFor is the task whose transcripts the popup lists, "" when it is
+// not a task's popup.
+func (d *DetailPopup) TranscriptsFor() string { return d.transcriptsFor }
+
 // SetTranscriptList shows a task's agent sessions (or why they could not be
 // listed) when the popup still shows taskID.
 func (d *DetailPopup) SetTranscriptList(taskID string, ss []protocol.TranscriptSession, note string, err error) {
@@ -281,6 +285,9 @@ func (d *DetailPopup) View() string {
 		Padding(1, 2)
 	header := HeaderStyle.Render(d.title)
 	hint := "Esc: close"
+	if d.transcriptsFor != "" {
+		hint = modalKeys.DetailTranscripts + ": transcripts · " + hint
+	}
 	if len(d.records) > 0 {
 		hint = modalKeys.DetailRecordKeep + ": keep · " + hint
 	}

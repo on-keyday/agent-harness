@@ -67,6 +67,9 @@ func (a *App) inDetail(msg tea.KeyMsg) tea.Cmd {
 			return nil
 		}
 	}
+	if msg.String() == modalKeys.DetailTranscripts && a.detail.TranscriptsFor() != "" {
+		return a.listTranscripts()
+	}
 	// Everything else scrolls: the body can be taller than the screen
 	// (`?` is), and a popup you cannot scroll hides its own top.
 	var cmd tea.Cmd

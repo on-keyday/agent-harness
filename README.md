@@ -511,8 +511,9 @@ bin/harness-cli transcript ls <task-id> <session>    # the files that session is
 bin/harness-cli transcript get <task-id> <session> <file> > s.jsonl   # one file, as stored
 bin/harness-cli transcript get -o s.tar <task-id> <session>          # the whole session, as a tar
 # -o is created only once the first byte arrives, so a refused fetch leaves no
-# file behind. TUI: `d` lists the sessions under the PTY records; the verbs on
-# the command line (`transcript get` there needs -o). WebUI: 「✎ 会話記録を表示」
+# file behind. TUI: `s` in a task's `d` popup lists the sessions under the PTY
+# records (`d` alone does not ask the runner); the verbs on the command line
+# (`transcript get` there needs -o). WebUI: 「✎ 会話記録を表示」
 # on the task sheet lists them, opens a session's files, and downloads one file
 # or the session as a .tar.
 

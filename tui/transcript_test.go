@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/cli/verb"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
@@ -69,6 +70,30 @@ func TestDetailTranscriptListError(t *testing.T) {
 	m, _ = a.Update(TranscriptListMsg{TaskID: id})
 	if !strings.Contains(m.(*App).detail.body, "transcripts:   none") {
 		t.Fatalf("an empty list is not shown as none:\n%s", m.(*App).detail.body)
+	}
+}
+
+// d does not ask the runner for transcripts: listing one runs each agent's
+// own lister there (opencode through its CLI, for up to a minute). The popup
+// names the key, and s in the popup asks.
+func TestDetailListsTranscriptsOnlyOnS(t *testing.T) {
+	a := bgTaskApp(t, protocol.TaskStatus_Detached, protocol.RunMode_Background)
+	a.focus = focusTasks
+	a.client = &cli.Client{} // non-nil is enough; the returned cmds are never run
+	a.onDetail(keyRune('d'))
+	if body := a.detail.body; strings.Contains(body, "transcripts:   loading") || !strings.Contains(body, "transcripts:   s: list") {
+		t.Fatalf("d asked for transcripts, or the popup does not name s:\n%s", body)
+	}
+	if !strings.Contains(a.detail.View(), "s: transcripts") {
+		t.Fatalf("the footer does not offer s:\n%s", a.detail.View())
+	}
+	m, cmd := a.Update(keyRune('s'))
+	a = m.(*App)
+	if cmd == nil || !strings.Contains(a.detail.body, "transcripts:   loading…") {
+		t.Fatalf("s did not ask (cmd %v):\n%s", cmd != nil, a.detail.body)
+	}
+	if !a.detail.IsOpen() {
+		t.Fatal("s closed the popup")
 	}
 }
 

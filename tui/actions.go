@@ -414,15 +414,16 @@ func (a *App) onDetail(msg tea.KeyMsg) (tea.Cmd, bool) {
 			a.detail.Open("Task detail", formatTaskDetail(*t, runnerIndex(a.runnersSnapshot)))
 			// The task's PTY records arrive after the popup opens (A-D28).
 			id := a.tasks.SelectedID()
+			// The agents' transcripts are read from the task's runner (pillar B),
+			// which runs each agent's own lister — opencode's for up to a minute
+			// — so they are listed only when asked, with s in the popup.
+			a.detail.WatchTranscripts(id, transcriptsOnS)
 			if a.client == nil {
 				a.detail.WatchRecords(id, "records:       (not connected)")
-				a.detail.WatchTranscripts(id, "transcripts:   (not connected)")
 				return nil, true
 			}
 			a.detail.WatchRecords(id, "records:       loading…")
-			// The agents' transcripts are read from the task's runner (pillar B).
-			a.detail.WatchTranscripts(id, "transcripts:   loading…")
-			return tea.Batch(DoRecordList(a.client, id), DoTranscriptList(a.client, id)), true
+			return DoRecordList(a.client, id), true
 		}
 		a.cmdresult.Append(WarnStyle.Render("no task selected"))
 		return nil, true
@@ -430,6 +431,21 @@ func (a *App) onDetail(msg tea.KeyMsg) (tea.Cmd, bool) {
 		return a.onScheduleDetail()
 	}
 	return nil, false
+}
+
+// transcriptsOnS is the d popup's transcripts line until s asks for them.
+const transcriptsOnS = "transcripts:   " + "s: list (read from the task's runner)"
+
+// listTranscripts is s in a task's d popup: it asks the task's runner for the
+// agents' sessions (pillar B); s again asks again.
+func (a *App) listTranscripts() tea.Cmd {
+	id := a.detail.TranscriptsFor()
+	if a.client == nil {
+		a.detail.WatchTranscripts(id, "transcripts:   (not connected)")
+		return nil
+	}
+	a.detail.WatchTranscripts(id, "transcripts:   loading…")
+	return DoTranscriptList(a.client, id)
 }
 
 // `c` cancels the selected task when tasks panel is focused.
