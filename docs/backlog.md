@@ -298,37 +298,40 @@ isolation unit:
 
 ---
 
-## `Capability` is running out of bits
+## Task labels
 
-**What.** `enum Capability` is `:u32`. With `forward_link`
-(`2026-10-25-ip-link-forward-design.md` §6b) it uses 23 bits, leaving 9.
+**What.** Operator-chosen labels on a task, for finding tasks in a long list.
+Step 3 of `2026-11-16-task-list-order-design.md`. Steps 1 (ordering modes) and
+2 (the u64 widening of `Capability`, `2026-11-16-capability-u64-design.md`)
+have landed; no labels spec exists.
 
-**Evidence** (2026-10-25), the date each recent bit first appears in
-`runner/protocol/message.bgn`:
+**Already decided** (operator, 2026-11-16):
 
-```
-$ git log -S'<bit line>' --reverse --format=%ad --date=short -- runner/protocol/message.bgn | head -1
-exec_view 0x1000      2026-08-20
-forward_tap 0x10000   2026-08-29
-board_send 0x20000    2026-10-04
-exec_tap 0x40000      2026-10-09
-board_peer 0x80000    2026-10-16
-resume 0x100000       2026-10-19
-resume_exact 0x200000 2026-10-19
-```
+- Labels are held by the server, not per client.
+- A task can carry several.
+- Setting and removing them is gated by a new `label` cap bit. It would be the
+  31st bit; the u64 widening made room, and the budget is now 53 bits
+  (`TestCapabilityStaysExactInTheWebUI`).
+- A child inherits its parent's labels at spawn.
+- Labels are **not** an authority target: no scope, grant or reach decision
+  reads them.
 
-Ten bits in two months, five of them in the last fifteen days.
+**Proposed scope, not yet agreed:**
 
-**What widening costs.** `Capability` is the type of 13 fields
-(`grep -c ':Capability\b' runner/protocol/message.bgn`), so it is a wire change
-for every peer, and the WAL persists masks as numbers, so it has the disk axis
-too: a `u32` mask written before the change must still decode after it.
-`all` is a literal and moves with the width.
+- Set and remove labels from the CLI, the TUI and the WebUI.
+- Show labels in task rows.
+- A `label` mode in `cli.OrderTasks` (`cli/task_order.go`). A task with several
+  labels appears under each one.
+- `ls --label X`, with the same filter in the TUI and the WebUI.
+- No bulk cancel or prune by label.
 
-**Why deferred.** Found while choosing `forward_link`'s bit. The decision there
-was not to fold the link into existing bits to save one, since that would change
-what existing grants mean. Widening is its own change with its own rollout, and
-the remaining bits leave time to do it deliberately.
+**Open.** What labels will actually name (a topic of work, a waiting state, …),
+and therefore who mostly sets them, the operator or agents. That answer decides
+how much inheritance at spawn is worth and which surface has to be cheapest.
+
+**Why deferred.** After trying the ordering modes in the TUI, the operator found
+them enough for now (2026-11-16). Revisit when `live` / `state` / `repo`
+ordering stops finding the tasks that matter.
 
 ---
 
