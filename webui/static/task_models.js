@@ -373,10 +373,9 @@ function composePtyOption(v) {
   return v === "on" || v === "off" ? v : "";
 }
 
-// composeBoxesFromTask is the kind half of prefilling Compose from a task:
-// the stream box, the one-shot box (A3, A-D29) and the PTY select (A-D33) each
-// say what its last run was, so a prefill never leaves one as Compose's
-// previous use left it. The select names the PTY choice only where it differs
+// composeBoxesFromTask is the kind half of prefilling the Resume… dialog from
+// a task: the stream box, the one-shot box (A3, A-D29) and the PTY select
+// (A-D33) each say what its last run was. The select names the PTY choice only where it differs
 // from the mode's default (a PTY for an interactive run, none for a one-shot),
 // so the prefilled open resolves to what the last run had.
 function composeBoxesFromTask(t) {
@@ -518,14 +517,14 @@ function scheduleZoneOptions(zones) {
 // message instead of being dropped.
 function composeScheduleTokens(f) {
   if (f.stream) {
-    throw new Error("schedule: an event-stream session cannot be scheduled -- untick \"event-stream で開く\" (a firing resumes a background task)");
+    throw new Error("schedule: an event-stream session cannot be scheduled -- untick \"event-stream (チャット)\" (a firing resumes a background task)");
   }
   const t = ["--cron", String(f.cron).trim()];
   const tz = String(f.tz || "").trim();
   if (tz) t.push("--tz", tz);
   if (f.task) t.push("--task", f.task);
   else if (f.repo) t.push("--repo", f.repo);
-  else throw new Error("schedule: select a repo (or fill in Task id to bind that task)");
+  else throw new Error("schedule: select a repo (or pick a task under 対象 to bind it)");
   if (f.host) t.push("--host", f.host);
   if (f.agent) t.push("--agent", f.agent);
   for (const a of f.agentArgs || []) t.push("--agent-arg", a);
@@ -716,6 +715,24 @@ function resumeDialogDefaults(t, connectedRunnerIds) {
       quiet: msDurationStr(c.quietMs), blocked: msDurationStr(c.blockedMs), queueTimeout: msDurationStr(c.queueTimeoutMs),
     },
   };
+}
+
+// composeAuthoritySummary is the 新規作成 権限 section's closed line: caps,
+// scope, and the scope-for overrides when there are any.
+function composeAuthoritySummary(capsLabel, scope, scopeFor) {
+  let line = `権限  caps: ${capsLabel} · scope: ${scope || "subtree"}`;
+  if (scopeFor && scopeFor.length > 0) line += "  +scope-for " + scopeFor.join(" ");
+  return line;
+}
+
+// findTaskFresh is lookup(), asking the server once (refresh) when the last
+// listing does not have the task yet — a feed entry can name a task the poll
+// has not shown. null when the server does not list it either.
+async function findTaskFresh(lookup, refresh) {
+  const t = lookup();
+  if (t) return t;
+  await refresh();
+  return lookup() || null;
 }
 
 // resumeDialogRequest turns the dialog's form into sessionReq's argument. The

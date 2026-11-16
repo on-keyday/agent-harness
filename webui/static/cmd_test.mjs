@@ -1136,3 +1136,28 @@ test("composeTargetPick: a vanished target stays the operator's pick", () => {
   eq([gone.value, gone.idText], ["#id", "b".repeat(32)]);
   assert.match(gone.note, /bbbbbbbb/);
 });
+
+// The 権限 summary names a scope-for override too: without it a narrowed
+// grant reads exactly like the plain one.
+test("composeAuthoritySummary: names the scope-for overrides", () => {
+  eq(page.composeAuthoritySummary("all", "", []), "権限  caps: all · scope: subtree");
+  eq(page.composeAuthoritySummary("spawn", "global", ["exec_view=none"]),
+    "権限  caps: spawn · scope: global  +scope-for exec_view=none");
+});
+
+// The feed's Resume names a task the list may not show yet: it asks the
+// server once before deciding, so a new background task opens the dialog
+// instead of a resume the server refuses prompt_required.
+test("findTaskFresh: refreshes once when the listing lacks the task", async () => {
+  let list = [];
+  let refreshed = 0;
+  const lookup = () => list.find((t) => t.id === ID);
+  const refresh = async () => { refreshed++; list = [{ id: ID, runMode: "background" }]; };
+  eq(await page.findTaskFresh(lookup, refresh), { id: ID, runMode: "background" });
+  eq(refreshed, 1);
+  eq(await page.findTaskFresh(lookup, refresh), { id: ID, runMode: "background" });
+  eq(refreshed, 1, "a listed task needs no refresh");
+  list = [];
+  const none = async () => { refreshed++; };
+  eq(await page.findTaskFresh(lookup, none), null);
+});

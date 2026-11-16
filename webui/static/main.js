@@ -471,8 +471,6 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   const hostSelect   = document.getElementById("host-select");
   const agentSelect  = document.getElementById("agent-select");
   const agentArgs    = document.getElementById("agent-args-input");
-  // Single unified task-id field, shared by reattach (target a detached
-  // session) and resume (reuse a terminal task's worktree via Open).
   const runnerList   = document.getElementById("runner-list");
   const taskList     = document.getElementById("task-list");
 
@@ -4317,7 +4315,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // The 権限 section's summary: what the panel holds, without opening it.
   function renderComposeAuthoritySummary() {
     const sum = document.getElementById("compose-authority-summary");
-    if (sum) sum.textContent = `権限  caps: ${capsLabelFor(spawnCaps)} · scope: ${spawnScope || "subtree"}`;
+    if (sum) sum.textContent = composeAuthoritySummary(capsLabelFor(spawnCaps), spawnScope, overrideSpecsFrom("spawn"));
   }
   const composeForm = () => ({
     cron: composeCron ? composeCron.value : "",
@@ -5433,8 +5431,9 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // session and asks the runner to resume the agent conversation too.
   const resumeTaskById = async (id) => {
     if (!id) return;
-    // A background task resumes in background from Compose, prefilled.
-    const known = lastTasks.find((x) => x.id === id);
+    // A background task resumes through the Resume… dialog. The feed can name
+    // a task the last poll has not listed yet; ask once before deciding.
+    const known = await findTaskFresh(() => (lastTasks || []).find((x) => x.id === id), refreshSnapshot);
     if (known && known.runMode === "background") {
       openResumeDialog(known);
       return;
