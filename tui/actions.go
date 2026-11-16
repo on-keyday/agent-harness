@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -665,23 +666,14 @@ func (a *App) onBackgroundOpen(msg tea.KeyMsg) (tea.Cmd, bool) {
 	return nil, true
 }
 
-// resolveTaskPrefix is the schedule form's task field: a full id or a unique
-// prefix of a listed task.
+// resolveTaskPrefix is resolveTaskIDPrefix for the schedule form's task field,
+// whose resolver returns an error.
 func (a *App) resolveTaskPrefix(s string) (string, error) {
-	q := strings.ToLower(strings.TrimSpace(s))
-	var hits []string
-	for id := range a.tasksByID {
-		if strings.HasPrefix(id, q) {
-			hits = append(hits, id)
-		}
+	full, reason := a.resolveTaskIDPrefix(strings.TrimSpace(s))
+	if reason != "" {
+		return "", errors.New(reason)
 	}
-	switch len(hits) {
-	case 1:
-		return hits[0], nil
-	case 0:
-		return "", fmt.Errorf("no listed task has id %s", q)
-	}
-	return "", fmt.Errorf("%s matches %d tasks; type more of the id", q, len(hits))
+	return full, nil
 }
 
 // `E` switches the selected running session's run mode (A-D19): to

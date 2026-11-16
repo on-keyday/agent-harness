@@ -105,3 +105,20 @@ func TestScheduleFormSubmitChecksTheSchedule(t *testing.T) {
 		t.Fatalf("open=%v view:\n%s", a.bgform.IsOpen(), a.bgform.View())
 	}
 }
+
+// Submitted while disconnected, the request is never sent: the form says so
+// and takes the next Ctrl+J instead of waiting for an answer that cannot come.
+func TestScheduleFormSubmitWhileDisconnectedIsAnswered(t *testing.T) {
+	a := New(Config{})
+	a.width, a.height = 160, 40
+	a.defaultRepo = "/r"
+	a.setFocus(focusSchedules)
+	a = press(t, a, runes("N"))
+	a.bgform.prompt.SetValue("triage")
+	a.bgform.fields[bgFieldCron].SetValue("@daily")
+	a.bgform.fields[bgFieldAgent].SetValue("claude")
+	a = press(t, a, tea.KeyMsg{Type: tea.KeyCtrlJ})
+	if a.bgform.Pending() || !strings.Contains(a.bgform.View(), "not connected") {
+		t.Fatalf("pending=%v view:\n%s", a.bgform.Pending(), a.bgform.View())
+	}
+}

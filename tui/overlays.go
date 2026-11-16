@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -1197,7 +1198,12 @@ func (a *App) inBgForm(msg tea.KeyMsg) tea.Cmd {
 				var v verb.ScheduleSpecAction
 				if v, err = verb.ParseCmdScheduleNew(verb.TUI, args, nil); err == nil {
 					a.bgform.Submitted()
-					return tuiVerbs{a}.ScheduleNew(v)
+					if cmd := (tuiVerbs{a}).ScheduleNew(v); cmd != nil {
+						return cmd
+					}
+					// A nil Cmd for `schedule new` is scheduleRecord's
+					// "not connected": nothing was sent, so no answer comes.
+					err = errors.New("not connected to server")
 				}
 			}
 			a.bgform.Answered(err)
