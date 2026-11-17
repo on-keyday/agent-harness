@@ -411,3 +411,56 @@ what binding an existing stream task with `--task` does today.
 **Why deferred.** Found 2026-11-17 while designing the overview; the operator
 asked for it to be fixed right after the overview lands (operator,
 2026-11-17).
+
+---
+
+## Split the daemons' connection and auth code out of `package cli`
+
+**What.** `package cli` holds two kinds of code: what only the operator
+surfaces use (CLI, TUI, WebUI via wasm), and what both daemons run — the PSK
+handshake, server/runner signature checks, dialing and reconnecting. The
+daemons import `cli`, and `cli` imports `cli/verb`, so the whole verb table is
+built at daemon start too. Move the daemon half into its own package so that
+neither `harness-server` nor `agent-runner` imports `cli` (or `cli/verb`).
+
+**Evidence** (2026-11-17, landing the overview, `f4def0ec..ed71ccdf`):
+
+- `scripts/land.py` printed "restart the server" and "restart the runner
+  slots" for a change whose Go part was client-only (`cli/`, `cli/verb/`,
+  `tui/`, `cmd/harness-cli/`, `cmd/harness-webui-wasm/`): it names a daemon
+  when `go list -deps ./cmd/<daemon>` contains a changed package, and both
+  daemons list `cli` and `cli/verb`.
+- No path rule fixes it. The daemons do run `cli` code, so "`cli/` needs no
+  restart" would miss a handshake change. Symbols the daemons call, from
+  `grep -rhoE 'cli\.[A-Z][A-Za-z]+' server runner cmd/harness-server
+  cmd/agent-runner`: `ComputePSKBinder`, `PskAuthReply`, `PersistLoop`,
+  `Dial`, `ResolveCandidate`, `VerifyRunnerAuth`, `SignServerAuth`, …
+- Comparing reproducible daemon builds does not fix it either. Built at base
+  and head with `GOFLAGS=-buildvcs=false go build -trimpath`, `agent-runner`
+  differed (two head builds were identical, so the build is deterministic),
+  and `go tool nm` showed the only difference: three new
+  `cli/verb.init.0.func*` closures — the `overview` row of the verb table,
+  which the runner never reads.
+- `cli` imports `cli/verb` from `grammar.go`, `caps_audit.go`,
+  `caps_audit_render.go`, `caps_tier.go`, `cmd_board.go`, `schedule.go`,
+  `reach.go`, `whatif.go`.
+
+**Shape.** The daemon-side files, as a first list to check (a rough
+symbol-to-file match, not exhaustive): `psk.go`, `psk_binder.go`,
+`psk_js.go`, `server_auth.go`, `runner_auth.go`, `persist.go`,
+`candidate.go`, `dial_endpoint_native.go` / `_js.go`, `tls_client.go`,
+`server_dial_runner.go`, `shutdownwatch.go`, `operator_env.go`, `path.go`,
+`probe.go`, `client.go`. The daemons also borrow single helpers from
+`await_idle.go`, `board_archive.go`, `attach.go`, `list.go`,
+`file_transfer.go`, `capability_error.go`; each needs a decision (move it, or
+stop the daemon using it). Once done, `land.py`'s `go list -deps` hints are
+exact with no change to `land.py`.
+
+**Cost and risk.** Several dozen files and import cycles to untangle, on the
+handshake and reconnect path, which is the path the harness upgrades itself
+through. No wire bytes should change; prove it with `scripts/wire-skew-check.sh`
+(forced) and a dummy-harness E2E across a server restart.
+
+**Why deferred.** After the schedule stream-kind fix above, by operator
+decision (2026-11-17). Until then, a restart decision reads the landed diff,
+not `land.py`'s hint, for any change under `cli/`.
