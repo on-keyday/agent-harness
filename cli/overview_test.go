@@ -216,3 +216,17 @@ func TestTaskStateBadge(t *testing.T) {
 		t.Errorf("program: %q", got)
 	}
 }
+
+// Hosts are capped like every other section; the count stays whole.
+func TestBuildOverviewHostsCapped(t *testing.T) {
+	var rs []protocol.RunnerInfo
+	for _, h := range []string{"e", "d", "c", "b", "a"} {
+		var r protocol.RunnerInfo
+		r.SetHostname([]byte(h))
+		rs = append(rs, r)
+	}
+	o := BuildOverview(OverviewInput{Runners: rs}, ovNow)
+	if o.HostCount != 5 || len(o.Hosts) != OverviewRowCap || o.Hosts[0].Hostname != "a" {
+		t.Fatalf("count %d rows %+v", o.HostCount, o.Hosts)
+	}
+}

@@ -32,6 +32,7 @@ type mainKeyMap struct {
 	GridSubtree     string
 	GridDescendants string
 	Conns           string
+	Overview        string
 	Board           string
 	Tree            string
 	Order           string
@@ -78,6 +79,7 @@ var mainKeys = mainKeyMap{
 	GridSubtree:     "z",
 	GridDescendants: "Z",
 	Conns:           "C",
+	Overview:        "V",
 	Board:           "O",
 	Tree:            "T",
 	Order:           "o",
@@ -371,6 +373,7 @@ var mainKeyBindings = []keyBinding{
 	{Keys: []string{mainKeys.Session}, Scope: scopeGlobal, Do: (*App).onSession, Short: "S session", Long: "open a new detachable session"},
 	{Keys: []string{mainKeys.Grid}, Scope: scopeGlobal, Do: (*App).onGrid, Short: "g grid", Long: "live session viewer grid"},
 	{Keys: []string{mainKeys.Conns}, Scope: scopeGlobal, Do: (*App).onConns, Short: "C conns", Long: "connections view"},
+	{Keys: []string{mainKeys.Overview}, Scope: scopeGlobal, Do: (*App).onOverview, Short: "V overview", Long: "one screen: needs you, tasks, hosts, forwards, board (enter opens the selected row)"},
 	{Keys: []string{mainKeys.Board}, Scope: scopeGlobal, Do: (*App).onBoard, Short: "O board", Long: "agentboard topics view"},
 	{Keys: []string{mainKeys.Tree}, Scope: scopeGlobal, Do: (*App).onTree, Short: "T tree", Long: "toggle the task list between flat and creator-tree order"},
 	{Keys: []string{mainKeys.Order}, Scope: scopeGlobal, Do: (*App).onOrder, Short: "o order", Long: "cycle the flat task list's order: created → activity → live → state → repo (the last three grouped under headers; not in the tree view)"},

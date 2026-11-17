@@ -119,6 +119,9 @@ type App struct {
 
 	// connections view
 	connsModal ConnsModal
+	// overview overlay (V / `overview`) and the inputs it last fetched itself
+	overview   OverviewModel
+	overviewIn OverviewFetchMsg
 	// Which run of the conns modal's trsf poll is current; a tick from an
 	// older one is dropped rather than allowed to reschedule. See trsfTickMsg.
 	trsfGen       int
@@ -415,6 +418,7 @@ func New(cfg Config) *App {
 		filepicker:        NewFilePicker(),
 		fileEditor:        NewFileEdit(),
 		connsModal:        NewConnsModal(),
+		overview:          NewOverviewModel(),
 		forwardsModal:     NewForwardsModal(),
 		execsModal:        NewExecsModal(),
 		idleWatchersModal: NewIdleWatchersModal(),
@@ -594,6 +598,9 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		a.refreshTasksTable()
 		a.schedules.rebuild()
+		if a.overview.IsOpen() {
+			a.rebuildOverview()
+		}
 		listCmd := a.requestScheduleList()
 		if a.workspaceArmed {
 			a.workspaceArmed = false
@@ -889,6 +896,22 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Row count changes with the log, and the split depends on it.
 		a.gitModal.SetSize(a.width, a.height)
 		return a, nil
+
+	case OverviewFetchMsg:
+		// A result for an opening the operator has left is dropped, and with
+		// it the chain: only the current one re-arms the tick.
+		if msg.gen != a.overview.Gen() || !a.overview.IsOpen() {
+			return a, nil
+		}
+		a.overviewIn = msg
+		a.rebuildOverview()
+		return a, overviewTick(msg.gen)
+
+	case overviewTickMsg:
+		if msg.gen != a.overview.Gen() || !a.overview.IsOpen() || a.client == nil {
+			return a, nil
+		}
+		return a, DoOverviewFetch(a.client, msg.gen)
 
 	case BoardTopicsMsg:
 		if msg.Err != nil {
@@ -1797,6 +1820,7 @@ func (a *App) updateWindowSize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	a.filepicker.SetSize(a.width, a.height)
 	a.fileEditor.SetSize(a.width, a.height)
 	a.connsModal.SetSize(a.width, a.height)
+	a.overview.SetSize(a.width, a.height)
 	a.forwardsModal.SetSize(a.width, a.height)
 	a.tap.SetSize(a.width, a.height)
 	a.execsModal.SetSize(a.width, a.height)
@@ -2230,6 +2254,9 @@ func (a *App) View() string {
 	}
 	if a.connsModal.IsOpen() {
 		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.connsModal.View())
+	}
+	if a.overview.IsOpen() {
+		return lipgloss.Place(a.width, a.height, lipgloss.Left, lipgloss.Top, a.overview.View())
 	}
 	// The tap is opened from the execs modal and the forwards pane and is
 	// drawn over both.

@@ -2136,8 +2136,13 @@ var Verbs = []VerbSpec{
 		// operator, what runs, which hosts, which forwards, what the board is
 		// doing (2026-11-17-overview-design.md). Computed once in
 		// cli.BuildOverview; every surface prints it as given.
-		Path: []string{"overview"}, CmdlineSurfaces: CLI,
-		NoModalSurface: "none yet: the TUI overlay and the WebUI tab are the next two steps of the overview plan",
+		Path: []string{"overview"}, CmdlineSurfaces: CLI | TUI,
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/overview.go:OverviewModel"},
+		},
+		SurfaceNotes: map[Surface][]string{
+			TUI: {"`overview` opens the overview overlay (the 'V' key does the same); it re-reads conns, forwards and the board every 5s while open, and enter opens the selected row where the TUI shows it"},
+		},
 		Notes: []string{
 			"sections: needs you, tasks, hosts, forwards, board -- each its count and at most three rows",
 			"a section whose source the caller may not read (conns, forwards, the board) prints its error; the others still print",

@@ -28,6 +28,7 @@ var appOverlays = []overlay{
 	{func(a *App) bool { return a.recordKeep.IsOpen() }, (*App).inRecordKeep},
 	{func(a *App) bool { return a.detail.IsOpen() }, (*App).inDetail},
 	{func(a *App) bool { return a.connsModal.IsOpen() }, (*App).inConnsModal},
+	{func(a *App) bool { return a.overview.IsOpen() }, (*App).inOverview},
 	// Opened from the forwards pane or the execs modal and drawn over both,
 	// so it comes before both.
 	{func(a *App) bool { return a.tap.IsOpen() }, (*App).inTap},

@@ -216,6 +216,9 @@ func (h tuiVerbs) ServerDialRunner(v verb.ServerDialRunnerAction) tea.Cmd {
 // Not the `trsf` verb further down: that one dumps THIS client's own link to
 // the server, out of the transport object in this process. This one is every
 // connection the answerer can see, and the answerer can be a runner.
+// Overview opens the overview overlay, as V does.
+func (h tuiVerbs) Overview(verb.OverviewAction) tea.Cmd { return h.a.openOverview() }
+
 func (h tuiVerbs) Conns(v verb.ConnsAction) tea.Cmd {
 	a := h.a
 	if a.client == nil {

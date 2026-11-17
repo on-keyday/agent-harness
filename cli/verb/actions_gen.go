@@ -2990,6 +2990,10 @@ func init() {
 			a.JSON = b.Bool("json")
 			return a, nil
 		},
+		"overview\x00tui": func(b Bound) (Action, error) {
+			a := OverviewAction{}
+			return a, nil
+		},
 		"caps\x00cli": func(b Bound) (Action, error) {
 			a := CatalogAction{}
 			a.Sub = "caps"
@@ -10730,6 +10734,8 @@ type TUIDispatch[R any] interface {
 	Cancel(CancelAction) R
 	// conns
 	Conns(ConnsAction) R
+	// overview
+	Overview(OverviewAction) R
 	// caps
 	Caps(CatalogAction) R
 	// restore
@@ -11107,6 +11113,12 @@ func DispatchTUI[R any](h TUIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.Conns(a), true, nil
+	case CmdOverview:
+		a, perr := ParseCmdOverview(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.Overview(a), true, nil
 	case CmdCaps:
 		a, perr := ParseCmdCaps(TUI, args, ctx)
 		if perr != nil {
@@ -11557,6 +11569,8 @@ func DispatchTUIAction[R any](h TUIDispatch[R], act Action) (r R, handled bool) 
 		return h.Cancel(a), true
 	case ConnsAction:
 		return h.Conns(a), true
+	case OverviewAction:
+		return h.Overview(a), true
 	case CatalogAction:
 		switch a.Sub {
 		case "caps":
@@ -11935,6 +11949,12 @@ func ParseTUICommand(tokens []string, ctx map[string]string) (act Action, handle
 			return a, true, nil
 		case CmdConns:
 			a, perr := ParseCmdConns(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdOverview:
+			a, perr := ParseCmdOverview(TUI, tokens[n:], ctx)
 			if perr != nil {
 				return nil, true, perr
 			}

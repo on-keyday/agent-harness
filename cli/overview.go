@@ -227,6 +227,9 @@ func BuildOverview(in OverviewInput, now time.Time) Overview {
 	}
 	sort.Slice(o.Hosts, func(i, j int) bool { return o.Hosts[i].Hostname < o.Hosts[j].Hostname })
 	o.HostCount = len(o.Hosts)
+	if len(o.Hosts) > OverviewRowCap {
+		o.Hosts = o.Hosts[:OverviewRowCap]
+	}
 	for _, c := range in.Conns {
 		switch c.Role {
 		case protocol.ConnRole_Cli, protocol.ConnRole_Tui, protocol.ConnRole_Webui:
