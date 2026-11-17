@@ -464,3 +464,18 @@ through. No wire bytes should change; prove it with `scripts/wire-skew-check.sh`
 **Why deferred.** After the schedule stream-kind fix above, by operator
 decision (2026-11-17). Until then, a restart decision reads the landed diff,
 not `land.py`'s hint, for any change under `cli/`.
+
+---
+
+## `OpenInteractiveRequest` says the task kind with a bool
+
+**What.** `session new` carries the event-stream choice as the bit
+`event_stream` on `OpenInteractiveRequest`; `interactiveKind`
+(`server/task_handler.go:2629`) turns it into a `TaskKind`. A schedule says
+the same choice with `kind :TaskKind` (`2026-11-17-schedule-stream-kind-design.md`,
+K2, operator's choice of the enum over bits). Two spawn wires now encode one
+choice two ways. Move the open to `kind :TaskKind` too.
+
+**Why deferred.** A wire change to the open path that nothing is blocked on;
+found while designing the schedule fix, and kept out of it (operator,
+2026-11-17).
