@@ -4385,3 +4385,48 @@ looking at the screenshot. Fixed in `webui/static/style.css` (at phone width:
 `keep-all`, `nowrap`, smaller gaps and padding, `overflow-x: auto`). Second
 instance of the 2026-09-10 entry's note that nothing on this list asks what an
 addition costs on the surface it lands on.
+
+### 2026-11-17 (pre-landing) — `schedule new/edit --stream`: a schedule stores its task kind
+
+Spec `2026-11-17-schedule-stream-kind-design.md` (K1–K9): withdraws pillar S's
+exclusion of the stream kind, per GD G1. `ScheduleSpec.kind_present` + `kind`,
+`ScheduleDetail.kind`, three new `ScheduleStatus` values, `schedules.json`
+`"kind"`. S1–S6 `n/a`: no agent, preset, bin, argv template, credential mode or
+launch env changed.
+
+done:    1 (`cli/verb/spawn.go`: `--stream` dropped from `scheduleOff`;
+         `StreamPresent` presence; `scheduleExclusive` gains oneshot×stream and
+         pty×stream), 4 (a TUI form field, not a key: `tui/bgform.go`
+         `bgFieldStream` in the schedule form's Tab order), 6 (the WebUI Compose
+         schedule tab reads the existing stream checkbox:
+         `webui/static/task_models.js` `COMPOSE_TAB_DEFS` +
+         `composeScheduleTokens`), 7 (WebUI command line: `schedule new …
+         --stream` reaches `scheduleCreate`; a test in `schedule_test.mjs`), 10,
+         24 (the kind on each path: a create without it is interactive; an edit
+         that does not name it keeps it; a `--task` binding takes the flag, not
+         the bound task's current kind), 25 (presence: `ScheduleSpec.kind_present`,
+         so an edit tells `--stream=false` from not naming it), 28 (persistence:
+         `schedules.json` `"kind"` by NAME — `TaskKind`'s numeric zero is
+         oneshot, so an old file without the field must read interactive; and
+         `Schedule.Kind` is read through `runKind()`, so a zero-valued struct
+         fires interactive), 29 (the edit result line names `stream` — it said
+         "changed nothing named" until the live check caught it), 31 (`schedule
+         show` prints the kind for both kinds; `pty: none` for stream instead of
+         the misleading stored `on`), 32 (one renderer: `cli`
+         `ScheduleDetailText` / `Parts` / JSON feed the CLI, the TUI and the
+         WebUI), 33 (stream+oneshot and stream+pty refused, also after an
+         edit's overlay, by the server: `oneshot_stream` / `pty_stream`), 35
+         (README), 37 (spec + a pillar S Decisions row), 39 (spec K8's surfaces
+         checked live: the CLI, the TUI form and the WebUI form each created a
+         stream schedule that `schedule show` reads back as `kind: stream`)
+missed:  — (two defects were caught by the live check BEFORE landing, not after:
+         item 29's result line and item 31's `pty: on`)
+
+**Four tests pinned the exclusion, and no Decisions row stood behind it.**
+`TestScheduleRefusesWhatAFiringCannotCarry`, `TestScheduleFlagsAreSpawnFlags`,
+the WebUI parse-error case in `schedule_test.mjs` and `composeFormFor` in
+`cmd_test.mjs` all asserted that a schedule refuses `--stream`, and
+`composeScheduleTokens` threw at runtime on a checked stream box. A design
+exclusion copied into five guards, none of them traceable to a decision: the
+pillar S entry above recorded it as item 2's "`--stream` not offered", which
+reads as a cross-flag rule rather than as a scope cut someone made.

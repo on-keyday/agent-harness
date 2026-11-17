@@ -1787,20 +1787,26 @@ later firing resumes it. At most one run per schedule is queued or running.
 # new: --cron, --prompt, --deadline, --agent, and --repo (or --task T to bind
 # an existing task instead of creating one at the first firing). The run flags
 # are session new --background's (--turn-end, --quiet, --blocked,
-# --queue-timeout, --record, --oneshot, --pty/--no-pty, --resume-conversation,
-# --agent-arg, --runner/--host/--ip, --rows/--cols), and the authority flags
-# are session new's (--caps, --scope, --scope-for, --delegate-*).
-# Needs the schedule capability and at least one candidate runner for the repo
-# now. --stream is not offered: a firing opens an interactive session.
+# --queue-timeout, --record, --oneshot, --pty/--no-pty, --stream,
+# --resume-conversation, --agent-arg, --runner/--host/--ip, --rows/--cols), and
+# the authority flags are session new's (--caps, --scope, --scope-for,
+# --delegate-*). Needs the schedule capability and at least one candidate runner
+# for the repo now. --stream makes every firing open an event-stream session
+# (5b); as on session new it is refused with --oneshot or --pty, and its
+# --turn-end defaults to lifecycle (quiet and program are refused).
 harness-cli schedule new --cron '0 9 * * mon-fri' --tz Asia/Tokyo \
   --repo /abs/path/to/repo --agent claude --deadline 30m \
   --prompt 'Triage the new issues and report on chat.<short-id>'
-# ls / show need no capability, only reach. show prints the definition, the
-# stored authority, the last 50 firings and the wait statistics.
+# ls / show need no capability, only reach. show prints the definition (with
+# kind: interactive|stream, and pty: none for stream), the stored authority,
+# the last 50 firings and the wait statistics.
 harness-cli schedule ls [--json]
 harness-cli schedule show [--json] <schedule-id>
 # edit changes FUTURE firings only; naming a flag changes that field and
-# nothing else. --cron or --tz recomputes the next firing.
+# nothing else. --cron or --tz recomputes the next firing. --stream /
+# --stream=false switches the kind (an edit naming neither keeps it); the
+# edited schedule as a whole must still pass the --oneshot / --pty / --turn-end
+# checks above.
 harness-cli schedule edit --cron '*/30 * * * *' <schedule-id>
 # run fires it now, outside its times (recorded run_now); the next firing is
 # unchanged. It exists so a schedule set for 09:00 can be tried at once.
@@ -1877,7 +1883,9 @@ the full 32-hex id, which `schedule ls`, `schedule_id` in `ls --json` and the
 task detail views print; the TUI command line also takes a unique prefix of a
 schedule it lists). A task the schedule CREATED (its first firing) reads
 `from=schedule`; a task bound with `--task` keeps the origin it had, and its
-firings show as `resumed_by=schedule` in `ls`. A `task_schedule` event on
+firings show as `resumed_by=schedule` in `ls`. A bound task runs as the
+schedule's kind (`--stream` or not), not as whatever kind it last ran as —
+the rule `session new --resume` follows. A `task_schedule` event on
 `watch` says its binding changed. Taking the task
 away — a resume asking for foreground, or `session mode … foreground` —
 needs the `schedule` bit as well as what it needs today, unbinds the task and
@@ -1934,7 +1942,8 @@ Surfaces. CLI: the verbs above. TUI: the **Schedules** table, where `N`
 opens a "new schedule" form (see **TUI**). WebUI: the **Schedules** button
 opens a dialog listing the rows, with a detail view (history and wait
 statistics) and **Run now** / **Delete** (confirmed) buttons; the 新規作成
-form's **schedule** tab creates one — cron, zone, the background fields, and
+form's **schedule** tab creates one — cron, zone, the background fields, the
+event-stream (チャット) checkbox for a stream schedule, and
 the task: 新規に作る (the first firing creates it), a listed task it can bind,
 or a pasted id — and its button reads **schedule を作る** (no other field
 turns a button into a schedule); the task row and sheet name the bound
@@ -2056,7 +2065,7 @@ statistics — in the popup, `n` fires it now (`schedule run`), and `x` deletes
 it after a `y` (any other key keeps it; its task stays). `N` there opens a
 "new schedule" form (the Tasks table's `N` is a background session): cron,
 zone, repo, the task to bind (empty for a new one, or an id or its prefix),
-the prompt and the background fields, one-shot and conversation; `Ctrl+J`
+the prompt and the background fields, one-shot, stream and conversation; `Ctrl+J`
 sends it as `schedule new` would be typed, and a refusal keeps the form open
 with the reason. Edit is the command line's `schedule edit`. The task detail
 popup names the schedule a task is bound to.
