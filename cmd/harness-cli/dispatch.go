@@ -231,6 +231,22 @@ func (h cliVerbs) Conns(a verb.ConnsAction) error {
 	return nil
 }
 
+// Overview prints the one-screen summary (cli.BuildOverview), or its JSON.
+func (h cliVerbs) Overview(a verb.OverviewAction) error {
+	return h.withClient(func(c *cli.Client) error {
+		now := time.Now()
+		o, err := c.OverviewWith(h.ctx, now)
+		if err != nil {
+			return err
+		}
+		if a.JSON {
+			return json.NewEncoder(os.Stdout).Encode(o)
+		}
+		cli.WriteOverview(os.Stdout, o, now)
+		return nil
+	})
+}
+
 func (h cliVerbs) Cancel(a verb.CancelAction) error {
 	return cli.Cancel(h.ctx, h.cid(), a.TaskID)
 }

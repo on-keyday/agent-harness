@@ -2132,6 +2132,28 @@ var Verbs = []VerbSpec{
 		Examples: []string{"conns", "conns -f --json", "conns --trsf --watch 1s"},
 	},
 	{
+		// One screen over what the other verbs list in full: what needs the
+		// operator, what runs, which hosts, which forwards, what the board is
+		// doing (2026-11-17-overview-design.md). Computed once in
+		// cli.BuildOverview; every surface prints it as given.
+		Path: []string{"overview"}, CmdlineSurfaces: CLI,
+		NoModalSurface: "none yet: the TUI overlay and the WebUI tab are the next two steps of the overview plan",
+		Notes: []string{
+			"sections: needs you, tasks, hosts, forwards, board -- each its count and at most three rows",
+			"a section whose source the caller may not read (conns, forwards, the board) prints its error; the others still print",
+			"the board rows carry the newest message's first line, escaped",
+		},
+		Action: "OverviewAction",
+		Flags: []Flag{
+			{
+				Name: "json", Type: FlagBool, Default: false, Field: "JSON", CmdlineSurfaces: CLI,
+				SurfaceReason: "the other two answer with a live view, and a JSON dump is the CLI's answer shape -- stdout, to be piped or saved",
+				Help:          "print the summary as JSON",
+			},
+		},
+		Examples: []string{"overview", "overview --json"},
+	},
+	{
 		// All three surfaces. The catalog is the only place the granular
 		// capabilities carry a description of what they actually gate, and it
 		// used to be reachable from the CLI alone -- so a TUI or WebUI

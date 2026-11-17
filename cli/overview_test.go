@@ -62,6 +62,10 @@ func TestBuildOverviewZeroCountsPresent(t *testing.T) {
 			t.Fatalf("%s missing: %v", k, o.GroupCounts)
 		}
 	}
+	// JSON readers (the WebUI, `overview --json`) get [] for an empty section, not null.
+	if o.NeedsYou == nil || o.Live == nil || o.Hosts == nil || o.Forwards == nil || o.Topics == nil {
+		t.Fatalf("nil row slice: %+v", o)
+	}
 }
 
 func TestBuildOverviewFinishedIsOnlyCounted(t *testing.T) {

@@ -484,6 +484,13 @@ type NotifyAction struct {
 	Text string
 }
 
+// OverviewAction is built by: overview.
+type OverviewAction struct {
+	ActionMarker
+	// print the summary as JSON
+	JSON bool
+}
+
 // PreviewAction is built by: preview.
 type PreviewAction struct {
 	ActionMarker
@@ -2978,6 +2985,11 @@ func init() {
 			a.Follow = b.Bool("follow")
 			return a, nil
 		},
+		"overview\x00cli": func(b Bound) (Action, error) {
+			a := OverviewAction{}
+			a.JSON = b.Bool("json")
+			return a, nil
+		},
 		"caps\x00cli": func(b Bound) (Action, error) {
 			a := CatalogAction{}
 			a.Sub = "caps"
@@ -5197,6 +5209,7 @@ const (
 	CmdCancel                 = "cancel"
 	CmdLs                     = "ls"
 	CmdConns                  = "conns"
+	CmdOverview               = "overview"
 	CmdCaps                   = "caps"
 	CmdSkillLs                = "skill ls"
 	CmdWhoami                 = "whoami"
@@ -6937,6 +6950,27 @@ func ParseCmdConns(sf Surface, args []string, ctx map[string]string) (ConnsActio
 	return a, nil
 }
 
+func ParseCmdOverview(sf Surface, args []string, ctx map[string]string) (OverviewAction, error) {
+	var zero OverviewAction
+	sp, ok := Lookup("overview")
+	if !ok {
+		return zero, fmt.Errorf("overview: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(OverviewAction)
+	return a, nil
+}
+
 func ParseCmdCaps(sf Surface, args []string, ctx map[string]string) (CatalogAction, error) {
 	var zero CatalogAction
 	sp, ok := Lookup("caps")
@@ -8594,6 +8628,8 @@ type CLIDispatch[R any] interface {
 	Ls(ListAction) R
 	// conns
 	Conns(ConnsAction) R
+	// overview
+	Overview(OverviewAction) R
 	// caps
 	Caps(CatalogAction) R
 	// skill ls
@@ -9129,6 +9165,12 @@ func DispatchCLI[R any](h CLIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.Conns(a), true, nil
+	case CmdOverview:
+		a, perr := ParseCmdOverview(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.Overview(a), true, nil
 	case CmdCaps:
 		a, perr := ParseCmdCaps(CLI, args, ctx)
 		if perr != nil {
@@ -9690,6 +9732,8 @@ func DispatchCLIAction[R any](h CLIDispatch[R], act Action) (r R, handled bool) 
 		return h.Ls(a), true
 	case ConnsAction:
 		return h.Conns(a), true
+	case OverviewAction:
+		return h.Overview(a), true
 	case CatalogAction:
 		switch a.Sub {
 		case "caps":
@@ -10222,6 +10266,12 @@ func ParseCLICommand(tokens []string, ctx map[string]string) (act Action, handle
 			return a, true, nil
 		case CmdConns:
 			a, perr := ParseCmdConns(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdOverview:
+			a, perr := ParseCmdOverview(CLI, tokens[n:], ctx)
 			if perr != nil {
 				return nil, true, perr
 			}

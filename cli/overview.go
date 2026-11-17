@@ -165,7 +165,14 @@ func sortedTopics(topics []BoardTopicRow) []BoardTopicRow {
 // BuildOverview computes the overview from in. It is pure: every surface calls
 // it on the inputs it holds, so none restates a rule.
 func BuildOverview(in OverviewInput, now time.Time) Overview {
-	o := Overview{GroupCounts: map[string]int{}}
+	o := Overview{
+		GroupCounts: map[string]int{},
+		NeedsYou:    []OverviewTask{},
+		Live:        []OverviewTask{},
+		Hosts:       []OverviewHost{},
+		Forwards:    []OverviewForward{},
+		Topics:      []OverviewTopic{},
+	}
 	for _, g := range stateGroupOrder {
 		if g != groupNeedsYou {
 			o.GroupCounts[g] = 0
