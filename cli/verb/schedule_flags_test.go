@@ -34,14 +34,16 @@ func flagsByName(v VerbSpec) map[string]Flag {
 func TestScheduleFlagsAreSpawnFlags(t *testing.T) {
 	spawn := flagsByName(verbByPath(t, "session", "new"))
 
-	// Removed: they name a resume target, a terminal, a foreground run or a
-	// stream (R16: --stream, because ScheduleSpec cannot carry it).
-	removed := []string{"resume", "exact", "x11", "x11-display", "detach", "stream", "foreground", "background"}
+	// Removed: they name a resume target, a terminal or a foreground run.
+	// (--stream was here under R16 until schedules gained a task kind,
+	// 2026-11-17-schedule-stream-kind-design.md, K1.)
+	removed := []string{"resume", "exact", "x11", "x11-display", "detach", "foreground", "background"}
 	// Same name, same row except for these attributes (see scheduleFlags).
 	differs := map[string]string{
 		"repo":                "no HARNESS_REPO_PATH ladder: it would make --task conflict and a bare edit change the repo",
 		"resume-conversation": "its help names --resume, which a schedule has not",
 		"oneshot":             "PresenceField: an edit must tell --oneshot=false from not naming it",
+		"stream":              "PresenceField: an edit must tell --stream=false (interactive) from not naming it",
 		"rows":                "PresenceField: an edit must tell an explicit 40 from the default",
 		"cols":                "PresenceField: an edit must tell an explicit 120 from the default",
 		"deadline":            "PresenceField (R17)",
@@ -124,10 +126,12 @@ func contains(l []string, s string) bool {
 	return false
 }
 
-// A schedule has no --stream and no way to name a resume target: the parse
-// refuses them rather than ignoring them (checklist 33).
+// A schedule has no way to name a resume target, a foreground run or an X
+// tunnel: the parse refuses them rather than ignoring them (checklist 33).
+// --stream left this list when schedules gained a kind
+// (2026-11-17-schedule-stream-kind-design.md, K1).
 func TestScheduleRefusesWhatAFiringCannotCarry(t *testing.T) {
-	for _, flag := range []string{"--stream", "--resume=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "--foreground", "--x11"} {
+	for _, flag := range []string{"--resume=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "--foreground", "--x11"} {
 		if _, err := ParseCmdScheduleNew(CLI, []string{"--cron", "@daily", "--repo", "/r", flag}, nil); err == nil {
 			t.Errorf("schedule new accepted %s", flag)
 		}

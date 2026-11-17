@@ -159,15 +159,15 @@ func spawnFlags(k spawnKind) []Flag {
 // scheduleOff are the spawn flags a schedule does not take, with why: a firing
 // resumes (or creates) a background task nobody is attached to, so nothing that
 // names a resume target, a terminal, a foreground run or a stream applies.
-// --stream is absent because ScheduleSpec cannot carry it (Pillar S ruling
-// R16); --ip and --host stay (a schedule can pin a runner).
+// --stream is NOT here: a schedule carries the task kind
+// (2026-11-17-schedule-stream-kind-design.md, K1); --ip and --host stay (a
+// schedule can pin a runner).
 var scheduleOff = map[string]string{
 	"resume":      "a firing resumes the schedule's own task",
 	"exact":       "a firing resumes the schedule's own task",
 	"x11":         "a firing has no client to host the X tunnel",
 	"x11-display": "a firing has no client to host the X tunnel",
 	"detach":      "every firing is a background run, which is detached",
-	"stream":      "a schedule cannot start an event-stream session",
 	"foreground":  "every firing is a background run",
 	"background":  "every firing is a background run",
 }
@@ -180,6 +180,7 @@ var scheduleOff = map[string]string{
 var schedulePresence = map[string]string{
 	"resume-conversation": "ResumeConversationPresent",
 	"oneshot":             "OneshotPresent",
+	"stream":              "StreamPresent", // --stream=false on an edit says interactive
 	"rows":                "RowsPresent",
 	"cols":                "ColsPresent",
 	// The conditions travel as one presence bit each (R17): a present zero
@@ -235,6 +236,10 @@ func scheduleExclusive() []Rule {
 			Reason: "they are the two answers to one question"},
 		{Flags: []string{"pty", "no-pty"},
 			Reason: "they are the two answers to one question"},
+		{Flags: []string{"oneshot", "stream"},
+			Reason: "a one-shot runs in a PTY; an event-stream session has none"},
+		{Flags: []string{"pty", "stream"},
+			Reason: "an event-stream session has no PTY; the server refuses the pair too"},
 		{Flags: []string{"repo", "task"},
 			Reason: "a bound task brings its own repo"},
 		{Flags: []string{"agent-arg", "no-agent-args"},

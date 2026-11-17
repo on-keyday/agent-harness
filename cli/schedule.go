@@ -50,8 +50,9 @@ type ScheduleSpecOpts struct {
 
 	ResumeConversation *bool
 	Oneshot            *bool
-	Record             *bool // --record true, --no-record false
-	Pty                *bool // --pty true, --no-pty false
+	Kind               *protocol.TaskKind // --stream: stream, --stream=false: interactive; nil = not named
+	Record             *bool              // --record true, --no-record false
+	Pty                *bool              // --pty true, --no-pty false
 
 	// The authority block, as OpenInteractiveRequest's: Scope gates Overrides
 	// too (ScopePresent), exactly as --scope / --scope-for do.
@@ -125,6 +126,13 @@ func ScheduleSpecOptsFromAction(a verb.ScheduleSpecAction) (ScheduleSpecOpts, er
 	if a.OneshotPresent {
 		v := a.Oneshot
 		o.Oneshot = &v
+	}
+	if a.StreamPresent {
+		k := protocol.TaskKind_Interactive
+		if a.Stream {
+			k = protocol.TaskKind_Stream
+		}
+		o.Kind = &k
 	}
 	switch {
 	case a.Record:
@@ -242,6 +250,10 @@ func buildScheduleSpec(o ScheduleSpecOpts, promptStreamID uint64) protocol.Sched
 	if o.ResumeConversation != nil {
 		s.SetResumeConversationSet(true)
 		s.SetResumeConversation(*o.ResumeConversation)
+	}
+	if o.Kind != nil {
+		s.SetKindPresent(true)
+		s.SetKind(*o.Kind)
 	}
 	if o.Oneshot != nil {
 		s.SetOneshotSet(true)
@@ -361,6 +373,10 @@ var scheduleStatusGloss = map[protocol.ScheduleStatus]string{
 	protocol.ScheduleStatus_OneshotStream:         "--oneshot runs in a PTY; an event-stream (--stream) schedule has none",
 	protocol.ScheduleStatus_PtyStream:             "--pty: an event-stream (--stream) schedule has no PTY",
 }
+
+// ScheduleKindWord is a schedule's task kind as `schedule show` prints it:
+// the kind's wire name (interactive / stream).
+func ScheduleKindWord(k protocol.TaskKind) string { return EnumWireName(k.String()) }
 
 // scheduleStatusError is the error for a schedule answer: nil for ok,
 // otherwise `schedule <verb>: <status>: <the server's message, or the gloss>`.
@@ -984,6 +1000,7 @@ func ScheduleDetailParts(d protocol.ScheduleDetail, now time.Time) ScheduleDetai
 	}
 	line("extra-args: %s", quotedList(d.ExtraArgs.AsStrings()))
 	line("resume-conversation: %v", d.ResumeConversation())
+	line("kind: %s", ScheduleKindWord(d.Kind))
 	line("oneshot: %v", d.Oneshot())
 	line("record: %s", schedTriState(d.RecordSet(), d.Record(), "server default"))
 	line("pty: %s", schedTriState(d.PtySet(), d.Pty(), "the mode's default"))
@@ -1141,6 +1158,7 @@ type scheduleDetailJSON struct {
 	ExtraArgs          []string              `json:"extra_args"`
 	Selector           string                `json:"selector"`
 	ResumeConversation bool                  `json:"resume_conversation"`
+	Kind               string                `json:"kind"`
 	Oneshot            bool                  `json:"oneshot"`
 	Record             string                `json:"record"`
 	Pty                string                `json:"pty"`
@@ -1167,7 +1185,7 @@ func writeScheduleDetailJSON(w io.Writer, d protocol.ScheduleDetail, now time.Ti
 		scheduleRowJSON: newScheduleRowJSON(d.Row),
 		Prompt:          string(d.Prompt), ExtraArgs: append([]string{}, d.ExtraArgs.AsStrings()...),
 		Selector:           schedSelectorLabel(d.Selector),
-		ResumeConversation: d.ResumeConversation(), Oneshot: d.Oneshot(),
+		ResumeConversation: d.ResumeConversation(), Kind: ScheduleKindWord(d.Kind), Oneshot: d.Oneshot(),
 		Record: schedTriState(d.RecordSet(), d.Record(), "default"), Pty: schedTriState(d.PtySet(), d.Pty(), "default"),
 		Conditions: conditionsJSON{
 			DeadlineMs: d.Conditions.DeadlineMs, TurnEnd: EnumWireName(d.Conditions.TurnEnd.String()),

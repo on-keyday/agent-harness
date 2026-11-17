@@ -861,3 +861,60 @@ func TestScheduleEditRefusesRowsWithoutCols(t *testing.T) {
 		}
 	}
 }
+
+// --stream on a schedule (2026-11-17-schedule-stream-kind-design.md, K8): the
+// kind travels behind its presence bit; an edit that does not name it leaves
+// the bit clear.
+func TestScheduleStreamFlag(t *testing.T) {
+	kindOf := func(line string) *protocol.TaskKind {
+		t.Helper()
+		o, err := ScheduleSpecOptsFromAction(parseScheduleLine(t, line))
+		if err != nil {
+			t.Fatal(err)
+		}
+		s := buildScheduleSpec(o, 0)
+		if !s.KindPresent() {
+			return nil
+		}
+		return s.Kind()
+	}
+	if k := kindOf("new --cron @daily --repo /r --agent claude --prompt p --deadline 30m --stream"); k == nil || *k != protocol.TaskKind_Stream {
+		t.Errorf("new --stream: %v", k)
+	}
+	if k := kindOf("edit " + schedHexID + " --stream=false"); k == nil || *k != protocol.TaskKind_Interactive {
+		t.Errorf("edit --stream=false: %v", k)
+	}
+	if k := kindOf("edit " + schedHexID + " --cron @weekly"); k != nil {
+		t.Errorf("edit without --stream sent kind %v", *k)
+	}
+}
+
+func TestScheduleStreamRefusesOneshotAndPty(t *testing.T) {
+	base := []string{"--cron", "@daily", "--repo", "/r", "--agent", "claude", "--prompt", "p", "--deadline", "30m", "--stream"}
+	for _, extra := range []string{"--oneshot", "--pty"} {
+		_, err := verb.ParseCmdScheduleNew(verb.CLI, append(append([]string{}, base...), extra), nil)
+		if err == nil || strings.Contains(err.Error(), "not defined") {
+			t.Errorf("--stream %s: want the pair refused, got %v", extra, err)
+		}
+	}
+}
+
+func TestScheduleDetailShowsKind(t *testing.T) {
+	d := schedDetail()
+	d.Kind = protocol.TaskKind_Stream
+	if got := ScheduleDetailText(d, schedNow); !strings.Contains(got, "kind: stream") {
+		t.Errorf("detail lacks the kind:\n%s", got)
+	}
+	d.Kind = protocol.TaskKind_Interactive
+	if got := ScheduleDetailText(d, schedNow); !strings.Contains(got, "kind: interactive") {
+		t.Errorf("detail lacks the kind:\n%s", got)
+	}
+	var b bytes.Buffer
+	d.Kind = protocol.TaskKind_Stream
+	if err := ScheduleDetailJSON(&b, d, schedNow); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(b.String(), `"kind":"stream"`) {
+		t.Errorf("json lacks the kind: %s", b.String())
+	}
+}

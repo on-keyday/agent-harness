@@ -718,6 +718,10 @@ type ScheduleSpecAction struct {
 	Host string
 	// pin to a runner by IP address
 	IP string
+	// whether --stream was typed, which its zero value cannot say
+	StreamPresent bool
+	// open an event-stream session (structured events, no PTY)
+	Stream bool
 	// whether --rows was typed, which its zero value cannot say
 	RowsPresent bool
 	// initial PTY rows of a detached/background open; --rows 0 --cols 0 sends no size (PTY 0x0)
@@ -4235,6 +4239,8 @@ func init() {
 			a.Runner = b.Str("runner")
 			a.Host = b.Str("host")
 			a.IP = b.Str("ip")
+			a.StreamPresent = b.Set["stream"]
+			a.Stream = b.Bool("stream")
 			a.RowsPresent = b.Set["rows"]
 			a.Rows = uintOf(b.Flags["rows"])
 			a.ColsPresent = b.Set["cols"]
@@ -4327,6 +4333,8 @@ func init() {
 			a.Runner = b.Str("runner")
 			a.Host = b.Str("host")
 			a.IP = b.Str("ip")
+			a.StreamPresent = b.Set["stream"]
+			a.Stream = b.Bool("stream")
 			a.RowsPresent = b.Set["rows"]
 			a.Rows = uintOf(b.Flags["rows"])
 			a.ColsPresent = b.Set["cols"]
@@ -4419,6 +4427,8 @@ func init() {
 			a.Runner = b.Str("runner")
 			a.Host = b.Str("host")
 			a.IP = b.Str("ip")
+			a.StreamPresent = b.Set["stream"]
+			a.Stream = b.Bool("stream")
 			a.RowsPresent = b.Set["rows"]
 			a.Rows = uintOf(b.Flags["rows"])
 			a.ColsPresent = b.Set["cols"]
@@ -4512,6 +4522,8 @@ func init() {
 			a.Runner = b.Str("runner")
 			a.Host = b.Str("host")
 			a.IP = b.Str("ip")
+			a.StreamPresent = b.Set["stream"]
+			a.Stream = b.Bool("stream")
 			a.RowsPresent = b.Set["rows"]
 			a.Rows = uintOf(b.Flags["rows"])
 			a.ColsPresent = b.Set["cols"]
@@ -4608,6 +4620,8 @@ func init() {
 			a.Runner = b.Str("runner")
 			a.Host = b.Str("host")
 			a.IP = b.Str("ip")
+			a.StreamPresent = b.Set["stream"]
+			a.Stream = b.Bool("stream")
 			a.RowsPresent = b.Set["rows"]
 			a.Rows = uintOf(b.Flags["rows"])
 			a.ColsPresent = b.Set["cols"]
@@ -4704,6 +4718,8 @@ func init() {
 			a.Runner = b.Str("runner")
 			a.Host = b.Str("host")
 			a.IP = b.Str("ip")
+			a.StreamPresent = b.Set["stream"]
+			a.Stream = b.Bool("stream")
 			a.RowsPresent = b.Set["rows"]
 			a.Rows = uintOf(b.Flags["rows"])
 			a.ColsPresent = b.Set["cols"]

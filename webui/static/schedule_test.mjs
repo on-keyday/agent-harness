@@ -177,9 +177,19 @@ test("a parse error on a schedule line is the shared declaration's, and nothing 
   const r = await run("schedule new --repo /r --agent claude --prompt hi --deadline 1h");
   assert.match(r.err || "", /cron/, "--cron is required, the declaration says so");
   assert.equal(named(r.calls, "scheduleCreate").length, 0);
-  const x = await run("schedule new --cron @daily --repo /r --stream");
-  assert.ok(x.err, "--stream is not a schedule flag");
+  const x = await run("schedule new --cron @daily --repo /r --agent claude --prompt hi --deadline 1h --stream --oneshot");
+  assert.match(x.err || "", /stream/, "--stream with --oneshot is refused by the declaration");
   assert.equal(named(x.calls, "scheduleCreate").length, 0);
+});
+
+// A schedule carries its task kind (2026-11-17-schedule-stream-kind-design.md):
+// --stream reaches the create like any other run flag.
+test("schedule new --stream reaches the create", async () => {
+  const r = await run("schedule new --cron @daily --repo /r --agent claude --prompt hi --deadline 1h --stream");
+  assert.equal(r.err, undefined);
+  const calls = named(r.calls, "scheduleCreate");
+  assert.equal(calls.length, 1);
+  assert.ok(JSON.stringify(calls[0]).includes("--stream"), JSON.stringify(calls[0]));
 });
 
 test("the bound schedule is named on a task row, never elided when present", () => {
