@@ -282,7 +282,7 @@ func (s *Server) fireScheduleChecked(id string, due time.Time, manual bool, chec
 	sc := act.sc
 	var actErr error
 	if act.creates {
-		actErr = s.tasks.CreateWithinLimitsID(act.taskID, sc.Repo, sc.Prompt, protocol.TaskKind_Interactive,
+		actErr = s.tasks.CreateWithinLimitsID(act.taskID, sc.Repo, sc.Prompt, sc.runKind(),
 			protocol.ClientKind_Schedule, act.creatorTID, sc.Selector, sc.ExtraArgs, sc.Grant, sc.Agent, sc.Run)
 		if actErr == nil {
 			s.tasks.SetResumeConversation(act.taskID, sc.ResumeConversation)
@@ -291,7 +291,7 @@ func (s *Server) fireScheduleChecked(id string, due time.Time, manual bool, chec
 		u := GrantUpdate{Caps: true, Scope: true, DelegateCaps: true, DelegateScope: true,
 			SpawnDepth: true, MaxDescendants: true, To: sc.Grant}
 		_, actErr = s.tasks.Resume(act.taskID, sc.Prompt, sc.ExtraArgs, sc.Selector, "", protocol.ClientKind_Schedule,
-			u, protocol.TaskKind_Interactive, sc.Agent, act.creatorTID, sc.ResumeConversation, sc.Run)
+			u, sc.runKind(), sc.Agent, act.creatorTID, sc.ResumeConversation, sc.Run)
 	}
 	queuedAt := s.sched.now()
 	if actErr == nil && s.taskHandler != nil && s.taskHandler.OnChange != nil {

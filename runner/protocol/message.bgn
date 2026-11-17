@@ -6115,7 +6115,12 @@ format ScheduleSpec:
     turn_end_present :u1
     prompt_present :u1          # 1 = a PromptBody follows on prompt_stream_id
     size_present :u1            # 1 = initial_rows / initial_cols below (0 in either = none)
-    reserved :u4
+    # 1 = kind below. The task kind each firing creates or resumes the task as
+    # (2026-11-17-schedule-stream-kind-design.md, K1/K2): interactive or
+    # stream; any other value is refused kind_unsupported. Absent on a create
+    # = interactive; absent on an edit = unchanged.
+    kind_present :u1
+    reserved :u3
     if cron_present == 1:
         cron_len :u16
         cron :[cron_len]u8
@@ -6163,6 +6168,8 @@ format ScheduleSpec:
     if size_present == 1:
         initial_rows :u16
         initial_cols :u16
+    if kind_present == 1:
+        kind :TaskKind
 
 format ScheduleCreateRequest:
     spec :ScheduleSpec
@@ -6203,6 +6210,10 @@ enum ScheduleStatus:
     turn_end_unsupported    # mirrors the open status
     task_already_bound      # --task T names a task another schedule is bound to
     not_ready               # schedule run before the server finished starting its schedules
+    # appended (2026-11-17-schedule-stream-kind-design.md, K3/K4).
+    kind_unsupported        # kind other than interactive / stream
+    oneshot_stream          # stream with --oneshot (after an edit's overlay too)
+    pty_stream              # stream with --pty
 
 # message: why, for the statuses that have more to say. stream_id is non-zero
 # for list and show (a ScheduleRow list / a ScheduleDetail on that stream).
@@ -6288,6 +6299,7 @@ format ScheduleDetail:
     pty_set :u1
     pty :u1
     reserved :u2
+    kind :TaskKind              # the kind each firing runs the task as
     prompt_len :u32
     prompt :[prompt_len]u8
     extra_args :AgentArgs

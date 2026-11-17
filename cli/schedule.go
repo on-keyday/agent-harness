@@ -357,6 +357,9 @@ var scheduleStatusGloss = map[protocol.ScheduleStatus]string{
 	protocol.ScheduleStatus_TurnEndUnsupported:    "that --turn-end signal is not supported for this run",
 	protocol.ScheduleStatus_TaskAlreadyBound:      "that task is already bound to another schedule",
 	protocol.ScheduleStatus_NotReady:              "the server is still starting its schedules; try again in a moment",
+	protocol.ScheduleStatus_KindUnsupported:       "a schedule runs its task as interactive or stream",
+	protocol.ScheduleStatus_OneshotStream:         "--oneshot runs in a PTY; an event-stream (--stream) schedule has none",
+	protocol.ScheduleStatus_PtyStream:             "--pty: an event-stream (--stream) schedule has no PTY",
 }
 
 // scheduleStatusError is the error for a schedule answer: nil for ok,

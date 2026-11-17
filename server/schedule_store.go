@@ -28,15 +28,20 @@ var ErrScheduleNotFound = errors.New("no such schedule")
 // firing and to display. State is protocol.ScheduleTaskState (S-D21): the one
 // type for the concept, not a second one in this package.
 type Schedule struct {
-	ID                  string // 32 hex
-	Cron, TZ            string
-	State               protocol.ScheduleTaskState
-	TaskID              string // bound task, or the pre-chosen id of a pending creation
-	Repo, Agent         string
-	Selector            protocol.RunnerSelector
-	Prompt              string
-	ExtraArgs           []string
-	ResumeConversation  bool
+	ID                 string // 32 hex
+	Cron, TZ           string
+	State              protocol.ScheduleTaskState
+	TaskID             string // bound task, or the pre-chosen id of a pending creation
+	Repo, Agent        string
+	Selector           protocol.RunnerSelector
+	Prompt             string
+	ExtraArgs          []string
+	ResumeConversation bool
+	// Kind is the task kind each firing creates or resumes the task as
+	// (2026-11-17-schedule-stream-kind-design.md). Read it through runKind:
+	// TaskKind's zero value is oneshot, so a Schedule built without a Kind
+	// must still run as interactive, as every schedule did before the field.
+	Kind                protocol.TaskKind
 	Run                 RunSpec // Mode is always Background
 	Grant               authority.Grant
 	Creator             string // task hex, "" = operator
@@ -59,6 +64,35 @@ type HistoryEntry struct {
 	ByKind                       protocol.ClientKind
 	By                           string
 	Message                      string
+}
+
+// runKind is the kind a firing uses: stream when the schedule says so,
+// interactive otherwise (the zero value included).
+func (s *Schedule) runKind() protocol.TaskKind {
+	if s.Kind == protocol.TaskKind_Stream {
+		return protocol.TaskKind_Stream
+	}
+	return protocol.TaskKind_Interactive
+}
+
+// scheduleKindName and scheduleKindFromName are the kind as schedules.json
+// holds it: by NAME, because the numeric zero is oneshot and a file written
+// before the field has none. "" (absent) reads as interactive.
+func scheduleKindName(k protocol.TaskKind) string {
+	if k == protocol.TaskKind_Stream {
+		return "stream"
+	}
+	return "interactive"
+}
+
+func scheduleKindFromName(n string) (protocol.TaskKind, error) {
+	switch n {
+	case "", "interactive":
+		return protocol.TaskKind_Interactive, nil
+	case "stream":
+		return protocol.TaskKind_Stream, nil
+	}
+	return 0, fmt.Errorf("kind %q (want interactive or stream)", n)
 }
 
 // appendHistory adds e and evicts the oldest entries past historyMax.
@@ -543,6 +577,7 @@ type scheduleJSON struct {
 	Prompt             string                     `json:"prompt"`
 	ExtraArgs          []string                   `json:"extra_args"`
 	ResumeConversation bool                       `json:"resume_conversation"`
+	Kind               string                     `json:"kind"`
 	Run                runSpecJSON                `json:"run"`
 	Grant              grantJSON                  `json:"grant"`
 	Creator            string                     `json:"creator"`
@@ -594,6 +629,7 @@ func (s Schedule) toJSON() (scheduleJSON, error) {
 		ID: s.ID, Cron: s.Cron, TZ: s.TZ, State: s.State, TaskID: s.TaskID,
 		Repo: s.Repo, Agent: s.Agent, SelectorB64: base64.StdEncoding.EncodeToString(sel),
 		Prompt: s.Prompt, ExtraArgs: s.ExtraArgs, ResumeConversation: s.ResumeConversation,
+		Kind: scheduleKindName(s.runKind()),
 		Run: runSpecJSON{
 			Mode: s.Run.Mode, DeadlineNs: int64(c.Deadline), QuietNs: int64(c.Quiet), BlockedNs: int64(c.Blocked),
 			QueueTimeoutNs: int64(c.QueueTimeout), TurnEnd: c.TurnEnd, Rows: c.Rows, Cols: c.Cols,
@@ -627,8 +663,13 @@ func (j scheduleJSON) schedule() (Schedule, error) {
 		return Schedule{}, fmt.Errorf("selector: %w", err)
 	}
 	r := j.Run
+	kind, err := scheduleKindFromName(j.Kind)
+	if err != nil {
+		return Schedule{}, err
+	}
 	s := Schedule{
-		ID: j.ID, Cron: j.Cron, TZ: j.TZ, State: j.State, TaskID: j.TaskID,
+		Kind: kind,
+		ID:   j.ID, Cron: j.Cron, TZ: j.TZ, State: j.State, TaskID: j.TaskID,
 		Repo: j.Repo, Agent: j.Agent, Selector: sel,
 		Prompt: j.Prompt, ExtraArgs: j.ExtraArgs, ResumeConversation: j.ResumeConversation,
 		Run: RunSpec{

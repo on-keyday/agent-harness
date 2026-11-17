@@ -29,7 +29,7 @@ func fullSchedule(t *testing.T, id string, n int) Schedule {
 		ID: id, Cron: "*/5 * * * *", TZ: "Asia/Tokyo",
 		State: protocol.ScheduleTaskState_Bound, TaskID: strings.Repeat("ab", 16),
 		Repo: "r", Agent: "claude", Selector: sel, Prompt: "do it", ExtraArgs: []string{"--x", "y"},
-		ResumeConversation: true,
+		ResumeConversation: true, Kind: protocol.TaskKind_Stream,
 		Run: RunSpec{Mode: protocol.RunMode_Background, Cond: RunConditions{
 			Deadline: time.Hour, Quiet: 3 * time.Minute, Blocked: 4 * time.Minute, QueueTimeout: 90 * time.Second,
 			TurnEnd: protocol.TurnEndSignal_Lifecycle, Rows: 24, Cols: 80,
@@ -479,6 +479,8 @@ func TestScheduleFileFixtureV1(t *testing.T) {
 		ID: scheduleID(1), Cron: "*/5 * * * *", TZ: "Asia/Tokyo",
 		State: protocol.ScheduleTaskState_Bound, TaskID: cid("ab"), Repo: "r", Agent: "claude",
 		Selector: got.Selector, Prompt: "do it", ExtraArgs: []string{"--x", "y"}, ResumeConversation: true,
+		// The v1 fixture predates the kind: it has none, and reads as interactive.
+		Kind: protocol.TaskKind_Interactive,
 		Run: RunSpec{Mode: protocol.RunMode_Background, Cond: RunConditions{
 			Deadline: time.Hour, Quiet: 3 * time.Minute, Blocked: 4 * time.Minute, QueueTimeout: 90 * time.Second,
 			TurnEnd: protocol.TurnEndSignal_Lifecycle, Rows: 24, Cols: 80,

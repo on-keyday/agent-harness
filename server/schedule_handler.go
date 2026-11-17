@@ -524,6 +524,23 @@ func (h *TaskHandler) applySpec(cid string, base Schedule, spec *protocol.Schedu
 		sc.ResumeConversation = spec.ResumeConversation()
 	}
 	sc.Run.Mode = protocol.RunMode_Background
+	// The kind (2026-11-17-schedule-stream-kind-design.md, K1-K6): set before
+	// the conditions, whose defaults depend on it.
+	kindChanged := false
+	switch {
+	case spec.KindPresent():
+		k := protocol.TaskKind(255)
+		if v := spec.Kind(); v != nil {
+			k = *v
+		}
+		if k != protocol.TaskKind_Interactive && k != protocol.TaskKind_Stream {
+			return refuse(protocol.ScheduleStatus_KindUnsupported, "kind %s: a schedule runs interactive or stream", k)
+		}
+		kindChanged = create || k != sc.runKind()
+		sc.Kind = k
+	case create:
+		sc.Kind = protocol.TaskKind_Interactive
+	}
 	if spec.OneshotSet() {
 		sc.Run.Oneshot = spec.Oneshot()
 	}
@@ -581,7 +598,9 @@ func (h *TaskHandler) applySpec(cid string, base Schedule, spec *protocol.Schedu
 				cond.TurnEnd = *v
 			}
 		}
-		sc.Run.Cond = cond.WithDefaults(protocol.TaskKind_Interactive)
+		sc.Run.Cond = cond.WithDefaults(sc.runKind())
+	} else if kindChanged {
+		sc.Run.Cond = sc.Run.Cond.WithDefaults(sc.runKind())
 	}
 	if spec.SizePresent() && spec.InitialRows() != nil && spec.InitialCols() != nil {
 		r, c := *spec.InitialRows(), *spec.InitialCols()
@@ -594,9 +613,22 @@ func (h *TaskHandler) applySpec(cid string, base Schedule, spec *protocol.Schedu
 		sc.Prompt = prompt
 	}
 
+	// The open's stream rules (task_handler.go, OneshotStream / PtyStream),
+	// judged on the schedule as it would be stored, so an edit naming only the
+	// kind meets the stored --oneshot / --pty too.
+	if sc.runKind() == protocol.TaskKind_Stream {
+		if sc.Run.Oneshot {
+			return refuse(protocol.ScheduleStatus_OneshotStream, "--oneshot runs in a PTY; an event-stream session has none")
+		}
+		if spec.PtySet() && spec.Pty() {
+			return refuse(protocol.ScheduleStatus_PtyStream, "--pty: an event-stream session has no PTY")
+		}
+		sc.Run.NoPTY = false // a stream run has no PTY, and its kind says so (resolveNoPTY)
+	}
+
 	// S-D12: the checks a background open makes, through the same function.
 	wc := sc.Run.Cond.Wire()
-	if st, msg := h.checkBackgroundRun(protocol.TaskKind_Interactive, sc.Agent, &wc, sc.Prompt, sc.Repo, sc.Selector); st != protocol.OpenInteractiveStatus_Ok {
+	if st, msg := h.checkBackgroundRun(sc.runKind(), sc.Agent, &wc, sc.Prompt, sc.Repo, sc.Selector); st != protocol.OpenInteractiveStatus_Ok {
 		return refuse(scheduleStatusFromOpen(st), "%s", msg)
 	}
 	if create && len(h.Registry.Candidates(sc.Repo, sc.Selector)) == 0 {
@@ -832,7 +864,7 @@ func (h *TaskHandler) scheduleEditChecked(cid string, id protocol.ScheduleID, id
 	apply := func(sc *Schedule) error {
 		sc.Cron, sc.TZ, sc.Repo, sc.Agent, sc.Selector = next.Cron, next.TZ, next.Repo, next.Agent, next.Selector
 		sc.Prompt, sc.ExtraArgs, sc.ResumeConversation = next.Prompt, next.ExtraArgs, next.ResumeConversation
-		sc.Run, sc.Grant = next.Run, next.Grant
+		sc.Kind, sc.Run, sc.Grant = next.Kind, next.Run, next.Grant
 		sc.EditedAt, sc.EditedBy, sc.EditedByKind = next.EditedAt, next.EditedBy, next.EditedByKind
 		if d.timeChange {
 			sc.NextAt = next.NextAt
@@ -1097,6 +1129,7 @@ func (h *TaskHandler) scheduleDetail(cid string, id protocol.ScheduleID) (*proto
 	}
 	d.SetResumeConversation(sc.ResumeConversation)
 	d.SetOneshot(sc.Run.Oneshot)
+	d.Kind = sc.runKind()
 	d.SetRecordSet(true)
 	d.SetRecord(sc.Run.Record)
 	d.SetPtySet(true)
