@@ -772,12 +772,7 @@ func runCell(t protocol.TaskInfo) string {
 // colour is added after the table renders (colorStateBadges): a style inside a
 // cell is cut mid-sequence by bubbles' width truncation (see aboutCell).
 func lifeCell(t protocol.TaskInfo) string {
-	b := cli.LifecycleBadge(&t)
-	if b == "lc:-" {
-		if p := cli.ProgramBadge(&t); p != "" {
-			return p
-		}
-	}
+	b := cli.TaskStateBadge(&t)
 	if rest, ok := strings.CutPrefix(b, "wait:"); ok {
 		return "WAIT:" + rest
 	}
