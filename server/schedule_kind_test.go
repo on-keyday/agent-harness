@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
@@ -210,5 +211,64 @@ func TestScheduleDetailCarriesKind(t *testing.T) {
 	}
 	if d.Kind != protocol.TaskKind_Stream {
 		t.Errorf("detail kind %v", d.Kind)
+	}
+}
+
+// Switching to stream and back restores what the interactive schedule had:
+// its --no-pty and its turn-end default (review finding 1).
+func TestScheduleKindRoundTripKeepsInteractiveSettings(t *testing.T) {
+	e := newSchedEnv(t)
+	e.addCandidate("claude")
+	sp := createSpec()
+	sp.SetPtySet(true)
+	sp.SetPty(false)
+	r := e.create(t, "", sp, "p")
+	id := schedIDHex(r.Id)
+	before := e.stored(t, id)
+	if !before.Run.NoPTY || before.Run.Cond.TurnEnd != protocol.TurnEndSignal_Any {
+		t.Fatalf("start: noPTY %v turn-end %v", before.Run.NoPTY, before.Run.Cond.TurnEnd)
+	}
+	kind := func(k protocol.TaskKind) {
+		t.Helper()
+		ed := &protocol.ScheduleSpec{}
+		ed.SetKindPresent(true)
+		ed.SetKind(k)
+		if r := e.edit(t, "", id, ed, ""); r.Status != protocol.ScheduleStatus_Ok {
+			t.Fatalf("%v %s", r.Status, r.Message)
+		}
+	}
+	kind(protocol.TaskKind_Stream)
+	if sc := e.stored(t, id); sc.Run.Cond.TurnEnd != protocol.TurnEndSignal_Lifecycle {
+		t.Errorf("stream turn-end %v", sc.Run.Cond.TurnEnd)
+	}
+	kind(protocol.TaskKind_Interactive)
+	after := e.stored(t, id)
+	if !after.Run.NoPTY || after.Run.Cond.TurnEnd != protocol.TurnEndSignal_Any {
+		t.Errorf("after the round trip: noPTY %v turn-end %v, want true any", after.Run.NoPTY, after.Run.Cond.TurnEnd)
+	}
+}
+
+// A stream firing's run has no PTY whatever the stored bit says, on the
+// creating firing and on a resume (review finding 4).
+func TestScheduleStreamFiringRunsWithoutPTY(t *testing.T) {
+	s, _ := newFireServer(t, t.TempDir())
+	sc := fireTestSchedule(1, protocol.ScheduleTaskState_PendingCreate, "")
+	sc.Kind = protocol.TaskKind_Stream
+	sc.Run.NoPTY = true
+	putSchedule(t, s, sc)
+	s.fireSchedule(sc.ID, sc.NextAt, false)
+	after := getSched(t, s, sc.ID)
+	task, _ := s.tasks.Get(after.TaskID)
+	if task.Kind != protocol.TaskKind_Stream || task.NoPTY {
+		t.Fatalf("created: kind %v noPTY %v", task.Kind, task.NoPTY)
+	}
+	s.tasks.Finish(after.TaskID, 0, nil)
+	after.NextAt = after.NextAt.Add(-48 * time.Hour)
+	putSchedule(t, s, after)
+	if got := s.fireSchedule(after.ID, after.NextAt, false); got != protocol.ScheduleOutcome_Fired {
+		t.Fatalf("second firing %v", got)
+	}
+	if task, _ := s.tasks.Get(after.TaskID); task.Kind != protocol.TaskKind_Stream || task.NoPTY || task.Run != 2 {
+		t.Errorf("resumed: kind %v noPTY %v run %d", task.Kind, task.NoPTY, task.Run)
 	}
 }

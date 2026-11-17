@@ -280,10 +280,16 @@ func (s *Server) fireScheduleChecked(id string, due time.Time, manual bool, chec
 
 	// Step 5: act, with no schedule-store lock held.
 	sc := act.sc
+	// A stream run has no PTY whatever the stored bit says (resolveNoPTY): the
+	// bit is kept for the interactive kind, so a switch back restores it.
+	run := sc.Run
+	if sc.runKind() == protocol.TaskKind_Stream {
+		run.NoPTY = false
+	}
 	var actErr error
 	if act.creates {
 		actErr = s.tasks.CreateWithinLimitsID(act.taskID, sc.Repo, sc.Prompt, sc.runKind(),
-			protocol.ClientKind_Schedule, act.creatorTID, sc.Selector, sc.ExtraArgs, sc.Grant, sc.Agent, sc.Run)
+			protocol.ClientKind_Schedule, act.creatorTID, sc.Selector, sc.ExtraArgs, sc.Grant, sc.Agent, run)
 		if actErr == nil {
 			s.tasks.SetResumeConversation(act.taskID, sc.ResumeConversation)
 		}
@@ -291,7 +297,7 @@ func (s *Server) fireScheduleChecked(id string, due time.Time, manual bool, chec
 		u := GrantUpdate{Caps: true, Scope: true, DelegateCaps: true, DelegateScope: true,
 			SpawnDepth: true, MaxDescendants: true, To: sc.Grant}
 		_, actErr = s.tasks.Resume(act.taskID, sc.Prompt, sc.ExtraArgs, sc.Selector, "", protocol.ClientKind_Schedule,
-			u, sc.runKind(), sc.Agent, act.creatorTID, sc.ResumeConversation, sc.Run)
+			u, sc.runKind(), sc.Agent, act.creatorTID, sc.ResumeConversation, run)
 	}
 	queuedAt := s.sched.now()
 	if actErr == nil && s.taskHandler != nil && s.taskHandler.OnChange != nil {

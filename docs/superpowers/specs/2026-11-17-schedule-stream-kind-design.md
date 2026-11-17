@@ -71,6 +71,21 @@ that exclusion and wants it withdrawn (operator, 2026-11-17). Backlog entry:
   bit of a stream run is false (`resolveNoPTY`), which the detail otherwise
   reads as "on".
 - **The edit's result line names `stream`** (`scheduleChangeList`).
+- **A kind switch round-trips** (whole-branch review). K5 first stored the
+  stream defaults over the interactive settings, so stream → interactive left
+  turn-end `lifecycle` and a PTY the operator had turned off. Now:
+  - the stored PTY bit is not touched by a switch; the firing builds a stream
+    run with no PTY (`schedule_fire.go`), and `schedule show` prints
+    `pty: none` for stream;
+  - a switch with no `--turn-end` takes a stored turn-end equal to the old
+    kind's default (`RunConditions{}.WithDefaults(old)`) back to unset, so the
+    new kind's default applies. An explicitly chosen non-default turn-end is
+    kept and judged for the new kind. Edge: an interactive schedule set
+    explicitly to `lifecycle` reads as the stream default after a switch to
+    stream and back, and returns as `any`.
+  - K4's `--pty` check applies to the request only: the store keeps no "pty
+    was named" bit, so a stored PTY cannot be told from the interactive
+    default; it stays stored and is ignored while the kind is stream.
 - Five existing guards encoded the old exclusion and changed with it:
   `TestScheduleRefusesWhatAFiringCannotCarry`, `TestScheduleFlagsAreSpawnFlags`,
   the WebUI parse-error case in `schedule_test.mjs`, `composeFormFor` in

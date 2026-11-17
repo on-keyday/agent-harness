@@ -157,7 +157,9 @@ accepts in combination stay as checkboxes on the tabs that allow them.
     allowed turn-end values) stay where they are enforced today.
 - **schedule:** the conditions block, cron, zone, **target**, plus one-shot,
   PTY and "会話も再開" (each firing's `--resume-conversation`).
-  - Event-stream is not offered: `composeScheduleTokens` refuses it today.
+  - ~~Event-stream is not offered: `composeScheduleTokens` refuses it today.~~
+    Superseded 2026-11-17: the schedule tab reads event-stream and sends
+    `--stream` (pillar S S-D23, `2026-11-17-schedule-stream-kind-design.md`).
 
 **The schedule target:**
 - A select:

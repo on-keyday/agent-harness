@@ -4414,13 +4414,18 @@ done:    1 (`cli/verb/spawn.go`: `--stream` dropped from `scheduleOff`;
          show` prints the kind for both kinds; `pty: none` for stream instead of
          the misleading stored `on`), 32 (one renderer: `cli`
          `ScheduleDetailText` / `Parts` / JSON feed the CLI, the TUI and the
-         WebUI), 33 (stream+oneshot and stream+pty refused, also after an
-         edit's overlay, by the server: `oneshot_stream` / `pty_stream`), 35
+         WebUI), 33 (stream+oneshot refused also after an edit's overlay;
+         stream+pty refused when the request names `--pty` — the store keeps no
+         "pty named" bit, so a stored PTY is kept and ignored while the kind is
+         stream; by the server: `oneshot_stream` / `pty_stream`), 35
          (README), 37 (spec + a pillar S Decisions row), 39 (spec K8's surfaces
          checked live: the CLI, the TUI form and the WebUI form each created a
          stream schedule that `schedule show` reads back as `kind: stream`)
-missed:  — (two defects were caught by the live check BEFORE landing, not after:
-         item 29's result line and item 31's `pty: on`)
+missed:  — (caught before landing, not after: item 29's result line and item
+         31's `pty: on` by the live check; and an item 24 defect by the
+         whole-branch review — the edit path's kind switch wrote the stream
+         defaults (turn-end lifecycle, PTY bit) over the stored interactive
+         settings, so switching back did not restore them)
 
 **Four tests pinned the exclusion, and no Decisions row stood behind it.**
 `TestScheduleRefusesWhatAFiringCannotCarry`, `TestScheduleFlagsAreSpawnFlags`,

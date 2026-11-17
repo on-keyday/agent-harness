@@ -527,6 +527,7 @@ func (h *TaskHandler) applySpec(cid string, base Schedule, spec *protocol.Schedu
 	// The kind (2026-11-17-schedule-stream-kind-design.md, K1-K6): set before
 	// the conditions, whose defaults depend on it.
 	kindChanged := false
+	prevKind := sc.runKind()
 	switch {
 	case spec.KindPresent():
 		k := protocol.TaskKind(255)
@@ -536,7 +537,7 @@ func (h *TaskHandler) applySpec(cid string, base Schedule, spec *protocol.Schedu
 		if k != protocol.TaskKind_Interactive && k != protocol.TaskKind_Stream {
 			return refuse(protocol.ScheduleStatus_KindUnsupported, "kind %s: a schedule runs interactive or stream", k)
 		}
-		kindChanged = create || k != sc.runKind()
+		kindChanged = create || k != prevKind
 		sc.Kind = k
 	case create:
 		sc.Kind = protocol.TaskKind_Interactive
@@ -572,6 +573,14 @@ func (h *TaskHandler) applySpec(cid string, base Schedule, spec *protocol.Schedu
 	// zero is an answer: queue_timeout 0 = none; quiet / blocked 0 and an unset
 	// turn_end = the defaults (WithDefaults); deadline 0 is refused below
 	// (G41). Size lives beside them and is untouched.
+	// A kind switch takes the stored turn-end back to unset when it is only the
+	// old kind's default (any / lifecycle), so the new kind's default applies
+	// and a switch back restores the old one. A turn-end the edit names, or one
+	// that differs from the old default, is kept and judged below.
+	if kindChanged && !create && !spec.TurnEndPresent() &&
+		sc.Run.Cond.TurnEnd == (RunConditions{}).WithDefaults(prevKind).TurnEnd {
+		sc.Run.Cond.TurnEnd = protocol.TurnEndSignal_Unset
+	}
 	if spec.DeadlinePresent() || spec.QuietPresent() || spec.BlockedPresent() || spec.QueueTimeoutPresent() || spec.TurnEndPresent() {
 		cond := sc.Run.Cond
 		ms := func(p *uint64) time.Duration {
@@ -613,9 +622,12 @@ func (h *TaskHandler) applySpec(cid string, base Schedule, spec *protocol.Schedu
 		sc.Prompt = prompt
 	}
 
-	// The open's stream rules (task_handler.go, OneshotStream / PtyStream),
-	// judged on the schedule as it would be stored, so an edit naming only the
-	// kind meets the stored --oneshot / --pty too.
+	// The open's stream rules (task_handler.go, OneshotStream / PtyStream).
+	// --oneshot is judged on the schedule as it would be stored, so an edit
+	// naming only the kind meets a stored --oneshot. --pty is judged on this
+	// request only: the store keeps no "pty was named" bit, so a stored PTY is
+	// indistinguishable from the interactive default; it is kept as it is (a
+	// switch back restores it) and the firing runs a stream with no PTY.
 	if sc.runKind() == protocol.TaskKind_Stream {
 		if sc.Run.Oneshot {
 			return refuse(protocol.ScheduleStatus_OneshotStream, "--oneshot runs in a PTY; an event-stream session has none")
@@ -623,7 +635,6 @@ func (h *TaskHandler) applySpec(cid string, base Schedule, spec *protocol.Schedu
 		if spec.PtySet() && spec.Pty() {
 			return refuse(protocol.ScheduleStatus_PtyStream, "--pty: an event-stream session has no PTY")
 		}
-		sc.Run.NoPTY = false // a stream run has no PTY, and its kind says so (resolveNoPTY)
 	}
 
 	// S-D12: the checks a background open makes, through the same function.
