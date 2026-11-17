@@ -122,3 +122,27 @@ func TestScheduleFormSubmitWhileDisconnectedIsAnswered(t *testing.T) {
 		t.Fatalf("pending=%v view:\n%s", a.bgform.Pending(), a.bgform.View())
 	}
 }
+
+// The schedule form's stream field (2026-11-17-schedule-stream-kind-design.md,
+// K8): yes sends --stream, which the shared parser accepts; no sends nothing.
+func TestScheduleArgsStream(t *testing.T) {
+	f := scheduleForm(t)
+	f.fields[bgFieldStream].SetValue("yes")
+	args, err := f.ScheduleArgs(identityResolve)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(args, " "), "--stream") {
+		t.Errorf("args %q lack --stream", args)
+	}
+	if _, err := verb.ParseCmdScheduleNew(verb.TUI, args, nil); err != nil {
+		t.Errorf("the shared parser refuses the form's args %q: %v", args, err)
+	}
+	f.fields[bgFieldStream].SetValue("no")
+	if args, _ := f.ScheduleArgs(identityResolve); strings.Contains(strings.Join(args, " "), "--stream") {
+		t.Errorf("stream=no sent --stream: %q", args)
+	}
+	if !strings.Contains(f.View(), "stream") {
+		t.Errorf("the form does not show the stream field:\n%s", f.View())
+	}
+}

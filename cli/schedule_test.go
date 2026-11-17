@@ -902,8 +902,17 @@ func TestScheduleStreamRefusesOneshotAndPty(t *testing.T) {
 func TestScheduleDetailShowsKind(t *testing.T) {
 	d := schedDetail()
 	d.Kind = protocol.TaskKind_Stream
-	if got := ScheduleDetailText(d, schedNow); !strings.Contains(got, "kind: stream") {
+	// The server stores a stream run's PTY bit as false (resolveNoPTY: the bit
+	// only qualifies an interactive run), so the detail says pty on; the line
+	// must say what is true instead -- a stream session has no PTY.
+	d.SetPtySet(true)
+	d.SetPty(true)
+	got := ScheduleDetailText(d, schedNow)
+	if !strings.Contains(got, "kind: stream") {
 		t.Errorf("detail lacks the kind:\n%s", got)
+	}
+	if strings.Contains(got, "pty: on") || !strings.Contains(got, "pty: none") {
+		t.Errorf("a stream schedule's pty line:\n%s", got)
 	}
 	d.Kind = protocol.TaskKind_Interactive
 	if got := ScheduleDetailText(d, schedNow); !strings.Contains(got, "kind: interactive") {
@@ -914,7 +923,22 @@ func TestScheduleDetailShowsKind(t *testing.T) {
 	if err := ScheduleDetailJSON(&b, d, schedNow); err != nil {
 		t.Fatal(err)
 	}
+	if !strings.Contains(b.String(), `"pty":"none"`) {
+		t.Errorf("json pty for stream: %s", b.String())
+	}
 	if !strings.Contains(b.String(), `"kind":"stream"`) {
 		t.Errorf("json lacks the kind: %s", b.String())
+	}
+}
+
+// An edit's result line names what it changed; --stream / --stream=false is a
+// change (checklist 29).
+func TestScheduleChangeListNamesStream(t *testing.T) {
+	o, err := ScheduleSpecOptsFromAction(parseScheduleLine(t, "edit "+schedHexID+" --stream=false"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := scheduleChangeList(o); !strings.HasPrefix(got, "stream ") {
+		t.Errorf("change list %q does not name stream", got)
 	}
 }

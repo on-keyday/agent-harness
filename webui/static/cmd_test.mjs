@@ -1027,8 +1027,10 @@ test("composeFormFor: what another tab holds is not read", () => {
   eq([o.stream, o.oneshot, o.pty, o.cron], [false, false, "off", ""]);
   const b = page.composeFormFor("background", raw());
   eq([b.oneshot, b.stream, b.deadline, b.turnEnd, b.cron, b.task], [true, true, "1h", "quiet", "", ""]);
+  // The schedule tab reads the event-stream box since schedules carry a task
+  // kind (2026-11-17-schedule-stream-kind-design.md).
   const s = page.composeFormFor("schedule", raw());
-  eq([s.cron, s.tz, s.task, s.oneshot, s.resumeConversation, s.stream, s.deadline], ["@daily", "Asia/Tokyo", ID, true, true, false, "1h"]);
+  eq([s.cron, s.tz, s.task, s.oneshot, s.resumeConversation, s.stream, s.deadline], ["@daily", "Asia/Tokyo", ID, true, true, true, "1h"]);
 });
 
 test("composeTargetOptions: tasks a schedule can bind, after 新規に作る", () => {

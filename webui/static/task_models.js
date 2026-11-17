@@ -516,9 +516,6 @@ function scheduleZoneOptions(zones) {
 // accept what the CLI refuses. A foreground-only option is refused here with a
 // message instead of being dropped.
 function composeScheduleTokens(f) {
-  if (f.stream) {
-    throw new Error("schedule: an event-stream session cannot be scheduled -- untick \"event-stream (チャット)\" (a firing resumes a background task)");
-  }
   const t = ["--cron", String(f.cron).trim()];
   const tz = String(f.tz || "").trim();
   if (tz) t.push("--tz", tz);
@@ -535,6 +532,8 @@ function composeScheduleTokens(f) {
   if (f.blocked) t.push("--blocked", f.blocked);
   if (f.queueTimeout) t.push("--queue-timeout", f.queueTimeout);
   if (f.oneshot) t.push("--oneshot");
+  // The task kind each firing runs (2026-11-17-schedule-stream-kind-design.md).
+  if (f.stream) t.push("--stream");
   if (f.record === "on") t.push("--record");
   else if (f.record === "off") t.push("--no-record");
   if (f.pty === "on") t.push("--pty");
@@ -595,7 +594,7 @@ const COMPOSE_TAB_DEFS = {
   oneshot: { label: "one-shot を実行", action: "open-session", fields: ["pty"] },
   background: { label: "background で投入", action: "open-session", fields: [...COMPOSE_COND_FIELDS, "oneshot", "stream", "pty"] },
   schedule: { label: "schedule を作る", action: "create-schedule",
-    fields: [...COMPOSE_COND_FIELDS, "cron", "tz", "task", "oneshot", "pty", "resumeConversation"] },
+    fields: [...COMPOSE_COND_FIELDS, "cron", "tz", "task", "oneshot", "stream", "pty", "resumeConversation"] },
 };
 
 // composeTabModel is a tab's button label, its action and the fields it reads.

@@ -40,12 +40,13 @@ const (
 	bgFieldRepo
 	bgFieldTarget
 	bgFieldOneshot
+	bgFieldStream
 	bgFieldConv
 	bgFieldCount
 )
 
 var bgFieldLabels = [bgFieldCount]string{"agent", "deadline", "turn end", "quiet", "blocked", "queue timeout", "record", "pty",
-	"cron", "zone", "repo", "task", "one-shot", "conversation"}
+	"cron", "zone", "repo", "task", "one-shot", "stream", "conversation"}
 
 // defaultBgDeadline is the deadline the form starts with: the front-end
 // prefill G41 allows (the server has no default).
@@ -107,6 +108,7 @@ func NewBgForm() BgFormModel {
 	m.fields[bgFieldZone].Placeholder = "the server's zone (or e.g. Asia/Tokyo)"
 	m.fields[bgFieldTarget].Placeholder = "new task (or a task id / its prefix to bind)"
 	m.fields[bgFieldOneshot].Placeholder = "no (no|yes)"
+	m.fields[bgFieldStream].Placeholder = "no (no|yes): each firing runs an event-stream session"
 	m.fields[bgFieldConv].Placeholder = "no (no|yes): each firing resumes the conversation"
 	m.fields[bgFieldRepo].CharLimit = 4096
 	return m
@@ -209,7 +211,7 @@ func (m *BgFormModel) order() []int {
 	}
 	if m.purpose == bgSchedule {
 		return []int{bgFieldCron, bgFieldZone, bgFieldRepo, bgFieldTarget, -1, bgFieldAgent, bgFieldDeadline, bgFieldTurnEnd,
-			bgFieldQuiet, bgFieldBlocked, bgFieldQueue, bgFieldRecord, bgFieldPty, bgFieldOneshot, bgFieldConv}
+			bgFieldQuiet, bgFieldBlocked, bgFieldQueue, bgFieldRecord, bgFieldPty, bgFieldOneshot, bgFieldStream, bgFieldConv}
 	}
 	return []int{-1, bgFieldAgent, bgFieldDeadline, bgFieldTurnEnd, bgFieldQuiet, bgFieldBlocked, bgFieldQueue, bgFieldRecord, bgFieldPty}
 }
@@ -382,7 +384,7 @@ func (m *BgFormModel) ScheduleArgs(resolve func(string) (string, error)) ([]stri
 	for _, f := range []struct {
 		i    int
 		flag string
-	}{{bgFieldOneshot, "--oneshot"}, {bgFieldConv, "--resume-conversation"}} {
+	}{{bgFieldOneshot, "--oneshot"}, {bgFieldStream, "--stream"}, {bgFieldConv, "--resume-conversation"}} {
 		switch v := val(f.i); v {
 		case "", "no":
 		case "yes":

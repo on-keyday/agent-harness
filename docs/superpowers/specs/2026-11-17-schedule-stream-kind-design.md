@@ -58,6 +58,30 @@ that exclusion and wants it withdrawn (operator, 2026-11-17). Backlog entry:
   own backlog entry.
 - Any change to how a background stream run is placed or ended.
 
+## As built (2026-11-17)
+
+- **The zero value is guarded in memory too, not only on disk.** `Schedule`
+  is a Go struct and `TaskKind`'s zero is `oneshot`, so every read goes
+  through `Schedule.runKind()` (stream only when the kind is stream, else
+  interactive): a `Schedule` built without a kind fires interactive.
+  `schedules.json` writes `"kind"` for every schedule, by name.
+- **The edit's field copy** (`apply` in `server/schedule_handler.go`) copies
+  fields by name; it now copies the kind (a test caught it missing).
+- **`schedule show` prints `pty: none` for a stream schedule**: the stored PTY
+  bit of a stream run is false (`resolveNoPTY`), which the detail otherwise
+  reads as "on".
+- **The edit's result line names `stream`** (`scheduleChangeList`).
+- Five existing guards encoded the old exclusion and changed with it:
+  `TestScheduleRefusesWhatAFiringCannotCarry`, `TestScheduleFlagsAreSpawnFlags`,
+  the WebUI parse-error case in `schedule_test.mjs`, `composeFormFor` in
+  `cmd_test.mjs`, and a throw in `composeScheduleTokens`.
+- Live check (dummy harness, fake agent): a schedule created with `--stream`
+  from the CLI, the TUI form and the WebUI form each reads back
+  `kind: stream`; `schedule run` creates a `stream` task. The fake agent has
+  no stream adapter, so that task fails the same way a one-off
+  `session new --background --stream` does on it; a run to completion needs
+  `--agent claude`, which was not done.
+
 ## Left to the builder
 
 - Status message wording; the TUI toggle's key and label; where the kind sits

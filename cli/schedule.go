@@ -374,6 +374,16 @@ var scheduleStatusGloss = map[protocol.ScheduleStatus]string{
 	protocol.ScheduleStatus_PtyStream:             "--pty: an event-stream (--stream) schedule has no PTY",
 }
 
+// scheduleDetailPty is the detail's PTY word. A stream run has no PTY, and the
+// server stores its bit as false (resolveNoPTY) -- read literally, "pty on" --
+// so the kind decides first.
+func scheduleDetailPty(d protocol.ScheduleDetail, dflt string) string {
+	if d.Kind == protocol.TaskKind_Stream {
+		return "none"
+	}
+	return schedTriState(d.PtySet(), d.Pty(), dflt)
+}
+
 // ScheduleKindWord is a schedule's task kind as `schedule show` prints it:
 // the kind's wire name (interactive / stream).
 func ScheduleKindWord(k protocol.TaskKind) string { return EnumWireName(k.String()) }
@@ -624,6 +634,7 @@ func scheduleChangeList(o ScheduleSpecOpts) string {
 	add(o.ExtraArgs != nil, "agent-arg")
 	add(o.ResumeConversation != nil, "resume-conversation")
 	add(o.Oneshot != nil, "oneshot")
+	add(o.Kind != nil, "stream")
 	add(o.Record != nil, "record")
 	add(o.Pty != nil, "pty")
 	add(o.Prompt != "", "prompt")
@@ -1003,7 +1014,7 @@ func ScheduleDetailParts(d protocol.ScheduleDetail, now time.Time) ScheduleDetai
 	line("kind: %s", ScheduleKindWord(d.Kind))
 	line("oneshot: %v", d.Oneshot())
 	line("record: %s", schedTriState(d.RecordSet(), d.Record(), "server default"))
-	line("pty: %s", schedTriState(d.PtySet(), d.Pty(), "the mode's default"))
+	line("pty: %s", scheduleDetailPty(d, "the mode's default"))
 	line("conditions: %s", schedConditions(d.Conditions))
 	auth := fmt.Sprintf("caps=%s scope=%s", CapsLabel(d.Caps), ScopeLabel(d.Scope))
 	if ov := OverridesLabel(d.Overrides); ov != "" {
@@ -1186,7 +1197,7 @@ func writeScheduleDetailJSON(w io.Writer, d protocol.ScheduleDetail, now time.Ti
 		Prompt:          string(d.Prompt), ExtraArgs: append([]string{}, d.ExtraArgs.AsStrings()...),
 		Selector:           schedSelectorLabel(d.Selector),
 		ResumeConversation: d.ResumeConversation(), Kind: ScheduleKindWord(d.Kind), Oneshot: d.Oneshot(),
-		Record: schedTriState(d.RecordSet(), d.Record(), "default"), Pty: schedTriState(d.PtySet(), d.Pty(), "default"),
+		Record: schedTriState(d.RecordSet(), d.Record(), "default"), Pty: scheduleDetailPty(d, "default"),
 		Conditions: conditionsJSON{
 			DeadlineMs: d.Conditions.DeadlineMs, TurnEnd: EnumWireName(d.Conditions.TurnEnd.String()),
 			QuietMs: d.Conditions.QuietMs, BlockedMs: d.Conditions.BlockedMs, QueueTimeoutMs: d.Conditions.QueueTimeoutMs,

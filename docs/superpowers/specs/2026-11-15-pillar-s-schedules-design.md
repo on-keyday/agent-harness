@@ -31,8 +31,9 @@ times, not only at intervals (operator, 2026-11-15).
 - Event triggers (GD G40). The schedule's trigger is one field of a schedule,
   so an event trigger is a sibling of it later; nothing else here anticipates
   events.
-- A schedule running the stream kind. Firings open interactive sessions,
-  `--oneshot` included (PA A-D29); `--stream` is refused at create.
+- ~~A schedule running the stream kind. Firings open interactive sessions,
+  `--oneshot` included (PA A-D29); `--stream` is refused at create.~~
+  Withdrawn 2026-11-17: it reversed GD G1 without a Decisions row; see S-D23.
 - Unlimited history. A schedule keeps its last 50 history entries (S-D7).
 - Priorities or fairness among firings (GD anti-goal).
 
@@ -110,7 +111,7 @@ author's call; those rows are the ones to check.
 | S-D9 | **Missed firings run once (settles GD O3).** On server start, a schedule whose stored `next_at` is in the past fires once immediately (subject to GD G28), its history entry carrying the old `due_at`; then `next_at` is recomputed from now. However many occurrences were missed, at most one runs | operator (on this spec's proposal) |
 | S-D10 | **Runs a schedule did not start (settles GD O9):** listed in the history as `resumed_by` with the resumer, because a firing skipped as busy ran into them; not counted in the wait statistics, because their wait is not the schedule's | operator (GD's candidate, on this spec's proposal) |
 | S-D11 | **Wait statistics:** over the `fired` and `run_now` entries in the history that have both `queued_at` and `started_at`, every surface that shows a schedule's detail shows the count, median and maximum of `started_at − queued_at`. Not stored; computed when shown | this spec |
-| S-D12 | **Creating a schedule needs at least one candidate runner for its repo now** (GD G26), and refuses a missing deadline (GD G41), a missing prompt, a missing agent profile, a profile no candidate offers, and `--stream` (Non-goals) — the same checks `openBackground` makes, through the same function where one exists | GD G26/G41, this spec (reuse) |
+| S-D12 | **Creating a schedule needs at least one candidate runner for its repo now** (GD G26), and refuses a missing deadline (GD G41), a missing prompt, a missing agent profile, a profile no candidate offers~~, and `--stream` (Non-goals)~~ — the same checks `openBackground` makes, through the same function where one exists, for the schedule's kind (S-D23) | GD G26/G41, this spec (reuse) |
 | S-D13 | **`schedule run <id>` fires a schedule now**, outside its times, through the same firing function, recorded as `run_now`; `next_at` is not changed. It exists so a schedule set for 09:00 can be tried at once | operator (on this spec's proposal) |
 | S-D14 | **Binding an existing task (GD G46).** `schedule new --task <id>` binds a task instead of creating one at first firing. The task must be within the caller's reach and must not be running in foreground (refused with that reason: end it or switch it with `session mode` first). Binding writes the task's mode to background. The repo is the task's; `--repo` with `--task` is refused | GD G46 (binding), this spec (refusing a running foreground task) |
 | S-D15 | **Unbinding (GD G46).** A resume that asks for foreground, or `session mode … foreground`, on a task bound to a schedule requires the `schedule` bit as well as what it requires today, unbinds the task, and appends `unbound` (who, when) to the schedule's history. A schedule with no task shows as such on every surface and its firings are `skipped_no_task` until `schedule edit <id> --task <id>` binds one | GD G46 |
@@ -122,6 +123,7 @@ author's call; those rows are the ones to check.
 | S-D20 | **A schedule's own task cannot act on its schedule**: `edit`, `run`, `rm`, a `--task` rebind and the S-D15 unbinding are refused when the caller is the bound task, whatever its grant holds. The first job reads untrusted issue and pull-request text; an injected instruction must not outlive the run by rewriting the prompt, the times or the binding. Same reasoning as PA's refusal of a task switching its own run mode (A-D19) | this spec |
 | S-D21 | **A schedule's task state is stored, not derived from history**: `pending_create` (the first firing will create the task; a refused creation stays here and the next firing tries again), `bound` (with the task id), or `unbound` (S-D15; firings are `skipped_no_task`, and `schedule edit --task` binds again). A schedule created with `--task` starts `bound`; one unbound before its first firing is `unbound`, never `pending_create` | this spec |
 | S-D22 | **A firing runs at most once.** Before it resumes or creates the task, the firing writes an intent to `schedules.json` — a history entry with outcome `pending`, the run number it expects (`TaskEntry.Run + 1`; `Run` is persisted on `task_resumed`, `server/taskstore.go:747-753`), or, for a creation, a task id chosen in advance — and advances `next_at`. Then it acts, then it rewrites the entry with the outcome. On server start — and, for one schedule, at the start of each of its firings, since a failed outcome save leaves the entry `pending` in memory — each `pending` entry is settled from the task store: the task's `Run` reached the expected number (or the pre-chosen id exists) → `fired`, and its run ends however replay ended it (a run left `Running` replays as `Failed`, `server_restart`, `server/taskstore.go:1612-1620`); otherwise → `lost`. A crash therefore never repeats a firing and never loses one silently, and a created task is never orphaned. Creating a task under a pre-chosen id needs a `CreateWithinLimits` variant that takes the id | operator (at most once), this spec (the intent record) |
+| S-D23 | **A schedule stores a task kind, `interactive` or `stream`, and every firing creates or resumes its task as that kind** (`--stream` on `schedule new` / `edit`). This withdraws the Non-goal that excluded the stream kind: it reversed GD G1 (the run mode is independent of the data plane) without a row here, against this spec's own rule for reversing a GD row. Design and the as-built decisions: `2026-11-17-schedule-stream-kind-design.md` | operator (2026-11-17, citing GD G1) |
 
 ## Design
 
@@ -138,6 +140,7 @@ Schedule
   prompt        string                                     # ≤ protocol.PromptMax
   extra_args    []string
   resume_conversation bool
+  kind          interactive | stream                       # S-D23
   run           RunSpec (Mode = Background)                # PA: conditions, record, oneshot, NoPTY
   grant         authority.Grant                            # S-D16
   creator       TaskID (zero = operator)
@@ -198,7 +201,7 @@ command line and the WebUI command line parse them from one row each:
 
 "Run flags" are the flags `session new --background` takes for its run:
 `--turn-end`, `--quiet`, `--blocked`, `--queue-timeout`, `--record`,
-`--oneshot`, `--pty` / `--no-pty`, `--resume-conversation`, `--agent-arg`,
+`--oneshot`, `--stream` (S-D23), `--pty` / `--no-pty`, `--resume-conversation`, `--agent-arg`,
 `--runner` / selector, `--rows` / `--cols`. They are the same `Flag` rows,
 not copies, so a later change to one reaches both verbs.
 

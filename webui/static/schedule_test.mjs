@@ -137,8 +137,19 @@ test("Compose: an empty zone is the server's zone, a named one is sent; a task t
 });
 
 test("Compose with a cron refuses what a firing cannot carry, with a message", () => {
-  assert.throws(() => page.composeScheduleTokens(form({ stream: true })), /event-stream/);
   assert.throws(() => page.composeScheduleTokens(form({ repo: "", task: "" })), /repo/i);
+});
+
+// A schedule carries its task kind (2026-11-17-schedule-stream-kind-design.md):
+// the schedule tab reads the event-stream box and sends --stream.
+test("Compose: the schedule tab sends --stream from the event-stream box", () => {
+  assert.ok(page.composeTabModel("schedule").fields.includes("stream"));
+  const t = page.composeScheduleTokens(form({ stream: true }));
+  assert.ok(t.includes("--stream"), t.join(" "));
+  const b = page.bridge.parseCommand(["schedule", "new", ...t], {});
+  assert.equal(b.error, undefined, b.error);
+  assert.equal(b.flags.stream, true);
+  assert.ok(!page.composeScheduleTokens(form({ stream: false })).includes("--stream"));
 });
 
 test("schedule … on the command line dispatches all six verbs", async () => {
