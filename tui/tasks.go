@@ -13,7 +13,6 @@ import (
 	"github.com/mattn/go-runewidth"
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/runner/protocol"
-	"github.com/on-keyday/agent-harness/vtgrid"
 )
 
 type TasksModel struct {
@@ -726,40 +725,9 @@ func taskStatusStr(s protocol.TaskStatus) string {
 	return "?"
 }
 
-// renderPromptCell returns the prompt-column display string for a task.
-// Interactive tasks are surfaced as "<interactive>" because their prompt
-// is intentionally empty; oneshot tasks render their prompt truncated.
-// The Kind field is the authoritative source — TaskStatusEvent carries it
-// from the very first event, so a freshly-stubbed row knows its kind
-// without needing the next List snapshot to disambiguate.
-// aboutCell is the task table's last column, About. Its own progress line
-// when it has one, else its program's window title marked
-// "(title)" — a plain-text mark, because bubbles truncates cells by width and
-// an ANSI style inside one can be cut mid-sequence — else the prompt cell as
-// before. Interactive sessions used to show only "<interactive>" here. It was
-// named Doing until the operator objected: a title is generated from the first
-// prompt and drifts from the work, so the header claimed something two of the
-// three sources do not say (progress spec, D31).
-//
-// The line carries its age, which is how the reader judges a stale one (D4).
-// Both strings have their control characters stripped HERE: bubbles hands a
-// cell's bytes to the terminal as they are, and a task event can be forged by
-// any subscriber, so the server's own rules are not a substitute.
-//
-// A background task's run facts are the Run column's (runCell), not a prefix
-// here: About is the flex column and is a few cells wide below ~240 terminal
-// columns, so a prefix was readable only on the widest terminals.
-func aboutCell(t protocol.TaskInfo) string {
-	if t.ProgressAt != 0 && len(t.Progress) > 0 {
-		p := string(t.Progress)
-		return vtgrid.SanitizeTitle(p, len(p)) + " (" + cli.AgeStr(t.ProgressAgeMs) + ")"
-	}
-	if t.LiveTerminal() && len(t.Title) > 0 {
-		ti := string(t.Title)
-		return "(title) " + vtgrid.SanitizeTitle(ti, len(ti))
-	}
-	return renderPromptCell(t)
-}
+// aboutCell is the task table's last column, About: cli.TaskNowText, which
+// the overview prints too.
+func aboutCell(t protocol.TaskInfo) string { return cli.TaskNowText(t) }
 
 // runCell is the Run column (A-D14), blank for a foreground task: while a
 // background task is queued, why it waits (the wait reason's schema name, or
@@ -893,49 +861,4 @@ func actCell(t protocol.TaskInfo, merged bool) string {
 		return cli.ActivityStr(t.OutputIdleMs)
 	}
 	return ""
-}
-
-func renderPromptCell(t protocol.TaskInfo) string {
-	switch t.Kind {
-	case protocol.TaskKind_Interactive:
-		// A `session new --oneshot` run (A-D29) is this kind too, but it was
-		// started with a prompt to answer, and that prompt is what tells one
-		// row from another. Marked in plain text, like "(title)", so it reads
-		// as a one-shot rather than as a submit row from before A3.
-		// The PTY is marked where it is not the mode's default (A-D33),
-		// with cli.RunMark's words.
-		if t.Oneshot() {
-			if !t.NoPty() {
-				return "(oneshot+pty) " + truncatePrompt(string(t.Prompt))
-			}
-			return "(oneshot) " + truncatePrompt(string(t.Prompt))
-		}
-		if t.NoPty() {
-			return "<interactive+pipe>"
-		}
-		return "<interactive>"
-	case protocol.TaskKind_Stream:
-		// Distinct from <interactive>: same "no prompt" reason, different
-		// thing on the other end, and the row is where an operator first
-		// notices which one they are looking at.
-		return "<stream>"
-	}
-	return truncatePrompt(string(t.Prompt))
-}
-
-// truncatePrompt collapses newlines and clips to ~140 chars (the column SetSize will further clip).
-func truncatePrompt(p string) string {
-	out := make([]byte, 0, len(p))
-	for i := 0; i < len(p); i++ {
-		c := p[i]
-		if c == '\n' || c == '\r' || c == '\t' {
-			out = append(out, ' ')
-		} else {
-			out = append(out, c)
-		}
-	}
-	if len(out) > 140 {
-		out = out[:140]
-	}
-	return string(out)
 }
