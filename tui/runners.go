@@ -177,7 +177,7 @@ func (m *RunnersModel) SetRows(rs []protocol.RunnerInfo) {
 func (m *RunnersModel) rebuild() {
 	rows := make([]table.Row, 0, len(m.rowRunners))
 	for _, r := range m.rowRunners {
-		row := table.Row{runnerStatusStr(r.Status)}
+		row := table.Row{cli.RunnerStatusWord(r.Status)}
 		if m.showsID() {
 			row = append(row, cli.PrincipalShort(r.Id.Id[:]))
 		}
@@ -222,17 +222,6 @@ func (m RunnersModel) Update(msg tea.Msg) (RunnersModel, tea.Cmd) {
 
 func (m RunnersModel) View() string {
 	return m.table.View()
-}
-
-func runnerStatusStr(s protocol.RunnerStatus) string {
-	switch s {
-	case protocol.RunnerStatus_Idle:
-		return "Idle"
-	case protocol.RunnerStatus_Busy:
-		return "Busy"
-	default:
-		return "Offline"
-	}
 }
 
 // truncateLeft keeps the right-most part of s within max terminal cells
@@ -330,26 +319,4 @@ func runnerRootsCell(r protocol.RunnerInfo) string {
 		return fmt.Sprintf("%s (+%d)", first, len(r.AllowedRoots)-1)
 	}
 	return first
-}
-
-// runnerSummary is the one-line fleet state shown above whichever table is
-// visible: "runners N: X idle Y busy …". The labels are runnerStatusStr's,
-// lowercased, so the vocabulary is the table's. Idle and busy exist on every
-// fleet and keep a zero; other statuses appear only when present.
-func runnerSummary(rs []protocol.RunnerInfo) string {
-	counts := map[string]int{}
-	for _, r := range rs {
-		counts[runnerStatusStr(r.Status)]++
-	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "runners %d:", len(rs))
-	for _, s := range []protocol.RunnerStatus{protocol.RunnerStatus_Idle, protocol.RunnerStatus_Busy, protocol.RunnerStatus_Offline} {
-		label := runnerStatusStr(s)
-		n := counts[label]
-		if n == 0 && s == protocol.RunnerStatus_Offline {
-			continue
-		}
-		fmt.Fprintf(&b, " %d %s", n, strings.ToLower(label))
-	}
-	return b.String()
 }

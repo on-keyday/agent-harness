@@ -76,22 +76,6 @@ func TestVisibleTableUsesFullWidth(t *testing.T) {
 	}
 }
 
-func TestRunnerSummaryCounts(t *testing.T) {
-	mk := func(s protocol.RunnerStatus) protocol.RunnerInfo { return protocol.RunnerInfo{Status: s} }
-	got := runnerSummary([]protocol.RunnerInfo{
-		mk(protocol.RunnerStatus_Idle), mk(protocol.RunnerStatus_Busy),
-		mk(protocol.RunnerStatus_Busy), mk(protocol.RunnerStatus_Busy),
-		mk(protocol.RunnerStatus_Offline),
-	})
-	if want := "runners 5: 1 idle 3 busy 1 offline"; got != want {
-		t.Errorf("summary = %q, want %q", got, want)
-	}
-	// idle and busy keep their zero; an absent status is omitted.
-	if got, want := runnerSummary(nil), "runners 0: 0 idle 0 busy"; got != want {
-		t.Errorf("empty summary = %q, want %q", got, want)
-	}
-}
-
 func TestSummaryAndTabStripVisibleOnBothTables(t *testing.T) {
 	a := oneTableApp(80, 24)
 	a.Update(SnapshotMsg{Runners: []protocol.RunnerInfo{{Status: protocol.RunnerStatus_Busy}}})

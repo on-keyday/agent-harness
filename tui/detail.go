@@ -302,7 +302,7 @@ func (d *DetailPopup) View() string {
 // RunnerInfo for the detail popup.
 func formatRunnerDetail(r protocol.RunnerInfo) string {
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "status:        %s\n", runnerStatusStr(r.Status))
+	fmt.Fprintf(&sb, "status:        %s\n", cli.RunnerStatusWord(r.Status))
 	fmt.Fprintf(&sb, "id:            %s\n", r.Id.Hex())
 	// WHERE it is reached, as its own line: id used to BE the connection id, so
 	// one value answered both. Hostname does not replace it — two slots on one

@@ -2122,7 +2122,7 @@ func tableStrip(shown, from focus, rs []protocol.RunnerInfo) string {
 			entries = append(entries, names[f]+":←")
 		}
 	}
-	return " " + strings.Join(entries, " ") + " | " + runnerSummary(rs)
+	return " " + strings.Join(entries, " ") + " | " + cli.RunnerSummary(rs)
 }
 
 func (a *App) View() string {
