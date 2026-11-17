@@ -1,8 +1,10 @@
 package tui
 
 import (
+	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -35,7 +37,7 @@ func TestOverviewViewFits80x24(t *testing.T) {
 	m := NewOverviewModel()
 	m.SetSize(80, 24)
 	m.Open()
-	m.Apply(fullOverview())
+	m.Apply(fullOverview(), false)
 	lines := strings.Split(m.View(), "\n")
 	if len(lines) > 24 {
 		t.Fatalf("%d lines:\n%s", len(lines), m.View())
@@ -107,5 +109,47 @@ func TestOverviewEscCloses(t *testing.T) {
 	a.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	if a.overview.IsOpen() {
 		t.Fatal("esc left the overlay open")
+	}
+}
+
+// The TUI rows carry the same escaping as the CLI: no raw control byte from a
+// topic name, hostname or error reaches the overlay's text.
+func TestOverviewRowsEscapeForeignText(t *testing.T) {
+	o := cli.BuildOverview(cli.OverviewInput{
+		Topics:    []cli.BoardTopicRow{{Name: "evil\x1b[2J\ntopic", MsgCount: 1}},
+		TopicsErr: errors.New("x\x1b[2J"),
+	}, time.Now())
+	for _, r := range overviewRows(o, false) {
+		if strings.ContainsAny(r.text, "\x1b\n") {
+			t.Errorf("raw control byte in row %q", r.text)
+		}
+	}
+}
+
+// Before the first fetch of conns, forwards and the board, those counts are
+// not zero -- they are unknown, and the overlay says so.
+func TestOverviewUnfetchedShowsNoZeros(t *testing.T) {
+	a := New(Config{})
+	a.overview.Open()
+	a.rebuildOverview()
+	v := a.overview.View()
+	for _, bad := range []string{"forwards: 0", "board: 0 topics", "0 operator clients"} {
+		if strings.Contains(v, bad) {
+			t.Errorf("unmeasured %q shown as a measurement:\n%s", bad, v)
+		}
+	}
+	a.Update(OverviewFetchMsg{gen: a.overview.Gen()})
+	if v := a.overview.View(); !strings.Contains(v, "forwards: 0") {
+		t.Errorf("after a fetch the zero is a measurement and must show:\n%s", v)
+	}
+}
+
+// A tick that finds the TUI disconnected keeps the chain alive, so the
+// overlay resumes refreshing after a reconnect.
+func TestOverviewPollSurvivesDisconnect(t *testing.T) {
+	a := New(Config{})
+	g := a.overview.Open()
+	if _, cmd := a.Update(overviewTickMsg{gen: g}); cmd == nil {
+		t.Fatal("a tick while disconnected ended the poll chain")
 	}
 }

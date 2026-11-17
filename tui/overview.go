@@ -92,12 +92,12 @@ func (m *OverviewModel) SetSize(w, h int) { m.width, m.height = w, h }
 
 // Apply replaces the rows with o's, keeping the cursor on the same row when
 // that row still exists.
-func (m *OverviewModel) Apply(o cli.Overview) {
+func (m *OverviewModel) Apply(o cli.Overview, pending bool) {
 	var prev overviewRow
 	if m.cursor < len(m.rows) {
 		prev = m.rows[m.cursor]
 	}
-	m.rows = overviewRows(o)
+	m.rows = overviewRows(o, pending)
 	m.cursor = 0
 	for i, r := range m.rows {
 		if r.kind == prev.kind && r.key == prev.key && r.kind != "err" {
@@ -139,18 +139,25 @@ func (m OverviewModel) Update(msg tea.KeyMsg) OverviewModel {
 	return m
 }
 
-func overviewRows(o cli.Overview) []overviewRow {
+// overviewRows lays o out one line per row, every line through
+// cli.OverviewText. pending says conns, forwards and the board have not been
+// read yet: their counts are then unknown, not zero, and print as "…".
+func overviewRows(o cli.Overview, pending bool) []overviewRow {
 	var rows []overviewRow
+	add := func(r overviewRow) {
+		r.text = cli.OverviewText(r.text)
+		rows = append(rows, r)
+	}
 	head := func(section, text string) {
-		rows = append(rows, overviewRow{kind: "header:" + section, text: text})
+		add(overviewRow{kind: "header:" + section, text: text})
 	}
 	errRow := func(e string) {
 		if e != "" {
-			rows = append(rows, overviewRow{kind: "err", text: "  error: " + e})
+			add(overviewRow{kind: "err", text: "  error: " + e})
 		}
 	}
 	task := func(t cli.OverviewTask) {
-		rows = append(rows, overviewRow{kind: "task", key: t.ID,
+		add(overviewRow{kind: "task", key: t.ID,
 			text: fmt.Sprintf("  %-10s %-14s %s  %s", t.Badge, truncateLeft(t.Repo, 14), t.ID[:min(8, len(t.ID))], t.Now)})
 	}
 
@@ -164,22 +171,34 @@ func overviewRows(o cli.Overview) []overviewRow {
 	for _, t := range o.Live {
 		task(t)
 	}
-	head("hosts", fmt.Sprintf("hosts: %d (%d slots, %d operator clients)", o.HostCount, o.SlotCount, o.OperatorClients))
+	clients := fmt.Sprint(o.OperatorClients)
+	if pending {
+		clients = "…"
+	}
+	head("hosts", fmt.Sprintf("hosts: %d (%d slots, %s operator clients)", o.HostCount, o.SlotCount, clients))
 	errRow(o.HostsErr)
 	for _, h := range o.Hosts {
-		rows = append(rows, overviewRow{kind: "host", key: h.Hostname,
+		add(overviewRow{kind: "host", key: h.Hostname,
 			text: fmt.Sprintf("  %-16s %-8s idle %d busy %d offline %d  tasks %d/%d", truncateLeft(h.Hostname, 16), h.Goos, h.Idle, h.Busy, h.Offline, h.ActiveTasks, h.MaxTasks)})
 	}
-	head("forwards", fmt.Sprintf("forwards: %d", o.ForwardCount))
+	if pending {
+		head("forwards", "forwards: …")
+	} else {
+		head("forwards", fmt.Sprintf("forwards: %d", o.ForwardCount))
+	}
 	errRow(o.ForwardsErr)
 	for _, f := range o.Forwards {
-		rows = append(rows, overviewRow{kind: "forward", key: fmt.Sprint(f.ID),
+		add(overviewRow{kind: "forward", key: fmt.Sprint(f.ID),
 			text: fmt.Sprintf("  %-3s %s  %s %s", f.Dir, f.Spec, truncateLeft(f.Repo, 14), f.TaskID[:min(8, len(f.TaskID))])})
 	}
-	head("board", fmt.Sprintf("board: %d topics, %d messages", o.TopicCount, o.MsgTotal))
+	if pending {
+		head("board", "board: …")
+	} else {
+		head("board", fmt.Sprintf("board: %d topics, %d messages", o.TopicCount, o.MsgTotal))
+	}
 	errRow(o.BoardErr)
 	for _, t := range o.Topics {
-		rows = append(rows, overviewRow{kind: "topic", key: t.Name,
+		add(overviewRow{kind: "topic", key: t.Name,
 			text: fmt.Sprintf("  %-24s %d msgs  %-8s %s", truncateLeft(t.Name, 24), t.MsgCount, t.Age, t.Head)})
 	}
 	return rows
@@ -229,7 +248,7 @@ func (a *App) rebuildOverview() {
 		Conns: f.Conns, ConnsErr: f.ConnsErr,
 		Forwards: f.Forwards, ForwardsErr: f.ForwardsErr,
 		Topics: f.Topics, TopicsErr: f.TopicsErr, Newest: f.Newest,
-	}, time.Now()))
+	}, time.Now()), !a.overviewHave)
 }
 
 // openOverview is the V key and the `overview` verb.
@@ -240,7 +259,8 @@ func (a *App) openOverview() tea.Cmd {
 	}
 	gen := a.overview.Open()
 	a.overview.SetSize(a.width, a.height)
-	a.overviewIn = OverviewFetchMsg{}
+	// The last opening's read is kept: stale until this opening's first
+	// fetch lands, but measured. Before any read the counts print as "…".
 	a.rebuildOverview()
 	return DoOverviewFetch(a.client, gen)
 }

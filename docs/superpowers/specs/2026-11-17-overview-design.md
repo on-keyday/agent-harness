@@ -232,3 +232,21 @@ Decided while building (designer's calls, recorded in the plan's ledger):
   unchanged.
 - **The `board_observe` description** (`cli/verb/caps.go`) names `overview`,
   whose board section reads topics and each one's newest message.
+- **Correction to Architecture, "Partial failure":** conns has no capability
+  check of its own — the `conns` verb needs none, and a confined caller sees
+  only the connections whose principal task it can see. An agent running
+  `overview` therefore gets a smaller (likely zero) client count, not an
+  error. The board section is the one that names a refusal
+  (`board_observe`); forwards errors are shown the same way when they occur.
+- **Every line the CLI and the TUI print goes through `cli.OverviewText`**
+  (control bytes escaped, line breaks and tabs included). The anti-goal named
+  board payloads, progress and titles; topic names, hostnames, forward specs
+  and error strings are foreign text too, and the server accepts a topic name
+  holding ESC.
+- **The TUI shows `…`, not 0, for conns / forwards / board counts until its
+  first read**, and keeps the last read across re-openings. A poll tick that
+  finds the TUI disconnected re-arms instead of ending the chain.
+- **A tab switched to from code loads like a clicked one** (`tabActivators`
+  in `main.js`): a reload that restores Board, and the overview's Board
+  header, load the topic list. A topic opened from the overview opens in
+  Board's topics view whichever view Board was left in.

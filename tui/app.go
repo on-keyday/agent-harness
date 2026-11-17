@@ -122,6 +122,8 @@ type App struct {
 	// overview overlay (V / `overview`) and the inputs it last fetched itself
 	overview   OverviewModel
 	overviewIn OverviewFetchMsg
+	// overviewHave: overviewIn holds a real read (not the zero value).
+	overviewHave bool
 	// Which run of the conns modal's trsf poll is current; a tick from an
 	// older one is dropped rather than allowed to reschedule. See trsfTickMsg.
 	trsfGen       int
@@ -904,12 +906,18 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 		a.overviewIn = msg
+		a.overviewHave = true
 		a.rebuildOverview()
 		return a, overviewTick(msg.gen)
 
 	case overviewTickMsg:
-		if msg.gen != a.overview.Gen() || !a.overview.IsOpen() || a.client == nil {
+		if msg.gen != a.overview.Gen() || !a.overview.IsOpen() {
 			return a, nil
+		}
+		if a.client == nil {
+			// Disconnected: keep the chain alive so the overlay resumes
+			// refreshing once the client is back.
+			return a, overviewTick(msg.gen)
 		}
 		return a, DoOverviewFetch(a.client, msg.gen)
 

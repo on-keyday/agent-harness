@@ -3,50 +3,66 @@ package cli
 import (
 	"fmt"
 	"io"
+	"strings"
 	"time"
 )
+
+// OverviewText makes s one terminal line: control bytes escaped as
+// EscapeForTerminal writes them, and the line break and tab it leaves alone
+// escaped too. Topic names, hostnames, forward specs and error strings come
+// from agents, runners and peers -- the server accepts a topic name holding
+// ESC -- so every line the overview prints goes through this. Text already
+// escaped (a board head) passes unchanged: an escape is printable.
+func OverviewText(s string) string {
+	return strings.NewReplacer("\n", `\x0a`, "\t", `\x09`).Replace(EscapeForTerminal([]byte(s)))
+}
+
+// overviewLine prints one formatted line through OverviewText.
+func overviewLine(w io.Writer, format string, args ...any) {
+	fmt.Fprintln(w, OverviewText(fmt.Sprintf(format, args...)))
+}
 
 // WriteOverview prints o as `harness-cli overview` shows it: the five sections
 // in the spec's order, each header carrying its count (zeros included) and,
 // when that section's source failed, the error on the next line.
 func WriteOverview(w io.Writer, o Overview, now time.Time) {
-	fmt.Fprintf(w, "needs you: %d\n", o.NeedsYouCount)
+	overviewLine(w, "needs you: %d", o.NeedsYouCount)
 	writeOverviewTasks(w, o.NeedsYou)
 
 	g := o.GroupCounts
-	fmt.Fprintf(w, "tasks: %d ready, %d working, %d no report, %d queued, %d finished\n",
+	overviewLine(w, "tasks: %d ready, %d working, %d no report, %d queued, %d finished",
 		g[groupReady], g[groupWorking], g[groupNoReport], g[groupQueued], g[groupFinished])
 	writeOverviewTasks(w, o.Live)
 
-	fmt.Fprintf(w, "hosts: %d (%d slots, %d operator clients)\n", o.HostCount, o.SlotCount, o.OperatorClients)
+	overviewLine(w, "hosts: %d (%d slots, %d operator clients)", o.HostCount, o.SlotCount, o.OperatorClients)
 	writeOverviewErr(w, o.HostsErr)
 	for _, h := range o.Hosts {
-		fmt.Fprintf(w, "  %-16s %-8s idle %d busy %d offline %d  tasks %d/%d\n",
+		overviewLine(w, "  %-16s %-8s idle %d busy %d offline %d  tasks %d/%d",
 			h.Hostname, h.Goos, h.Idle, h.Busy, h.Offline, h.ActiveTasks, h.MaxTasks)
 	}
 
-	fmt.Fprintf(w, "forwards: %d\n", o.ForwardCount)
+	overviewLine(w, "forwards: %d", o.ForwardCount)
 	writeOverviewErr(w, o.ForwardsErr)
 	for _, f := range o.Forwards {
-		fmt.Fprintf(w, "  %-3s %-36s %-12s %s\n", f.Dir, f.Spec, f.Repo, shortHex(f.TaskID))
+		overviewLine(w, "  %-3s %-36s %-12s %s", f.Dir, f.Spec, f.Repo, shortHex(f.TaskID))
 	}
 
-	fmt.Fprintf(w, "board: %d topics, %d messages\n", o.TopicCount, o.MsgTotal)
+	overviewLine(w, "board: %d topics, %d messages", o.TopicCount, o.MsgTotal)
 	writeOverviewErr(w, o.BoardErr)
 	for _, t := range o.Topics {
-		fmt.Fprintf(w, "  %-24s %d msgs  %-8s %s\n", t.Name, t.MsgCount, t.Age, t.Head)
+		overviewLine(w, "  %-24s %d msgs  %-8s %s", t.Name, t.MsgCount, t.Age, t.Head)
 	}
 }
 
 func writeOverviewTasks(w io.Writer, ts []OverviewTask) {
 	for _, t := range ts {
-		fmt.Fprintf(w, "  %-10s %-16s %s  %s\n", t.Badge, t.Repo, shortHex(t.ID), t.Now)
+		overviewLine(w, "  %-10s %-16s %s  %s", t.Badge, t.Repo, shortHex(t.ID), t.Now)
 	}
 }
 
 func writeOverviewErr(w io.Writer, e string) {
 	if e != "" {
-		fmt.Fprintf(w, "  error: %s\n", e)
+		overviewLine(w, "  error: %s", e)
 	}
 }
 

@@ -3582,8 +3582,11 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
             return;
           }
           case "topic":
-            setActiveTab("board");
-            openBoardTopic(key);
+            // Not setActiveTab's own board load: that renders whichever view
+            // Board was left in (chains, archives), and the topic must open
+            // in the topics view.
+            setActiveTab("board", { activate: false });
+            boardShowTopic(key);
             return;
           case "host":
             setActiveTab("tasks");
@@ -3605,13 +3608,20 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     });
   }
 
-  const setActiveTab = (name) => {
+  // tabActivators[name] loads what a tab shows when it becomes the active one.
+  // Called from setActiveTab, so a tab switched to from code (the overview, the
+  // command line, a reload restoring the remembered tab) loads exactly as a
+  // click does. A tab registers its loader where its code lives.
+  const tabActivators = {};
+
+  const setActiveTab = (name, opts) => {
     document.body.dataset.activeTab = name;
     // Remembered per browser, so a reload comes back to the same tab
     // (operator, 2026-11-17). Storage may be absent or throw (private window,
     // blocked site data); the page works the same without it.
     try { localStorage.setItem(ACTIVE_TAB_KEY, name); } catch (_) { /* not remembered */ }
     if (name === "overview") refreshOverview();
+    if (!(opts && opts.activate === false) && tabActivators[name]) tabActivators[name]();
     for (const b of tabbar.querySelectorAll(".tab-btn")) {
       b.classList.toggle("is-active", b.dataset.tab === name);
     }
@@ -7415,6 +7425,14 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   }
 
   // openBoardTopic shows the detail view for one topic.
+  // boardShowTopic opens a topic from outside the Board tab: in the topics
+  // view, whatever view Board was left in (chains, or the archives list hide
+  // the detail element openBoardTopic shows).
+  function boardShowTopic(topic) {
+    setBoardView("topics");
+    openBoardTopic(topic);
+  }
+
   async function openBoardTopic(topic) {
     // A different topic starts a fresh composer; re-reading the same one (a
     // refresh after a send) leaves what is being written alone.
@@ -9239,12 +9257,13 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     if (capsAuditDetails.open) refreshCapsAudit();
   });
 
-  // Activate whichever board view is showing when the board tab is selected.
-  tabbar.addEventListener("click", (e) => {
-    const btn = e.target.closest(".tab-btn");
-    if (btn && btn.dataset.tab === "board") {
-      if (boardView === "chains") renderBoardChains();
-      else renderBoardTopics();
-    }
-  });
+  // Load whichever board view is showing when the board tab becomes active,
+  // by a click or from code. The page may already be ON Board -- a reload
+  // restores the remembered tab before this line registers -- so it loads once
+  // here too.
+  tabActivators.board = () => {
+    if (boardView === "chains") renderBoardChains();
+    else renderBoardTopics();
+  };
+  if (document.body.dataset.activeTab === "board") tabActivators.board();
 })();

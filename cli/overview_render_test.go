@@ -78,3 +78,25 @@ func TestOverviewWithPartialFailure(t *testing.T) {
 		t.Errorf("task sections lost:\n%s", out)
 	}
 }
+
+// Topic names, hostnames, specs and errors are not ours: an agent picks a
+// topic name, and the server accepts control bytes in one. Every line the
+// overview prints is one terminal line with no raw control byte.
+func TestWriteOverviewEscapesEveryField(t *testing.T) {
+	var r protocol.RunnerInfo
+	r.SetHostname([]byte("h\x1b]0;x\x07"))
+	in := OverviewInput{
+		Runners:   []protocol.RunnerInfo{r},
+		Topics:    []BoardTopicRow{{Name: "evil\x1b[2J\ntopic", MsgCount: 1, LastPublishedAtMs: 1}},
+		TopicsErr: errors.New("read evil\x1b[2J\ttopic"),
+	}
+	var b bytes.Buffer
+	WriteOverview(&b, BuildOverview(in, ovNow), ovNow)
+	out := b.String()
+	if strings.ContainsAny(out, "\x1b\x07\t") {
+		t.Fatalf("raw control byte in:\n%q", out)
+	}
+	if !strings.Contains(out, `evil\x1b[2J\x0atopic`) {
+		t.Errorf("topic name not escaped onto one line:\n%s", out)
+	}
+}
