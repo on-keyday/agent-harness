@@ -119,6 +119,13 @@ messaging, WASM transport, PSK auth, etc. are alongside it under
       `--watch 200ms` re-reading to report the DELTA. Several of those
       counters mean nothing as a single sample, so all three surfaces
       carry the reading: see **Reading a connection's transport state**.
+    - Overview: `overview` prints one summary in five sections — needs you,
+      tasks (counts per state group), hosts (runners by hostname, slot count,
+      operator clients), forwards, board (topics with message count, age and
+      the newest message's first line, escaped) — each a count and at most 3
+      rows; `--json` emits the structure. A section the caller may not read
+      prints its error and the others still print. The TUI (`V`) and the
+      WebUI (概要 tab) show the same sections.
     - Agent runtime (called from inside agent sessions):
       `agent {send | wait | inbox | read | thread | retained | retract
       | purge | dispatch | subscribe | unsubscribe | topics
@@ -2064,7 +2071,7 @@ selected task, picking what to wake on — output quiet, the hooks' lifecycle,
 the program's status, any of them, or the next progress line (`W` fires as an
 operator notification), `X` empties its
 progress line, `I` the armed watchers
-(await-idle and await-progress, each with its condition), `G` git, `F` files,
+(await-idle and await-progress, each with its condition), `V` the overview, `G` git, `F` files,
 `q` quit. **The authoritative list is the TUI itself**:
 the footer shows the keys that work in the focused pane and `?` shows
 everything — both render from the same table the dispatcher uses
@@ -2075,7 +2082,7 @@ The cmdline accepts `session {new,attach,ls,kill}
 / session await-idle [ls,kill] / await-progress [ls,kill] / session stream attach / file {ls,push,pull,delete} / git / exec
 / record {ls,get,rm,keep,on,off} / schedule {new,ls,show,edit,run,rm} / transcript {ls,get}
 / forward {ls,kill,tap} / conns
-/ grid / caps / scope
+/ grid / overview / caps / scope
 / caps set / caps set-parent / caps audit / caps reach / caps what-if / workspace {save,apply,detach,ls,show,rm} / workspace forward {add,rm}
 / server dial-runner / runner {enroll,keys,unenroll,kick} / runner dial {add,ls,rm} / ssh-gateway / cancel / prune / repo / clear / help / quit`.
 `exec <task-id> [--] <cmd>...` runs a command in that task's worktree and prints
@@ -2093,6 +2100,11 @@ does.
 instead (see **Reading a connection's transport state**); `t` toggles between
 the two inside it. `--json` is CLI-only there: this surface answers with a
 live view and has nothing to pipe a dump into.
+`overview` opens the overview overlay — the same as `V` — with the CLI's
+sections. ↑↓ select a row and Enter opens it where the TUI shows it (a task is
+selected in the tasks table, a topic opens the board modal on it, a host the
+runners table, a forward the forwards modal); Esc closes. While open it re-reads
+conns, forwards and the board every 5 s.
 `session new --stream -d` opens an event-stream session (detached only in
 the TUI — there is no terminal to splice); `session stream attach <id>`
 opens the chat on it, the same view `r` opens. `caps NAMES`
@@ -2311,8 +2323,15 @@ plus a **Host pin** dropdown for routing to a specific runner by
 hostname. The xterm-based interactive view splices the runner's PTY
 into the browser tab the same way the TUI does into its terminal.
 
-The page is organised into tabs (端末 / タスク / ファイル / 通知):
+The page is organised into tabs (概要 / 端末 / タスク / ファイル / 通知). A
+reload returns to the tab last shown in this browser (kept in `localStorage`;
+タスク when none is kept, it names no tab, or storage is blocked):
 
+- **Overview** (概要, leftmost) — the `overview` sections, refreshed with the
+  snapshot poll while the tab is shown. Tapping a row opens it where the page
+  shows it: a task its action dialog, a topic the Board tab on that topic, a
+  host the タスク tab scrolled to Runners, a forward the 接続 tab. `overview`
+  on the command line shows the tab.
 - **Tasks** — runners + task list (ordered by the select beside the
   Active / Finished / All chips: 最近の動き, the default, 作成順,
   動いているもの優先, 状態ごと or リポジトリごと — the last three under group

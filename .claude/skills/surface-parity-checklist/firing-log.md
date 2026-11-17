@@ -4341,3 +4341,47 @@ n/a:     3, 10, 13 (`whoami` lists the new bit by name through the shared capabi
 S1–S6:   n/a — no agent, preset, bin, argv template, credential mode or launch env changed
 missed:  33 (negative durations on `schedule edit` — `--queue-timeout -5m`, `--quiet -1m` — silently mean
          none / default instead of erroring; found in the Task 5 review, still open at this walk)
+
+### 2026-11-17 (pre-landing) — `overview`: one summary on the CLI, a TUI overlay (`V`) and a WebUI 概要 tab
+
+Spec `2026-11-17-overview-design.md` (and its "Amendment 2026-11-17 — as
+built"). A new verb on all three command lines, a new display surface on each,
+and a remembered WebUI tab. No wire, schema or task field change. S1–S6 `n/a`.
+
+done:    1 (`overview` row in `cli/verb/table.go`; `--json` CLI-only with a
+         SurfaceReason), 4 (`V` in `tui/keys.go`: mainKeyMap + its
+         mainKeyBindings row), 6 (`webui/index.html` 概要 tab button + section;
+         row buttons in `webui/static/overview.js`), 7
+         (`WebUIDispatch{Fn: "overviewView", Local: true}`; the
+         `webui/static/cmdline.js` case; a `cmd_test.mjs` test), 10 (CLI writes
+         stdout through `cli.WriteOverview`; TUI overlay; WebUI tab), 15 (see
+         below), 29 (WebUI command result `overview: showing the 概要 tab`), 30
+         (a section's error renders inside the overview; TUI not-connected goes
+         to cmdresult), 31 (every section header prints its count, zero
+         included; host rows print idle / busy / offline, zeros included), 32
+         (one builder, `cli.BuildOverview`, and its JSON; the WebUI prints Go's
+         strings — the topic age moved into Go as `OverviewTopic.Age` rather
+         than being re-derived in JS), 35 (README: an Overview bullet in the
+         harness-cli summary list; in the TUI section `V` in the key list,
+         `overview` in the cmdline verb list and a paragraph on the overlay;
+         in the WebUI section 概要 in the tab list, the remembered tab, and an
+         Overview bullet), 37 (spec Amendment section), 39 (every row of the
+         spec's Sections table and Architecture list checked against the
+         build, the drill-downs on the TUI and the WebUI included)
+omitted: 36 — an operator-facing view; no agent skill text changed. An agent
+         can still run `harness-cli overview`; its board section needs
+         `board_observe`, as `board read` does.
+missed:  —
+
+**Item 15 fired on a verb that adds no field or row**, the shape the
+2026-09-22 entry wrote into the item: a new verb on an EXISTING capability.
+`board_observe`'s description (`cli/verb/caps.go`) now names `overview`,
+because its board section reads topics and each one's newest message.
+
+**What no item asked and the 390px screenshot showed.** An eighth WebUI tab
+made the existing labels break inside a word (タ/ス/ク): this change altered
+how OTHER surfaces look, and no numbered item asks about that. Caught only by
+looking at the screenshot. Fixed in `webui/static/style.css` (at phone width:
+`keep-all`, `nowrap`, smaller gaps and padding, `overflow-x: auto`). Second
+instance of the 2026-09-10 entry's note that nothing on this list asks what an
+addition costs on the surface it lands on.
