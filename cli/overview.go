@@ -64,6 +64,9 @@ type OverviewTopic struct {
 	Name          string `json:"name"`
 	MsgCount      int    `json:"msg_count"`
 	LastPublishMs uint64 `json:"last_publish_ms"`
+	// Age is LastPublishMs as OverviewAge writes it at build time, so no
+	// surface re-derives "2m ago".
+	Age string `json:"age"`
 	// Head is the newest message's first line, escaped for a terminal; ""
 	// when it was not fetched, "(withdrawn)" when that message is retracted.
 	Head string `json:"head"`
@@ -217,7 +220,7 @@ func BuildOverview(in OverviewInput, now time.Time) Overview {
 		byHost[h] = append(byHost[h], r)
 	}
 	for h, rs := range byHost {
-		host := OverviewHost{Hostname: h, Goos: string(rs[0].Goos)}
+		host := OverviewHost{Hostname: h, Goos: RunnerGOOSStr(rs[0].Goos)}
 		host.Idle, host.Busy, host.Offline = RunnerStatusCounts(rs)
 		for _, r := range rs {
 			host.ActiveTasks += len(r.ActiveTasks)
@@ -273,6 +276,7 @@ func BuildOverview(in OverviewInput, now time.Time) Overview {
 			Name:          t.Name,
 			MsgCount:      t.MsgCount,
 			LastPublishMs: t.LastPublishedAtMs,
+			Age:           OverviewAge(t.LastPublishedAtMs, now),
 			Head:          BoardHead(in.Newest[t.Name]),
 		})
 	}

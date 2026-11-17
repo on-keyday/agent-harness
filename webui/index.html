@@ -32,6 +32,7 @@
   </header>
   <main>
     <nav id="tabbar" class="tabbar" role="tablist">
+      <button type="button" class="tab-btn" data-tab="overview">概要</button>
       <button type="button" class="tab-btn" data-tab="terminal">端末</button>
       <button type="button" class="tab-btn is-active" data-tab="tasks">タスク</button>
       <button type="button" class="tab-btn" data-tab="files">ファイル</button>
@@ -40,6 +41,12 @@
       <button type="button" class="tab-btn" data-tab="conns">接続</button>
       <button type="button" class="tab-btn" data-tab="board">Board</button>
     </nav>
+    <!-- One screen over the rest (2026-11-17-overview-design.md): rendered by
+         renderOverview (overview.js) from harness.overview(), refetched with
+         the snapshot poll only while this tab is the active one. -->
+    <section id="overview" data-tabgroup="overview">
+      <div id="overview-body" class="ov-body"></div>
+    </section>
     <section id="runners" data-tabgroup="tasks">
       <h2>Runners</h2>
       <div id="runner-list"></div>
@@ -890,6 +897,7 @@
 <script src="/static/board.js" defer></script>
 <script src="/static/selects.js" defer></script>
 <script src="/static/task_models.js" defer></script>
+<script src="/static/overview.js" defer></script>
 <script src="/static/cmdline.js" defer></script>
 <script src="/static/files.js" defer></script>
 <script src="/static/graph.js" defer></script>

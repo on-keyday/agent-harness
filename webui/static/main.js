@@ -182,6 +182,8 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // from the first paint. The poll it governs is armed much further down and
   // subscribes via onChange.
   const MOBILE_KEY = "harness.mobileMode";
+  // The tab this browser was last on (setActiveTab writes it, page load reads it).
+  const ACTIVE_TAB_KEY = "harness.activeTab";
   const mobileBtn = document.getElementById("mobile-btn");
   const mobileMode = (() => {
     let on = localStorage.getItem(MOBILE_KEY) === "on";
@@ -1231,6 +1233,10 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     renderForwardList(snap.forwards || []);
     renderExecList(snap.execs || []);
     renderIdleWatcherList(snap.idle_watchers || []);
+    // The overview builds on this poll's conns and forwards (kept by the
+    // bridge) plus its own board read, so it is refetched here -- and only
+    // while its tab is the one on screen.
+    if (document.body.dataset.activeTab === "overview") refreshOverview();
   };
 
   // --- Raw connect pane -------------------------------------------------------
@@ -3441,6 +3447,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     forwards: () => lastForwards || [],
     forwardLsView: (o) => forwardLsView(o),
     connsView: (o) => connsView(o),
+    overviewView: () => setActiveTab("overview"),
     routeAmbiguous: (e, req, reissue) => routeAmbiguous(e, req, reissue),
     findForwardEntry: (id) => findForwardEntry(id),
     toggleForwardTap: (f, wrap, btn, opts) => toggleForwardTap(f, wrap, btn, opts),
@@ -3553,8 +3560,58 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     vv.addEventListener("scroll", onVVChange);
   }
 
+  // refreshOverview fetches harness.overview() and draws the 概要 tab. A
+  // result that lands after the operator left the tab is still drawn (the tab
+  // is hidden), but nothing re-arms it: only the poll and a tab switch call it.
+  async function refreshOverview() {
+    const body = document.getElementById("overview-body");
+    if (!body) return;
+    let o;
+    try {
+      o = await window.harness.overview();
+    } catch (e) {
+      body.textContent = `overview: ${e.message}`;
+      return;
+    }
+    renderOverview(body, o, {
+      open: (kind, key) => {
+        switch (kind) {
+          case "task": {
+            const t = lastTasks.find((x) => x.id === key);
+            if (t) openTaskActionsDialog(t);
+            return;
+          }
+          case "topic":
+            setActiveTab("board");
+            openBoardTopic(key);
+            return;
+          case "host":
+            setActiveTab("tasks");
+            document.getElementById("runners").scrollIntoView();
+            return;
+          case "forward":
+            setActiveTab("conns");
+            return;
+        }
+      },
+      // A header leads to the tab that lists the section in full. The task
+      // list keeps the order the operator chose (taskOrder is not touched).
+      openSection: (section) => {
+        if (section === "board") setActiveTab("board");
+        else if (section === "forwards") setActiveTab("conns");
+        else if (section === "hosts") { setActiveTab("tasks"); document.getElementById("runners").scrollIntoView(); }
+        else setActiveTab("tasks");
+      },
+    });
+  }
+
   const setActiveTab = (name) => {
     document.body.dataset.activeTab = name;
+    // Remembered per browser, so a reload comes back to the same tab
+    // (operator, 2026-11-17). Storage may be absent or throw (private window,
+    // blocked site data); the page works the same without it.
+    try { localStorage.setItem(ACTIVE_TAB_KEY, name); } catch (_) { /* not remembered */ }
+    if (name === "overview") refreshOverview();
     for (const b of tabbar.querySelectorAll(".tab-btn")) {
       b.classList.toggle("is-active", b.dataset.tab === name);
     }
@@ -3573,9 +3630,14 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     const btn = e.target.closest(".tab-btn");
     if (btn) setActiveTab(btn.dataset.tab);
   });
-  // Land on the task list on first connect — no session exists yet, so the
-  // empty terminal isn't a useful default.
-  setActiveTab("tasks");
+  // Land on the tab this browser was last on; タスク the first time — no
+  // session exists yet, so the empty terminal isn't a useful default.
+  {
+    let stored = null;
+    try { stored = localStorage.getItem(ACTIVE_TAB_KEY); } catch (_) { /* fall back */ }
+    const names = Array.from(tabbar.querySelectorAll(".tab-btn")).map((b) => b.dataset.tab);
+    setActiveTab(pickInitialTab(stored, names));
+  }
 
   // scrollTermToBottom pins the viewport to the latest output. Called after
   // Reattach, whose replay otherwise leaves the viewport scrolled up. Triple

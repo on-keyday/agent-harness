@@ -524,6 +524,14 @@ test("tasksOnRunner never joins two absences", () => {
   eq(page.tasksOnRunner(tasks, null), [], "no conn at all");
 });
 
+// --- overview -------------------------------------------------------------
+
+test("overview shows the 概要 tab", async () => {
+  const { calls, err } = await run("overview");
+  assert.equal(err, undefined);
+  eq(named(calls, "overviewView"), [["overviewView"]]);
+});
+
 // --- conns / the trsf reading ------------------------------------------
 //
 // The verb was CLI-only until the reading reached all three surfaces. What is

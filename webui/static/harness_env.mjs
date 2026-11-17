@@ -199,6 +199,7 @@ export function recordingCtx(page, overrides = {}) {
     },
     setSpawnDefaults: (d) => { calls.push(["setSpawnDefaults", d]); },
     connsView: (o) => { calls.push(["connsView", o]); },
+    overviewView: () => { calls.push(["overviewView"]); },
     routeAmbiguous: (e, req, reissue) => {
       calls.push(["routeAmbiguous", e && e.code, req, typeof reissue]);
       return !!(e && e.code === "ambiguous_runner");

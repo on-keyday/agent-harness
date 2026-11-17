@@ -404,13 +404,38 @@ body[data-active-tab="files"]    [data-tabgroup]:not([data-tabgroup="files"]),
 body[data-active-tab="git"]      [data-tabgroup]:not([data-tabgroup="git"]),
 body[data-active-tab="notify"]   [data-tabgroup]:not([data-tabgroup="notify"]),
 body[data-active-tab="conns"]    [data-tabgroup]:not([data-tabgroup="conns"]),
-body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
+body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]),
+body[data-active-tab="overview"] [data-tabgroup]:not([data-tabgroup="overview"]) {
   display: none;
 }
 
+/* 概要: one column of tappable lines, sized for a phone first. */
+.ov-body { display: grid; gap: 0.6rem; }
+@media (min-width: 900px) { .ov-body { grid-template-columns: 1fr 1fr; } }
+.ov-section { display: flex; flex-direction: column; min-width: 0; }
+.ov-head, .ov-row {
+  display: block; width: 100%; text-align: left; background: none; border: none;
+  color: inherit; font: inherit; padding: 0.3rem 0.2rem; cursor: pointer;
+}
+.ov-head { font-weight: bold; border-bottom: 1px solid #444; }
+/* A row is one line (badge, then text cut with …) and, for a topic, the head
+   of its newest message on a second line. */
+.ov-row { border-bottom: 1px solid #2a2a2a; min-width: 0; }
+.ov-line { display: flex; align-items: baseline; min-width: 0; }
+.ov-badge { flex: none; margin-right: 0.5em; font-family: monospace; }
+.ov-text, .ov-headline {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+}
+.ov-text { flex: 1 1 0; }
+.ov-headline { display: block; color: #9aa; font-size: 0.9em; }
+.ov-err { color: #f14c4c; font-size: 0.9em; padding: 0.2rem; }
+
 @media (max-width: 600px) {
-  /* The buttons split the width evenly — there is no room to left-align. */
-  .tab-btn { flex: 1; padding: 0.5rem 0.4rem; }
+  /* The buttons split the width evenly — there is no room to left-align.
+     A label never breaks inside a word (タスク read タ/ス/ク once 概要 made
+     eight tabs); if they do not fit, the bar scrolls sideways instead. */
+  .tabbar { overflow-x: auto; gap: 0.2rem; }
+  .tab-btn { flex: 1 0 auto; padding: 0.5rem 0.15rem; word-break: keep-all; white-space: nowrap; }
 }
 
 /* Notification feed — color-coded, scannable entries. Sized against the

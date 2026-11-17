@@ -2136,12 +2136,15 @@ var Verbs = []VerbSpec{
 		// operator, what runs, which hosts, which forwards, what the board is
 		// doing (2026-11-17-overview-design.md). Computed once in
 		// cli.BuildOverview; every surface prints it as given.
-		Path: []string{"overview"}, CmdlineSurfaces: CLI | TUI,
+		Path: []string{"overview"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		WebUIDispatch: WebUIDispatch{Fn: "overviewView", Local: true},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/overview.go:OverviewModel"},
+			{Surface: WebUI, At: "webui/index.html#overview"},
 		},
 		SurfaceNotes: map[Surface][]string{
-			TUI: {"`overview` opens the overview overlay (the 'V' key does the same); it re-reads conns, forwards and the board every 5s while open, and enter opens the selected row where the TUI shows it"},
+			TUI:   {"`overview` opens the overview overlay (the 'V' key does the same); it re-reads conns, forwards and the board every 5s while open, and enter opens the selected row where the TUI shows it"},
+			WebUI: {"`overview` shows the 概要 tab; it is refetched with the snapshot poll while it is the active tab, and a tap opens the row where the page shows it"},
 		},
 		Notes: []string{
 			"sections: needs you, tasks, hosts, forwards, board -- each its count and at most three rows",

@@ -158,6 +158,9 @@ func TestBuildOverviewTopics(t *testing.T) {
 	if o.Topics[0].Name != "a" || o.Topics[1].Name != "b" || o.Topics[2].Name != "c" {
 		t.Errorf("order: %+v", o.Topics)
 	}
+	if o.Topics[0].Age != AgeStr(uint64(ovNow.UnixMilli())-50) {
+		t.Errorf("age %q", o.Topics[0].Age)
+	}
 	if o.Topics[0].Head != "hello" || o.Topics[1].Head != "" || o.Topics[0].MsgCount != 3 || o.Topics[0].LastPublishMs != 50 {
 		t.Errorf("row: %+v", o.Topics)
 	}

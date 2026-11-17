@@ -298,6 +298,12 @@ async function runVerbCommandDispatch(tokens, ctx) {
   const cmd = tokens[0];
   let out;
   switch (cmd) {
+    case "overview": {
+      parseOrHelp(ctx, tokens, {});
+      ctx.overviewView();
+      out = "overview: showing the 概要 tab";
+      break;
+    }
     case "conns": {
       // The tab and, with --trsf, the reading panel inside it. Nothing is
       // fetched here: the tab is already fed by the snapshot poll, and the

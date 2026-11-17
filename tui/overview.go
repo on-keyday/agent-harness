@@ -178,10 +178,9 @@ func overviewRows(o cli.Overview) []overviewRow {
 	}
 	head("board", fmt.Sprintf("board: %d topics, %d messages", o.TopicCount, o.MsgTotal))
 	errRow(o.BoardErr)
-	now := time.Now()
 	for _, t := range o.Topics {
 		rows = append(rows, overviewRow{kind: "topic", key: t.Name,
-			text: fmt.Sprintf("  %-24s %d msgs  %-8s %s", truncateLeft(t.Name, 24), t.MsgCount, cli.OverviewAge(t.LastPublishMs, now), t.Head)})
+			text: fmt.Sprintf("  %-24s %d msgs  %-8s %s", truncateLeft(t.Name, 24), t.MsgCount, t.Age, t.Head)})
 	}
 	return rows
 }

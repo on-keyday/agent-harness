@@ -148,7 +148,8 @@ func CapDescription(c protocol.Capability) string {
 		return "decide which runner keys may register: runner enroll, runner keys, runner unenroll; " +
 			"and make one runner leave (runner kick); NOT implied by runner_admin"
 	case protocol.Capability_BoardObserve:
-		return "list board topics, read a topic's retained messages, list its subscribers, list and read archives (board archives, board read --archive); " +
+		return "list board topics, read a topic's retained messages, list its subscribers, list and read archives (board archives, board read --archive) -- " +
+			"the overview's board section (overview) reads topics and each one's newest message this way; " +
 			"and read another task's direct messages (its chat.<id>, chat.operator, a tree.<id> you are not in) by any agent verb. " +
 			"NOT required to send, to read your own inbox, or to read a group topic"
 	case protocol.Capability_BoardPurge:

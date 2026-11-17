@@ -205,3 +205,30 @@ fetch).
 - Exact visual styling, reusing the existing badge colours
   (`stateBadgeColor`) and the TUI's styles.
 - JSON field names for `overview --json`.
+
+## Amendment 2026-11-17 — as built
+
+Decided while building (designer's calls, recorded in the plan's ledger):
+
+- **K = 3** (`cli.OverviewRowCap`) for every section, hosts included; the head
+  budget is 60 runes (`cli.OverviewHeadRunes`). The TUI key is `V`.
+- **The TUI overlay fetches conns itself**, with forwards and the board, on
+  open and every 5 s. The Architecture section above said "conns from the
+  state it already holds"; that state is filled only once the conns view has
+  been opened, so the overlay would have shown 0 clients until then.
+- **The state badge** is `cli.TaskStateBadge`: the lifecycle badge, or the
+  program's when the hooks never reported — the rule the TUI Life column
+  already used, moved into `cli` and called from both.
+- **A repo is named as the task list's `repo` order names it** (`repoLabels`:
+  the last path element, or the full path when two repos share it).
+- **A topic's age is a string computed in Go** (`OverviewTopic.Age`), so the
+  WebUI prints it rather than re-deriving "2m ago".
+- **Empty sections serialise as `[]`**, not `null`, in `overview --json` and
+  for the WebUI.
+- **The WebUI tab bar changed at phone width.** An eighth tab made the
+  existing labels break inside a word (タ/ス/ク). At ≤ 600 px a label no longer
+  breaks, the gaps and side padding are smaller (all eight fit at 390 px), and
+  the bar scrolls sideways if they still do not fit. Wider screens are
+  unchanged.
+- **The `board_observe` description** (`cli/verb/caps.go`) names `overview`,
+  whose board section reads topics and each one's newest message.

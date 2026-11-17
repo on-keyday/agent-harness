@@ -2994,6 +2994,10 @@ func init() {
 			a := OverviewAction{}
 			return a, nil
 		},
+		"overview\x00webui": func(b Bound) (Action, error) {
+			a := OverviewAction{}
+			return a, nil
+		},
 		"caps\x00cli": func(b Bound) (Action, error) {
 			a := CatalogAction{}
 			a.Sub = "caps"

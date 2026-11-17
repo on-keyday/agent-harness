@@ -97,6 +97,7 @@ func main() {
 		"list":               js.FuncOf(harnessList),
 		"restore":            js.FuncOf(harnessRestore),
 		"snapshot":           js.FuncOf(harnessSnapshot),
+		"overview":           js.FuncOf(harnessOverview),
 		"gridSet":            js.FuncOf(harnessGridSet),
 		"previewStart":       js.FuncOf(harnessPreviewStart),
 		"streamStart":        js.FuncOf(harnessStreamStart),
@@ -1135,6 +1136,18 @@ func harnessCapsReachText(this js.Value, args []js.Value) any {
 // lastListing is the listing the last snapshot drew the tree from.
 var lastListing []protocol.TaskInfo
 
+// The rest of the last snapshot poll, kept for harness.overview, which builds
+// from what the poll already fetched and reads only the board itself. The
+// errors are kept too: the poll degrades a failed conns or forwards list to an
+// empty one, and the overview names the failure instead.
+var (
+	lastRunners     []protocol.RunnerInfo
+	lastConns       []protocol.ConnInfo
+	lastConnsErr    error
+	lastForwards    []protocol.PortForwardInfo
+	lastForwardsErr error
+)
+
 // harnessReachOf answers the tree's reach mode over lastListing, with the
 // same authority functions `caps reach` prints: what taskId reaches through
 // sel (a capability name, "view" or "delegate"), and the entries the selector
@@ -1896,6 +1909,7 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 			// Kept for the tree's reach mode and what-if, which ask about it on
 			// every redraw and must not wait on a request to do so.
 			lastListing = lr.Tasks
+			lastRunners = lr.Runners
 			taskTree, grantEdges := taskTreeOf(lr.Tasks)
 
 			// Fetch the live connection list using the same long-lived client
@@ -1904,6 +1918,7 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 			// empty array so the topology section gracefully shows "(none)" rather than
 			// breaking the entire snapshot.
 			connInfos, connErr := c.ConnListWith(rootCtx)
+			lastConns, lastConnsErr = connInfos, connErr
 			if connErr != nil {
 				slog.Warn("snapshot: ConnListWith failed (topology will be empty)", "err", connErr)
 			}
@@ -1931,6 +1946,7 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 			// not fail the whole snapshot — log and emit an empty array,
 			// exactly as the conns section above degrades.
 			fwInfos, fwErr := c.PortForwardListWith(rootCtx, cli.ForwardListQuery{})
+			lastForwards, lastForwardsErr = fwInfos, fwErr
 			if fwErr != nil {
 				slog.Warn("snapshot: PortForwardListWith failed (forwards will be empty)", "err", fwErr)
 			}
@@ -1983,6 +1999,40 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 				"execs":         execs,
 				"idle_watchers": idleWatchers,
 			}))
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
+// harnessOverview builds cli.BuildOverview over the last snapshot poll plus a
+// fresh read of the board, and hands the page its JSON -- the same object
+// `overview --json` prints, so the page renders fields it does not compute.
+//
+//	harness.overview() -> Promise<Overview>
+func harnessOverview(this js.Value, args []js.Value) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		go func() {
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			in := cli.OverviewInput{
+				Runners: lastRunners, Tasks: lastListing,
+				Conns: lastConns, ConnsErr: lastConnsErr,
+				Forwards: lastForwards, ForwardsErr: lastForwardsErr,
+			}
+			in.Topics, in.Newest, in.TopicsErr = c.OverviewBoardWith(rootCtx)
+			blob, err := json.Marshal(cli.BuildOverview(in, time.Now()))
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			resolve.Invoke(js.Global().Get("JSON").Call("parse", string(blob)))
 		}()
 		return nil
 	})

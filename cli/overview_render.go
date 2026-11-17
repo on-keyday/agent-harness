@@ -34,7 +34,7 @@ func WriteOverview(w io.Writer, o Overview, now time.Time) {
 	fmt.Fprintf(w, "board: %d topics, %d messages\n", o.TopicCount, o.MsgTotal)
 	writeOverviewErr(w, o.BoardErr)
 	for _, t := range o.Topics {
-		fmt.Fprintf(w, "  %-24s %d msgs  %-8s %s\n", t.Name, t.MsgCount, OverviewAge(t.LastPublishMs, now), t.Head)
+		fmt.Fprintf(w, "  %-24s %d msgs  %-8s %s\n", t.Name, t.MsgCount, t.Age, t.Head)
 	}
 }
 
