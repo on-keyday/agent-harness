@@ -380,3 +380,34 @@ explicit value, "operator" or "task X". Refuse a connection that has no record.
 identity, so it does not depend on this change. Changing how every handler
 resolves its caller is its own change and needs its own verification across
 connection paths.
+
+---
+
+## A schedule cannot run the stream kind, against GD G1
+
+**What.** GD G1 (`2026-11-12-run-modes-and-records-grand-design.md:77`,
+decided by the operator) makes the run mode independent of the data plane
+(PTY / stream kind). Pillar S excludes the stream kind from schedules all the
+same:
+
+- Non-goals line, `2026-11-15-pillar-s-schedules-design.md:34`, present since
+  the spec's first commit `2017f725`. No Decisions row names G1, although the
+  spec's own header requires one for every GD row it reverses.
+- `stream_refused` added in `971e5043`, removed in `8fbd1d96` because
+  `ScheduleSpec` has no stream field (plan Ruling R16, `b7393d1b`).
+- `scheduleOff["stream"]` (`cli/verb/spawn.go:170`) drops `--stream` from the
+  schedule verbs; a firing creates and resumes `TaskKind_Interactive` only
+  (`server/schedule_fire.go:285`, `:294`).
+
+A one-off background stream session is allowed (`cli/verb/spawn.go:345`), so
+the exclusion is a scope cut, not a limit of the run model.
+
+**The fix.** A stream field on `ScheduleSpec` (a `.bgn` change; check the
+disk axis, since schedules are persisted), the firing path taking the kind
+from it, `--stream` on `schedule new` / `edit` on all three surfaces, and a
+pillar S Decisions row recording that the exclusion is withdrawn. Unchecked:
+what binding an existing stream task with `--task` does today.
+
+**Why deferred.** Found 2026-11-17 while designing the overview; the operator
+asked for it to be fixed right after the overview lands (operator,
+2026-11-17).
