@@ -62,10 +62,13 @@ apart.
   doubling from there (objtrsf `objproto/objproto.go:1325`,
   `objproto/session.go`). Each retransmit that arrives while the first dial
   is still in progress misses the map and starts another dial, and each
-  finished dial's `connMap.Set` replaces the previous entry. The runner sees
-  each socket as a separate peer and answers each copy of the hello; the
-  server keeps the first ack but sends on the last socket set. Read from the
-  code, not observed: LAN dials finish well inside 333 ms. Behind a TLS
+  finished dial's `connMap.Set` replaces the previous entry. The peer sees
+  each socket as a separate connection and answers each copy of the hello.
+  Observed (2026-11-21, a throwaway test against objtrsf 702d89f: an
+  `httptest` server holding every upgrade 1.5 s, ws and wss): three upgrade
+  requests, the handshake completes at 1.5 s, and once the later sockets
+  land the server holds three connections and a message sent afterwards
+  reaches none of them. LAN dials finish well inside 333 ms; behind a TLS
   front with a container that starts on demand, a dial of several seconds is
   the normal case.
 
@@ -103,7 +106,7 @@ worth a second look.
 | D7 | The table is a `*transport.WebSocketTargets`, created by the caller and passed in `WebSocketConfig.Targets` when the leg is built. This follows the vsock rule that a dial target that does not fit 16 bytes goes to the leg's constructor, never into the transport string. Entries are added at run time with `Register` and not removed. An entry is a few dozen bytes, and the table holds at most the candidates added since the server started; removing one safely would mean tracking which live connections still use its address, for no gain at that size | this spec |
 | D8 | Dialing a named address: the send loop looks the key up in `Targets`. `Location` is the registered URL; `Origin` is `http://` or `https://` plus the same host. The leg's TLS config is used as is: `tls.Dialer` takes SNI from `Location`'s host, which is now the name. Certificate verification stays off, as for IP targets (`cli/tls_client.go`: objproto authenticates the peer). A key with no entry, a nil `Targets`, or a URL scheme that differs from `pkt.To.Transport` is logged and reported with `CannotSend`. There is no fallback to dialing the address | this spec |
 | D9 | The server's WebSocket leg gets `TLS: cli.ClientTLSConfig()` in `buildEndpoint`, and `DialLegs` answers `wss` with the same condition as `ws` (`cfg.Addr != ""`). This fixes P4 for IP candidates too | this spec |
-| D14 | (P6, found by the builder check.) The WebSocket send loop keeps one dial in flight per address. While a dial to an address is in progress, a handshake packet for that address is dropped with a debug log; objproto retransmits it, and once the socket is in the map the retransmit goes out on it. Any other packet for that address is reported with `CannotSend`, as for an address with no socket today. Holding packets until the dial finishes would deliver sooner, but it adds a queue, its bound and its drain; dropping costs at most one retransmit interval after the dial completes | this spec |
+| D14 | (P6, found by the builder check.) **The first socket to land for an address wins.** Dials still start as they do today, one per handshake packet that finds no socket. When a dial completes and the address already has a socket, the new socket is closed without being used, and the handshake packet it carried is sent on the existing socket. That is a retransmit on the right socket, which objproto already answers by replaying its ack. **Replaces** the first version of D14, "one dial in flight per address, drop handshakes meanwhile". The operator asked for the current behaviour to be checked first. A throwaway test whose first upgrade request hangs and later ones are served showed: today the handshake completes in 337 ms (the retransmit's second dial rescues it), one-dial-in-flight fails it at the 10 s wait, and first-socket-wins completes it in 336 ms. All three were run against objtrsf 702d89f on 2026-11-21. In the P6 test both fixes leave one server connection that carries data | operator asked for the check; this spec chose the mechanism |
 | D10 | The dial manager resolves a URL candidate by registering it in the server's `Targets` and returning the named `ConnectionID` with a random ID. Other candidates still go through `cli.ResolveCandidate`. This is a server-side `Resolve` passed in `dialManagerConfig.Resolve`, which already exists for injection. `cli.ResolveCandidate` and `agent-runner --server-cid` do not accept URLs (Scope) | this spec |
 | D11 | `RecordsPointingAt` matches by address only when the record's bound key equals the runner's key, the condition adopt already applies. Named addresses fix P3 for named candidates by themselves; this closes the same hole for IP candidates, where two runners reachable at one IP:port (one NAT, one proxy) would otherwise lose each other's records on a kick | this spec |
 | D12 | `RunnerInfo` gains `link_target`: the candidate text that answered, for a runner whose link is `dial_record`. It is empty for every other link. Surfaces print it, so a named runner reads as its URL, not as `@<hex>` | operator (accepted the proposal, 2026-11-21) |
@@ -120,6 +123,10 @@ worth a second look.
   when one name resolves to several IPs.
 - Verifying the server certificate on `wss` dials (D8).
 - Removing table entries (D7).
+- The same P6 race in the wasm WebSocket implementation (`websocket_wasm.go`
+  `dialAndSend`), which the WebUI uses to reach the server. It is not on the
+  dial-record path, and a browser test harness for it is a separate piece of
+  work.
 
 ## 1. objtrsf
 
@@ -176,10 +183,14 @@ address there has no table to resolve it, so the browser is handed
   from `Targets` as in D8. For any other address the URL is built as today.
 - `connMap` keeps its `netip.AddrPort` key. Named addresses are distinct per
   target, so P2 needs no change there.
-- One dial in flight per address (D14): a set of addresses being dialed,
-  guarded with `connMap`'s lock or its own. The address is added before the
-  dial goroutine starts and removed after `connMap.Set` or on dial failure.
-  This applies to every WebSocket dial, named or not.
+- First socket wins (D14): `connectionMap` gains `setIfAbsent(addr, conn)
+  (existing *WebSocketConn, stored bool)` under its lock. The dial
+  goroutine calls it in place of `Set`. When `stored` is false, it closes
+  the new `websocket.Conn`, sends `pkt.Data` on `existing`, reports
+  `CannotSend` if that send fails, and does not hand the new socket to the
+  receive loop. This applies to every WebSocket dial, named or not. The wasm
+  implementation (`websocket_wasm.go` `dialAndSend`) has the same race and
+  is left as it is (Non-goals).
 
 ## 2. Harness server
 
@@ -284,10 +295,15 @@ objtrsf unit:
   written first against the current dial path: two IP `ConnectionID`s at
   `127.0.0.1:<port>` produce **one** upgrade request and one socket, with
   `Host: 127.0.0.1:<port>` and no SNI (P1, P2).
-- Dial coalescing (D14): a TLS server whose accept is delayed past several
-  retransmit intervals (for example 1.5 s). Exactly one upgrade request
-  arrives and the handshake completes. Red first against the current code,
-  which opens one socket per retransmit.
+- First socket wins (D14), ws and wss:
+  - Slow front: every upgrade is held 1.5 s. After 4 s, the server holds
+    exactly one objproto connection, and a message sent then arrives and is
+    answered. Red first against the current code: three server connections,
+    and the message reaches none of them.
+  - Hung first request: the first upgrade never answers, and later ones are
+    served at once. The handshake completes within 1 s. This passes on the
+    current code too. It is the guard that rejected the first version of
+    D14 (one dial in flight), which fails it.
 - A named address with no table entry, or a scheme mismatch, reaches
   `CannotSend`.
 
