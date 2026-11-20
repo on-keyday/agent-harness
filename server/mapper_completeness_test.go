@@ -214,6 +214,7 @@ func TestToRunnerInfoMapsEveryField(t *testing.T) {
 		Link:             protocol.RunnerLink_Via,
 		LinkRecord:       9,
 		LinkVia:          testRunnerID("ws:127.0.0.1:8540-2"),
+		LinkTarget:       "wss://h/ws",
 		ActiveTasks:      map[string]struct{}{"00112233445566778899aabbccddeeff": {}},
 		ConnectedAt:      now,
 		LastTaskActivity: now,
