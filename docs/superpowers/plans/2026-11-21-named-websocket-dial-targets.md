@@ -12,8 +12,8 @@
 
 ## Global Constraints
 
-- Two repos. objtrsf: `/home/kforfk/workspace/objtrsf`, branch `main`, commit locally, **do not push until Task 8**. Harness: this worktree, branch `harness/70fbad4a6eb6f1e992be8a669f1bcefd`.
-- While developing, the harness builds against the local objtrsf through a `replace github.com/on-keyday/objtrsf => /home/kforfk/workspace/objtrsf` line in `go.mod` that is **never committed** (Task 4 adds it, Task 8 replaces it with a real version).
+- Two repos. objtrsf: a local checkout (`<objtrsf>` below), branch `main`, commit locally, **do not push until Task 8**. Harness: the task's worktree and branch.
+- While developing, the harness builds against the local objtrsf through a `replace github.com/on-keyday/objtrsf => <objtrsf>` line in `go.mod` that is **never committed** (Task 4 adds it, Task 8 replaces it with a real version).
 - Stage by explicit path only; `git show --stat` after every commit.
 - Harness tests: `make test` (strips inherited `HARNESS_*`), integration: `make test-integration`. This host is memory-tight (≈2 GiB free, integration binary ≈2 GB): if the integration binary is OOM-killed (`signal: killed`, `journalctl -k | grep 'Killed process'`), run the affected tests by `-run` in smaller groups; do not read an OOM kill as a test failure.
 - Compile checks write no binaries into the worktree: `go build ./...`, `go vet ./...`, `go vet -tags integration ./...`.
@@ -171,7 +171,7 @@
   5. cancel runner B's `ListenAndServe` context: B deregisters within 15 s, A stays registered (Review Focus 5);
   6. `runner kick` on A (`cli` kick with A's identity prefix): A's record is gone from `RunnerDials.List()`, B's record is still there.
 - [ ] **Step 2:** Scoped integration run: `go test -tags integration ./integration -run TestNamedDialRecordsBehindOneAddress -count=1` (with the `GO_TEST_ENV` unsets) → PASS.
-- [ ] **Step 3:** Negative control: extract the objtrsf tree at the Task 2 commit into the scratchpad (`git -C /home/kforfk/workspace/objtrsf archive <task2 sha> | tar -x -C <scratch>/objtrsf-old`), point the `replace` there, rerun → FAIL (no host name reaches the proxy; the two records do not reach two runners). Restore the `replace`. One line of the result goes in the commit body.
+- [ ] **Step 3:** Negative control: extract the objtrsf tree at the Task 2 commit into the scratchpad (`git -C <objtrsf> archive <task2 sha> | tar -x -C <scratch>/objtrsf-old`), point the `replace` there, rerun → FAIL (no host name reaches the proxy; the two records do not reach two runners). Restore the `replace`. One line of the result goes in the commit body.
 - [ ] **Step 4:** Commit: `integration: two dial records behind one TLS address, told apart by URL`.
 
 ### Task 8: land
