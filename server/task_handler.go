@@ -2380,6 +2380,7 @@ func toRunnerInfo(r RunnerEntry) protocol.RunnerInfo {
 	info.Link = r.Link
 	info.LinkRecord = r.LinkRecord
 	info.LinkVia = r.LinkVia
+	info.SetLinkTarget([]byte(r.LinkTarget))
 	// WHERE it is reached, which id used to answer by being an address.
 	info.Cid = protocol.ConnIDFromObjproto(r.Conn.ConnectionID())
 

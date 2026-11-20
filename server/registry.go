@@ -96,9 +96,11 @@ type RunnerEntry struct {
 	// Link is how this runner is connected (RunnerInfo.link): dialed_in for an
 	// accepted connection, else the DialOrigin's. LinkRecord is the dial
 	// record's id for dial_record; LinkVia the relay runner for via.
+	// LinkTarget is the record's candidate that answered (dial_record only).
 	Link       protocol.RunnerLink
 	LinkRecord uint32
 	LinkVia    protocol.RunnerID
+	LinkTarget string
 }
 
 // snapshot copies e for a caller outside r.mu. ActiveTasks is cloned: a plain
@@ -229,11 +231,11 @@ func (r *Registry) Add(e *RunnerEntry) (displaced objproto.ConnectionID, err err
 
 // SetLink records how a connected runner is held: a dial record that adopted
 // an existing connection (spec 2026-11-04 D20) makes it dial_record.
-func (r *Registry) SetLink(id objproto.ConnectionID, link protocol.RunnerLink, record uint32) {
+func (r *Registry) SetLink(id objproto.ConnectionID, link protocol.RunnerLink, record uint32, target string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if e, ok := r.runners[id]; ok {
-		e.Link, e.LinkRecord = link, record
+		e.Link, e.LinkRecord, e.LinkTarget = link, record, target
 	}
 }
 

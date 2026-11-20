@@ -268,6 +268,9 @@ function runnerRowModel(r) {
     // How it is connected — in / out / dial:<id> / via:<id>, the string `ls`
     // prints as link=, rendered by the bridge (cli.RunnerLinkStr).
     link: r.link || "-",
+    // The dial-record URL a named cid (@<hex>) stands for, as `ls` prints
+    // target=; "" when the runner has none.
+    target: r.linkTarget || "",
   };
 }
 
@@ -338,7 +341,7 @@ function renderRunnerRows(container, runners, via) {
 
     const meta = document.createElement("div");
     meta.className = "task-row-meta";
-    meta.textContent = `${m.id}…  key=${m.key}  link=${m.link}  ${m.cid}`;
+    meta.textContent = `${m.id}…  key=${m.key}  link=${m.link}${m.target ? `  target=${m.target}` : ""}  ${m.cid}`;
 
     row.append(line1, agents, roots, meta);
     // Nothing for a runner holding no task: its load already reads 0/N.

@@ -1741,6 +1741,8 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					"linkKind":   r.Link.String(),
 					"linkRecord": float64(r.LinkRecord),
 					"linkVia":    r.LinkVia.Hex(),
+					// linkTarget: the dial-record URL a named cid stands for.
+					"linkTarget": string(r.LinkTarget),
 				})
 			}
 			tasks := make([]any, 0, len(lr.Tasks))

@@ -51,3 +51,46 @@ func TestListRunnerJSONHasLinkFields(t *testing.T) {
 		t.Errorf("via runner: %v", r)
 	}
 }
+
+func TestListRunnerRowShowsLinkTarget(t *testing.T) {
+	named := linkedRunner(protocol.RunnerLink_DialRecord, 0x3fa9c012)
+	named.SetLinkTarget([]byte("wss://agent-1.example.com/ws"))
+	plain := linkedRunner(protocol.RunnerLink_DialedIn, 0)
+	for _, render := range []func(*protocol.ListResultBody, interface{ Write([]byte) (int, error) }){
+		func(lr *protocol.ListResultBody, w interface{ Write([]byte) (int, error) }) { renderList(lr, w) },
+		func(lr *protocol.ListResultBody, w interface{ Write([]byte) (int, error) }) { renderListTree(lr, w) },
+	} {
+		var out strings.Builder
+		render(&protocol.ListResultBody{Runners: []protocol.RunnerInfo{named, plain}}, &out)
+		lines := strings.Split(out.String(), "\n")
+		var namedRow, plainRow string
+		for _, l := range lines {
+			if strings.Contains(l, "link=dial:") {
+				namedRow = l
+			}
+			if strings.Contains(l, "link=in") {
+				plainRow = l
+			}
+		}
+		if !strings.Contains(namedRow, "target=wss://agent-1.example.com/ws") {
+			t.Errorf("named row lacks target=: %q", namedRow)
+		}
+		if strings.Contains(plainRow, "target=") {
+			t.Errorf("row without a link target prints target=: %q", plainRow)
+		}
+	}
+	var out strings.Builder
+	renderListJSON(&protocol.ListResultBody{Runners: []protocol.RunnerInfo{named, plain}}, &out)
+	var doc struct {
+		Runners []map[string]any `json:"runners"`
+	}
+	if err := json.Unmarshal([]byte(out.String()), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := doc.Runners[0]["link_target"]; !ok || v != "wss://agent-1.example.com/ws" {
+		t.Errorf("named runner link_target = %v (present %v)", v, ok)
+	}
+	if v, ok := doc.Runners[1]["link_target"]; !ok || v != "" {
+		t.Errorf("plain runner link_target = %v (present %v), want an empty string, not absent", v, ok)
+	}
+}

@@ -978,6 +978,14 @@ format RunnerID:
 # sorted into identity or address while old and new binaries still interoperated;
 # that identity is gone as of RunnerID becoming opaque, and the two types now
 # differ in size as well as in meaning.
+#
+# A 16-byte ip_addr inside 100::/64 (RFC 6666, discard-only) is not an IP.
+# With transport vsock it is (cid u32, port u32) in the low 64 bits. With
+# transport ws or wss it is a named target: a 64-bit key into the table of
+# the server that registered a dial record's URL candidate
+# (docs/superpowers/specs/2026-11-21-named-websocket-dial-targets-design.md).
+# Such a cid means something only to that server and is never dialed by
+# anyone else.
 format ConnID:
     transport_len :u8
     transport :[transport_len]u8
@@ -1095,6 +1103,12 @@ format RunnerInfo:
     link :RunnerLink
     link_record :u32     # dial_record: the record's id; else 0
     link_via :RunnerID   # via: the relay runner's identity; else zero
+    # The dial-record candidate that answered, as stored (canonical) — set
+    # only when link == dial_record. A named cid (cid=ws(s):@<hex>-<id>) is a
+    # key into the server's table; this is the URL it stands for. Bounded by
+    # the server's 512-byte limit on a record's candidates.
+    link_target_len :u16
+    link_target :[link_target_len]u8
 
 enum RunnerLink:
     :u8

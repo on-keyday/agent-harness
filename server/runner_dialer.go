@@ -43,7 +43,7 @@ type dialManagerConfig struct {
 	// the ordinary connection path, which reports through origin.
 	Dial func(ctx context.Context, cid objproto.ConnectionID, origin *DialOrigin) error
 	// SetLink marks an ADOPTED connection's registry entry as this record's.
-	SetLink func(cid objproto.ConnectionID, link protocol.RunnerLink, record uint32)
+	SetLink func(cid objproto.ConnectionID, link protocol.RunnerLink, record uint32, target string)
 	Logger  *slog.Logger
 
 	// Defaults: cli.ResolveCandidate, a context-aware sleep, 500 ms, 30 s.
@@ -159,7 +159,7 @@ func (m *dialManager) Stop(id uint32) {
 	m.mu.Unlock()
 	if m.cfg.SetLink != nil {
 		for _, cid := range held {
-			m.cfg.SetLink(cid, protocol.RunnerLink_DialedOut, 0)
+			m.cfg.SetLink(cid, protocol.RunnerLink_DialedOut, 0, "")
 		}
 	}
 }
@@ -389,12 +389,13 @@ func (m *dialManager) attempt(rootCtx, ctx context.Context, l *dialLoop) (connec
 		att := newDialAttempt()
 		origin := &DialOrigin{
 			Link: protocol.RunnerLink_DialRecord, RecordID: rec.ID, ExpectKey: rec.Key,
+			Candidate: rec.Candidates[rc.index],
 			OnRegistered: func(id protocol.RunnerID) {
 				if !m.current(l) {
 					// The record was removed while this connection was
 					// still registering: it must not claim the record.
 					if e, ok := m.cfg.Registry.GetByIdentity(id); ok && m.cfg.SetLink != nil {
-						m.cfg.SetLink(e.ID, protocol.RunnerLink_DialedOut, 0)
+						m.cfg.SetLink(e.ID, protocol.RunnerLink_DialedOut, 0, "")
 					}
 				}
 				att.registered(id)
@@ -463,7 +464,7 @@ func (m *dialManager) adoptOrYield(l *dialLoop, resolved []resolvedCandidate) (a
 			// random id, and only transport and address matched.
 			m.connected(l, e.ID, rc.index, e.Identity)
 			if m.cfg.SetLink != nil {
-				m.cfg.SetLink(e.ID, protocol.RunnerLink_DialRecord, l.rec.ID)
+				m.cfg.SetLink(e.ID, protocol.RunnerLink_DialRecord, l.rec.ID, l.rec.Candidates[rc.index])
 			}
 			m.mu.Lock()
 			// It may have gone between List and here.

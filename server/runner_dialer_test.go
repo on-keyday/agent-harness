@@ -31,6 +31,8 @@ type fakeNet struct {
 	identity func(cid objproto.ConnectionID) protocol.RunnerID
 	origins  map[objproto.ConnectionID]*DialOrigin
 	links    map[objproto.ConnectionID]uint32 // SetLink(dial_record) calls
+	targets  map[objproto.ConnectionID]string // the target text of every SetLink
+	answered map[objproto.ConnectionID]string // DialOrigin.Candidate of every dial
 	sleeps   []time.Duration
 }
 
@@ -54,14 +56,16 @@ func runnerIDOf(s string) protocol.RunnerID {
 func newFakeNet(t *testing.T, keys *RunnerKeyStore, store *RunnerDialStore, key ed25519.PublicKey) *fakeNet {
 	n := &fakeNet{t: t, reg: NewRegistry(), key: key,
 		origins: map[objproto.ConnectionID]*DialOrigin{}, links: map[objproto.ConnectionID]uint32{},
+		targets: map[objproto.ConnectionID]string{}, answered: map[objproto.ConnectionID]string{},
 		fail:     func(objproto.ConnectionID) error { return nil },
 		identity: func(objproto.ConnectionID) protocol.RunnerID { return runnerIDOf("one-runner") },
 	}
 	n.m = newDialManager(dialManagerConfig{
 		Store: store, Keys: keys, Registry: n.reg, Dial: n.dial,
-		SetLink: func(cid objproto.ConnectionID, link protocol.RunnerLink, record uint32) {
+		SetLink: func(cid objproto.ConnectionID, link protocol.RunnerLink, record uint32, target string) {
 			n.mu.Lock()
 			n.links[cid] = record
+			n.targets[cid] = target
 			n.mu.Unlock()
 		},
 		BackoffInitial: 20 * time.Millisecond, BackoffMax: 80 * time.Millisecond,
@@ -84,6 +88,7 @@ func newFakeNet(t *testing.T, keys *RunnerKeyStore, store *RunnerDialStore, key 
 func (n *fakeNet) dial(_ context.Context, cid objproto.ConnectionID, o *DialOrigin) error {
 	n.mu.Lock()
 	n.calls = append(n.calls, cid.Transport+":"+cid.Addr.String())
+	n.answered[cid] = o.Candidate
 	fail, identity := n.fail, n.identity
 	n.mu.Unlock()
 	if err := fail(cid); err != nil {
@@ -472,5 +477,85 @@ func TestRecordsPointingAtRequiresKeyForAddressMatch(t *testing.T) {
 	e := RunnerEntry{ID: pcid(t, "ws:127.0.0.1:9600-5"), Identity: runnerIDOf("someone"), Key: mineKey}
 	if got := n.m.RecordsPointingAt(e); len(got) != 1 || got[0] != ids[0] {
 		t.Fatalf("RecordsPointingAt = %v, want only %d (the record on the runner's key)", got, ids[0])
+	}
+}
+
+// A record's dial names the candidate it walked to; adoption and Stop set and
+// clear the registry's link target (spec D12).
+func TestDialRecordLinkTarget(t *testing.T) {
+	f := newDialerFixture(t)
+	f.n.fail = func(cid objproto.ConnectionID) error {
+		if cid.Addr.Port() == 9700 {
+			return errTestRefused
+		}
+		return nil
+	}
+	f.n.m.Start(f.ctx)
+	rec := f.add(t, "ws:127.0.0.1:9700-*", "ws:127.0.0.1:9701-*")
+	eventually(t, "connected", func() bool { return dialRow(f.n.m, rec.ID).DialState == protocol.RunnerDialState_Connected })
+	e, _ := f.n.reg.GetByIdentity(runnerIDOf("one-runner"))
+	f.n.mu.Lock()
+	got := f.n.answered[e.ID]
+	f.n.mu.Unlock()
+	if got != "ws:127.0.0.1:9701-*" {
+		t.Fatalf("DialOrigin.Candidate = %q, want the candidate that answered", got)
+	}
+	f.n.m.Stop(rec.ID)
+	f.n.mu.Lock()
+	cleared, ok := f.n.targets[e.ID]
+	f.n.mu.Unlock()
+	if !ok || cleared != "" {
+		t.Fatalf("Stop: SetLink target = %q (called %v), want it cleared", cleared, ok)
+	}
+}
+
+func TestAdoptionSetsLinkTarget(t *testing.T) {
+	f := newDialerFixture(t)
+	oneShot := pcid(t, "ws:127.0.0.1:9702-77")
+	if _, err := f.n.reg.Add(&RunnerEntry{ID: oneShot, Identity: runnerIDOf("one-runner"), Key: f.key,
+		Conn: &fakeConn{id: oneShot}, ActiveTasks: map[string]struct{}{}}); err != nil {
+		t.Fatal(err)
+	}
+	f.n.m.Start(f.ctx)
+	rec := f.add(t, "ws:127.0.0.1:9702-*")
+	eventually(t, "adopted", func() bool { return dialRow(f.n.m, rec.ID).DialState == protocol.RunnerDialState_Connected })
+	f.n.mu.Lock()
+	got := f.n.targets[oneShot]
+	f.n.mu.Unlock()
+	if got != "ws:127.0.0.1:9702-*" {
+		t.Fatalf("adoption SetLink target = %q, want the record's candidate", got)
+	}
+}
+
+func TestRegistryLinkTargetReachesRunnerInfo(t *testing.T) {
+	reg := NewRegistry()
+	cid := pcid(t, "ws:127.0.0.1:9703-1")
+	if _, err := reg.Add(&RunnerEntry{ID: cid, Identity: runnerIDOf("r"), Conn: &fakeConn{id: cid}, ActiveTasks: map[string]struct{}{}}); err != nil {
+		t.Fatal(err)
+	}
+	reg.SetLink(cid, protocol.RunnerLink_DialRecord, 7, "wss://h/ws")
+	e, _ := reg.Get(cid)
+	if info := toRunnerInfo(e); string(info.LinkTarget) != "wss://h/ws" || info.LinkRecord != 7 {
+		t.Fatalf("RunnerInfo link_target = %q record %d", info.LinkTarget, info.LinkRecord)
+	}
+	reg.SetLink(cid, protocol.RunnerLink_DialedOut, 0, "")
+	e, _ = reg.Get(cid)
+	if e.LinkTarget != "" {
+		t.Fatalf("LinkTarget = %q after dialed_out", e.LinkTarget)
+	}
+}
+
+// cid= in ls for a named runner pastes back into a by_conn_id selector.
+func TestByConnIDSelectsNamedRunner(t *testing.T) {
+	cid := objproto.NewConnectionID("wss", objproto.NamedAddrPort([8]byte{1, 2, 3}), 99)
+	back, err := objproto.ParseConnectionID(cid.String(), objproto.ParseOption_ResolveAddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sel protocol.RunnerSelector
+	sel.Kind = protocol.RunnerSelectorKind_ByConnId
+	sel.SetConnId(protocol.ConnIDFromObjproto(back))
+	if !selectorMatches(sel, &RunnerEntry{ID: cid}) {
+		t.Fatalf("by_conn_id %s does not select the runner at %s", back, cid)
 	}
 }

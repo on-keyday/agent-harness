@@ -147,6 +147,7 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 		if origin != nil {
 			entry.Link = origin.Link
 			entry.LinkRecord = origin.RecordID
+			entry.LinkTarget = origin.Candidate
 			if origin.Via != nil {
 				entry.Via = origin.Via.Via
 				entry.ViaDialAddr = origin.Via.ViaDialAddr

@@ -1033,6 +1033,17 @@ bin/harness-cli runner kick <8+ hex of id=> [--force]
 - **Candidates are text**, tried in order on every attempt and re-resolved each
   time, as `--server-cid` is. A host name may contain `-` (an EC2 public DNS
   name does): the id is what follows the last `-`.
+- **A candidate may be a URL** — `wss://agent-1.example.com/ws`,
+  `ws://proxy:8080/a/ws` — for runners behind a front that routes by host
+  name or path (a CDN edge such as Cloudflare, a virtual host, a path-routing
+  proxy). The dial sends that host name as SNI and `Host` and that path, so
+  several runners can share one IP:port. The path is required; a query is
+  refused (`query is not supported`). The URL is printed by `runner dial ls`
+  and as `target=` on the runner's row, so it must not carry a credential.
+  URLs are taken by dial records only, not by `--server-cid` or `server
+  dial-runner`: a URL runner's `cid=` reads `wss:@<16 hex>-<id>`, a key that
+  means something only to this server. Design:
+  `docs/superpowers/specs/2026-11-21-named-websocket-dial-targets-design.md`.
 - **A record is bound to an enrolled key** (`--key`): a runner on another key
   at that address is refused before it registers, and `runner unenroll`
   removes the key's records. One key may carry several records — two slots on
@@ -1050,7 +1061,8 @@ bin/harness-cli runner kick <8+ hex of id=> [--force]
   `out` (`server dial-runner`), `dial:<id>` (a record), `via:<id>` (through a
   relay runner) — in `ls` and `ls --json`, the TUI runner detail (and a `Link`
   column once the runner pane is 129 cells wide, a terminal of about 260), and
-  the WebUI runner row.
+  the WebUI runner row. A runner a URL candidate reached also shows
+  `target=<url>` (TUI detail: `target:`).
 
 `runner dial add/ls/rm` need `runner_admin` (the server's network reach);
 `runner kick` needs `runner_enroll`. All four are on the CLI, the TUI command

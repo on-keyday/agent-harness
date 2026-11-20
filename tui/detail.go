@@ -321,6 +321,9 @@ func formatRunnerDetail(r protocol.RunnerInfo) string {
 	default:
 		fmt.Fprintf(&sb, "link:          %s\n", cli.RunnerLinkStr(r))
 	}
+	if len(r.LinkTarget) > 0 {
+		fmt.Fprintf(&sb, "target:        %s\n", string(r.LinkTarget))
+	}
 	fmt.Fprintf(&sb, "agent:         %s\n", agentProfilesDescriptor(r.AgentProfiles, string(r.AgentBin), r.SkillsInjected()))
 	fmt.Fprintf(&sb, "tasks:         %d active / %d max\n", r.ActiveTasksLen, r.MaxTasks)
 	for i, root := range r.AllowedRoots {

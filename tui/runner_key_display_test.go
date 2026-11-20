@@ -105,3 +105,14 @@ func TestRunnerDetailShowsLink(t *testing.T) {
 		t.Errorf("via detail:\n%s", d)
 	}
 }
+
+func TestRunnerDetailShowsLinkTarget(t *testing.T) {
+	r := protocol.RunnerInfo{Link: protocol.RunnerLink_DialRecord, LinkRecord: 0x3fa9c012}
+	if d := formatRunnerDetail(r); strings.Contains(d, "target:") {
+		t.Errorf("detail without a link target shows target:\n%s", d)
+	}
+	r.SetLinkTarget([]byte("wss://agent-1.example.com/ws"))
+	if d := formatRunnerDetail(r); !strings.Contains(d, "target:        wss://agent-1.example.com/ws") {
+		t.Errorf("detail:\n%s", d)
+	}
+}

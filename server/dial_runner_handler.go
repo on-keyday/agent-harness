@@ -35,6 +35,7 @@ type ViaRegistrationInfo struct {
 type DialOrigin struct {
 	Link      protocol.RunnerLink // dialed_out, dial_record or via; never dialed_in
 	RecordID  uint32              // dial_record: the record's id
+	Candidate string              // dial_record: the candidate text being dialed (RunnerInfo.link_target)
 	ExpectKey ed25519.PublicKey   // dial_record: a runner on any other key is refused before registration
 	Via       *ViaRegistrationInfo
 

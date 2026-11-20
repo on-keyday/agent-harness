@@ -221,7 +221,7 @@ func renderListRunners(lr *protocol.ListResultBody, out io.Writer) map[string]pr
 			agentProfilesStr(r.AgentProfiles, string(r.AgentBin), r.SkillsInjected()),
 			strings.Join(roots, ","),
 			RunnerKeyStr(r),
-			RunnerLinkStr(r),
+			RunnerLinkStr(r)+runnerLinkTargetSuffix(r),
 			r.Id.Hex(),
 			RunnerCIDStr(r.Cid),
 		)
@@ -439,7 +439,7 @@ func renderListTree(lr *protocol.ListResultBody, out io.Writer) {
 			agentProfilesStr(r.AgentProfiles, string(r.AgentBin), r.SkillsInjected()),
 			strings.Join(roots, ","),
 			RunnerKeyStr(r),
-			RunnerLinkStr(r),
+			RunnerLinkStr(r)+runnerLinkTargetSuffix(r),
 			r.Id.Hex(),
 			RunnerCIDStr(r.Cid),
 		)
@@ -502,6 +502,9 @@ type runnerJSON struct {
 	Link       string `json:"link"`
 	LinkRecord string `json:"link_record"`
 	LinkVia    string `json:"link_via"`
+	// LinkTarget is the dial-record candidate the runner answered on, ""
+	// for any other link. Always present.
+	LinkTarget string `json:"link_target"`
 }
 
 // RunnerKeyStr is what a runner row shows for the key it authenticated with:
@@ -715,6 +718,7 @@ func renderListJSONGroups(lr *protocol.ListResultBody, out io.Writer, groups []s
 			Link:           r.Link.String(),
 			LinkRecord:     runnerLinkRecordJSON(r),
 			LinkVia:        runnerLinkViaJSON(r),
+			LinkTarget:     string(r.LinkTarget),
 		})
 	}
 
@@ -1152,4 +1156,14 @@ func TaskScheduleHex(t *protocol.TaskInfo) string {
 		}
 	}
 	return ""
+}
+
+// runnerLinkTargetSuffix is the "  target=<url>" a runner row carries after
+// link= when a dial record reached it: a named cid= reads as @<hex>, and this
+// is the URL it stands for. Empty when the runner has no link target.
+func runnerLinkTargetSuffix(r protocol.RunnerInfo) string {
+	if len(r.LinkTarget) == 0 {
+		return ""
+	}
+	return "  target=" + string(r.LinkTarget)
 }

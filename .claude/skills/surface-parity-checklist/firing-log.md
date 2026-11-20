@@ -4435,3 +4435,34 @@ the WebUI parse-error case in `schedule_test.mjs` and `composeFormFor` in
 exclusion copied into five guards, none of them traceable to a decision: the
 pillar S entry above recorded it as item 2's "`--stream` not offered", which
 reads as a cross-flag rule rather than as a scope cut someone made.
+
+### 2026-11-21 (pre-landing) — `RunnerInfo.link_target` and URL candidates for `runner dial add`
+
+Spec `2026-11-21-named-websocket-dial-targets-design.md` (D1–D16). A dial-record
+candidate may be `ws(s)://host[:port]/path`; a runner reached through one shows
+the URL as `link_target`. S1–S6 `n/a`: a named cid never reaches an agent — a
+listen-mode runner hands agents the accepted server cid and
+`HARNESS_PROXY_VIA_RUNNER` (spec D2), so `HARNESS_SERVER_CID`'s format is
+unchanged.
+done:    1 (`runner dial add` notes + a URL example in `cli/verb/table.go`; the
+         candidate is the existing positional, no new flag), 11 (`ls` rows,
+         both renderers: `target=` after `link=`), 12 (`ls --json`
+         `link_target`, always present, `""` without one), 18 (TUI runner
+         detail `target:`), 23 (wasm runner conversion `linkTarget`), 24
+         (per path: dial record → accepted; `--server-cid` → refused by its
+         existing grammar; `server dial-runner` / `--via` with a named cid →
+         `invalid_target`, spec D3), 27/28a (one request build,
+         `cli.RunnerDialAddWith`; the CLI, TUI `DoRunnerDialAdd` and wasm
+         `harnessRunnerDialAdd` all call it, so the client-side URL check
+         reaches all three), 29 (a refused URL's error names its rule, e.g.
+         `query is not supported`), 32 (one canonicalizer,
+         `transport.ParseWebSocketTarget`, used by the client check, the add
+         handler and the dial manager), 33 (a URL with a query is an error, not
+         a silently dropped part), 35 (README reverse-dial section), 39 (spec
+         §4 rows checked: verb help, `ls`, `ls --json`, TUI detail, WebUI row
+         meta in `task_models.js` `runnerRowModel`, wasm snapshot, `runner dial
+         ls` unchanged, README)
+omitted: 18a (TUI runner table: the `Link` column already reads
+         `dial:<8 hex>`, and a URL does not fit an over-subscribed row; spec §4
+         says unchanged)
+missed:  —
