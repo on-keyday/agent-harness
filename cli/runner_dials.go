@@ -98,12 +98,11 @@ func RunnerDialAddWith(ctx context.Context, c taskControlClient, candidates []st
 	cs := make([]protocol.RunnerDialCandidate, len(candidates))
 	for i, c := range candidates {
 		// The server answers a refused candidate with invalid_candidates
-		// alone; a URL's rules are checked here too so the refusal says which
-		// one was broken (query, path, host, ...).
-		if IsURLCandidate(c) {
-			if _, err := CanonicalDialRecordCandidate(c); err != nil {
-				return 0, 0, fmt.Errorf("runner dial add: %w", err)
-			}
+		// alone, so each one is checked here too, by the same function the
+		// server uses, and the refusal says which rule it broke (a URL's
+		// query or path, a pasted named cid, a typo).
+		if _, err := CanonicalDialRecordCandidate(c); err != nil {
+			return 0, 0, fmt.Errorf("runner dial add: %w", err)
 		}
 		if !cs[i].SetText([]byte(c)) {
 			return 0, 0, fmt.Errorf("runner dial add: candidate %q too long (max 255 bytes)", c)

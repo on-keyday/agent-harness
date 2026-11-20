@@ -347,12 +347,14 @@ read in the TUI (dummy PTY) and the WebUI.
 
 ## Amendment (2026-11-21, while building)
 
-- **A1 — the client checks a URL candidate before sending it.** The add
+- **A1 — the client checks every candidate before sending it.** The add
   answer on the wire is a status (`invalid_candidates`), so a rule named
   only by the server would never reach the operator, and D4 says every
   rejection names its rule. `cli.RunnerDialAddWith` runs
-  `CanonicalDialRecordCandidate` on each URL candidate and returns its error
-  unsent. The CLI, the TUI (`DoRunnerDialAdd`) and the WebUI
+  `CanonicalDialRecordCandidate` — the function the server runs — on each
+  candidate and returns its error unsent. (First built for URL candidates
+  only; widened after the review found a pasted named cid refused with no
+  reason, A4.) The CLI, the TUI (`DoRunnerDialAdd`) and the WebUI
   (`harnessRunnerDialAdd`) all build the request there, so all three name
   the rule. The server still refuses on its own.
 - **A2 — no server log line for a refused candidate.** Its text may hold a
@@ -362,3 +364,18 @@ read in the TUI (dummy PTY) and the WebUI.
   The dial manager's `Resolve` is wired in `New`, before the endpoint
   exists; `newWSTargets` gives a table exactly when `Config.Addr` is set,
   which is when `buildEndpoint` makes the WebSocket leg that is handed it.
+- **A4 — the named text form is refused wherever an address to dial is read
+  (whole-branch review).** `ParseConnectionID` accepts `ws(s):@<hex>-<id>` so
+  that `cid=` pastes into `by_conn_id` (D6), and that made it a valid
+  dial-record candidate and `--server-cid` too — D3's trap again, on the
+  paths D3 did not name. `cliopts.RefuseNamedCID` (on
+  `objproto.ConnectionID.IsNamed`) refuses it in `ParseCandidate`,
+  `ResolveCandidate` and `ResolveServerCID`, naming the URL to use.
+- **A5 — a URL whose canonical form exceeds 255 bytes is refused (review).**
+  Escaping grows a path (`é` → `%C3%A9`); such a record was stored and then
+  listed with an empty candidate, because `RunnerDialCandidate.text` carries
+  at most 255 bytes.
+- **A6 — a bracketed IPv6 host on its default port is dialed with the port
+  written out (review).** x/net joins a port-less `Host` as given, so
+  `wss://[::1]/ws` dialed `[[::1]]:443` and failed every attempt. The dial
+  location adds the port; the canonical text and key (D5, D16) are unchanged.
