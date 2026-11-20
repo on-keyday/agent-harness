@@ -100,7 +100,9 @@ worth a second look.
 | D1 | A named target keeps the `ConnectionID` shape and the wire format. Its 16-byte address is `100::/64` with a 64-bit key in the low half, as vsock already does (objtrsf `objproto/vsock_addr.go`). The URL the key stands for lives in a table held by the WebSocket leg. Alternatives considered and not taken: a string or tagged-union address in `ConnectionID` (changes the struct, 44 non-test `.Addr` uses in objtrsf, and the wire `ConnID` that runner registration rides), and an IP→host-name table in the leg (anycast maps many names to one IP) | operator ("namedのあれでいきますか") |
 | D2 | A named `ConnectionID` exists only inside the server that registered it. It is never handed to another node or process to dial. This is the condition the vsock design rests on ("non-IP ConnIDs are never handed to another node to dial"). It holds for dial records: listen-mode agents reach the server through the runner's proxy (`HARNESS_PROXY_VIA_RUNNER`, set by `ListenAndServe`, `runner/connect.go:129`), and the only `ConnID` the server hands a client to dial is `DialAt` for the direct data plane, which requires udp on both ends (`server/dataplane.go:121`, `server/file_transfer.go:238-240`) | this spec |
 | D3 | `server dial-runner` and `--via` refuse a named target with the existing `DialRunnerStatus_InvalidTarget`, before dialing. Without the refusal, a cid copied from `ls` would dial when the server happens to hold its entry and fail when it does not | this spec |
-| D4 | Candidate grammar. A dial-record candidate is either the existing form (`transport:host:port-id`, unchanged) or a URL `ws://host[:port][/path]` or `wss://host[:port][/path]`. The URL is rejected if it has user info, a query, a fragment, an empty host, or a scheme other than `ws`/`wss`. The server stores it in canonical form: scheme and host lower-cased, the port omitted when it is the scheme default (80 for `ws`, 443 for `wss`), and an empty path replaced by the server's `cli.WebSocketPath`. `runner dial ls` shows that stored text, and `duplicate_candidate` compares it | this spec |
+| D4 | Candidate grammar. A dial-record candidate is either the existing form (`transport:host:port-id`, unchanged) or a URL `ws://host[:port]/path` or `wss://host[:port]/path`. The URL is rejected if it has an empty path (`wss://h` — `wss://h/` is accepted, its path is `/`), user info, a query, a fragment, an empty host, a host with non-ASCII characters (write an internationalized name in punycode; Go's resolver does no IDNA conversion, so such a host would fail every dial), or a scheme other than `ws`/`wss`. The server stores it in canonical form: scheme and host lower-cased, and the port omitted when it is the scheme default (80 for `ws`, 443 for `wss`). The path is kept byte for byte (`/ws` and `/ws/` differ: only the front knows how it routes). `runner dial ls` shows that stored text, and `duplicate_candidate` compares it | operator (path required, 2026-11-21); rest this spec |
+| D15 | The stored candidate text is not secret. It is printed by `runner dial ls`, by `ls` as `target=` (D12) to every caller that sees runners, and in the server log line `dial record added`. A URL must not carry a credential in its path. Authenticating the server to a front at the HTTP level (for example a token a Worker checks) needs a field that is not displayed, and is not part of this spec | this spec |
+| D16 | The canonical rules are part of the key (D5). Changing them in a later version changes the address of an existing candidate, so across that upgrade D20's adopt rule does not recognise a runner a record was holding, and the record dials it once more. Any change to D4's canonical form must say so in its commit | this spec |
 | D5 | The key is the first 8 bytes of SHA-256 over the canonical URL text. The port in the `AddrPort` is 0, and `Transport` is the URL scheme (`ws` or `wss`). A key derived from the text, not allocated, gives the same `ConnectionID` address for the same candidate after a server restart, and in every process that computes it | this spec |
 | D6 | Text form: `<transport>:@<16 lowercase hex>-<id>`, for example `wss:@3f2a9c0d11b7e604-4711`. `ConnectionID.String()` prints it for a `ws`/`wss` address in `100::/64` with port 0, and `ParseConnectionID` parses it back, with no DNS lookup. `@` cannot occur in an IP literal or a host name, so the form does not collide with the existing grammar. The round trip keeps `cid=` from `ls` usable in the `by_conn_id` selector | this spec |
 | D7 | The table is a `*transport.WebSocketTargets`, created by the caller and passed in `WebSocketConfig.Targets` when the leg is built. This follows the vsock rule that a dial target that does not fit 16 bytes goes to the leg's constructor, never into the transport string. Entries are added at run time with `Register` and not removed. An entry is a few dozen bytes, and the table holds at most the candidates added since the server started; removing one safely would mean tracking which live connections still use its address, for no gain at that size | this spec |
@@ -169,9 +171,8 @@ func (s *WebSocketTargets) Register(t WebSocketTarget) netip.AddrPort
 func (s *WebSocketTargets) Lookup(key [8]byte) (WebSocketTarget, bool)
 ```
 
-`ParseWebSocketTarget` rejects an empty path: objtrsf owns no path
-convention (`websocket_common.go`), so the harness fills its default before
-calling (§2.2). `WebSocketConfig` gains `Targets *WebSocketTargets`. The wasm
+`ParseWebSocketTarget` applies D4 in full, including the rejection of an
+empty path. `WebSocketConfig` gains `Targets *WebSocketTargets`. The wasm
 implementation ignores it. The WebUI dials only the server, and a named
 address there has no table to resolve it, so the browser is handed
 `[100::…]:0` and the dial fails, as it would for any unreachable address.
@@ -206,11 +207,11 @@ add`.
 ### 2.2 Candidates (`cli/candidate.go`, `server/runner_dial_handler.go`)
 
 - `cli.ParseCandidate` is unchanged. It is the grammar of `--server-cid`.
-- New `cli.CanonicalDialRecordCandidate(text string) (string, error)`: a URL
-  candidate is parsed with `transport.ParseWebSocketTarget` after an empty
-  path is replaced by `cli.WebSocketPath`, and the canonical text is
-  returned. Any other text goes through `ParseCandidate` and is returned as
-  is.
+- New `cli.CanonicalDialRecordCandidate(text string) (string, error)`: text
+  containing `://` is parsed with `transport.ParseWebSocketTarget` and its
+  canonical text is returned. Any other text goes through `ParseCandidate`
+  and is returned as is. `cli.WebSocketPath` plays no part in a URL
+  candidate.
 - `runnerDialAdd` calls it for each candidate, stores the returned text, and
   runs `DialLegs`, `OwnerOfCandidate` and the byte limits on the stored text.
   `cli.CandidateTransport` already returns `ws`/`wss` for a URL (it cuts at
@@ -268,7 +269,7 @@ and the WebUI command input (2026-11-04 spec D19). Only its help text changes.
 
 | Surface | What |
 | --- | --- |
-| `cli/verb/table.go` `runner dial add` | Help names the URL form, the default path, and that URLs are for dial records only |
+| `cli/verb/table.go` `runner dial add` | Help names the URL form, that the path is required, that the URL is displayed and must not carry a credential (D15), and that URLs are for dial records only |
 | `ls` runner rows (`cli/list.go`) | `target=<text>` when `link_target` is set. `ls --json` carries `link_target` on every runner, empty when unset |
 | TUI runner detail (`tui/detail.go` `formatRunnerDetail`) | A `target:` line when set |
 | TUI runner table | Unchanged. `dial:<8 hex>` in the Link column already names the record |
@@ -308,7 +309,8 @@ objtrsf unit:
   `CannotSend`.
 
 Harness unit:
-- `CanonicalDialRecordCandidate` table, including the default path.
+- `CanonicalDialRecordCandidate` table: `wss://h` rejected, `wss://h/`
+  accepted, a non-ASCII host rejected, `/ws` and `/ws/` kept distinct.
 - `runner dial add`: a URL is stored canonical; two spellings of one URL give
   `duplicate_candidate`.
 - `RecordsPointingAt` with two records whose candidates resolve to one
