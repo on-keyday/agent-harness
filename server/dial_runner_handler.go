@@ -110,7 +110,7 @@ func (h *DialRunnerHandler) Handle(ctx context.Context, target protocol.ConnID) 
 		}
 		return protocol.DialRunnerResponse{Status: protocol.DialRunnerStatus_InvalidTarget}
 	}
-	if isNamedTarget(target.ToObjproto()) {
+	if target.ToObjproto().IsNamed() {
 		if h.Logger != nil {
 			h.Logger.Warn("dial-runner: named targets are dialed only through dial records", "target", target.ToObjproto().String())
 		}
@@ -214,7 +214,7 @@ func (h *DialRunnerHandler) HandleWithVia(ctx context.Context, target protocol.C
 		}
 		return protocol.DialRunnerResponse{Status: protocol.DialRunnerStatus_InvalidTarget}
 	}
-	if isNamedTarget(target.ToObjproto()) {
+	if target.ToObjproto().IsNamed() {
 		if h.Logger != nil {
 			h.Logger.Warn("dial-runner: named targets are dialed only through dial records", "target", target.ToObjproto().String())
 		}
@@ -390,15 +390,4 @@ func (h *DialRunnerHandler) HandleWithVia(ctx context.Context, target protocol.C
 			"slot_id", slotID)
 	}
 	return protocol.DialRunnerResponse{Status: protocol.DialRunnerStatus_Ok}
-}
-
-// isNamedTarget reports whether cid is a dial record's named address
-// (objproto.NamedAddrPort). It stands for a URL in this server's table only,
-// so a one-shot dial or a relay cannot be handed one (spec D3).
-func isNamedTarget(cid objproto.ConnectionID) bool {
-	if cid.Transport != "ws" && cid.Transport != "wss" {
-		return false
-	}
-	_, ok := objproto.NamedFromAddrPort(cid.Addr)
-	return ok
 }

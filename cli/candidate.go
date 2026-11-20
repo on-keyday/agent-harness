@@ -5,6 +5,7 @@ import (
 	"net"
 	"strings"
 
+	"github.com/on-keyday/agent-harness/cli/cliopts"
 	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/objtrsf/transport"
 )
@@ -42,6 +43,9 @@ func ResolveCandidate(spec string) (objproto.ConnectionID, error) {
 	if err != nil {
 		return objproto.ConnectionID{}, fmt.Errorf("candidate %q: %w", spec, err)
 	}
+	if err := cliopts.RefuseNamedCID(spec, cid); err != nil {
+		return objproto.ConnectionID{}, fmt.Errorf("candidate: %w", err)
+	}
 	return cid, nil
 }
 
@@ -51,7 +55,10 @@ func ResolveCandidate(spec string) (objproto.ConnectionID, error) {
 // parsing the same text with the host replaced by a literal, which leaves
 // every other part (transport, port, id) to objproto's own parser.
 func ParseCandidate(spec string) error {
-	if _, err := objproto.ParseConnectionID(spec, objproto.ParseOption_AllowRandomID); err == nil {
+	if cid, err := objproto.ParseConnectionID(spec, objproto.ParseOption_AllowRandomID); err == nil {
+		if err := cliopts.RefuseNamedCID(spec, cid); err != nil {
+			return fmt.Errorf("candidate: %w", err)
+		}
 		return nil
 	}
 	bad := fmt.Errorf("candidate %q: want transport:host:port-id, e.g. ws:runner.example:8540-*", spec)
@@ -84,6 +91,9 @@ func CandidateTransport(spec string) string {
 	return t
 }
 
+// maxStoredCandidateBytes is what RunnerDialCandidate.text can carry.
+const maxStoredCandidateBytes = 255
+
 // IsURLCandidate reports whether a candidate is a ws:// or wss:// URL rather
 // than a transport:host:port-id. Only a dial record takes a URL: its address
 // is a named one, which means something only to the server that registered
@@ -99,6 +109,11 @@ func CanonicalDialRecordCandidate(text string) (string, error) {
 		t, err := transport.ParseWebSocketTarget(text)
 		if err != nil {
 			return "", err
+		}
+		// Escaping can grow a URL (é is %C3%A9) past what a stored
+		// candidate carries on the wire (RunnerDialCandidate.text, u8 length).
+		if n := len(t.String()); n > maxStoredCandidateBytes {
+			return "", fmt.Errorf("ws target %q: its canonical form %q is %d bytes, over the %d-byte limit of a candidate", text, t.String(), n, maxStoredCandidateBytes)
 		}
 		return t.String(), nil
 	}

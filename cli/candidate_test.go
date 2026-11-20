@@ -101,3 +101,26 @@ func TestRunnerDialAddWithRefusesBadURLLocally(t *testing.T) {
 		t.Fatal("the request was sent")
 	}
 }
+
+// A named cid (cid= of a runner a URL reached) is a key into one server's
+// table, never an address to dial: every candidate grammar refuses it.
+func TestCandidatesRefuseNamedText(t *testing.T) {
+	const named = "wss:@3f2a9c0d11b7e604-*"
+	if err := ParseCandidate(named); err == nil || !strings.Contains(err.Error(), "ws(s):// URL") {
+		t.Errorf("ParseCandidate: %v", err)
+	}
+	if _, err := ResolveCandidate(named); err == nil || !strings.Contains(err.Error(), "ws(s):// URL") {
+		t.Errorf("ResolveCandidate: %v", err)
+	}
+	if _, err := CanonicalDialRecordCandidate(named); err == nil {
+		t.Error("CanonicalDialRecordCandidate accepted a named cid")
+	}
+}
+
+// Escaping can grow a URL past what a stored candidate holds on the wire.
+func TestCanonicalDialRecordCandidateLength(t *testing.T) {
+	raw := "wss://h/" + strings.Repeat("é", 80) // 168 bytes typed, 488 canonical
+	if _, err := CanonicalDialRecordCandidate(raw); err == nil || !strings.Contains(err.Error(), "255") {
+		t.Fatalf("err = %v, want one naming the 255-byte limit", err)
+	}
+}

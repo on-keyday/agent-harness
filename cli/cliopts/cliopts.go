@@ -20,7 +20,25 @@ func ResolveServerCID(flagVal string) (objproto.ConnectionID, error) {
 	if raw == "" {
 		return objproto.ConnectionID{}, errors.New("--server-cid required (or set HARNESS_SERVER_CID)")
 	}
-	return objproto.ParseConnectionID(raw, objproto.ParseOption_AllowRandomID|objproto.ParseOption_ResolveAddr)
+	cid, err := objproto.ParseConnectionID(raw, objproto.ParseOption_AllowRandomID|objproto.ParseOption_ResolveAddr)
+	if err != nil {
+		return objproto.ConnectionID{}, err
+	}
+	if err := RefuseNamedCID(raw, cid); err != nil {
+		return objproto.ConnectionID{}, err
+	}
+	return cid, nil
+}
+
+// RefuseNamedCID refuses a named address (cid=ws(s):@<hex>-<id>, a runner a
+// dial record's URL reached) wherever an address to dial is read from text.
+// It is a key into the table of the one server that registered the URL, so it
+// dials only there, and only until that server restarts. nil for any other cid.
+func RefuseNamedCID(text string, cid objproto.ConnectionID) error {
+	if !cid.IsNamed() {
+		return nil
+	}
+	return fmt.Errorf("%q is a named address, a key into one server's table and not something to dial; use the ws(s):// URL it stands for (ls prints it as target=)", text)
 }
 
 // ResolveAuthTicket reads HARNESS_AUTH_TICKET only (no flag fallback).
