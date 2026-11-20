@@ -246,9 +246,20 @@ func RunnerKick(ctx context.Context, server objproto.ConnectionID, prefix string
 func FormatRunnerDialAdd(st protocol.RunnerDialStatus, id uint32, candidates []string) (string, bool) {
 	switch st {
 	case protocol.RunnerDialStatus_Ok:
-		return fmt.Sprintf("dial %s added: %s", FormatDialID(id), strings.Join(candidates, ", ")), true
+		// What the server stored: a URL is kept in canonical form, so show that
+		// rather than the spelling typed.
+		shown := make([]string, len(candidates))
+		for i, c := range candidates {
+			shown[i] = c
+			if IsURLCandidate(c) {
+				if canon, err := CanonicalDialRecordCandidate(c); err == nil {
+					shown[i] = canon
+				}
+			}
+		}
+		return fmt.Sprintf("dial %s added: %s", FormatDialID(id), strings.Join(shown, ", ")), true
 	case protocol.RunnerDialStatus_InvalidCandidates:
-		return "runner dial add: invalid candidates (1-8 of transport:host:port-id, 512 bytes in all, a transport this server listens on; label at most 64 bytes)", false
+		return "runner dial add: invalid candidates (1-8 of transport:host:port-id or ws(s)://host[:port]/path, 512 bytes in all, a transport this server listens on; label at most 64 bytes)", false
 	case protocol.RunnerDialStatus_KeyNotFound:
 		return "runner dial add: no enrolled key has that prefix (see runner keys)", false
 	case protocol.RunnerDialStatus_AmbiguousKey:

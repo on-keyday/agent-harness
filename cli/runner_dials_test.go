@@ -174,3 +174,15 @@ func TestFormatRunnerUnenrollListsRemovedDials(t *testing.T) {
 		t.Fatalf("zero must be printed: %q", s)
 	}
 }
+
+// The added line names what the server stored: a URL in its canonical form.
+func TestFormatRunnerDialAddShowsStoredURL(t *testing.T) {
+	s, ok := FormatRunnerDialAdd(protocol.RunnerDialStatus_Ok, 0x51750478, []string{"WSS://LOCALHOST:443/b/ws", "ws:a:1-*"})
+	if !ok || s != "dial 51750478 added: wss://localhost/b/ws, ws:a:1-*" {
+		t.Fatalf("got %q", s)
+	}
+	s, _ = FormatRunnerDialAdd(protocol.RunnerDialStatus_InvalidCandidates, 0, nil)
+	if !strings.Contains(s, "ws(s)://host[:port]/path") {
+		t.Fatalf("invalid_candidates text does not name the URL form: %q", s)
+	}
+}
