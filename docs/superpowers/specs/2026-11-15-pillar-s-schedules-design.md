@@ -11,10 +11,11 @@ GD row, its Decisions table names the row and what moved it.
 ## Amendment — 2026-11-21: independent management and manual firing
 
 This amendment supersedes the single-capability rules in S-D17 and S-D15,
-and the corresponding GD G34/G37/G46 references. The operator requested
-「せめてnew/edit/rmとrunは分けたい」 and named the management capability
-`schedule_edit` in this session. The cron trigger and firing algorithm remain
-as specified; manual-only triggers and per-run input are still proposals.
+and the corresponding GD G34/G37/G46 references. Management (new/edit/rm)
+and manual firing (run) use separate capability bits, with the management bit
+named `schedule_edit` (operator, 2026-11-21). The cron trigger and firing
+algorithm remain as specified; manual-only triggers and per-run input are
+still proposals.
 
 - `schedule_edit` gates `new`, `edit`, `rm`, binding and foreground unbinding.
   It retains the former `schedule` bit, `0x20000000`.
