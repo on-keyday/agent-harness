@@ -262,7 +262,7 @@ func TestRecordsPointingAtDoesNotResolve(t *testing.T) {
 	mu.Lock()
 	before := resolves
 	mu.Unlock()
-	got := f.n.m.RecordsPointingAt(RunnerEntry{ID: pcid(t, "ws:127.0.0.1:9641-9"), Identity: runnerIDOf("restarted")})
+	got := f.n.m.RecordsPointingAt(RunnerEntry{ID: pcid(t, "ws:127.0.0.1:9641-9"), Identity: runnerIDOf("restarted"), Key: f.key})
 	mu.Lock()
 	after := resolves
 	mu.Unlock()

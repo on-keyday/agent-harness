@@ -221,7 +221,9 @@ func (m *dialManager) RecordsPointingAt(e RunnerEntry) []uint32 {
 			if hit {
 				break
 			}
-			hit = sameAddr(a, e.ID)
+			// An address is shared by every runner behind one NAT or proxy;
+			// only the record's own key makes it this runner's (spec D11).
+			hit = sameAddr(a, e.ID) && l.rec.Key.Equal(e.Key)
 		}
 		if hit {
 			out = append(out, id)

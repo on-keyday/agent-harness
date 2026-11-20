@@ -379,7 +379,7 @@ func TestRecordsPointingAt(t *testing.T) {
 		t.Fatalf("live connection: %v", got)
 	}
 	// A restarted runner: new identity, same port, not connected to the record.
-	other := RunnerEntry{ID: pcid(t, "ws:127.0.0.1:9513-5"), Identity: runnerIDOf("restarted")}
+	other := RunnerEntry{ID: pcid(t, "ws:127.0.0.1:9513-5"), Identity: runnerIDOf("restarted"), Key: f.key}
 	if got := f.n.m.RecordsPointingAt(other); len(got) != 1 || got[0] != rec.ID {
 		t.Fatalf("by address: %v", got)
 	}
@@ -442,5 +442,35 @@ func TestResolveDialCandidateURL(t *testing.T) {
 	}
 	if _, err := resolveDialCandidate(nil)("wss://h/ws"); err == nil {
 		t.Fatal("URL candidate resolved on a server with no WebSocket leg")
+	}
+}
+
+// Two runners reachable at one address (one NAT, one proxy) on different keys:
+// kicking one must not take the other's record (spec D11).
+func TestRecordsPointingAtRequiresKeyForAddressMatch(t *testing.T) {
+	mineKey, _, _ := ed25519.GenerateKey(nil)
+	theirKey, _, _ := ed25519.GenerateKey(nil)
+	keys, _ := LoadRunnerKeyStore("", []RunnerKeyRecord{{Key: mineKey}, {Key: theirKey}})
+	store, _ := LoadRunnerDialStore("")
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	n := newFakeNet(t, keys, store, mineKey)
+	n.fail = func(objproto.ConnectionID) error { return errTestRefused } // both wait, addresses resolved
+	n.m.Start(ctx)
+	var ids []uint32
+	for _, k := range []ed25519.PublicKey{mineKey, theirKey} {
+		rec, err := store.Add(RunnerDialRecord{Candidates: []string{"ws:127.0.0.1:9600-*"}, Key: k})
+		if err != nil {
+			t.Fatal(err)
+		}
+		n.m.Add(rec)
+		ids = append(ids, rec.ID)
+	}
+	for _, id := range ids {
+		eventually(t, "waiting", func() bool { return dialRow(n.m, id).DialState == protocol.RunnerDialState_Waiting })
+	}
+	e := RunnerEntry{ID: pcid(t, "ws:127.0.0.1:9600-5"), Identity: runnerIDOf("someone"), Key: mineKey}
+	if got := n.m.RecordsPointingAt(e); len(got) != 1 || got[0] != ids[0] {
+		t.Fatalf("RecordsPointingAt = %v, want only %d (the record on the runner's key)", got, ids[0])
 	}
 }

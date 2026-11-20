@@ -610,3 +610,23 @@ func startFakeListenRunner(t *testing.T, listenAddr string, firstKind chan<- app
 		_ = srv.Shutdown(shutdownCtx)
 	}
 }
+
+// A named address means something only to the table that registered it, and a
+// relay has none: one-shot dials refuse it before any work.
+func TestDialRunnerRefusesNamedTarget(t *testing.T) {
+	named := protocol.ConnIDFromObjproto(objproto.NewConnectionID("wss", objproto.NamedAddrPort([8]byte{7}), 1))
+	h := &DialRunnerHandler{Logger: slog.Default(), Endpoint: nil} // a dial would panic on the nil endpoint
+	if resp := h.Handle(context.Background(), named); resp.Status != protocol.DialRunnerStatus_InvalidTarget {
+		t.Errorf("Handle: %v, want InvalidTarget", resp.Status)
+	}
+	resolved := false
+	h.ResolveVia = func(protocol.RunnerID) (*RunnerEntry, bool) { resolved = true; return nil, false }
+	var via protocol.RunnerID
+	via.Id[0] = 1
+	if resp := h.HandleWithVia(context.Background(), named, via); resp.Status != protocol.DialRunnerStatus_InvalidTarget {
+		t.Errorf("HandleWithVia: %v, want InvalidTarget", resp.Status)
+	}
+	if resolved {
+		t.Error("HandleWithVia looked up the relay for a named target")
+	}
+}
