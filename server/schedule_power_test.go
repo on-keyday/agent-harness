@@ -11,7 +11,7 @@ import (
 
 func powerGrant(caps protocol.Capability, resumeBase protocol.ScopeBase) authority.Grant {
 	g := authority.Grant{
-		Caps:  caps | protocol.Capability_Schedule | protocol.Capability_FileRead,
+		Caps:  caps | protocol.Capability_ScheduleEdit | protocol.Capability_ScheduleRun | protocol.Capability_FileRead,
 		Scope: authority.Scope{Base: protocol.ScopeBase_Global}, DelegateCaps: protocol.Capability_All,
 		DelegateScope: authority.Scope{Base: protocol.ScopeBase_Global},
 	}
@@ -158,7 +158,7 @@ func TestSchedulePowerAfterReachAndSelf(t *testing.T) {
 	e := newSchedEnv(t)
 	maker := e.terminal(t, protocol.RunMode_Background, "") // creator of the seeded schedules
 	task := e.terminal(t, protocol.RunMode_Background, "")
-	none, _ := e.agent(t, authority.Grant{Caps: protocol.Capability_Schedule, Scope: authority.Scope{Base: protocol.ScopeBase_None}})
+	none, _ := e.agent(t, authority.Grant{Caps: protocol.Capability_ScheduleEdit, Scope: authority.Scope{Base: protocol.ScopeBase_None}})
 	sc := e.seed(t, 1, protocol.ScheduleTaskState_Bound, task, "")
 	pend := e.seed(t, 2, protocol.ScheduleTaskState_PendingCreate, "", maker)
 	cid := e.connIDOf(none)

@@ -136,7 +136,8 @@ var capTargetClasses = map[protocol.Capability]capTargetClass{
 	// schedule names the task whose reach decides who may act on a schedule —
 	// its bound task, else its creator — and the task a verb binds; the handler
 	// checks both against this bit's own scope (pillar S, S-D17).
-	protocol.Capability_Schedule: {kind: capResolvedLiteral},
+	protocol.Capability_ScheduleEdit: {kind: capResolvedLiteral},
+	protocol.Capability_ScheduleRun:  {kind: capResolvedLiteral},
 }
 
 // serverSources concatenates the package's non-test sources, which is what the

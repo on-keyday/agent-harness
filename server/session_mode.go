@@ -52,8 +52,8 @@ func (h *TaskHandler) handleSessionMode(cid string, conn ConnHandle, req *protoc
 	// reach. (A task switching itself is refused above.)
 	unbinds := !sm.Background() && h.boundScheduleOf(taskID) != ""
 	if unbinds {
-		if !hasCap(h.callerCaps(cid), protocol.Capability_Schedule) {
-			h.denyTaskControl(conn, req.Header.Kind, req.Header.RequestId, protocol.Capability_Schedule)
+		if !hasCap(h.callerCaps(cid), protocol.Capability_ScheduleEdit) {
+			h.denyTaskControl(conn, req.Header.Kind, req.Header.RequestId, protocol.Capability_ScheduleEdit)
 			return
 		}
 		if reach, _ := h.unbindRefusal(cid, taskID); !reach {

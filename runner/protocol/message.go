@@ -86574,8 +86574,9 @@ const (
 	Capability_RecordDelete   Capability = 67108864
 	Capability_RecordPersist  Capability = 134217728
 	Capability_TranscriptRead Capability = 268435456
-	Capability_Schedule       Capability = 536870912
-	Capability_All            Capability = 1073741823
+	Capability_ScheduleEdit   Capability = 536870912
+	Capability_ScheduleRun    Capability = 1073741824
+	Capability_All            Capability = 2147483647
 )
 
 func (e Capability) String() string {
@@ -86640,8 +86641,10 @@ func (e Capability) String() string {
 		return "record_persist"
 	case Capability_TranscriptRead:
 		return "transcript_read"
-	case Capability_Schedule:
-		return "schedule"
+	case Capability_ScheduleEdit:
+		return "schedule_edit"
+	case Capability_ScheduleRun:
+		return "schedule_run"
 	case Capability_All:
 		return "all"
 	default:

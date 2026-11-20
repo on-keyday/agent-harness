@@ -53,13 +53,12 @@ var requiredCap = map[protocol.TaskControlKind]protocol.Capability{
 	// handler; a shared session also needs exec_run, checked there.
 	protocol.TaskControlKind_TranscriptList: protocol.Capability_TranscriptRead,
 	protocol.TaskControlKind_TranscriptGet:  protocol.Capability_TranscriptRead,
-	// Schedules (pillar S, S-D17): the four that change one need the schedule
-	// bit; list / show need none and are bounded by reach. The handler that
-	// reaches the target lands in Task 4.
-	protocol.TaskControlKind_ScheduleCreate: protocol.Capability_Schedule,
-	protocol.TaskControlKind_ScheduleEdit:   protocol.Capability_Schedule,
-	protocol.TaskControlKind_ScheduleDelete: protocol.Capability_Schedule,
-	protocol.TaskControlKind_ScheduleRun:    protocol.Capability_Schedule,
+	// Schedule management and explicit firing are independent powers.
+	// List / show need no bit and are bounded by reach.
+	protocol.TaskControlKind_ScheduleCreate: protocol.Capability_ScheduleEdit,
+	protocol.TaskControlKind_ScheduleEdit:   protocol.Capability_ScheduleEdit,
+	protocol.TaskControlKind_ScheduleDelete: protocol.Capability_ScheduleEdit,
+	protocol.TaskControlKind_ScheduleRun:    protocol.Capability_ScheduleRun,
 	protocol.TaskControlKind_PruneTasks:     protocol.Capability_Prune,
 	protocol.TaskControlKind_Notify:         protocol.Capability_Notify,
 	// Emptying another task's progress line: whoever may end the task may

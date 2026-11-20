@@ -507,8 +507,8 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		// (handleOpenInteractive answers resume_not_found otherwise): the bit's
 		// absence must not say whether an unreachable task is bound.
 		if t, unbinds := h.openUnbinds(oi); unbinds && h.resumeTargetAllowed(cid, oi.ResumeExact(), t) &&
-			!hasCap(h.callerCaps(cid), protocol.Capability_Schedule) {
-			deny(protocol.Capability_Schedule)
+			!hasCap(h.callerCaps(cid), protocol.Capability_ScheduleEdit) {
+			deny(protocol.Capability_ScheduleEdit)
 			return
 		}
 		// An attached open hands the opener the control seat, so it needs what
@@ -1599,7 +1599,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 				resp.SetErrorMsg([]byte("a schedule's own task cannot unbind itself"))
 				return resp, body
 			}
-			if !hasCap(creatorCaps, protocol.Capability_Schedule) {
+			if !hasCap(creatorCaps, protocol.Capability_ScheduleEdit) {
 				// The dispatch checked the bit against the binding it saw; this
 				// gate reads the binding again, so it checks the bit itself.
 				resp, body := errResp(protocol.OpenInteractiveStatus_ScopeNotPermitted)

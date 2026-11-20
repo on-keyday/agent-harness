@@ -100,7 +100,7 @@ func schedOpConn() *fakeConn {
 }
 
 var schedAgentGrant = authority.Grant{
-	Caps:  protocol.Capability_Schedule | protocol.Capability_Spawn | protocol.Capability_Resume | protocol.Capability_FileRead | protocol.Capability_Cancel,
+	Caps:  protocol.Capability_ScheduleRun | protocol.Capability_ScheduleEdit | protocol.Capability_Spawn | protocol.Capability_Resume | protocol.Capability_FileRead | protocol.Capability_Cancel,
 	Scope: authority.Scope{Base: protocol.ScopeBase_Subtree}, DelegateCaps: protocol.Capability_All,
 	DelegateScope: authority.Scope{Base: protocol.ScopeBase_Subtree},
 }
@@ -298,8 +298,12 @@ func TestScheduleNeedsBit(t *testing.T) {
 		})
 		resp := lastTaskControlResponse(t, conn)
 		pd := resp.PermissionDenied()
+		want := protocol.Capability_ScheduleEdit
+		if k == protocol.TaskControlKind_ScheduleRun {
+			want = protocol.Capability_ScheduleRun
+		}
 		if resp.Kind != protocol.TaskControlKind_PermissionDenied || pd == nil ||
-			pd.RequestedKind != k || pd.RequiredCap != protocol.Capability_Schedule {
+			pd.RequestedKind != k || pd.RequiredCap != want {
 			t.Errorf("%v without the bit: %+v", k, resp)
 		}
 	}
@@ -314,7 +318,7 @@ func TestScheduleOutOfReachIsNoSuch(t *testing.T) {
 	task := e.terminal(t, protocol.RunMode_Background, "")
 	sc := e.seed(t, 1, protocol.ScheduleTaskState_Bound, task, "")
 	// A caller that reaches only itself.
-	conn, _ := e.agent(t, authority.Grant{Caps: protocol.Capability_Schedule | protocol.Capability_Spawn | protocol.Capability_Resume, Scope: authority.Scope{Base: protocol.ScopeBase_None}})
+	conn, _ := e.agent(t, authority.Grant{Caps: protocol.Capability_ScheduleRun | protocol.Capability_ScheduleEdit | protocol.Capability_Spawn | protocol.Capability_Resume, Scope: authority.Scope{Base: protocol.ScopeBase_None}})
 	for _, k := range []protocol.TaskControlKind{
 		protocol.TaskControlKind_ScheduleDelete, protocol.TaskControlKind_ScheduleRun, protocol.TaskControlKind_ScheduleShow,
 	} {
@@ -430,7 +434,7 @@ func TestEditRecomputesGrantWithoutFlags(t *testing.T) {
 	e.addCandidate("claude")
 	// An editor narrower than the creator: fewer caps, subtree scope.
 	conn, editor := e.agent(t, authority.Grant{
-		Caps:  protocol.Capability_Schedule | protocol.Capability_Spawn | protocol.Capability_Resume | protocol.Capability_FileRead,
+		Caps:  protocol.Capability_ScheduleEdit | protocol.Capability_Spawn | protocol.Capability_Resume | protocol.Capability_FileRead,
 		Scope: authority.Scope{Base: protocol.ScopeBase_Subtree}, DelegateCaps: protocol.Capability_FileRead,
 		DelegateScope: authority.Scope{Base: protocol.ScopeBase_Subtree},
 	})
@@ -452,7 +456,7 @@ func TestEditRecomputesGrantWithoutFlags(t *testing.T) {
 	if got.Prompt != "a new prompt" {
 		t.Fatalf("prompt %q", got.Prompt)
 	}
-	if got.Grant.Caps&^(protocol.Capability_Schedule|protocol.Capability_FileRead|protocol.Capability_Spawn|protocol.Capability_Resume) != 0 || got.Grant.Caps&protocol.Capability_FileRead == 0 {
+	if got.Grant.Caps&^(protocol.Capability_ScheduleEdit|protocol.Capability_FileRead|protocol.Capability_Spawn|protocol.Capability_Resume) != 0 || got.Grant.Caps&protocol.Capability_FileRead == 0 {
 		t.Errorf("stored caps %v exceed the editor's", got.Grant.Caps)
 	}
 	if got.Grant.Scope.Base == protocol.ScopeBase_Global || got.Grant.DelegateScope.Base == protocol.ScopeBase_Global {
@@ -555,7 +559,7 @@ func TestForegroundResumeOfBoundTaskNeedsBitAndUnbinds(t *testing.T) {
 	req.SetOpenInteractive(*foregroundResume(task))
 	e.h.Handle(noBit, encodeTaskControlRequest(t, req))
 	resp := lastTaskControlResponse(t, noBit)
-	if pd := resp.PermissionDenied(); resp.Kind != protocol.TaskControlKind_PermissionDenied || pd == nil || pd.RequiredCap != protocol.Capability_Schedule {
+	if pd := resp.PermissionDenied(); resp.Kind != protocol.TaskControlKind_PermissionDenied || pd == nil || pd.RequiredCap != protocol.Capability_ScheduleEdit {
 		t.Fatalf("resume without the bit: %+v", resp)
 	}
 	// The same for `session mode ... foreground` of a running bound task.
@@ -566,7 +570,7 @@ func TestForegroundResumeOfBoundTaskNeedsBitAndUnbinds(t *testing.T) {
 	smReq.SetSessionMode(sm)
 	e.h.Handle(noBit, encodeTaskControlRequest(t, smReq))
 	resp = lastTaskControlResponse(t, noBit)
-	if pd := resp.PermissionDenied(); resp.Kind != protocol.TaskControlKind_PermissionDenied || pd == nil || pd.RequiredCap != protocol.Capability_Schedule {
+	if pd := resp.PermissionDenied(); resp.Kind != protocol.TaskControlKind_PermissionDenied || pd == nil || pd.RequiredCap != protocol.Capability_ScheduleEdit {
 		t.Fatalf("session mode without the bit: %+v", resp)
 	}
 	for _, id := range []string{sc.ID, sc2.ID} {
@@ -579,14 +583,14 @@ func TestForegroundResumeOfBoundTaskNeedsBitAndUnbinds(t *testing.T) {
 	}
 
 	// The bound task itself may not unbind itself, bit or not (S-D20).
-	selfConn, selfTask := e.agent(t, authority.Grant{Caps: protocol.Capability_Schedule | protocol.Capability_Resume,
+	selfConn, selfTask := e.agent(t, authority.Grant{Caps: protocol.Capability_ScheduleEdit | protocol.Capability_Resume,
 		Scope: authority.Scope{Base: protocol.ScopeBase_Subtree}, DelegateCaps: protocol.Capability_All,
 		DelegateScope: authority.Scope{Base: protocol.ScopeBase_Subtree}})
 	e.h.Tasks.Cancel(selfTask, protocol.EndReason_Cancelled, protocol.TaskID{})
 	self := e.seed(t, 3, protocol.ScheduleTaskState_Bound, selfTask, "")
 	cidSelf := e.connIDOf(selfConn)
 	if r, _ := e.h.handleOpenInteractive(cidSelf, nil, foregroundResume(selfTask), protocol.ClientKind_Agent, hexToTaskID(t, selfTask),
-		protocol.Capability_Schedule|protocol.Capability_Resume, ""); r.Status != protocol.OpenInteractiveStatus_ScopeNotPermitted {
+		protocol.Capability_ScheduleEdit|protocol.Capability_Resume, ""); r.Status != protocol.OpenInteractiveStatus_ScopeNotPermitted {
 		t.Fatalf("a bound task resuming itself to foreground: %v, want scope_not_permitted", r.Status)
 	}
 	if got := e.stored(t, self.ID); got.State != protocol.ScheduleTaskState_Bound {
@@ -1054,7 +1058,7 @@ func TestListCutsPromptHeadOnARuneBoundary(t *testing.T) {
 func TestListHidesPrompt(t *testing.T) {
 	e := newSchedEnv(t)
 	conn, caller := e.agent(t, authority.Grant{
-		Caps:  protocol.Capability_Schedule,
+		Caps:  protocol.Capability_ScheduleEdit,
 		Scope: authority.Scope{Base: protocol.ScopeBase_Subtree, VisBasePresent: true, VisBase: protocol.ScopeBase_None},
 	})
 	child := e.terminal(t, protocol.RunMode_Background, caller)
@@ -1169,7 +1173,7 @@ func TestCreateWithTaskGrantBoundedByCreator(t *testing.T) {
 	e := newSchedEnv(t)
 	e.addCandidate("claude")
 	conn, creator := e.agent(t, authority.Grant{
-		Caps:  protocol.Capability_Schedule | protocol.Capability_Spawn | protocol.Capability_Resume | protocol.Capability_FileRead,
+		Caps:  protocol.Capability_ScheduleEdit | protocol.Capability_Spawn | protocol.Capability_Resume | protocol.Capability_FileRead,
 		Scope: authority.Scope{Base: protocol.ScopeBase_Subtree}, DelegateCaps: protocol.Capability_FileRead,
 		DelegateScope: authority.Scope{Base: protocol.ScopeBase_Subtree},
 	})
@@ -1247,7 +1251,7 @@ func TestScheduleRefusalStatuses(t *testing.T) {
 	esp.SetRepoPath([]byte("/r"))
 	want("repo on bound edit", e.edit(t, "", bsc.ID, esp, ""), protocol.ScheduleStatus_RepoConflict)
 	// scope_not_permitted: a scope id outside the creator's reach.
-	conn, _ := e.agent(t, authority.Grant{Caps: protocol.Capability_Schedule | protocol.Capability_Spawn | protocol.Capability_FileRead,
+	conn, _ := e.agent(t, authority.Grant{Caps: protocol.Capability_ScheduleEdit | protocol.Capability_Spawn | protocol.Capability_FileRead,
 		Scope: authority.Scope{Base: protocol.ScopeBase_Subtree}, DelegateCaps: protocol.Capability_All,
 		DelegateScope: authority.Scope{Base: protocol.ScopeBase_Subtree}})
 	sp = createSpec()
@@ -1299,7 +1303,7 @@ func TestEditChecksRecordOnlyWhenNamed(t *testing.T) {
 	e := newSchedEnv(t)
 	task := e.terminal(t, protocol.RunMode_Background, "")
 	sc := e.seed(t, 1, protocol.ScheduleTaskState_Bound, task, "")
-	conn, creator := e.agent(t, authority.Grant{Caps: protocol.Capability_Schedule | protocol.Capability_Spawn | protocol.Capability_Resume | protocol.Capability_RecordPersist,
+	conn, creator := e.agent(t, authority.Grant{Caps: protocol.Capability_ScheduleEdit | protocol.Capability_Spawn | protocol.Capability_Resume | protocol.Capability_RecordPersist,
 		Scope:        authority.Scope{Base: protocol.ScopeBase_Global, Overrides: []authority.ScopeOverride{{Caps: protocol.Capability_RecordPersist, Base: protocol.ScopeBase_None}}},
 		DelegateCaps: protocol.Capability_All, DelegateScope: authority.Scope{Base: protocol.ScopeBase_Global}})
 	_ = creator
@@ -1404,7 +1408,7 @@ func TestOpenGateChecksTheBitItself(t *testing.T) {
 	openRunner(t, e.h)
 	task := e.terminal(t, protocol.RunMode_Background, "")
 	sc := e.seed(t, 1, protocol.ScheduleTaskState_Bound, task, "")
-	conn, _ := e.agent(t, authority.Grant{Caps: protocol.Capability_Resume | protocol.Capability_Schedule,
+	conn, _ := e.agent(t, authority.Grant{Caps: protocol.Capability_Resume | protocol.Capability_ScheduleEdit,
 		Scope: authority.Scope{Base: protocol.ScopeBase_Global}})
 	cid := e.connIDOf(conn)
 	r, _ := e.h.handleOpenInteractive(cid, nil, foregroundResume(task), protocol.ClientKind_Agent, e.h.lookupPrincipal(cid), protocol.Capability_Resume, "")

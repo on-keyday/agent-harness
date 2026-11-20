@@ -1152,7 +1152,7 @@ board as the operator, keeping a board topic past its TTL (`board_persist`), put
 keeping a session's PTY record — switching recording on or keeping a record longer (`record_persist`) — and
 deleting one, switching recording off or shortening its retention (`record_delete`),
 reading the agents' own transcripts of a task's working directory (`transcript_read`),
-creating, editing, running and deleting a server-kept cron schedule and unbinding a task from one (`schedule`, see **Schedules**)) — and a **target scope** bounding WHICH tasks those
+creating, editing, running and deleting a server-kept cron schedule and unbinding a task from one (`schedule_edit` / `schedule_run`, see **Schedules**)) — and a **target scope** bounding WHICH tasks those
 capabilities may be pointed at.
 
 Attaching to a session is three capabilities, not one, because the three
@@ -1802,7 +1802,7 @@ later firing resumes it. At most one run per schedule is queued or running.
 # --queue-timeout, --record, --oneshot, --pty/--no-pty, --stream,
 # --resume-conversation, --agent-arg, --runner/--host/--ip, --rows/--cols), and
 # the authority flags are session new's (--caps, --scope, --scope-for,
-# --delegate-*). Needs the schedule capability and at least one candidate runner
+# --delegate-*). Needs the schedule_edit capability and at least one candidate runner
 # for the repo now. --stream makes every firing open an event-stream session
 # (5b); as on session new it is refused with --oneshot or --pty, and its
 # --turn-end defaults to lifecycle (quiet and program are refused).
@@ -1900,20 +1900,26 @@ schedule's kind (`--stream` or not), not as whatever kind it last ran as —
 the rule `session new --resume` follows. A `task_schedule` event on
 `watch` says its binding changed. Taking the task
 away — a resume asking for foreground, or `session mode … foreground` —
-needs the `schedule` bit as well as what it needs today, unbinds the task and
+needs the `schedule_edit` bit as well as what it needs today, unbinds the task and
 appends `unbound` to the history. A schedule with no task shows as such, and
 its firings are `skipped_no_task`.
 
-**The `schedule` capability** gates `new`, `edit`, `run`, `rm` and that
-unbinding. Acting on a particular schedule also needs reach to its task (while
-it has none, to the task that created it); `--task T` needs T in reach. `ls`
-and `show` need no bit, only the same reach, and the operator reaches all; a
+**The `schedule_edit` capability** gates `new`, `edit`, `rm` and that
+unbinding. **The independent `schedule_run` capability** gates `run`.
+Acting on a particular schedule also needs reach through the operation's own
+capability scope to its task (while it has none, to the task that created it);
+`--task T` needs T in `schedule_edit` reach. `ls` and `show` need no bit,
+only `schedule_edit` reach, and the operator reaches all; a
 schedule's prompt is shown only where the caller could read its task's prompt
 in `ls`. The stored authority is computed as `session new` does it, bounded by
 the creator, and `schedule edit` recomputes it with the EDITOR as granter
 whether or not an authority flag is named — otherwise someone able to edit
 another principal's schedule could change its prompt and have it run with the
 original creator's grant. Each firing writes the stored grant onto the task.
+The former `schedule` capability is now named `schedule_edit`, retaining its
+numeric bit in saved grants; the old name is no longer accepted in capability
+flags. Existing grants do not gain `schedule_run`: grant it explicitly to keep
+manual firing access. A newly granted `all` includes both bits.
 A schedule's own task can never act on its schedule — `edit`, `run`, `rm`, a
 `--task` rebind and the unbinding are refused whatever its grant holds — since
 the run reads untrusted text (issues, pull requests) and an injected
@@ -1934,11 +1940,11 @@ spawn`); T outside `resume`'s scope answers `task_not_reachable`. Reach and the
 own-task refusal are answered first. `rm`, `ls` and `show` are unchanged, and a
 firing checks nothing: the check was made when the schedule was written.
 
-**Do not grant `schedule` in a scheduled task's authority** (the grant a
+**Do not grant `schedule_edit` in a scheduled task's authority** (the grant a
 schedule stores). The rule above compares the caller with the bound task only:
-a bound task that holds `schedule` and either `spawn` or `resume` over a task
+a bound task that holds `schedule_edit` and either `spawn` or `resume` over a task
 it can bind can still create a NEW schedule, and a child it spawns with
-`schedule` and `resume` over its parent can edit the parent's
+`schedule_edit` and `resume` over its parent can edit the parent's
 schedule — so an instruction injected into a run could outlive it.
 
 **Per-field edits.** The five run-condition fields (`--deadline`, `--turn-end`,

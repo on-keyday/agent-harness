@@ -35,7 +35,7 @@ func fullSchedule(t *testing.T, id string, n int) Schedule {
 			TurnEnd: protocol.TurnEndSignal_Lifecycle, Rows: 24, Cols: 80,
 		}, Record: true, Oneshot: true, NoPTY: true},
 		Grant: authority.Grant{
-			Caps: protocol.Capability_FileRead | protocol.Capability_Schedule,
+			Caps: protocol.Capability_FileRead | protocol.Capability_ScheduleEdit,
 			Scope: authority.Scope{Base: protocol.ScopeBase_Global, IDs: []string{strings.Repeat("cd", 16)},
 				VisBase: protocol.ScopeBase_None, VisBasePresent: true, ExcludeSelf: true,
 				VisIDs:    []string{strings.Repeat("ef", 16)},
@@ -486,7 +486,7 @@ func TestScheduleFileFixtureV1(t *testing.T) {
 			TurnEnd: protocol.TurnEndSignal_Lifecycle, Rows: 24, Cols: 80,
 		}, Record: true, Oneshot: true, NoPTY: true},
 		Grant: authority.Grant{
-			Caps: protocol.Capability_FileRead | protocol.Capability_Schedule,
+			Caps: protocol.Capability_FileRead | protocol.Capability_ScheduleEdit,
 			Scope: authority.Scope{Base: protocol.ScopeBase_Global, IDs: []string{cid("cd")},
 				VisBase: protocol.ScopeBase_None, VisBasePresent: true, ExcludeSelf: true, VisIDs: []string{cid("ef")},
 				Overrides: []authority.ScopeOverride{{Caps: protocol.Capability_FileRead, Base: protocol.ScopeBase_None, ExcludeSelf: true, IDs: []string{cid("01")}}}},

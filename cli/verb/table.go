@@ -3239,7 +3239,7 @@ var Verbs = []VerbSpec{
 		ModalSurfaces: []ModalSurface{{Surface: WebUI, At: "webui/index.html#compose-cron"}},
 		Notes: []string{
 			"create a server-kept cron schedule: each firing resumes the schedule's background task (the first firing creates it, or --task binds one now)",
-			"needs the schedule capability; the stored authority is bounded by yours, from the same --caps / --scope / --scope-for / --delegate-* flags as session new",
+			"needs the schedule_edit capability; the stored authority is bounded by yours, from the same --caps / --scope / --scope-for / --delegate-* flags as session new",
 			"needs --cron, --repo or --task, --prompt, --deadline and (without --task) --agent; the run flags are session new --background's",
 		},
 		Action:    "ScheduleSpecAction",
@@ -3298,7 +3298,7 @@ var Verbs = []VerbSpec{
 			{Surface: WebUI, At: "webui/index.html#schedules-modal"},
 		},
 		Notes: []string{
-			"fire a schedule now, outside its times (recorded run_now); its next firing is unchanged. Needs the schedule capability and reach to the schedule's task",
+			"fire a schedule now, outside its times (recorded run_now); its next firing is unchanged. Needs the schedule_run capability and reach to the schedule's task",
 		},
 		Action:   "ScheduleIDAction",
 		Const:    map[string]string{"Sub": "run"},

@@ -789,7 +789,7 @@ enum TaskControlKind:
     transcript_list         # appended: a task's sessions, or one session's files
     transcript_get          # appended: one file of a session, or all as a tar
     # Server-kept cron schedules (pillar S). create / edit / delete / run need
-    # the schedule bit; list / show need none (reach decides what they return).
+    # schedule_edit for management, schedule_run for firing; list / show need none.
     schedule_create         # appended: a new schedule
     schedule_edit           # appended: change future firings only
     schedule_delete         # appended
@@ -4931,26 +4931,30 @@ enum Capability:
     # B, B-D10). Not exec_view: a transcript carries what never reached a
     # screen (files the agent read, subagents, past runs). Default-off, appended.
     transcript_read = 0x10000000, "transcript_read"
-    # schedule creates, edits, deletes and runs server-kept cron schedules, and
+    # schedule_edit creates, edits and deletes server-kept cron schedules, and
     # unbinds a task from one (a foreground resume, `session mode ... foreground`).
     # Strong: a schedule fires on its own with the authority stored at create or
-    # edit, for as long as it exists (pillar S, S-D17). Default-off, appended.
-    schedule       = 0x20000000, "schedule"
+    # edit. Keeps the former schedule bit; does not authorize schedule run.
+    schedule_edit  = 0x20000000, "schedule_edit"
+    # schedule_run explicitly fires a saved schedule. Independent of
+    # schedule_edit; spawn or resume is also required for the action it takes.
+    # Scoped to the bound task, or its creator before binding. Default-off.
+    schedule_run   = 0x40000000, "schedule_run"
     # `all` is a LITERAL, not "every defined bit", so it widens by hand — the
     # same edit exec_view / exec_cowrite / exec_resize each needed. The WAL
     # persists the NUMBER, so a task already granted `all` holds 0xffff and
     # does NOT gain forward_tap until it is re-granted (nor, at 0x3fffff,
     # forward_link; nor, at 0x7fffff, runner_enroll; nor, at 0xffffff,
     # board_persist; nor, at 0x1ffffff, board_member; nor, at 0xfffffff,
-    # record_delete and record_persist; nor, at 0x1fffffff, transcript_read; nor, at
-    # 0x3fffffff, schedule).
+    # record_delete and record_persist; nor, at 0xfffffff, transcript_read; nor, at
+    # 0x1fffffff, schedule_edit; nor, at 0x3fffffff, schedule_run).
     # That is the safe
     # direction and needs no migration.
     #
     # Widening it is REQUIRED, not stylistic: callerCaps hands operator
     # connections Capability_All, so a literal left at 0xffff would deny the
     # operator its own feature.
-    all            = 0x3fffffff, "all"
+    all            = 0x7fffffff, "all"
 
 # ScopeBase is the base target set a TaskScope starts from, before its explicit
 # id list is unioned in. Self joins that union unless exclude_self removes it,

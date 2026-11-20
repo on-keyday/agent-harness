@@ -2,13 +2,23 @@ package protocol
 
 import "testing"
 
+func TestScheduleCapabilitySplit(t *testing.T) {
+	// Persisted grants retain management access without gaining manual firing.
+	if Capability_ScheduleEdit != 0x20000000 || Capability_ScheduleRun != 0x40000000 {
+		t.Fatal("schedule capability bits moved")
+	}
+	if Capability(0x3fffffff)&Capability_ScheduleRun != 0 {
+		t.Fatal("old all grants gained schedule_run")
+	}
+}
+
 func TestCapabilityBits(t *testing.T) {
 	// Formatted through uint32, never the Capability itself: Capability has a
 	// String method, and fmt applies %x to the STRING for a Stringer — so
 	// %#x of Capability_All printed 0x616c6c ("all" in ASCII) and hid the
 	// actual value behind a plausible-looking hex number.
-	if Capability_All != 0x3fffffff {
-		t.Fatalf("All = %#x, want 0x3fffffff", uint64(Capability_All))
+	if Capability_All != 0x7fffffff {
+		t.Fatalf("All = %#x, want 0x7fffffff", uint64(Capability_All))
 	}
 	if Capability_None != 0 {
 		t.Fatalf("None = %#x, want 0", uint64(Capability_None))
@@ -23,7 +33,7 @@ func TestCapabilityBits(t *testing.T) {
 		Capability_BoardSend | Capability_ExecTap | Capability_BoardPeer |
 		Capability_Resume | Capability_ResumeExact | Capability_ForwardLink |
 		Capability_RunnerEnroll | Capability_BoardPersist | Capability_BoardMember |
-		Capability_RecordDelete | Capability_RecordPersist | Capability_TranscriptRead | Capability_Schedule
+		Capability_RecordDelete | Capability_RecordPersist | Capability_TranscriptRead | Capability_ScheduleEdit | Capability_ScheduleRun
 	if or != Capability_All {
 		t.Fatalf("OR of bits = %#x, want All = %#x", uint64(or), uint64(Capability_All))
 	}
