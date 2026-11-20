@@ -638,10 +638,11 @@ Granular names: `spawn`, `resume_exact`, `resume`, `cancel`, `exec_view`, `exec_
 `exec_control`, `exec_resize`, `exec_run`, `exec_tap`, `file_read`, `file_write`,
 `forward_local`, `forward_remote`, `forward_link`, `forward_tap`, `notify`, `prune`,
 `runner_admin`, `board_observe`, `board_purge`, `board_send`, `board_peer`, `board_persist`, `board_member`,
-`record_persist`, `record_delete`, `transcript_read`, `schedule` — plus the aliases `none` / `all`. `harness-cli caps`
+`record_persist`, `record_delete`, `transcript_read`, `schedule_edit`, `schedule_run` — plus the aliases `none` / `all`. `harness-cli caps`
 prints the authoritative list with a line each; this one can fall behind it.
-`schedule` creates, edits, runs and deletes a server-kept cron schedule and
-unbinds a task from one (next section).
+`schedule_edit` creates, edits and deletes a server-kept cron schedule and
+unbinds a task from one. `schedule_run` independently authorizes explicit
+firing with `schedule run` (next section).
 `record_persist` keeps a session's PTY record (switches recording on, opens a
 session with `--record`, keeps a record longer) and `record_delete` removes one
 (`record rm`, `record off`, a shorter retention); reading a record is
@@ -694,15 +695,21 @@ harness-cli schedule run <schedule-id>           # fire now (history: run_now)
 harness-cli schedule rm <schedule-id>            # the task stays; a run is not cancelled
 ```
 
-- **`new`, `edit`, `run`, `rm` need the `schedule` bit**, and `edit` / `run` /
-  `rm` also need the schedule's task in your scope (while it has none, its
-  creator task). `ls` / `show` need no bit. `new` takes `--prompt`,
+- **`new`, `edit`, `rm` need `schedule_edit`; `run` needs `schedule_run`.**
+  The bits are independent. `edit` / `rm` use `schedule_edit`'s scope and `run`
+  uses `schedule_run`'s scope over the bound task (or its creator before binding).
+  `ls` / `show` need no bit through management reach; a `schedule_run` holder
+  can also read schedules in its run scope. Read access does not grant edits. `new` takes `--prompt`,
   `--deadline`, `--agent` and `--repo` (or `--task T` to bind an existing
   task, not running in foreground), with `session new --background`'s run
   flags and `session new`'s `--caps` / `--scope` / `--scope-for` /
   `--delegate-*`. The stored authority is bounded by yours; an edit recomputes
   it with the editor as granter, so editing a schedule never leaves it wider
   than you. Check `whoami` before promising to create one.
+- **Existing grants keep management access, not manual firing.** The old
+  `schedule` name is removed; its saved numeric bit now means `schedule_edit`.
+  Neither it nor an old saved `all` grants `schedule_run` automatically; grant
+  the new bit explicitly where manual firing is needed.
 - **A schedule verb also needs the power it exercises.** `new` without
   `--task` needs `spawn`; `new --task T` and an edit that binds T need `resume`
   with T in its scope (`resume_exact` is not enough); `edit` / `run` of an
@@ -723,11 +730,11 @@ harness-cli schedule rm <schedule-id>            # the task stays; a run is not 
   and an instruction injected into it must not outlive the run by rewriting
   the prompt, the times or the binding. Do not read the refusal (`self_refused`)
   as a missing bit; the operator or another task changes it.
-- **Do not grant `schedule` in a scheduled task's authority** (the grant a
+- **Do not grant `schedule_edit` in a scheduled task's authority** (the grant a
   schedule stores). That refusal compares the caller with the bound task only:
-  a bound task holding `schedule` and either `spawn` or `resume` over a task
+  a bound task holding `schedule_edit` and either `spawn` or `resume` over a task
   it can bind can still create a NEW schedule, and a child it spawns with
-  `schedule` and `resume` over its parent can edit the parent's
+  `schedule_edit` and `resume` over its parent can edit the parent's
   schedule — so an injected instruction could outlive the run.
 - **Every due firing leaves a history entry** (`schedule show`, last 50):
   `fired`, `run_now`, `skipped_busy` (the previous run is still queued or
@@ -737,7 +744,7 @@ harness-cli schedule rm <schedule-id>            # the task stays; a run is not 
   the server was down runs once when it comes back.
 - **Taking a scheduled task away needs the bit too.** A resume that asks for
   `--foreground`, or `session mode <id> foreground`, on a task bound to a
-  schedule needs `schedule` as well as what it needs today; it unbinds the task,
+  schedule needs `schedule_edit` as well as what it needs today; it unbinds the task,
   and its firings are `skipped_no_task` until `schedule edit --task <id>` binds
   one. `ls` shows the binding as `schedule=<id8>`. A task the schedule CREATED
   (its first firing) reads `from=schedule`; a task bound with `--task` keeps

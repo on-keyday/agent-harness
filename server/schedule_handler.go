@@ -266,8 +266,8 @@ func scheduleTarget(sc Schedule) string {
 	return sc.Creator
 }
 
-// scheduleReach reports management and read reach through schedule_edit's
-// own scope (no bit is needed to ask: reading is bounded by reach alone).
+// scheduleReach reports management reach through schedule_edit's own scope.
+// Reading also admits a schedule_run holder's run reach (scheduleReadReach).
 // A schedule with no target is the operator's.
 func (h *TaskHandler) scheduleReach(cid string, sc Schedule) bool {
 	target := scheduleTarget(sc)
@@ -285,6 +285,15 @@ func (h *TaskHandler) scheduleRunReach(cid string, sc Schedule) bool {
 		return h.principalHex(cid) == ""
 	}
 	return h.inScope(cid, protocol.Capability_ScheduleRun, target)
+}
+
+// scheduleReadReach preserves reads through management reach without requiring
+// a capability, and lets run-only callers discover schedules they can fire.
+// An absent run bit must not widen an existing read restriction through its
+// default scope. This predicate is never used to authorize mutations.
+func (h *TaskHandler) scheduleReadReach(cid string, sc Schedule) bool {
+	return h.scheduleReach(cid, sc) ||
+		(hasCap(h.callerCaps(cid), protocol.Capability_ScheduleRun) && h.scheduleRunReach(cid, sc))
 }
 
 // scheduleOwnTask is S-D20: the caller is the task bound to sc.
@@ -1122,7 +1131,7 @@ func (h *TaskHandler) scheduleListBody(cid string) protocol.ScheduleListBody {
 	visAll, visible := h.visibleToCaller(cid)
 	var rows []protocol.ScheduleRow
 	for _, sc := range h.Sched.Store.List() {
-		if h.scheduleReach(cid, sc) {
+		if h.scheduleReadReach(cid, sc) {
 			rows = append(rows, h.scheduleRow(sc, visAll, visible))
 		}
 	}
@@ -1132,9 +1141,10 @@ func (h *TaskHandler) scheduleListBody(cid string) protocol.ScheduleListBody {
 }
 
 func (h *TaskHandler) scheduleDetail(cid string, id protocol.ScheduleID) (*protocol.ScheduleDetail, *protocol.ScheduleResponse) {
-	sc, refusal := h.scheduleFor(cid, id)
-	if refusal != nil {
-		return nil, refusal
+	sc, ok := h.Sched.Store.Get(hex.EncodeToString(id.Id[:]))
+	if !ok || !h.scheduleReadReach(cid, sc) {
+		r := scheduleRefusal(protocol.ScheduleStatus_NoSuchSchedule, "")
+		return nil, &r
 	}
 	visAll, visible := h.visibleToCaller(cid)
 	d := &protocol.ScheduleDetail{

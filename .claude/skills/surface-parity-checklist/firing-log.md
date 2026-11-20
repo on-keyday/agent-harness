@@ -4466,3 +4466,22 @@ omitted: 18a (TUI runner table: the `Link` column already reads
          `dial:<8 hex>`, and a URL does not fit an over-subscribed row; spec §4
          says unchanged)
 missed:  —
+
+
+### 2026-11-21 — schedule_edit / schedule_run split and review follow-up
+
+The initial commit a63ced25 skipped this walk. Peer review caught the stale
+embedded worker skill and absent spec amendment, and run-only callers could
+execute a known id but not discover it through ls/show. The full ordered
+1–39 walk (including 18a/28a/34a) is recorded in the Pillar S amendment's
+Surface audit table. Agent-launch S1–S6 do not apply: no launch contract changed.
+
+done: 1, 3–7, 10–13, 15, 19, 23–24, 27–29, 28a, 31–33, 35–37, 39
+      (`cli/verb/table.go`, shared capability catalog and Schedule methods;
+      server action scopes remain separate from the read predicate;
+      README, embedded supervising-workers skill and both mirrors;
+      Pillar S amendment and GD amendment reference).
+omitted: —
+missed: 31 (run-only discovery), 36 (embedded skill), 37 (amendment) in the
+        initial commit; corrected by this follow-up. README already documented
+        narrowed old grants; the amendment and commit body now state it too.

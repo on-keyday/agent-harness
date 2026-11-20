@@ -1909,7 +1909,9 @@ unbinding. **The independent `schedule_run` capability** gates `run`.
 Acting on a particular schedule also needs reach through the operation's own
 capability scope to its task (while it has none, to the task that created it);
 `--task T` needs T in `schedule_edit` reach. `ls` and `show` need no bit,
-only `schedule_edit` reach, and the operator reaches all; a
+`schedule_edit` reach or, for a `schedule_run` holder, `schedule_run` reach.
+Read reach does not authorize management or firing; each action checks its own
+bit and scope. The operator reaches all; a
 schedule's prompt is shown only where the caller could read its task's prompt
 in `ls`. The stored authority is computed as `session new` does it, bounded by
 the creator, and `schedule edit` recomputes it with the EDITOR as granter

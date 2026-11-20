@@ -7,6 +7,16 @@ pieces of work and the order they are built in. Each pillar below gets its own
 spec, which must stay inside the decisions here or record a reversal of one.
 Nothing here is implemented yet.
 
+
+## Amendment reference — 2026-11-21: schedule capabilities
+
+The single schedule capability in G34/G37 and G46's foreground-unbinding
+requirement is superseded by the [Pillar S capability amendment](2026-11-15-pillar-s-schedules-design.md#amendment--2026-11-21-independent-management-and-manual-firing).
+The operator split management (`schedule_edit`: new/edit/rm/unbind) from
+explicit firing (`schedule_run`: run), with separate scopes and no implication
+between the bits. The amendment defines read reach and compatibility for old
+numeric grants. Other authority and firing decisions remain unchanged.
+
 ## Problem
 
 - **P1 — the oneshot kind is half-built and unused.** Of the 37 tasks visible

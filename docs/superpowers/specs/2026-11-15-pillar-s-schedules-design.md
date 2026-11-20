@@ -8,6 +8,94 @@ Implements pillar S of `2026-11-12-run-modes-and-records-grand-design.md`
 conditions and `session new --oneshot` are landed. Where this spec reverses a
 GD row, its Decisions table names the row and what moved it.
 
+## Amendment — 2026-11-21: independent management and manual firing
+
+This amendment supersedes the single-capability rules in S-D17 and S-D15,
+and the corresponding GD G34/G37/G46 references. The operator requested
+「せめてnew/edit/rmとrunは分けたい」 and named the management capability
+`schedule_edit` in this session. The cron trigger and firing algorithm remain
+as specified; manual-only triggers and per-run input are still proposals.
+
+- `schedule_edit` gates `new`, `edit`, `rm`, binding and foreground unbinding.
+  It retains the former `schedule` bit, `0x20000000`.
+- `schedule_run` independently gates `run`, with a new bit, `0x40000000`.
+  Neither capability implies the other. Each action uses its own capability's
+  scope over the bound task, or the creator while no task is bound.
+- The S-D17a `spawn` / `resume` checks, stored grants, prompt redaction and
+  S-D20 self-refusals remain in force. Run reach must not authorize edits or
+  deletion.
+- Reading through management reach still needs no capability. Builder's
+  clarification after review: a holder of `schedule_run` may also list/show
+  schedules within its run scope, so a run-only caller can discover its
+  targets. An ungranted run bit's default scope does not widen read reach.
+  A visible schedule can still be outside one action's scope; visibility
+  does not promise permission for every action.
+- The old CLI capability name `schedule` is rejected. Persisted numeric
+  grants keep management access but lose manual firing unless explicitly
+  re-granted `schedule_run`. A saved `all=0x3fffffff` does not gain the new
+  bit; a newly granted `all=0x7fffffff` includes both. No automatic grant
+  migration is performed: preserving management access without adding
+  execution authority is intentional.
+
+Validation: server tests cover both scope directions for list/show/run,
+management denial through read-only reach, and no read widening when the run
+bit is absent or both scopes exclude the target. The embedded worker skill
+and both mirrors name the new capabilities. Dummy harness verification uses
+actual runner-issued task tickets for edit-only and run-only callers.
+
+### Surface audit for the capability split and review follow-up
+
+The initial commit omitted the embedded skill and specification amendment;
+this walk records those corrections and the read-reach follow-up.
+
+| Item | Verdict | Evidence / reason |
+|---|---|---|
+| 1 | done | `cli/verb/table.go` new/run help names the separate bits. |
+| 2 | n/a | No cross-flag validity change. |
+| 3 | done | Existing buttons/keys retain the same shared Schedule requests. |
+| 4 | done | `tui/schedules.go` run/delete requests meet server-side action gates. |
+| 5 | done | `tui/authoritypicker.go` consumes the shared capability catalog. |
+| 6 | done | WebUI capability controls consume that same catalog. |
+| 7 | done | Schedule verb dispatch declarations remain shared in `cli/verb/table.go`. |
+| 8 | n/a | No new bridge action or argument interpretation. |
+| 9 | n/a | No session-default change. |
+| 10 | done | Existing result renderers retain action-specific permission denials. |
+| 11 | done | Schedule text rows use the server-filtered list in `cli/schedule.go`. |
+| 12 | done | Schedule JSON uses the same list, without extra client filtering. |
+| 13 | done | `whoami` capability names derive from the shared catalog. |
+| 14 | n/a | No session-list field added. |
+| 15 | done | `cli/verb/caps.go` lists/describes both bits independently. |
+| 16 | n/a | No task-table field added. |
+| 17 | n/a | No task-detail field added. |
+| 18 | n/a | No runner-detail change. |
+| 18a | n/a | No runner-table change. |
+| 19 | done | Authority picker rows use the shared catalog, not a second bit list. |
+| 20 | n/a | No task-row field added. |
+| 21 | n/a | No task-sheet action added. |
+| 22 | n/a | No dialog-prefill field added. |
+| 23 | done | WASM capability catalog and schedule lists use shared Go/server data. |
+| 24 | done | Create/edit/delete/unbind use edit; run uses run; read admits either applicable reach. |
+| 25 | n/a | No optional field or presence-bit change. |
+| 26 | n/a | No default application change. |
+| 27 | done | Existing shared Schedule request builders remain the single path. |
+| 28 | done | Numeric management bit retained; old all does not gain run; protocol fixture tested. |
+| 28a | done | CLI/TUI/WASM use the same Schedule methods; no request field added. |
+| 29 | done | Existing errors identify the denied capability; scope refusals remain no_such_schedule. |
+| 30 | n/a | No result-routing change. |
+| 31 | done | Run-only rows become discoverable; existing prompt-redaction rules remain. |
+| 32 | done | Capability names still come from the protocol enum and shared ParseCaps. |
+| 33 | done | Removed schedule name errors; action gates cannot silently accept missing bits. |
+| 34 | n/a | No varying column set. |
+| 34a | n/a | No new form control. |
+| 35 | done | README capability and schedule sections updated, including compatibility. |
+| 36 | done | Embedded supervising-workers skill and both mirrors updated together. |
+| 37 | done | This amendment records the operator's reversal and GD references. |
+| 38 | n/a | No screen-rendering change. |
+| 39 | done | Pillar S Surfaces: CLI text/JSON, TUI table/detail/command line, WebUI dialog/Compose/command line retain their shared requests and server list/detail predicates. |
+
+Agent-launch audit S1–S6 does not fire: no agent preset, argv, credentials,
+launch environment or addressing contract changed.
+
 ## Why
 
 GD's second motive: work a machine starts on a schedule and that ends itself

@@ -85,6 +85,24 @@ func TestScheduleRunUsesItsOwnScope(t *testing.T) {
 				{Caps: protocol.Capability_ScheduleRun, Base: runBase},
 			}},
 		})
+		// Both directions can discover the schedule: management reach alone,
+		// or run reach while schedule_edit is explicitly narrowed to none.
+		rows := e.h.scheduleListBody(e.connIDOf(conn)).Rows
+		if len(rows) != 1 {
+			t.Fatalf("runReaches=%v: ls returned %d rows", runReaches, len(rows))
+		}
+		if r := e.call(t, conn, protocol.TaskControlKind_ScheduleShow, sc.ID); r.Status != protocol.ScheduleStatus_Ok {
+			t.Fatalf("runReaches=%v: show returned %v", runReaches, r.Status)
+		}
+		if runReaches {
+			// Discoverability must not widen the management path's reach.
+			if r := e.h.scheduleDelete(e.connIDOf(conn), schedHexID(t, sc.ID)); r.Status != protocol.ScheduleStatus_NoSuchSchedule {
+				t.Fatalf("run reach authorized delete: %v", r.Status)
+			}
+			if r, deny := e.h.scheduleEdit(e.connIDOf(conn), schedHexID(t, sc.ID), &protocol.ScheduleSpec{}, ""); deny != 0 || r.Status != protocol.ScheduleStatus_NoSuchSchedule {
+				t.Fatalf("run reach authorized edit: %v %v", r.Status, deny)
+			}
+		}
 		want := protocol.ScheduleStatus_NoSuchSchedule
 		if runReaches {
 			want = protocol.ScheduleStatus_Ok
@@ -94,6 +112,31 @@ func TestScheduleRunUsesItsOwnScope(t *testing.T) {
 		}
 		if runReaches != (len(e.fires) == 1) {
 			t.Fatalf("runReaches=%v: firings %v", runReaches, e.fires)
+		}
+	}
+}
+
+func TestScheduleReadDoesNotUseUngrantedRunScope(t *testing.T) {
+	e := newSchedEnv(t)
+	task := e.terminal(t, protocol.RunMode_Background, "")
+	sc := e.seed(t, 1, protocol.ScheduleTaskState_Bound, task, "")
+	for _, caps := range []protocol.Capability{protocol.Capability_None, protocol.Capability_ScheduleRun} {
+		runBase := protocol.ScopeBase_Global
+		if caps != protocol.Capability_None {
+			runBase = protocol.ScopeBase_None
+		}
+		conn, _ := e.agent(t, authority.Grant{
+			Caps: caps,
+			Scope: authority.Scope{Base: protocol.ScopeBase_Global, Overrides: []authority.ScopeOverride{
+				{Caps: protocol.Capability_ScheduleEdit, Base: protocol.ScopeBase_None},
+				{Caps: protocol.Capability_ScheduleRun, Base: runBase},
+			}},
+		})
+		if rows := e.h.scheduleListBody(e.connIDOf(conn)).Rows; len(rows) != 0 {
+			t.Fatalf("caps=%v: ls exposed a schedule outside read reach", caps)
+		}
+		if r := e.call(t, conn, protocol.TaskControlKind_ScheduleShow, sc.ID); r.Status != protocol.ScheduleStatus_NoSuchSchedule {
+			t.Fatalf("caps=%v: show exposed a schedule outside read reach: %v", caps, r.Status)
 		}
 	}
 }
