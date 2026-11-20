@@ -234,3 +234,51 @@ func TestUnenrollRemovesBoundRecords(t *testing.T) {
 		t.Fatal("the removed records' loops still run")
 	}
 }
+
+func TestRunnerDialAddStoresCanonicalURL(t *testing.T) {
+	f := newDialVerbFixture(t)
+	f.h.DialLegs = func(tr string) bool { return tr == "ws" || tr == "wss" }
+	op := keyVerbConn()
+	k, _, _ := ed25519.GenerateKey(nil)
+	f.enroll(t, op, k, "")
+	full := hex.EncodeToString(k)
+	st, id := dialAdd(t, f, op, full, "", "WSS://Agent-1.Example.COM:443/ws")
+	if st != protocol.RunnerDialStatus_Ok {
+		t.Fatalf("URL add: %v", st)
+	}
+	rec, _ := f.h.RunnerDials.Get(id)
+	if len(rec.Candidates) != 1 || rec.Candidates[0] != "wss://agent-1.example.com/ws" {
+		t.Fatalf("stored %q, want the canonical wss://agent-1.example.com/ws", rec.Candidates)
+	}
+	if st, _ := dialAdd(t, f, op, full, "", "wss://agent-1.example.com:443/ws"); st != protocol.RunnerDialStatus_DuplicateCandidate {
+		t.Fatalf("another spelling of the same URL: %v, want duplicate_candidate", st)
+	}
+	if st, _ := dialAdd(t, f, op, full, "", "wss://agent-2.example.com/ws?token=x"); st != protocol.RunnerDialStatus_InvalidCandidates {
+		t.Fatalf("URL with a query: %v, want invalid_candidates", st)
+	}
+	f.h.DialLegs = func(tr string) bool { return tr == "udp" }
+	if st, _ := dialAdd(t, f, op, full, "", "wss://agent-3.example.com/ws"); st != protocol.RunnerDialStatus_InvalidCandidates {
+		t.Fatalf("URL on a server with no WebSocket leg: %v, want invalid_candidates", st)
+	}
+}
+
+func TestDialLegsWSS(t *testing.T) {
+	for _, c := range []struct {
+		cfg  Config
+		want bool
+	}{
+		{Config{Addr: "127.0.0.1:0"}, true},
+		{Config{UDPAddr: "127.0.0.1:0"}, false},
+	} {
+		s := New(c.cfg)
+		if got := s.taskHandler.DialLegs("wss"); got != c.want {
+			t.Errorf("Addr=%q: DialLegs(wss) = %v, want %v", c.cfg.Addr, got, c.want)
+		}
+		if got := s.taskHandler.DialLegs("ws"); got != c.want {
+			t.Errorf("Addr=%q: DialLegs(ws) = %v, want %v", c.cfg.Addr, got, c.want)
+		}
+		if (s.wsTargets != nil) != c.want {
+			t.Errorf("Addr=%q: wsTargets = %v, want present=%v", c.cfg.Addr, s.wsTargets, c.want)
+		}
+	}
+}

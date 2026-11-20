@@ -123,7 +123,10 @@ type Config struct {
 
 // Server wires all components together and manages the main accept loop.
 type Server struct {
-	cfg           Config
+	cfg Config
+	// wsTargets resolves the named addresses of dial records' URL
+	// candidates for the WebSocket leg; nil without one (no Addr).
+	wsTargets     *transport.WebSocketTargets
 	registry      *Registry
 	tasks         *TaskStore
 	sessions      *SessionRegistry
@@ -264,6 +267,7 @@ func New(cfg Config) *Server {
 	}
 	s := &Server{
 		cfg:               cfg,
+		wsTargets:         newWSTargets(cfg),
 		registry:          NewRegistry(),
 		tasks:             NewTaskStore(),
 		sessions:          NewSessionRegistry(),
@@ -311,6 +315,7 @@ func New(cfg Config) *Server {
 	s.dials = newDialManager(dialManagerConfig{
 		Store: cfg.RunnerDials, Keys: cfg.RunnerKeys, Registry: s.registry,
 		Dial: s.dialWithOrigin, SetLink: s.registry.SetLink, Logger: cfg.Logger,
+		Resolve: resolveDialCandidate(s.wsTargets),
 	})
 	s.taskHandler = &TaskHandler{
 		RunnerKeys:  cfg.RunnerKeys,
@@ -318,7 +323,7 @@ func New(cfg Config) *Server {
 		Dials:       s.dials,
 		DialLegs: func(transport string) bool {
 			switch transport {
-			case "ws":
+			case "ws", "wss":
 				return cfg.Addr != ""
 			case "udp":
 				return cfg.UDPAddr != ""
@@ -882,6 +887,9 @@ func (s *Server) buildEndpoint() (objproto.Endpoint, *http.ServeMux, string, err
 		legs = append(legs, transport.WebSocketLeg(mux, transport.WebSocketConfig{
 			Logger: s.cfg.Logger,
 			Path:   cli.WebSocketPath,
+			// Reverse dials to wss runners, and to dial records' URLs.
+			TLS:     cli.ClientTLSConfig(),
+			Targets: s.wsTargets,
 		}))
 	}
 	if s.cfg.UDPAddr != "" {

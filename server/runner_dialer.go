@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sort"
 	"sync"
@@ -10,6 +11,7 @@ import (
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
+	"github.com/on-keyday/objtrsf/transport"
 )
 
 // dialManager keeps every dial record's runner connected: one loop per record,
@@ -535,4 +537,32 @@ func FormatDialRecordID(id uint32) string {
 		id >>= 4
 	}
 	return string(b)
+}
+
+// newWSTargets is the table a server's WebSocket leg resolves named addresses
+// through, or nil when the server has no WebSocket leg.
+func newWSTargets(cfg Config) *transport.WebSocketTargets {
+	if cfg.Addr == "" {
+		return nil
+	}
+	return transport.NewWebSocketTargets()
+}
+
+// resolveDialCandidate is a dial record's Resolve: a URL candidate is
+// registered in targets and dialed at its named address; any other goes
+// through cli.ResolveCandidate.
+func resolveDialCandidate(targets *transport.WebSocketTargets) func(string) (objproto.ConnectionID, error) {
+	return func(spec string) (objproto.ConnectionID, error) {
+		if !cli.IsURLCandidate(spec) {
+			return cli.ResolveCandidate(spec)
+		}
+		if targets == nil {
+			return objproto.ConnectionID{}, fmt.Errorf("candidate %q: no WebSocket leg for a URL candidate", spec)
+		}
+		t, err := transport.ParseWebSocketTarget(spec)
+		if err != nil {
+			return objproto.ConnectionID{}, fmt.Errorf("candidate %q: %w", spec, err)
+		}
+		return objproto.NewRandomConnectionID(t.Transport(), targets.Register(t))
+	}
 }

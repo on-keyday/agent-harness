@@ -12,6 +12,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
+	"github.com/on-keyday/objtrsf/transport"
 )
 
 // fakeNet stands in for the network under a dialManager: a dial "succeeds" by
@@ -415,4 +416,31 @@ func TestServerDialsStoredRecordAtStartup(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	t.Fatal("the record did not re-dial the runner after its connection was closed")
+}
+
+func TestResolveDialCandidateURL(t *testing.T) {
+	targets := transport.NewWebSocketTargets()
+	resolve := resolveDialCandidate(targets)
+	a, err := resolve("wss://h/ws")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := resolve("wss://h/ws")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, named := objproto.NamedFromAddrPort(a.Addr)
+	if a.Transport != "wss" || !named || a.Addr != b.Addr {
+		t.Fatalf("resolve = %v then %v, want one named wss address", a, b)
+	}
+	if tg, ok := targets.Lookup(key); !ok || tg.String() != "wss://h/ws" {
+		t.Fatalf("table holds %v, %v; want wss://h/ws", tg, ok)
+	}
+	ip, err := resolve("ws:127.0.0.1:9-*")
+	if err != nil || ip.Transport != "ws" || ip.Addr.String() != "127.0.0.1:9" {
+		t.Fatalf("IP candidate = %v, %v", ip, err)
+	}
+	if _, err := resolveDialCandidate(nil)("wss://h/ws"); err == nil {
+		t.Fatal("URL candidate resolved on a server with no WebSocket leg")
+	}
 }

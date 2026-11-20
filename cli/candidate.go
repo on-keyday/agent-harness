@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/on-keyday/objtrsf/objproto"
+	"github.com/on-keyday/objtrsf/transport"
 )
 
 // A candidate is one address in a list a process keeps dialing: a dial-mode
@@ -81,4 +82,28 @@ func ParseCandidate(spec string) error {
 func CandidateTransport(spec string) string {
 	t, _, _ := strings.Cut(spec, ":")
 	return t
+}
+
+// IsURLCandidate reports whether a candidate is a ws:// or wss:// URL rather
+// than a transport:host:port-id. Only a dial record takes a URL: its address
+// is a named one, which means something only to the server that registered
+// it (objproto.NamedAddrPort), so it is never handed to anyone else to dial.
+func IsURLCandidate(text string) bool { return strings.Contains(text, "://") }
+
+// CanonicalDialRecordCandidate checks one dial-record candidate and returns
+// the text to store: a URL in canonical form (transport.ParseWebSocketTarget,
+// which names the rule a refused URL broke), anything else as given once
+// ParseCandidate accepts it.
+func CanonicalDialRecordCandidate(text string) (string, error) {
+	if IsURLCandidate(text) {
+		t, err := transport.ParseWebSocketTarget(text)
+		if err != nil {
+			return "", err
+		}
+		return t.String(), nil
+	}
+	if err := ParseCandidate(text); err != nil {
+		return "", err
+	}
+	return text, nil
 }

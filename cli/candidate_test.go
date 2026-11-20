@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -55,5 +56,48 @@ func TestSplitCandidatesRefusesEmptyEntry(t *testing.T) {
 	}
 	if _, err := SplitCandidates("ws:a:1-*,"); err == nil {
 		t.Fatal("a trailing comma is a typo, not an empty candidate to skip")
+	}
+}
+
+func TestCanonicalDialRecordCandidate(t *testing.T) {
+	for _, c := range []struct{ in, want, errHas string }{
+		{"WSS://H:443/WS", "wss://h/WS", ""},
+		{"wss://agent-1.example.com:8443/a/ws", "wss://agent-1.example.com:8443/a/ws", ""},
+		{"ws:1.2.3.4:80-*", "ws:1.2.3.4:80-*", ""},
+		{"wss://h", "", "path"},
+		{"wss://h/ws?", "", "query is not supported"},
+		{"not-a-cid", "", ""},
+	} {
+		got, err := CanonicalDialRecordCandidate(c.in)
+		if c.want == "" {
+			if err == nil {
+				t.Errorf("CanonicalDialRecordCandidate(%q) = %q, want an error", c.in, got)
+			} else if c.errHas != "" && !strings.Contains(err.Error(), c.errHas) {
+				t.Errorf("CanonicalDialRecordCandidate(%q) error %v, want it to name %q", c.in, err, c.errHas)
+			}
+			continue
+		}
+		if err != nil || got != c.want {
+			t.Errorf("CanonicalDialRecordCandidate(%q) = %q, %v; want %q", c.in, got, err, c.want)
+		}
+	}
+	if tr := CandidateTransport("wss://h/ws"); tr != "wss" {
+		t.Errorf("CandidateTransport(URL) = %q, want wss", tr)
+	}
+	if !IsURLCandidate("wss://h/ws") || IsURLCandidate("ws:h:1-*") {
+		t.Error("IsURLCandidate misclassifies")
+	}
+}
+
+// A refused URL is refused before the request leaves, with the rule named:
+// the server answers only invalid_candidates.
+func TestRunnerDialAddWithRefusesBadURLLocally(t *testing.T) {
+	f := &fakeTaskControlClient{}
+	_, _, err := RunnerDialAddWith(context.Background(), f, []string{"wss://h/ws?token=x"}, "abcd1234", "")
+	if err == nil || !strings.Contains(err.Error(), "query is not supported") {
+		t.Fatalf("err = %v, want one naming the query rule", err)
+	}
+	if f.lastRequest != nil {
+		t.Fatal("the request was sent")
 	}
 }
