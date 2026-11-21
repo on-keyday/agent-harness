@@ -225,7 +225,7 @@ Independent of the rest; lands first.
   - `type Credential struct { TaskID protocol.TaskID; Key ed25519.PrivateKey }`; `func ParseCredential(s string) (Credential, error)`; `func (c Credential) String() string`; `func LoadCredential(flagPath string) (*Credential, error)` (sources and order per Global Constraints; nil,nil when none; a file readable by group/other → error naming the mode).
   - `func SendCredentialHandshake(ctx context.Context, sendFn func([]byte) error, transcript []byte, cred Credential, serverKey ed25519.PublicKey, respCh <-chan PskAuthReply) error` (model: `runner/connect.go:617-657`).
   - `dialOn`: `if cred != nil` → `SendCredentialHandshake`, `Client.kind = ClientKind_Credential`; otherwise unchanged.
-  - Verb table rows (`CmdlineSurfaces: CLI|TUI|WebUI` except keygen = CLI only, with a `TestSurfaceNarrowingHasAReason` note "keygen writes a private key file on the host that will use it; TUI/WebUI run elsewhere"):
+  - Verb table rows. **In this task every row is `CmdlineSurfaces: CLI` only** (narrowing note: "TUI and WebUI are added with their handlers in the surfaces task") with `NoModalSurface` set — declaring TUI/WebUI here would require the TUI dispatch handlers and the wasm exports that Task 8 writes. Task 8 widens all rows except keygen to `CLI|TUI|WebUI`. keygen stays CLI only for good (note: "keygen writes a private key file on the host that will use it; TUI/WebUI run elsewhere"):
     - `credential keygen --out FILE` → prints the public key hex.
     - `credential new --ttl DUR [--name N] [--caps …] [--scope …] [--out FILE | --pubkey HEX]` (`Exclusive` out|pubkey; caps/scope flags reuse the spawn flag declarations).
     - `credential rekey <id> --ttl DUR [--caps …] [--out FILE | --pubkey HEX]`.
@@ -254,7 +254,8 @@ Independent of the rest; lands first.
 - Test: `webui/static/credential_test.mjs`, `tui/credential_test.go`, `cli/verb` modal-surface entries (`ModalSurfaces: {WebUI, "webui/index.html#credentials-modal"}, {TUI, "tui/credentials.go:CredentialsModel"}` on `ls`, `revoke`, `rekey`; `new` keeps the TUI on the command line — the generate path's one-time secret goes to the cmdline result surface)
 
 **Interfaces:**
-- Consumes: Task 7 `cli` credential methods and verb rows.
+- Consumes: Task 7 `cli` credential methods and verb rows (declared CLI-only there).
+- First step of this task: widen the credential verb rows (all but keygen) to `CmdlineSurfaces: CLI|TUI|WebUI`, add `WebUIDispatch` Fns and the TUI dispatch handlers, replacing Task 7's interim narrowing note and `NoModalSurface`.
 
 - [ ] **Step 1: Write the failing tests:** `credential_test.mjs` — `credentialRowModel` renders expiry/name/last-used (`unknown` for 0); the generate path's result string matches `/^[0-9a-f]{32}:[0-9a-f]{64}$/` and is not written to `localStorage`; `cmd_test.mjs` gains `credential ls`. `tui/credential_test.go` — detail popup shows `kind: credential` and `expires:`; `credential revoke <id>` from the cmdline goes through `a.client`; `CredentialsModel` columns at narrow and wide widths rebuild through `SetRows` (checklist item 34); `x` then `y` revokes the selected row, `x` then `n` does nothing; `TestEveryOverlayIsNamedByTheVerbTable` stays green.
 - [ ] **Step 2:** run `make test` (includes the node tests) → FAIL.
