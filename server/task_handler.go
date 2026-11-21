@@ -230,6 +230,12 @@ type TaskHandler struct {
 	// not established (minimal test wiring); ClientHello falls back to Ok.
 	OnAgentHello func(conn ConnHandle, info *protocol.AgentInfo) protocol.ClientHelloStatus
 
+	// OnCredentialHello attaches the board identity of a credential
+	// connection RecordCredentialIdentity accepted (credential-tasks D10).
+	// Implemented by Server (establishCredentialBoard). nil => no board
+	// identity (minimal test wiring).
+	OnCredentialHello func(conn ConnHandle, tid protocol.TaskID)
+
 	// BoardConnState resolves the agentboard ConnState for a connection, or
 	// nil when that connection never completed an agent ClientHello. Wired by
 	// Server.New; nil in tests that do not exercise an agent verb.
@@ -386,6 +392,10 @@ func (h *TaskHandler) RecordClientIdentity(cid string, conn ConnHandle, hello *p
 // revoke or re-key landing between the gate's check and this call either
 // finds this connection when it closes the task's connections (it is already
 // recorded), or is seen here: the task ended, or its key is no longer pub.
+// Only an accepted connection gets a board identity (OnCredentialHello). A
+// revoke or re-key landing between this check and that attach leaves a board
+// state holding only the seeded topics, nothing of an earlier holder's, and
+// every board request is gated per connection anyway (boardState).
 func (h *TaskHandler) RecordCredentialIdentity(cid string, conn ConnHandle, tid protocol.TaskID, pub [32]byte) protocol.ClientHelloStatus {
 	if tid.Id == ([16]byte{}) || pub == ([32]byte{}) {
 		return protocol.ClientHelloStatus_NotPermitted
@@ -411,6 +421,9 @@ func (h *TaskHandler) RecordCredentialIdentity(cid string, conn ConnHandle, tid 
 		return protocol.ClientHelloStatus_NotPermitted
 	}
 	h.Tasks.TouchCredential(idHex, now)
+	if h.OnCredentialHello != nil {
+		h.OnCredentialHello(conn, tid)
+	}
 	if h.OnConnIdentified != nil {
 		h.OnConnIdentified(conn.ConnectionID())
 	}

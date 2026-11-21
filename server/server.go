@@ -349,6 +349,9 @@ func New(cfg Config) *Server {
 		ServerRevision: stamp.Revision,
 		ServerDirty:    stamp.Modified,
 		OnAgentHello:   s.establishAgentIdentity,
+		// A credential's board identity, attached at its handshake with no
+		// ticket (credential-tasks D10).
+		OnCredentialHello: s.establishCredentialBoard,
 		// The board identity OnAgentHello established, read back per request by
 		// the agent_* task-control kinds. Gated on helloed, not on state being
 		// non-nil: getOrCreateAgentConn mints an empty entry for whatever
@@ -783,9 +786,11 @@ func New(cfg Config) *Server {
 		// A credential has no runner to tell; ending it (revoke, or expiry
 		// through the same cancel) closes the connections it authenticated
 		// (credential-tasks D9). callerCaps already answers none for them
-		// (D8); this takes the connection itself away.
+		// (D8); this takes the connection itself away, and drops its board
+		// state (D10).
 		if t, ok := s.tasks.Get(id); ok && t.Kind == protocol.TaskKind_Credential {
 			s.dropConnsForPrincipal(id)
+			boardRevokeCredential(s.Board, id)
 		}
 	}
 	// A cancel of a task still waiting for its TaskFinished resends the

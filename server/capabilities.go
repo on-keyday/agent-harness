@@ -484,7 +484,10 @@ func (h *TaskHandler) listVisibleToCaller(connID string) (all bool, allowed map[
 
 // agentCallerCaps resolves the capability set of the agentboard caller
 // identified by ac.state.Identity(). Returns Capability_None if the task
-// is not found or the connection state is nil (not yet helloed).
+// is not found or the connection state is nil (not yet helloed). The task is
+// read through principalRecord on ac's connection, so a credential that is not
+// live, or whose key is no longer the one that connection proved, holds none
+// here either.
 func (s *Server) agentCallerCaps(ac *agentConn) protocol.Capability {
 	if ac == nil || ac.state == nil {
 		return protocol.Capability_None
@@ -495,9 +498,9 @@ func (s *Server) agentCallerCaps(ac *agentConn) protocol.Capability {
 		return protocol.Capability_None
 	}
 	tidHex := hex.EncodeToString(tid.Id[:])
-	t, ok := s.tasks.Get(tidHex)
+	t, ok := s.taskHandler.principalRecord(ac.cid, tidHex)
 	if !ok {
-		slog.Warn("agentCallerCaps: task not found", "task_id", tidHex)
+		slog.Warn("agentCallerCaps: no live principal record", "task_id", tidHex)
 		return protocol.Capability_None
 	}
 	return t.Capabilities

@@ -951,6 +951,9 @@ func makeTestAgentConn(t *testing.T, caps protocol.Capability) (*Server, *agentC
 	s := &Server{
 		Board: board,
 		tasks: tasks,
+		// agentCallerCaps reads the record through the handler's
+		// principalRecord, per connection.
+		taskHandler: &TaskHandler{Tasks: tasks},
 	}
 	return s, ac
 }

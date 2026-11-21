@@ -34,9 +34,22 @@ import (
 // "this caller is not an agent" have ONE answer rather than ten. Both are the
 // same thing to a verb: there is no subscription set to read and no authorship
 // to check, which is not a capability failure and must not be reported as one.
+//
+// A credential connection is also held to principalRecord, the key-bound
+// liveness gate TaskControl's callerCaps uses: once its credential is revoked,
+// expired, or re-keyed away from the key this connection proved, it has no
+// board identity. Nothing else on the agent face would notice — its verbs need
+// no capability, and reach is decided per task, not per connection.
 func (h *TaskHandler) boardState(conn ConnHandle) *agentboard.ConnState {
 	if h.BoardConnState == nil {
 		return nil
+	}
+	cid := conn.ConnectionID().String()
+	if h.lookupClientKind(cid) == protocol.ClientKind_Credential {
+		pid := h.lookupPrincipal(cid)
+		if _, ok := h.principalRecord(cid, hex.EncodeToString(pid.Id[:])); !ok {
+			return nil
+		}
 	}
 	return h.BoardConnState(conn)
 }
@@ -141,6 +154,13 @@ func (h *TaskHandler) handleAgentSend(conn ConnHandle, requestID uint32, r *prot
 				status = protocol.SendStatus_PayloadTooLarge
 			}
 			reply(status, 0, 0)
+			return
+		}
+		// Asked again once the body is in: the request was admitted before
+		// its body was read, and a credential revoked or re-keyed in between
+		// must not publish (boardState).
+		if h.boardState(conn) == nil {
+			reply(protocol.SendStatus_BadFrame, 0, 0)
 			return
 		}
 		fromRid, fromTid, fromHost, fromProfile := st.Identity()

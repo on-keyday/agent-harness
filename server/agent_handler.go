@@ -18,6 +18,9 @@ import (
 type agentConn struct {
 	state   *agentboard.ConnState
 	helloed bool
+	// cid is the connection this entry belongs to, for the principal gate
+	// (agentCallerCaps → principalRecord) that is per connection.
+	cid string
 }
 
 func (s *Server) getOrCreateAgentConn(conn ConnHandle) *agentConn {
@@ -29,7 +32,7 @@ func (s *Server) getOrCreateAgentConn(conn ConnHandle) *agentConn {
 	cid := conn.ConnectionID()
 	ac, ok := s.agentConns[cid]
 	if !ok {
-		ac = &agentConn{}
+		ac = &agentConn{cid: cid.String()}
 		s.agentConns[cid] = ac
 	}
 	return ac
@@ -87,6 +90,21 @@ func (s *Server) establishAgentIdentity(conn ConnHandle, info *protocol.AgentInf
 		ac.state = s.Board.Attach(info.RunnerId, info.TaskId, string(info.Hostname), profile)
 	}
 	return status
+}
+
+// establishCredentialBoard is establishAgentIdentity for a credential
+// connection (credential-tasks D10), called once RecordCredentialIdentity has
+// accepted it. There is no ticket to check: the handshake proved the key. The
+// board identity carries no hostname or agent profile, since a credential has
+// no runner and runs no agent. Whether the connection may use it is decided
+// per request (TaskHandler.boardState), not here.
+func (s *Server) establishCredentialBoard(conn ConnHandle, tid protocol.TaskID) {
+	if s.Board == nil {
+		return
+	}
+	ac := s.getOrCreateAgentConn(conn)
+	ac.helloed = true
+	ac.state = boardAttachCredential(s.Board, tid)
 }
 
 // resolveReplyTarget maps a send request's (topic, in_reply_to) to the topic

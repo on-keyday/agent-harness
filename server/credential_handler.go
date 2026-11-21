@@ -213,12 +213,17 @@ func (h *TaskHandler) credentialRekey(cid string, req *protocol.CredentialRekeyR
 	}
 	// The old key's connections already hold nothing (principalRecord compares
 	// the key per request); closing them tells their peers at once (D18: every
-	// connection authenticated with it is closed). OnCancel does not do it
-	// here: a live credential's re-key is no cancel.
+	// connection authenticated with it is closed), and dropping the board state
+	// keeps the old holder's subscriptions and contacts from the new one (D10).
+	// OnCancel does neither here: a live credential's re-key is no cancel.
+	// After the store's re-key, not before: until it, the old key is live, and
+	// an old-key connection made in between could build a fresh state up
+	// again for the new holder to inherit.
 	closed := 0
 	if h.DropConnsForPrincipal != nil {
 		closed = h.DropConnsForPrincipal(idHex)
 	}
+	boardRevokeCredential(h.Board, idHex)
 	slog.Info("credential re-keyed", "task", idHex, "caps", after.Capabilities.String(), "expires_at", expiresAt, "conns_closed", closed)
 	return credentialOK(idHex, expiresAt)
 }

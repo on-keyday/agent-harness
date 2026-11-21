@@ -25,9 +25,10 @@ import (
 // register / revoke / lookup names the RUNNER and the TASK, and this file is the
 // only place that decides what the board is keyed by.
 //
-// All three are nil-Board safe: the handlers are constructed with Board unset in
-// test wiring (task_handler.go's Board == nil degradation), and every caller
-// used to carry its own `if X.Board != nil` guard for exactly that reason.
+// Every board wrapper here is nil-Board safe: the handlers are constructed with
+// Board unset in test wiring (task_handler.go's Board == nil degradation), and
+// every caller used to carry its own `if X.Board != nil` guard for exactly that
+// reason.
 
 // boardRegisterTask stores the task's fresh ticket and seeds its inbound topic.
 //
@@ -75,6 +76,28 @@ func boardRevokeTask(b *agentboard.Board, runner protocol.RunnerID, taskIDHex st
 	b.Revoke(runner, taskIDFromHex(taskIDHex))
 }
 
+// A credential task has no runner and no ticket (credential-tasks D10): its
+// board state is keyed under the zero runner identity, which no agent
+// registration can hold (boardRegisterTask refuses it), so a credential and an
+// agent never share a state.
+
+// boardAttachCredential attaches a credential connection's board identity,
+// creating the credential's state on its first connection since issue, revoke,
+// expiry or re-key.
+func boardAttachCredential(b *agentboard.Board, tid protocol.TaskID) *agentboard.ConnState {
+	if b == nil {
+		return nil
+	}
+	return b.AttachTicketless(protocol.RunnerID{}, tid)
+}
+
+// boardRevokeCredential destroys the credential's board state — its
+// subscriptions and contacts — so the next key holder starts with none of
+// them. Messages on its topics stay (Board.Revoke).
+func boardRevokeCredential(b *agentboard.Board, taskIDHex string) {
+	boardRevokeTask(b, protocol.RunnerID{}, taskIDHex)
+}
+
 // boardTaskTicket returns the ticket already registered for the task. Looked
 // up, never reissued: Register overwrites, so minting a fresh one here would
 // invalidate the credential a running agent is holding
@@ -97,8 +120,9 @@ func boardTaskTicket(b *agentboard.Board, runner protocol.RunnerID, tid protocol
 // names entry.Identity directly.
 //
 // A miss yields the zero identity rather than an error. That is deliberate: the
-// entry is gone, so there is nothing left to revoke, and a zero key matches
-// nothing in the board.
+// entry is gone, so there is nothing left to revoke, and a zero key matches no
+// agent's state in the board — only a credential's, and a credential task is
+// never assigned to a runner, so no TaskFinished names one.
 func identityOfConn(reg *Registry, runnerConnID objproto.ConnectionID) protocol.RunnerID {
 	if reg == nil {
 		return protocol.RunnerID{}

@@ -114,6 +114,12 @@ func (b *Board) RegisterTask(rid protocol.RunnerID, tid protocol.TaskID, ticket 
 	joined := b.memberTopicsLocked(tid)
 	b.mu.Unlock()
 	ts.setIdentity(rid, tid, "", agentProfile)
+	seedInbound(ts, tid, joined)
+}
+
+// seedInbound subscribes a fresh registration to what a task receives on
+// without asking: its own chat.<id> and the topics it is a member of.
+func seedInbound(ts *taskState, tid protocol.TaskID, joined []string) {
 	ts.addPattern(SelfTopic(tid))
 	for _, topic := range joined {
 		ts.addPattern(topic)
@@ -176,6 +182,35 @@ func (b *Board) Attach(rid protocol.RunnerID, tid protocol.TaskID, hostname, age
 	}
 	b.mu.Unlock()
 	ts.setIdentity(rid, tid, hostname, agentProfile)
+	c := newConnState(ts)
+	ts.attachConn(c)
+	return c
+}
+
+// AttachTicketless is Attach for a task that holds no ticket and has no
+// process — a credential task (credential-tasks D10), which reaches the board
+// straight from its handshake. No RegisterTask runs for it, so the attach that
+// creates the (rid, tid) state seeds what RegisterTask would: the task's
+// chat.<id> and the topics it is a member of. A later attach finds the state
+// and seeds nothing, so an unsubscribe holds until Revoke, as an agent's holds
+// until its next registration. Nothing is ever woken for the state (emitWake):
+// a message to it stays on the board for a read or a wait.
+func (b *Board) AttachTicketless(rid protocol.RunnerID, tid protocol.TaskID) *ConnState {
+	key := ticketKey{runner: runnerIDStringProto(rid), task: hexTaskIDProto(tid)}
+	b.mu.Lock()
+	ts, ok := b.tasks[key]
+	var joined []string
+	if !ok {
+		ts = newTaskState()
+		ts.noProcess = true
+		b.tasks[key] = ts
+		joined = b.memberTopicsLocked(tid)
+	}
+	b.mu.Unlock()
+	ts.setIdentity(rid, tid, "", "")
+	if !ok {
+		seedInbound(ts, tid, joined)
+	}
 	c := newConnState(ts)
 	ts.attachConn(c)
 	return c
@@ -416,11 +451,13 @@ func (b *Board) deliver(targets, wake []*taskState) int {
 }
 
 // emitWake calls onDeliver for ts, and reports whether there was one to call.
+// A state with no process (AttachTicketless) has nothing to wake: it is not
+// called for, and Wake does not count it.
 func (b *Board) emitWake(ts *taskState) bool {
 	b.mu.Lock()
 	fn := b.onDeliver
 	b.mu.Unlock()
-	if fn == nil {
+	if fn == nil || ts.noProcess {
 		return false
 	}
 	rid, tid, _, _ := ts.identity()

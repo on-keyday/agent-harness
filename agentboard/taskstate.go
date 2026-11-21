@@ -47,6 +47,10 @@ type taskState struct {
 	tid          protocol.TaskID
 	host         string
 	profile      string
+	// noProcess marks a state created by Board.AttachTicketless: no process
+	// stands behind it, so emitWake never wakes it. Set before the state is
+	// put in Board.tasks and never changed, so it is read without mu.
+	noProcess bool
 }
 
 func newTaskState() *taskState {
