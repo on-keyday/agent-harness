@@ -127,7 +127,7 @@ Independent of the rest; lands first.
 
 **Files:**
 - Create: `cli/credential_auth.go` (no build tag; used by server and client)
-- Modify: `server/psk.go` (gate), `server/server.go` (gate wiring ~`:1521`, `OnCancel` wiring `:772`, `RecordCredentialIdentity` wiring ~`:492`), `server/dispatch.go:71` (dispatcher field), `server/task_handler.go` (`RecordClientIdentity` refuses `ClientKind_Credential`; new `RecordCredentialIdentity`), `server/capabilities.go` (`callerCaps`, `scopeSetWith`), `server/pubsub_authz.go` (comment only: credential role falls under the non-Client refusal)
+- Modify: `server/psk.go` (gate), `server/server.go` (gate wiring ~`:1521`, `OnCancel` wiring `:772`, `RecordCredentialIdentity` wiring ~`:492`), `server/dispatch.go:71` (dispatcher field), `server/task_handler.go` (`RecordClientIdentity` refuses `ClientKind_Credential`; new `RecordCredentialIdentity`), `server/capabilities.go` (`callerCaps`, `scopeSetWith`), `server/pubsub_authz.go` (`authorizeJoin` admits `AuthRole_Credential` under the same per-topic rules as a client)
 - Test: `server/credential_auth_test.go`, `cli/credential_auth_test.go`
 
 **Interfaces:**
@@ -136,7 +136,8 @@ Independent of the rest; lands first.
   - `func SignCredentialAuth(key ed25519.PrivateKey, transcript []byte) []byte`, `func VerifyCredentialAuth(pub ed25519.PublicKey, transcript, sig []byte) bool` (domain string per Global Constraints).
   - `pskGate.CredentialFor func(tid protocol.TaskID, now time.Time) ([32]byte, CredentialState, bool)`; wired to `s.tasks.CredentialLive`.
   - Gate step for `AuthRole_Credential`: missing arm → `no_identity`; `!ok` or bad signature → `bad_ticket`; then `Expired` → `expired`, `Revoked` → `revoked`; else accept. Order: look up key, verify, then state (so states are only revealed to the key holder, D5).
-  - `AllowsMessage`: credential role admits TaskControl (except a ClientHello) and Telemetry; Pubsub refused.
+  - `AllowsMessage`: credential role admits TaskControl (except a ClientHello), Pubsub and Telemetry.
+  - `authorizeJoin`: `role == AuthRole_Client || role == AuthRole_Credential` enters the existing per-topic rules (notifications needs `seesEverything`, which a credential never has; `task.*.log` refused; task event delivery is already filtered by `taskEventAudience` → `listVisibleToCaller`, so a credential receives only events of tasks it can see).
   - `pskDispatchIdentity` case `AuthRole_Credential` → `d.RecordCredentialIdentity(cid, conn, tid) bool`.
   - `func (h *TaskHandler) RecordCredentialIdentity(cid string, conn ConnHandle, tid protocol.TaskID) protocol.ClientHelloStatus` — sets `clientKinds[cid] = ClientKind_Credential`, `principals[cid] = tid` (refuses a zero `tid` → close), calls `OnConnIdentified`, calls `Tasks.TouchCredential`.
   - `callerCaps`: if the principal's task is a credential and `CredentialLive` state ≠ Live → `Capability_None`. Missing record already → None.
@@ -146,7 +147,7 @@ Independent of the rest; lands first.
 - [ ] **Step 1: Write the failing tests** (`server/credential_auth_test.go`, using the existing in-process server harness the `psk_test.go` / `whoami` tests use):
   - `TestCredentialHandshakeAccepts`; `TestCredentialHandshakeWrongKeyIsBadTicket`; `TestCredentialHandshakeUnknownTaskIsBadTicket`; `TestCredentialHandshakeNonCredentialTaskIsBadTicket`; `TestCredentialHandshakeExpired`; `TestCredentialHandshakeRevoked`.
   - `TestCredentialPrincipalIsNeverZero` (anti-goal): after accept, `lookupPrincipal(cid)` equals the task id; a request needing `schedule_edit` is denied; `callerCaps` ≠ `Capability_All`.
-  - `TestCredentialConnRefusesPubsubJoin`.
+  - `TestCredentialPubsubSeesOnlyVisibleTaskEvents`: a credential scoped to T joins the task event topic and receives T's status events but not an unrelated task's; joining the notifications topic is refused; after revoke the connection is closed (no further events).
   - `TestClientHelloClaimingCredentialKindRefused`.
   - `TestCredentialDeadBeforeTimerSeesNothing` (D8): expiry in the past, watcher not running → first request denied, `visibleToCaller` empty.
   - `TestMissingPrincipalRecordSeesNothing` (Review Focus 1).
@@ -246,15 +247,16 @@ Independent of the rest; lands first.
 ### Task 8: TUI and WebUI surfaces
 
 **Files:**
-- Modify: `tui/dispatch.go` (credential handlers via `DoRecord(a.client, …)` — the long-lived client, never a fresh dial), `tui/detail.go:389` + `:545` (kind label; expires / last used / name lines), `tui/tasks.go` (no new column: status column shows `active`; `About` shows `credential <name> expires <date>`), `tui/cmdline_help` text
+- Create: `tui/credentials.go` — `CredentialsModel`, modelled on `tui/schedules.go` (`SchedulesModel` `:23`, `schedColsFor` `:57`, `SetRows` `:174`): columns Name / ID / Expires / Last used / Caps (Scope when wide); `x` revoke with a y/n confirm (as `onScheduleDelete` `:298` / `inSchedDeleteConfirm` `:316`), `d` detail, `r` pre-fills the cmdline with `credential rekey <id> --ttl ` for the operator to complete; rows from `credential ls` refreshed on task events (as `requestScheduleList` `tui/app.go:2799`)
+- Modify: `tui/app.go` (`focusCredentials`, model field, ←/→ table switching as for schedules `tui/keys.go:371`), `tui/keys.go` (bindings in a `scopeCredentials`, help section), `tui/dispatch.go` (credential handlers via `DoRecord(a.client, …)` — the long-lived client, never a fresh dial), `tui/detail.go:389` + `:545` (kind label; expires / last used / name lines), `tui/tasks.go` (no new column: status column shows `active`; `About` shows `credential <name> expires <date>`), `tui/cmdline_help` text
 - Create: `cmd/harness-webui-wasm/credential.go` (exports `credentialNew`, `credentialRekey`, `credentialList`, `credentialRevoke`, all via `currentClient()` and the `…With` forms; generation of a key pair in wasm for the generate path)
 - Modify: `cmd/harness-webui-wasm/main.go:95` (register exports), `:1753`/`:1891` (snapshot fields `credentialExpiresAt`, `credentialLastUsedAt`, `credentialName`), `webui/static/cmdline.js` (`case "credential":` like `schedule` `:324-342`), `webui/index.html` (a `credentials-modal` dialog + header button, like `#schedules-modal` `:739`), `webui/static/main.js` (dialog: list with revoke/rekey buttons; issue form with a pubkey field OR "generate" → result shown once with copy and a download through `downloadText(name, "text/plain", credentialString)` `:8578`; nothing stored in `localStorage`), `webui/static/task_models.js` (`credentialRowModel`), `renderTaskList` meta `:6867` (`expires=… name=…` like the schedule append `:6873`)
-- Test: `webui/static/credential_test.mjs`, `tui/credential_test.go`, `cli/verb` modal-surface entries (`ModalSurfaces: {WebUI, "webui/index.html#credentials-modal"}`; TUI: `NoModalSurface: "looked for: a TUI credentials table; issue/rekey/revoke are by the command line, rows appear in the task table"`)
+- Test: `webui/static/credential_test.mjs`, `tui/credential_test.go`, `cli/verb` modal-surface entries (`ModalSurfaces: {WebUI, "webui/index.html#credentials-modal"}, {TUI, "tui/credentials.go:CredentialsModel"}` on `ls`, `revoke`, `rekey`; `new` keeps the TUI on the command line — the generate path's one-time secret goes to the cmdline result surface)
 
 **Interfaces:**
 - Consumes: Task 7 `cli` credential methods and verb rows.
 
-- [ ] **Step 1: Write the failing tests:** `credential_test.mjs` — `credentialRowModel` renders expiry/name/last-used (`unknown` for 0); the generate path's result string matches `/^[0-9a-f]{32}:[0-9a-f]{64}$/` and is not written to `localStorage`; `cmd_test.mjs` gains `credential ls`. `tui/credential_test.go` — detail popup shows `kind: credential` and `expires:`; `credential revoke <id>` from the cmdline goes through `a.client`.
+- [ ] **Step 1: Write the failing tests:** `credential_test.mjs` — `credentialRowModel` renders expiry/name/last-used (`unknown` for 0); the generate path's result string matches `/^[0-9a-f]{32}:[0-9a-f]{64}$/` and is not written to `localStorage`; `cmd_test.mjs` gains `credential ls`. `tui/credential_test.go` — detail popup shows `kind: credential` and `expires:`; `credential revoke <id>` from the cmdline goes through `a.client`; `CredentialsModel` columns at narrow and wide widths rebuild through `SetRows` (checklist item 34); `x` then `y` revokes the selected row, `x` then `n` does nothing; `TestEveryOverlayIsNamedByTheVerbTable` stays green.
 - [ ] **Step 2:** run `make test` (includes the node tests) → FAIL.
 - [ ] **Step 3:** implement.
 - [ ] **Step 4:** `make test` → PASS.
