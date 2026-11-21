@@ -93,8 +93,10 @@ What is missing is a credential that is attenuable **and** outlives any process.
 | D7 | **Expiry is required at issue**, as a duration (`--ttl`), bounded above by a server constant of 90 days. No default — an issue without `--ttl` is refused | this spec |
 | D8 | **Liveness is checked at three points**: the handshake (D4), a server timer that ends the task at its expiry (also run once at start for anything already past), and `callerCaps` itself — for a credential principal, a task that is not live yields `Capability_None`. The third is what keeps a connection opened just before expiry from outliving it, and it does not depend on the timer firing | this spec |
 | D9 | **Ending a credential closes its live connections.** Revoke and expiry both close every connection whose principal is that task, in addition to D8 | this spec |
-| D10 | **No agentboard in v1.** `Board.Attach` and the `chat.<id>` inbox are keyed by `(runner, task)` and model a process that receives messages; a credential has neither. Board verbs from a credential connection are refused with a status that says so. Revisit on a concrete need | this spec |
-| D11 | **Revoke is cancel.** The existing cancel verb on a credential task ends it (status `Cancelled`, end reason `cancelled`). Expiry ends it with status `Succeeded` and a new `EndReason.expired = 11`. Either is final for the key; the identity can be re-keyed (D18) | this spec |
+| D10 | **No agentboard in v1.** `Board.Attach` and the `chat.<id>` inbox are keyed by `(runner, task)` and model a process that receives messages; a credential has neither. Board verbs from a credential connection are refused with a status that says so. Pubsub joins (task event topics) are refused too: `authorizeJoin` admits `AuthRole_Client` only (`server/pubsub_authz.go:21`) and a credential role is left out, so a script polls rather than subscribes. Revisit on a concrete need | this spec |
+| D11 | **Revoke is cancel; expiry is a cancel with its own reason.** The existing cancel verb on a credential task ends it (status `Cancelled`, end reason `cancelled`). Expiry ends it through the same store path (`TaskStore.cancel`, `server/taskstore.go:985`) with status `Cancelled` and a new `EndReason.expired = 11`, as a background turn end is a `Cancelled` with a `turn_done_*` reason. **Reversal:** an earlier draft had expiry end as `Succeeded`; moved because the cancel path already carries the WAL record, replay, `OnCancel` publication and the reason field, and `Succeeded` would need a fourth terminal writer. Either end is final for the key; the identity can be re-keyed (D18) | this spec |
+| D19 | **A live credential holds a new `TaskStatus.active`.** Every existing status is wrong for it (planning recon, 2026-11-22): `Running` is failed by the post-replay sweep (`taskstore.go:1619`) and passes the port-forward / file-transfer checks (`port_forward.go:28`, `file_transfer.go:31`); `Detached` is cancelled at boot (`server.go:980-984`); `Held` is swept by readopt / hold expiry; `Queued` is returned by `QueuedTasks`, published as `TaskQueued`, and shown as waiting. A new value fails every "is it Running / Queued" test by default, so runner-assuming code skips it without edits; cancel and prune already treat any non-terminal status as live | this spec |
+| D20 | **`LastUsedAt` is not persisted.** Kept in memory, set on each accepted handshake; after a server restart it shows as unknown until the next use. A WAL write per handshake is excluded (spec constraint) and a periodic flush adds a writer for a display-only value | this spec |
 | D12 | **Re-grant works unchanged.** `set_caps` on a credential task narrows/widens what the script can do without reissuing the key | this spec |
 | D13 | **Issuing needs a new grantable bit, `credential_issue`**, and goes through the spawn attenuation path (`CreateWithinLimits`, granter reach, spawn limits): the new task is a child of the issuer, holding at most the issuer's caps within its scope. An operator issues a root-level credential. Not `spawn`: a spawned child stays inside the harness, a credential's secret leaves it. Not operator-only (repo rule: operator-only is reserved for re-grant authority) | this spec (proposed; operator has not ruled) |
 | D14 | **A credential can never hold `credential_issue` or `schedule_edit`**: they are masked at issue, at re-key and by `set_caps` on a credential task. `credential_issue` because a credential that can issue (or re-key) a successor never expires; `schedule_edit` because a schedule it created would keep firing after the credential ends (a schedule's firings check nothing, S-D17a) — a revoke that does not stop what a leaked key set up. **`spawn` is allowed**: a spawned task is one creation, not a recurring one, bounded by the spawn limits, and left behind exactly as an agent's children are; spawn attenuation keeps both masked bits out of the credential's children too | operator, 2026-11-22 (spawn allowed); this spec (the two masked bits) |
@@ -114,17 +116,11 @@ check):
 
 - `CredentialPubKey [32]byte`
 - `ExpiresAt time.Time`
-- `LastUsedAt time.Time` — in memory, updated on each accepted handshake;
-  persisting it is left to the builder (constraint: not one WAL write per
-  handshake).
+- `LastUsedAt time.Time` — in memory only (D20).
 - `Name string` — optional operator label, shown in lists (a script's purpose
   is not recoverable from a hex id).
 
-Status while live: whatever existing status the builder finds least disruptive
-for a task with no runner (`Running` with no `AssignedTo` is the candidate; it
-must not be picked up by the queue, the runner-death path, the agent resume
-path, session open, exec, file transfer, or held-across-restart). Every task-status consumer
-that assumes "Running ⇒ has a runner" must be found and taught the kind.
+Status while live: `TaskStatus.active` (D19).
 
 A credential task can never be opened, exec'd into, bound to a schedule as its
 target, or assigned to a runner. Each refusal names the kind. Resume has its
@@ -173,7 +169,7 @@ scope and expiry.
 |---|---|
 | `credential keygen --out FILE` | on the script's host: generate a key pair, write the seed (0600), print the public key (D3 way 2) |
 | `credential new --ttl D [--name N] [--caps …] [--scope …] [--out FILE \| --pubkey HEX]` | issue. Without `--pubkey`, generate a pair and hand the seed over once — printed as `<task-id>:<seed>`, or written to `--out` (D3 way 1; D3a under an agent identity) |
-| `credential rekey <id> --ttl D [--out FILE \| --pubkey HEX]` | resume = re-key (D18); also reachable as the generic resume of a credential task |
+| `credential rekey <id> --ttl D [--out FILE \| --pubkey HEX]` | resume = re-key (D18). The generic resume paths (session open / background open with a resume id, schedule firing) refuse a credential task and name this verb — **reversal** of an earlier "also reachable as the generic resume": every generic resume path passes a new `TaskKind` into `TaskStore.Resume` (`taskstore.go:708`) and re-queues for a runner, so reaching re-key through it would mean special-casing each of them |
 | `credential ls` | credential tasks in reach: name, id, caps, scope, expires, last used, status |
 | `credential revoke <id>` | cancel (D11); also reachable as the generic task cancel |
 
@@ -218,8 +214,6 @@ data-plane listener; a credential arm there is refused. Run
 
 ## Left to the builder
 
-- The live status value and the full list of "Running ⇒ runner" consumers.
-- Whether `LastUsedAt` is persisted, and how often.
 - Verb names and flag spellings within the table conventions.
 - The same site-by-site classification as D6 for `AuthRole_Client` checks:
   `pskGate.AllowsMessage` (`server/psk.go`) and `authorizeJoin`
