@@ -143,6 +143,11 @@ func TestToTaskInfoMapsEveryField(t *testing.T) {
 		Run:             3,
 		Oneshot:         true,
 		NoPTY:           true,
+		// The credential fields, set on an interactive entry on purpose: the
+		// mapper copies them whatever the kind (they are zero on any other).
+		ExpiresAt:      now.Add(time.Hour),
+		LastUsedAt:     now.Add(-time.Minute),
+		CredentialName: "nightly",
 	}
 	info := toTaskInfo(e)
 	assertNoZeroFields(t, info, mergeSkips(map[string]string{
@@ -179,13 +184,6 @@ func TestToTaskInfoMapsEveryField(t *testing.T) {
 		// The schedule a task is bound to (pillar S) is skipped through
 		// scheduleFieldSkips: the binding lives in the schedule store, not on
 		// the TaskEntry, so the list handler fills it (Task 4).
-		// Credential tasks (spec 2026-11-21-credential-tasks-design.md): the
-		// TaskEntry fields these copy do not exist yet. Remove these four when
-		// the mapper reads them from the entry.
-		"CredentialExpiresAt":  "wire field added ahead of the TaskEntry fields it copies (credential tasks)",
-		"CredentialLastUsedAt": "wire field added ahead of the TaskEntry fields it copies (credential tasks)",
-		"CredentialNameLen":    "wire field added ahead of the TaskEntry fields it copies (credential tasks)",
-		"CredentialName":       "wire field added ahead of the TaskEntry fields it copies (credential tasks)",
 	}, scheduleFieldSkips(t)))
 	// The reflect sweep above CANNOT see bit-packed fields: is_attached and
 	// skills_injected share one unexported byte, so setting either makes the
@@ -326,30 +324,32 @@ func TestPortForwardInfoMapsLink(t *testing.T) {
 // here, and the symptom was `whoami` printing no scope for a task that had one.
 //
 // This asserts the handler fills every field, using a confined principal so
-// nothing is legitimately zero.
+// nothing is legitimately zero. The principal is a credential task, the one
+// kind for which principal_kind and credential_expires_at are both non-zero.
 func TestWhoamiResponseMapsEveryField(t *testing.T) {
 	h, _, c, _, _ := scopeFixture(t)
 	// A grandchild: non-zero principal AND non-zero creator.
-	child := h.Tasks.Create("/r", "gc", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
-		hexToTaskID(t, c), "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_Spawn, Scope: authority.Scope{
-			Base: protocol.ScopeBase_None,
+	_, pub := newCredentialKey(t)
+	child, err := h.Tasks.CreateCredential(hexToTaskID(t, c), protocol.ClientKind_Agent, authority.Grant{Caps: protocol.Capability_Spawn, Scope: authority.Scope{
+		Base: protocol.ScopeBase_None,
 
-			VisBase: protocol.ScopeBase_Global, VisBasePresent: true, ExcludeSelf: true,
-			VisIDs:    []string{"aabbccddeeff00112233445566778899"},
-			Overrides: []authority.ScopeOverride{{Caps: protocol.Capability_Spawn, Base: protocol.ScopeBase_None}},
-		}, DelegateCaps: protocol.Capability_FileRead, DelegateScope: authority.Scope{Base: protocol.ScopeBase_None},
-			SpawnDepth: authority.LimitOf(2), MaxDescendants: authority.LimitOf(5)},
-
-		"")
+		VisBase: protocol.ScopeBase_Global, VisBasePresent: true, ExcludeSelf: true,
+		VisIDs:    []string{"aabbccddeeff00112233445566778899"},
+		Overrides: []authority.ScopeOverride{{Caps: protocol.Capability_Spawn, Base: protocol.ScopeBase_None}},
+	}, DelegateCaps: protocol.Capability_FileRead, DelegateScope: authority.Scope{Base: protocol.ScopeBase_None},
+		SpawnDepth: authority.LimitOf(2), MaxDescendants: authority.LimitOf(5)},
+		pub, time.Now().Add(time.Hour), "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	// One task under the principal, so descendants and the room are non-zero.
-	h.Tasks.Create("/r", "ggc", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
+	h.Tasks.Create("/r", "ggc", protocol.TaskKind_Oneshot, protocol.ClientKind_Credential,
 		hexToTaskID(t, child), "", protocol.RunnerSelector{}, nil, authority.Grant{}, "")
 
 	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9960-1")}
-	if h.principals == nil {
-		h.principals = make(map[string]protocol.TaskID)
+	if st := h.RecordCredentialIdentity(conn.ConnectionID().String(), conn, hexToTaskID(t, child), pub); st != protocol.ClientHelloStatus_Ok {
+		t.Fatalf("RecordCredentialIdentity: %v", st)
 	}
-	h.principals[conn.ConnectionID().String()] = hexToTaskID(t, child)
 	// The server's build, which a test binary does not carry: `go test` stamps
 	// no vcs info and passes no -ldflags, so reading it from the process would
 	// make this guard vacuous for those two fields. Set here so the assertion
@@ -367,12 +367,7 @@ func TestWhoamiResponseMapsEveryField(t *testing.T) {
 	if w == nil {
 		t.Fatalf("no whoami response (kind %v)", resp.Kind)
 	}
-	assertNoZeroFields(t, *w, map[string]string{
-		// Credential tasks: the whoami handler does not fill these yet. Remove
-		// both when it reports the principal's kind and expiry.
-		"PrincipalKind":       "wire field added ahead of the handler that fills it (credential tasks)",
-		"CredentialExpiresAt": "wire field added ahead of the handler that fills it (credential tasks)",
-	})
+	assertNoZeroFields(t, *w, map[string]string{})
 }
 
 // ExecRunInfo is built by hand in execRunInfo, the same exposure as

@@ -117,6 +117,8 @@ func TestCreateCredentialMasksIssueAndScheduleEdit(t *testing.T) {
 
 // D14: set_caps on a credential task can never add credential_issue or
 // schedule_edit — on the target, and on a credential reached by a cascade.
+// Named on the target it is refused (masked_cap), not silently masked: a
+// typed grant either takes effect or errors.
 func TestSetCapsCannotAddMaskedBitsToCredential(t *testing.T) {
 	h, p, _, _, _ := scopeFixture(t)
 	opConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9910-1")}
@@ -125,15 +127,12 @@ func TestSetCapsCannotAddMaskedBitsToCredential(t *testing.T) {
 	direct := protocol.SetCapsRequest{TaskId: hexToTaskID(t, cred), Caps: protocol.Capability_All, DelegateCaps: protocol.Capability_All}
 	direct.SetCapsPresent(true)
 	direct.SetDelegateCapsPresent(true)
-	if got := sendSetCaps(t, h, opConn, direct); got.Status != protocol.SetCapsStatus_Ok {
-		t.Fatalf("direct: status = %v, want ok", got.Status)
+	if got := sendSetCaps(t, h, opConn, direct); got.Status != protocol.SetCapsStatus_MaskedCap {
+		t.Fatalf("direct: status = %v, want masked_cap", got.Status)
 	}
 	e, _ := h.Tasks.Get(cred)
-	if e.Capabilities&CredentialMaskedCaps != 0 || e.DelegateCaps&CredentialMaskedCaps != 0 {
-		t.Fatalf("direct: caps %v delegate %v hold a masked bit", e.Capabilities, e.DelegateCaps)
-	}
-	if e.Capabilities&protocol.Capability_Spawn == 0 {
-		t.Fatalf("direct: caps %v lost spawn", e.Capabilities)
+	if e.Capabilities != protocol.Capability_Spawn || e.DelegateCaps&CredentialMaskedCaps != 0 {
+		t.Fatalf("direct: a refused set_caps left caps %v delegate %v", e.Capabilities, e.DelegateCaps)
 	}
 
 	cascade := protocol.SetCapsRequest{TaskId: hexToTaskID(t, p), Caps: protocol.Capability_All, DelegateCaps: protocol.Capability_All}

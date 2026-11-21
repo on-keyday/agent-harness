@@ -108,6 +108,8 @@ func (h *TaskHandler) openBackground(b backgroundOpen) protocol.OpenInteractiveR
 			switch {
 			case errors.Is(err, ResumeErrNotFound):
 				return refuse(protocol.OpenInteractiveStatus_ResumeNotFound, "")
+			case errors.Is(err, ResumeErrCredential):
+				return refuse(protocol.OpenInteractiveStatus_ResumeNotFound, credentialResumeRefusal(b.resumeHex))
 			case errors.Is(err, ResumeErrNotTerminal):
 				return refuse(protocol.OpenInteractiveStatus_ResumeNotTerminal, "")
 			default:

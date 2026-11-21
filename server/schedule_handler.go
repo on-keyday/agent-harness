@@ -432,6 +432,11 @@ func (h *TaskHandler) scheduleBinding(cid string, taskHex, own string) (TaskEntr
 	if !ok || !h.inScope(cid, protocol.Capability_ScheduleEdit, taskHex) {
 		return fail(protocol.ScheduleStatus_TaskNotReachable, "no task %s within your reach", short(taskHex))
 	}
+	// A firing resumes its task onto a runner; a credential task has none and
+	// is never resumed (credential-tasks D18).
+	if t.Kind == protocol.TaskKind_Credential {
+		return fail(protocol.ScheduleStatus_KindUnsupported, "task %s is a credential task: a schedule cannot run it", short(taskHex))
+	}
 	if other, bound := h.Sched.Store.BoundTo(taskHex); bound && other != own {
 		return fail(protocol.ScheduleStatus_TaskAlreadyBound, "task %s is already bound to schedule %s", short(taskHex), short(other))
 	}

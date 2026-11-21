@@ -700,6 +700,10 @@ type ResumeError uint8
 const (
 	ResumeErrNotFound ResumeError = iota + 1
 	ResumeErrNotTerminal
+	// ResumeErrCredential: a credential task is re-keyed, never resumed
+	// (credential-tasks D18). Resume would overwrite its kind and queue it
+	// for a runner.
+	ResumeErrCredential
 )
 
 func (e ResumeError) Error() string {
@@ -708,6 +712,8 @@ func (e ResumeError) Error() string {
 		return "resume_not_found"
 	case ResumeErrNotTerminal:
 		return "resume_not_terminal"
+	case ResumeErrCredential:
+		return "a credential task is re-keyed, not resumed"
 	default:
 		return "resume_unknown_error"
 	}
@@ -742,6 +748,10 @@ func (s *TaskStore) Resume(id, prompt string, extraArgs []string, selector proto
 	if !ok {
 		s.mu.Unlock()
 		return TaskEntry{}, ResumeErrNotFound
+	}
+	if e.Kind == protocol.TaskKind_Credential {
+		s.mu.Unlock()
+		return TaskEntry{}, ResumeErrCredential
 	}
 	switch e.Status {
 	case protocol.TaskStatus_Succeeded,

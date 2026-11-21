@@ -202,7 +202,7 @@ func CapDescription(c protocol.Capability) string {
 			"also needs spawn before its task is created, or resume or resume_exact over its bound task. " +
 			"Does not authorize creating, editing, deleting or unbinding schedules"
 	case protocol.Capability_CredentialIssue:
-		return "issue credential tasks: a key pair whose holder connects with the issued task's caps and scope (credential new / rekey); attenuated like spawn, and a credential can never hold this bit"
+		return "issue credential tasks: a key pair whose holder connects with the issued task's caps and scope (credential new / rekey); attenuated like spawn, and a credential can never hold this bit. Issuing names no task; re-key resolves its target through this bit's scope"
 	case protocol.Capability_All:
 		return "full capability set (operator-equivalent)"
 	default:
@@ -502,9 +502,10 @@ var capAuditTable = map[protocol.Capability]capAuditEntry{
 	// schedule's task (or its creator) through the bit.
 	protocol.Capability_ScheduleEdit: {tier: TierStrong},
 	protocol.Capability_ScheduleRun:  {tier: TierStrong},
-	// Strong: the secret leaves the harness and works until its expiry. No
-	// scope kind: issuing names no existing task (spawn-like).
-	protocol.Capability_CredentialIssue: {tier: TierStrong, scope: ScopeNone},
+	// Strong: the secret leaves the harness and works until its expiry.
+	// Scoped: issuing names no task; re-key resolves its target through this
+	// bit's scope.
+	protocol.Capability_CredentialIssue: {tier: TierStrong},
 	protocol.Capability_ResumeExact:     {tier: TierMid, impliedBy: []protocol.Capability{protocol.Capability_Resume}},
 	protocol.Capability_ExecView:        {tier: TierWeak, impliedBy: []protocol.Capability{protocol.Capability_ExecCowrite, protocol.Capability_ExecControl}},
 	protocol.Capability_ExecResize:      {tier: TierWeak},

@@ -177,7 +177,9 @@ func (h *TaskHandler) controlSeatAllowed(cid, resumeHex string) bool {
 	if resumeHex != "" {
 		return h.inScope(cid, authority.AttachModeScopeCap(protocol.AttachMode_Control), resumeHex)
 	}
-	self, ok := h.Tasks.Get(hex.EncodeToString(pid.Id[:]))
+	// principalRecord, not the bare record: a credential that is not live, or
+	// whose key is no longer the one this connection proved, holds no seat.
+	self, ok := h.principalRecord(cid, hex.EncodeToString(pid.Id[:]))
 	return ok && authority.CoversNewChild(self.Scope, protocol.Capability_ExecControl)
 }
 

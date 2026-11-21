@@ -33,7 +33,7 @@ type pubsubAuthzServer struct {
 	runnerPriv ed25519.PrivateKey
 }
 
-func startPubsubAuthzServer(t *testing.T) (context.Context, *pubsubAuthzServer) {
+func startPubsubAuthzServer(t *testing.T, opts ...func(*Config)) (context.Context, *pubsubAuthzServer) {
 	t.Helper()
 	for _, key := range []string{"HARNESS_TASK_ID", "HARNESS_RUNNER_ID", "HARNESS_AUTH_TICKET", "HARNESS_PROXY_VIA_RUNNER", "HARNESS_PSK", "HARNESS_PSK_FILE", "HARNESS_OPERATOR_PSK", "HARNESS_OPERATOR_PSK_FILE", "HARNESS_SERVER_CID", "HARNESS_WS_PATH", cli.ServerPubKeyEnv, cli.ServerPubKeyFileEnv} {
 		t.Setenv(key, "")
@@ -46,7 +46,11 @@ func startPubsubAuthzServer(t *testing.T) (context.Context, *pubsubAuthzServer) 
 	_ = ln.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	runnerPriv, runnerKeys := enrolledTestRunner(t)
-	s := New(Config{Addr: addr, OperatorPSK: []byte("pubsub-authz-operator"), RunnerKeys: runnerKeys})
+	cfg := Config{Addr: addr, OperatorPSK: []byte("pubsub-authz-operator"), RunnerKeys: runnerKeys}
+	for _, o := range opts {
+		o(&cfg)
+	}
+	s := New(cfg)
 	s.SetBoard(newTestBoard(t))
 	done := make(chan error, 1)
 	go func() { done <- s.Run(ctx) }()

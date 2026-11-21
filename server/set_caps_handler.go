@@ -51,6 +51,24 @@ func (h *TaskHandler) handleSetCaps(conn ConnHandle, requestID uint32, cid strin
 		respond(protocol.SetCapsStatus_NotFound, nil, 0)
 		return
 	}
+	// A credential can never hold credential_issue or schedule_edit (D14).
+	// Naming one is refused rather than left to the store's mask, which would
+	// answer ok to a grant that did not take effect.
+	if before.Kind == protocol.TaskKind_Credential {
+		var named protocol.Capability
+		if req.CapsPresent() {
+			named |= req.Caps
+		}
+		if req.DelegateCapsPresent() {
+			named |= req.DelegateCaps
+		}
+		if named&CredentialMaskedCaps != 0 {
+			slog.Warn("set_caps denied: a masked bit on a credential", "cid", cid, "task", targetHex,
+				"masked", authority.CapsLabel(named&CredentialMaskedCaps))
+			respond(protocol.SetCapsStatus_MaskedCap, nil, 0)
+			return
+		}
+	}
 
 	// The spawn limits are written on the target only: the cascade below
 	// never sets their bits, so no descendant's limits change (spec D13).

@@ -90,10 +90,9 @@ var capTargetClasses = map[protocol.Capability]capTargetClass{
 	// scope when the attach decides whether the observer's resizes are honoured
 	// (resizeAllowed), so --scope-for exec_resize narrows it.
 	protocol.Capability_ExecResize: {kind: capResolvedLiteral},
-	protocol.Capability_CredentialIssue: {
-		kind:   capNoTargetResolution,
-		reason: "issuing names no existing task; the new task's bound is the grant path",
-	},
+	// Issuing names no task; re-key resolves its target, the credential task,
+	// through this bit's scope by name (credential-tasks D18).
+	protocol.Capability_CredentialIssue: {kind: capResolvedLiteral},
 	protocol.Capability_Notify: {
 		kind:   capNoTargetResolution,
 		reason: "a notification names no task; its origin is stamped from the sender",

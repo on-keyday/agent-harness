@@ -5080,9 +5080,9 @@ enum Capability:
     # credential_issue creates credential tasks (credential new / rekey): a key
     # pair whose holder connects with the issued task's caps and scope
     # (credential-tasks D13). Attenuated like spawn: the new task is a child of
-    # the issuer and holds at most the issuer's caps within its scope. Creation
-    # names no existing task, so no scope bounds this bit. A credential can
-    # never hold it (D14). Default-off, appended.
+    # the issuer and holds at most the issuer's caps within its scope. Issuing
+    # names no task; re-key resolves its target through this bit's scope. A
+    # credential can never hold it (D14). Default-off, appended.
     credential_issue = 0x80000000, "credential_issue"
     # `all` is a LITERAL, not "every defined bit", so it widens by hand — the
     # same edit exec_view / exec_cowrite / exec_resize each needed. The WAL

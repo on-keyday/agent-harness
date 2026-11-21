@@ -1057,6 +1057,8 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		// The root's spawn limits are all unbounded, the zero values.
 		var spawnDepth, maxDesc, room protocol.SpawnLimit
 		var descendants uint32
+		// 0 unless the principal is a credential task (credential-tasks).
+		var credExpires uint64
 		if pid.Id != ([16]byte{}) {
 			delegCaps, delegScope = protocol.Capability_None, authority.Scope{Base: protocol.ScopeBase_None}
 			selfHex := hex.EncodeToString(pid.Id[:])
@@ -1066,6 +1068,9 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 				delegCaps, delegScope = t.DelegateCaps, t.DelegateScope
 				spawnDepth, maxDesc = t.SpawnDepth, t.MaxDescendants
 				descendants, room = h.Tasks.SpawnStatus(selfHex)
+				if t.Kind == protocol.TaskKind_Credential {
+					credExpires = unixNano(t.ExpiresAt)
+				}
 			}
 		}
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_Whoami, RequestId: req.Header.RequestId}
@@ -1082,6 +1087,10 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			MaxDescendants:  maxDesc,
 			Descendants:     descendants,
 			SpawnRoom:       room,
+			// The kind of THIS connection, so a script can tell a credential
+			// from an agent: both have a principal task.
+			PrincipalKind:       h.lookupClientKind(cid),
+			CredentialExpiresAt: credExpires,
 		}
 		// Which commit THIS server is running. Ungated with the rest of the
 		// answer: a build id is not authority, and the caller who most needs it
@@ -1292,6 +1301,22 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		protocol.TaskControlKind_ScheduleDelete, protocol.TaskControlKind_ScheduleRun,
 		protocol.TaskControlKind_ScheduleList, protocol.TaskControlKind_ScheduleShow:
 		h.handleSchedule(cid, conn, &req)
+
+	case protocol.TaskControlKind_CredentialIssue:
+		ci := req.CredentialIssue()
+		if ci == nil {
+			slog.Error("TaskHandler: CredentialIssue variant is nil")
+			return
+		}
+		h.handleCredentialIssue(conn, req.Header.RequestId, cid, ci)
+
+	case protocol.TaskControlKind_CredentialRekey:
+		cr := req.CredentialRekey()
+		if cr == nil {
+			slog.Error("TaskHandler: CredentialRekey variant is nil")
+			return
+		}
+		h.handleCredentialRekey(conn, req.Header.RequestId, cid, cr)
 
 	case protocol.TaskControlKind_RecordList, protocol.TaskControlKind_RecordGet,
 		protocol.TaskControlKind_RecordDelete, protocol.TaskControlKind_RecordKeep,
@@ -1649,6 +1674,15 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 		if !h.resumeTargetAllowed(cid, req.ResumeExact(), idHex) {
 			return errResp(protocol.OpenInteractiveStatus_ResumeNotFound)
 		}
+		// A credential's resume is its re-key (D18); this path would queue it
+		// for a runner. Answered here, before the mode is resolved, for the
+		// foreground and the background open alike (openBackground is reached
+		// only from below); TaskStore.Resume refuses it as well.
+		if _, kind, ok := h.Tasks.PeekRepo(idHex); ok && kind == protocol.TaskKind_Credential {
+			resp, body := errResp(protocol.OpenInteractiveStatus_ResumeNotFound)
+			resp.SetErrorMsg([]byte(credentialResumeRefusal(idHex)))
+			return resp, body
+		}
 		// Mode (Kind) is per-open, latest-recorded (spec §4c) — a resume
 		// through the interactive-open path is valid regardless of the
 		// task's previously recorded Kind; the invoked path (open ⇒
@@ -1891,6 +1925,10 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 			switch err {
 			case ResumeErrNotFound:
 				return errResp(protocol.OpenInteractiveStatus_ResumeNotFound)
+			case ResumeErrCredential:
+				resp, body := errResp(protocol.OpenInteractiveStatus_ResumeNotFound)
+				resp.SetErrorMsg([]byte(credentialResumeRefusal(existingTaskIDHex)))
+				return resp, body
 			case ResumeErrNotTerminal:
 				return errResp(protocol.OpenInteractiveStatus_ResumeNotTerminal)
 			default:
@@ -2557,6 +2595,10 @@ func toTaskInfo(t TaskEntry) protocol.TaskInfo {
 		// Server clock, as progress_age_ms: a client never subtracts.
 		info.AuthorityAgeMs = progressAgeMs(t.AuthorityAt.UnixNano())
 	}
+	// Credential tasks (credential-tasks D7, D20); zero on any other kind.
+	info.CredentialExpiresAt = unixNano(t.ExpiresAt)
+	info.CredentialLastUsedAt = unixNano(t.LastUsedAt)
+	info.SetCredentialName([]byte(t.CredentialName))
 	return info
 }
 
