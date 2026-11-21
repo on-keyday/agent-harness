@@ -712,12 +712,15 @@ harness-cli schedule rm <schedule-id>            # the task stays; a run is not 
   the new bit explicitly where manual firing is needed.
 - **A schedule verb also needs the power it exercises.** `new` without
   `--task` needs `spawn`; `new --task T` and an edit that binds T need `resume`
-  with T in its scope (`resume_exact` is not enough); `edit` / `run` of an
-  existing schedule need `spawn` while its task is still to be created and
-  `resume` over its bound task (an unbound schedule needs neither; an edit that
-  binds a task needs no `spawn` but `resume` over the old and the new task). A missing
-  bit is a permission denial naming it; T outside `resume`'s scope is
-  `task_not_reachable`. Firings check nothing.
+  with T in its scope (`resume_exact` is not enough); `edit` of an existing
+  schedule needs `spawn` while its task is still to be created and `resume`
+  over its bound task (an edit that binds a task needs no `spawn` but `resume`
+  over the old and the new task). `run` needs `spawn` while its task is still
+  to be created, and over its bound task `resume` or `resume_exact` (the
+  firer picks only the timing). An unbound schedule needs neither. A missing
+  bit is a permission denial naming it; T outside the scope of the bit
+  (`resume`'s, or `resume_exact`'s for a run) is `task_not_reachable`.
+  Firings check nothing.
 - **The expression is five cron fields in the schedule's zone**, or `@hourly`
   / `@daily` / `@weekly` / `@monthly` / `@yearly`; an interval is a step
   (`*/30 * * * *`). `@every`, `?`, `L`, `W`, `#` and a `TZ=` prefix are
