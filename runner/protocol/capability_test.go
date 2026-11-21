@@ -12,13 +12,24 @@ func TestScheduleCapabilitySplit(t *testing.T) {
 	}
 }
 
+func TestCredentialIssueBitNotInOldAll(t *testing.T) {
+	// A grant persisted as the old `all` keeps working and does not gain the
+	// right to mint credentials; the WAL stores the number.
+	if Capability_CredentialIssue != 0x80000000 {
+		t.Fatal("credential_issue bit moved")
+	}
+	if uint64(0x7fffffff)&uint64(Capability_CredentialIssue) != 0 {
+		t.Fatal("old all grants gained credential_issue")
+	}
+}
+
 func TestCapabilityBits(t *testing.T) {
 	// Formatted through uint32, never the Capability itself: Capability has a
 	// String method, and fmt applies %x to the STRING for a Stringer — so
 	// %#x of Capability_All printed 0x616c6c ("all" in ASCII) and hid the
 	// actual value behind a plausible-looking hex number.
-	if Capability_All != 0x7fffffff {
-		t.Fatalf("All = %#x, want 0x7fffffff", uint64(Capability_All))
+	if Capability_All != 0xffffffff {
+		t.Fatalf("All = %#x, want 0xffffffff", uint64(Capability_All))
 	}
 	if Capability_None != 0 {
 		t.Fatalf("None = %#x, want 0", uint64(Capability_None))
@@ -33,7 +44,7 @@ func TestCapabilityBits(t *testing.T) {
 		Capability_BoardSend | Capability_ExecTap | Capability_BoardPeer |
 		Capability_Resume | Capability_ResumeExact | Capability_ForwardLink |
 		Capability_RunnerEnroll | Capability_BoardPersist | Capability_BoardMember |
-		Capability_RecordDelete | Capability_RecordPersist | Capability_TranscriptRead | Capability_ScheduleEdit | Capability_ScheduleRun
+		Capability_RecordDelete | Capability_RecordPersist | Capability_TranscriptRead | Capability_ScheduleEdit | Capability_ScheduleRun | Capability_CredentialIssue
 	if or != Capability_All {
 		t.Fatalf("OR of bits = %#x, want All = %#x", uint64(or), uint64(Capability_All))
 	}

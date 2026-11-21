@@ -179,6 +179,13 @@ func TestToTaskInfoMapsEveryField(t *testing.T) {
 		// The schedule a task is bound to (pillar S) is skipped through
 		// scheduleFieldSkips: the binding lives in the schedule store, not on
 		// the TaskEntry, so the list handler fills it (Task 4).
+		// Credential tasks (spec 2026-11-21-credential-tasks-design.md): the
+		// TaskEntry fields these copy do not exist yet. Remove these four when
+		// the mapper reads them from the entry.
+		"CredentialExpiresAt":  "wire field added ahead of the TaskEntry fields it copies (credential tasks)",
+		"CredentialLastUsedAt": "wire field added ahead of the TaskEntry fields it copies (credential tasks)",
+		"CredentialNameLen":    "wire field added ahead of the TaskEntry fields it copies (credential tasks)",
+		"CredentialName":       "wire field added ahead of the TaskEntry fields it copies (credential tasks)",
 	}, scheduleFieldSkips(t)))
 	// The reflect sweep above CANNOT see bit-packed fields: is_attached and
 	// skills_injected share one unexported byte, so setting either makes the
@@ -360,7 +367,12 @@ func TestWhoamiResponseMapsEveryField(t *testing.T) {
 	if w == nil {
 		t.Fatalf("no whoami response (kind %v)", resp.Kind)
 	}
-	assertNoZeroFields(t, *w, map[string]string{})
+	assertNoZeroFields(t, *w, map[string]string{
+		// Credential tasks: the whoami handler does not fill these yet. Remove
+		// both when it reports the principal's kind and expiry.
+		"PrincipalKind":       "wire field added ahead of the handler that fills it (credential tasks)",
+		"CredentialExpiresAt": "wire field added ahead of the handler that fills it (credential tasks)",
+	})
 }
 
 // ExecRunInfo is built by hand in execRunInfo, the same exposure as

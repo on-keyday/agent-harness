@@ -155,6 +155,8 @@ enum AuthRole:
     :u8
     client        = 2  # ClientHello: an agent's binder is keyed by its ticket, a data-plane hello's by its grant id
     runner        = 3  # RunnerAuth: an enrolled Ed25519 key signs the transcript
+    credential    = 4  # CredentialAuth: a credential task's Ed25519 key signs the
+                       # transcript (credential-tasks D4). 0 and 1 stay retired.
 
 # PskAuthStatus is the outcome of the PSK + identity gate.
 # Replaces the hand-written constant in appwire/psk.go (Task 6 migrates refs).
@@ -170,6 +172,11 @@ enum PskAuthStatus:
     not_enrolled  = 6  # role=runner: the signature verifies, but the server
                        # has not enrolled this key. Retryable: enrolling it
                        # lets the runner in on its next attempt.
+    revoked       = 7  # role=credential: the signature verifies, but the
+                       # credential task was cancelled (credential-tasks D5).
+                       # An expired one answers `expired`; an unknown task, a
+                       # non-credential task or a bad signature answers
+                       # bad_ticket, indistinguishably.
 
 # PskAuthRequest is the merged authentication + identity first message.
 # binder is HMAC-SHA512 over the objproto transcript (64 bytes) keyed by the
@@ -185,6 +192,7 @@ format PskAuthRequest:
     match role:
         AuthRole.client        => client_hello :ClientHello
         AuthRole.runner        => runner_auth :RunnerAuth
+        AuthRole.credential    => credential_auth :CredentialAuth
 
 # RunnerAuth is a runner's proof of an enrolled key: key is its Ed25519 public
 # key, sig an Ed25519 signature over
@@ -193,6 +201,15 @@ format RunnerAuth:
     key :[32]u8
     sig :[64]u8
     hello :RunnerHello
+
+# CredentialAuth is a credential task's proof of its key: sig is an Ed25519
+# signature over "agent-harness credential-auth v1" || 0x00 || transcript, made
+# with the private half of the public key stored on task_id (credential-tasks
+# D4). It carries no runner id and no hello: a credential has no runner. The
+# request's binder is empty (binder_len = 0).
+format CredentialAuth:
+    task_id :TaskID
+    sig :[64]u8
 
 # PskAuthResponse is the server's accept/reject for a PskAuthRequest.
 # On-wire: [0x45] + PskAuthResponse(brgen-encoded).
@@ -366,6 +383,9 @@ enum EndReason:
     agent_error = 8
     blocked_timeout = 9
     queue_timeout = 10
+    expired = 11      # a credential task reached its expiry (credential-tasks
+                      # D11): a Cancelled end through the cancel path, with this
+                      # reason instead of cancelled.
 
 # Why a queued background task waits (A-D14), computed when a listing is built.
 enum WaitReason:
@@ -796,6 +816,12 @@ enum TaskControlKind:
     schedule_run            # appended: fire now (S-D13)
     schedule_list           # appended: rows on a stream
     schedule_show           # appended: one schedule's detail on a stream
+    credential_issue        # appended: create a credential task from a public
+                            # key (credential-tasks D13). Requires the
+                            # credential_issue bit; attenuated like spawn.
+    credential_rekey        # appended: register a new public key and expiry on
+                            # an existing credential task (D18, resume = re-key).
+                            # Gated as issue, not as resume.
 
 # ClientKind tags the kind of caller that opened a TaskControl session.
 # `agent` is an in-task harness-cli that proves its identity via agent_info;
@@ -814,6 +840,10 @@ enum ClientKind:
     schedule    # appended (pillar S, S-D18): a schedule's own firing. Only ever
                 # seen as resumed_by_kind / origin_kind on a task a schedule
                 # created or resumed; a ClientHello claiming it is refused.
+    credential  # appended (credential-tasks D6): a connection authenticated as
+                # a credential task (AuthRole.credential). A principal like an
+                # agent, but with no process on a runner. Also seen as
+                # origin_kind / resumed_by_kind on what such a connection did.
 
 # AgentInfo names the task an in-task agent speaks for. It carries no
 # credential: under AuthRole.client the agent proves its ticket with the
@@ -1010,6 +1040,11 @@ enum TaskStatus:
     # deadline passed) or Cancelled (the operator said so while it was held).
     # Appended, so every existing value keeps its number.
     Held
+    # A live credential task (credential-tasks D19): it has no runner and no
+    # process, so no other status fits -- Running is failed by the post-replay
+    # sweep, Detached is cancelled at boot, Held is swept, Queued is offered to
+    # runners. Ends as Cancelled (revoked, or EndReason.expired).
+    Active
 
 # TaskKind distinguishes how the task was requested.
 #  - oneshot:     submitted via SubmitRequest, claude ran with -p prompt and
@@ -1034,6 +1069,10 @@ enum TaskKind:
     # enum VALUE is decode-safe (scope_wire_test pins that an unknown value
     # decodes and renders numerically); nothing about the byte layout moves.
     stream
+    # credential is a task with no runner and no process (credential-tasks D1):
+    # its Ed25519 public key lets an external holder connect with the task's
+    # caps and scope. Not a session kind and not a PTY kind.
+    credential
 
 enum RunnerStatus:
     :u8
@@ -1322,6 +1361,15 @@ format TaskInfo:
     reserved :u7
     if schedule_present == 1:
         schedule_id :ScheduleID
+    # Credential tasks (credential-tasks D7, D20), appended; all zero for any
+    # other kind. credential_expires_at is unix nanos on the SERVER clock.
+    # credential_last_used_at is the last accepted handshake, kept in memory
+    # only: 0 = not used since the server started, which is not "never used".
+    # credential_name is the issuer's optional label (<= 64 bytes).
+    credential_expires_at :u64
+    credential_last_used_at :u64
+    credential_name_len :u8
+    credential_name :[credential_name_len]u8
 
 format ListResult:
     # Server-initiated send-stream id; client reads ListResultBody bytes
@@ -2839,6 +2887,12 @@ format WhoAmIResponse:
     max_descendants :SpawnLimit
     descendants     :u32
     spawn_room      :SpawnLimit
+    # Appended (credential-tasks): the kind of connection answering, so a script
+    # can tell a credential from an agent (both have a principal task), and the
+    # principal's expiry in unix nanos on the SERVER clock (0 = the principal is
+    # not a credential task).
+    principal_kind    :ClientKind
+    credential_expires_at :u64
 # await_idle: one-shot idle-edge watch on an interactive session's PTY output.
 # Fires when now - last_output >= threshold (byte-level quiescence; measured
 # claude busy-side max gap is ~0.5s, so the 2500ms default has wide margin),
@@ -3273,7 +3327,82 @@ format TaskControlRequest:
         TaskControlKind.schedule_run             => schedule_run             :ScheduleIDRequest
         TaskControlKind.schedule_list            => schedule_list            :ScheduleListRequest
         TaskControlKind.schedule_show            => schedule_show            :ScheduleIDRequest
+        TaskControlKind.credential_issue         => credential_issue         :CredentialIssueRequest
+        TaskControlKind.credential_rekey         => credential_rekey         :CredentialRekeyRequest
         .. => error("Unexpected task")
+
+# --- credential tasks (docs/superpowers/specs/2026-11-21-credential-tasks-design.md) ---
+# The server only ever receives the public key: the key pair is made by the
+# client (D2, D3) and the seed never reaches the server.
+
+# CredentialIssueRequest creates a credential task, a child of the caller (an
+# operator's is root-level). It goes through the spawn attenuation path (D13):
+# the grant fields below are OpenInteractiveRequest's spawn grant, with the
+# same semantics, so one handler can read both. ttl_ms is required and bounded
+# above by the server (D7); 0 is refused as ttl_invalid. name is an optional
+# label, at most 64 bytes.
+format CredentialIssueRequest:
+    pubkey :[32]u8
+    ttl_ms :u64
+    name_len :u8
+    name :[name_len]u8
+    # requested_caps: same semantics as SubmitRequest.requested_caps. The
+    # credential_issue and schedule_edit bits are refused (D14).
+    requested_caps :Capability
+    scope :TaskScope
+    overrides_len :u8   # per-capability scope overrides; masks pairwise disjoint
+    overrides     :[overrides_len]ScopeOverride
+    delegate_caps  :Capability
+    delegate_scope :TaskScope
+    spawn_depth     :SpawnLimit
+    max_descendants :SpawnLimit
+
+# CredentialRekeyRequest registers a new public key and expiry on an existing
+# credential task (D18); the old key stops working at once. Gated as issue (D13
+# attenuation against the recorded grant), not as resume. Each *_present bit
+# says whether the matching grant field below narrows what the task recorded;
+# with none set the recorded caps, scope and bounds are kept (resume's rule).
+format CredentialRekeyRequest:
+    task_id :TaskID
+    pubkey :[32]u8
+    ttl_ms :u64
+    caps_present :u1
+    scope_present :u1
+    delegate_caps_present :u1
+    delegate_scope_present :u1
+    spawn_depth_present :u1
+    max_descendants_present :u1
+    reserved :u2
+    requested_caps :Capability
+    scope :TaskScope
+    overrides_len :u8   # per-capability scope overrides; masks pairwise disjoint
+    overrides     :[overrides_len]ScopeOverride
+    delegate_caps  :Capability
+    delegate_scope :TaskScope
+    spawn_depth     :SpawnLimit
+    max_descendants :SpawnLimit
+
+enum CredentialStatus:
+    :u8
+    ok                  = "ok"
+    ttl_invalid         = "ttl_invalid"          # ttl_ms is 0
+    ttl_too_long        = "ttl_too_long"         # ttl_ms exceeds the server's bound (D7)
+    bad_pubkey          = "bad_pubkey"           # not a valid Ed25519 public key
+    scope_not_permitted = "scope_not_permitted"  # the grant exceeds what the caller may issue (D13)
+    spawn_limit         = "spawn_limit"          # the caller's spawn limits forbid another task
+    not_credential      = "not_credential"       # rekey: task_id is not a credential task
+    no_such_task        = "no_such_task"         # rekey: unknown, or outside the caller's reach
+    masked_cap          = "masked_cap"           # the grant names credential_issue or schedule_edit (D14)
+
+# CredentialResponse answers issue and rekey. task_id is the credential task
+# (new at issue, the same one at rekey); expires_at is unix nanos on the SERVER
+# clock. message says why, for the statuses that have more to say.
+format CredentialResponse:
+    status :CredentialStatus
+    task_id :TaskID
+    expires_at :u64
+    message_len :u16
+    message :[message_len]u8
 
 # CancelResult replaces a bare u8 that every reply wrote as 0. ok stays 0, so
 # the success byte is unchanged on the wire; no_such_task is the answer for a
@@ -3384,6 +3513,8 @@ format TaskControlResponse:
         TaskControlKind.schedule_run             => schedule_run             :ScheduleResponse
         TaskControlKind.schedule_list            => schedule_list            :ScheduleResponse
         TaskControlKind.schedule_show            => schedule_show            :ScheduleResponse
+        TaskControlKind.credential_issue         => credential_issue         :CredentialResponse
+        TaskControlKind.credential_rekey         => credential_rekey         :CredentialResponse
 
 # --- runner enrollment (2026-10-27-runner-enrollment-design.md) --------------
 # The server lets a runner register under AuthRole.runner only when it signs
@@ -3569,6 +3700,9 @@ enum SetCapsStatus:
     # than it holds itself. Appended, so an old client renders an unfamiliar
     # status as its number rather than failing to decode.
     invalid_scope  = "invalid_scope"
+    # The grant would give a credential task a bit no credential may hold
+    # (credential_issue or schedule_edit, credential-tasks D14). Appended.
+    masked_cap     = "masked_cap"
 
 # SetCapsRequest rewrites a live task's authority. Unlike a resume-time
 # re-grant it has no terminal-state precondition: the point is to change a task
@@ -3904,6 +4038,9 @@ enum ConnRole:
                   # way TaskControlKind admits kinds no grant ever carries. The
                   # role always names the PEER, so a runner's own uplink is
                   # "server" and its data-plane connections are the client kinds.
+    credential    # appended after server: a connection authenticated as a
+                  # credential task (ClientKind.credential, credential-tasks D6).
+                  # Like agent it is a principal, but it has no runner.
 
 # --- ConnInfo: one live (or just-opened/just-closed) connection. ---
 # TrsfTarget names WHICH transport stack to read. The two are different
@@ -4940,6 +5077,13 @@ enum Capability:
     # schedule_edit; spawn or resume is also required for the action it takes.
     # Scoped to the bound task, or its creator before binding. Default-off.
     schedule_run   = 0x40000000, "schedule_run"
+    # credential_issue creates credential tasks (credential new / rekey): a key
+    # pair whose holder connects with the issued task's caps and scope
+    # (credential-tasks D13). Attenuated like spawn: the new task is a child of
+    # the issuer and holds at most the issuer's caps within its scope. Creation
+    # names no existing task, so no scope bounds this bit. A credential can
+    # never hold it (D14). Default-off, appended.
+    credential_issue = 0x80000000, "credential_issue"
     # `all` is a LITERAL, not "every defined bit", so it widens by hand — the
     # same edit exec_view / exec_cowrite / exec_resize each needed. The WAL
     # persists the NUMBER, so a task already granted `all` holds 0xffff and
@@ -4947,14 +5091,14 @@ enum Capability:
     # forward_link; nor, at 0x7fffff, runner_enroll; nor, at 0xffffff,
     # board_persist; nor, at 0x1ffffff, board_member; nor, at 0xfffffff,
     # record_delete and record_persist; nor, at 0xfffffff, transcript_read; nor, at
-    # 0x1fffffff, schedule_edit; nor, at 0x3fffffff, schedule_run).
+    # 0x1fffffff, schedule_edit; nor, at 0x3fffffff, schedule_run; nor, at 0x7fffffff, credential_issue).
     # That is the safe
     # direction and needs no migration.
     #
     # Widening it is REQUIRED, not stylistic: callerCaps hands operator
     # connections Capability_All, so a literal left at 0xffff would deny the
     # operator its own feature.
-    all            = 0x7fffffff, "all"
+    all            = 0xffffffff, "all"
 
 # ScopeBase is the base target set a TaskScope starts from, before its explicit
 # id list is unioned in. Self joins that union unless exclude_self removes it,

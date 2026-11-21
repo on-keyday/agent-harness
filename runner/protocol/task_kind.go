@@ -20,6 +20,9 @@ package protocol
 //     terminal bytes until the TUI has an event renderer
 //
 // Those read `== TaskKind_Interactive` on purpose, with a comment saying so.
+//
+// A credential task is not a session either: it has no runner, no process and
+// no stream, so no session verb applies to it.
 func IsSessionKind(k TaskKind) bool {
 	return k == TaskKind_Interactive || k == TaskKind_Stream
 }

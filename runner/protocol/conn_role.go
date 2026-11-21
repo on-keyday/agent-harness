@@ -22,6 +22,8 @@ func ConnRoleForClientKind(k ClientKind) ConnRole {
 		return ConnRole_Webui
 	case ClientKind_Agent:
 		return ConnRole_Agent
+	case ClientKind_Credential:
+		return ConnRole_Credential
 	default:
 		// Unspecified (the handshake has not completed) and data_plane, which
 		// is deliberate: a data-plane connection speaks for one request rather

@@ -80,6 +80,9 @@ func GrantableCaps() []protocol.Capability {
 		// its own, with an authority stored now (pillar S).
 		protocol.Capability_ScheduleEdit,
 		protocol.Capability_ScheduleRun,
+		// credential_issue after the schedule bits: it hands a secret to a
+		// holder outside the harness, spawn-attenuated (credential tasks D13).
+		protocol.Capability_CredentialIssue,
 		protocol.Capability_All,
 	}
 }
@@ -198,6 +201,8 @@ func CapDescription(c protocol.Capability) string {
 		return "explicitly fire a saved schedule (schedule run), within this bit's scope; " +
 			"also needs spawn before its task is created, or resume or resume_exact over its bound task. " +
 			"Does not authorize creating, editing, deleting or unbinding schedules"
+	case protocol.Capability_CredentialIssue:
+		return "issue credential tasks: a key pair whose holder connects with the issued task's caps and scope (credential new / rekey); attenuated like spawn, and a credential can never hold this bit"
 	case protocol.Capability_All:
 		return "full capability set (operator-equivalent)"
 	default:
@@ -497,11 +502,14 @@ var capAuditTable = map[protocol.Capability]capAuditEntry{
 	// schedule's task (or its creator) through the bit.
 	protocol.Capability_ScheduleEdit: {tier: TierStrong},
 	protocol.Capability_ScheduleRun:  {tier: TierStrong},
-	protocol.Capability_ResumeExact:  {tier: TierMid, impliedBy: []protocol.Capability{protocol.Capability_Resume}},
-	protocol.Capability_ExecView:     {tier: TierWeak, impliedBy: []protocol.Capability{protocol.Capability_ExecCowrite, protocol.Capability_ExecControl}},
-	protocol.Capability_ExecResize:   {tier: TierWeak},
-	protocol.Capability_FileRead:     {tier: TierWeak},
-	protocol.Capability_Notify:       {tier: TierWeak, scope: ScopeNone},
+	// Strong: the secret leaves the harness and works until its expiry. No
+	// scope kind: issuing names no existing task (spawn-like).
+	protocol.Capability_CredentialIssue: {tier: TierStrong, scope: ScopeNone},
+	protocol.Capability_ResumeExact:     {tier: TierMid, impliedBy: []protocol.Capability{protocol.Capability_Resume}},
+	protocol.Capability_ExecView:        {tier: TierWeak, impliedBy: []protocol.Capability{protocol.Capability_ExecCowrite, protocol.Capability_ExecControl}},
+	protocol.Capability_ExecResize:      {tier: TierWeak},
+	protocol.Capability_FileRead:        {tier: TierWeak},
+	protocol.Capability_Notify:          {tier: TierWeak, scope: ScopeNone},
 }
 
 // CapTierOf is c's audit tier. A bit missing from the table reads as strong,

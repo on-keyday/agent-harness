@@ -187,10 +187,14 @@ var kindTargetClass = map[protocol.TaskControlKind]targetClass{
 	protocol.TaskControlKind_ScheduleRun:    targetGated,
 	protocol.TaskControlKind_ScheduleList:   infoScoped,
 	protocol.TaskControlKind_ScheduleShow:   infoScoped,
+	// Credential tasks (D13, D18): issue names no existing task (the new
+	// task's bound is the grant path); re-key names the credential task.
+	protocol.TaskControlKind_CredentialIssue: noTarget,
+	protocol.TaskControlKind_CredentialRekey: targetGated,
 }
 
 func TestEveryTaskControlKindIsClassified(t *testing.T) {
-	for i := 0; i <= int(protocol.TaskControlKind_ScheduleShow); i++ {
+	for i := 0; i <= int(protocol.TaskControlKind_CredentialRekey); i++ {
 		k := protocol.TaskControlKind(i)
 		if k.String() == fmt.Sprintf("TaskControlKind(%d)", i) {
 			continue // gap in the enum, not a real kind
@@ -205,7 +209,7 @@ func TestEveryTaskControlKindIsClassified(t *testing.T) {
 	}
 }
 
-// record_switch is the last kind; if the enum grows past it the loops above
+// credential_rekey is the last kind; if the enum grows past it the loops above
 // stop short and silently cover nothing new. It has caught sixteen appends now:
 // restore_tasks, when the bound was open_forward_tap; trsf_state; the ten
 // agent_* kinds, which arrived together and would otherwise have dispatched
@@ -216,11 +220,12 @@ func TestEveryTaskControlKindIsClassified(t *testing.T) {
 // lifecycle_set; board_retain; board_membership; agent_read_page; the
 // seven flush / archive kinds; runner_dial_add / _list / _remove /
 // runner_kick; session_mode; the five record_* kinds; and transcript_list /
-// transcript_get; and the six schedule_* kinds.
-func TestScheduleShowIsStillTheLastKind(t *testing.T) {
-	next := protocol.TaskControlKind(int(protocol.TaskControlKind_ScheduleShow) + 1)
+// transcript_get; the six schedule_* kinds; and credential_issue /
+// credential_rekey.
+func TestCredentialRekeyIsStillTheLastKind(t *testing.T) {
+	next := protocol.TaskControlKind(int(protocol.TaskControlKind_CredentialRekey) + 1)
 	if next.String() != fmt.Sprintf("TaskControlKind(%d)", int(next)) {
-		t.Fatalf("a kind was appended after schedule_show (%v) — raise the loop bound in "+
+		t.Fatalf("a kind was appended after credential_rekey (%v) — raise the loop bound in "+
 			"TestEveryTaskControlKindIsClassified and in TestEveryTaskControlKindHasACapVerdict, "+
 			"which otherwise stop before it", next)
 	}

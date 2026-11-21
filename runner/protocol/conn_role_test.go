@@ -2,13 +2,13 @@ package protocol
 
 import "testing"
 
-// The four PRINCIPAL kinds each get their own role, and they must stay
+// The five PRINCIPAL kinds each get their own role, and they must stay
 // distinct: the mapping exists so the two ends of one connection agree about
 // it, and two kinds sharing a role would make a surface unable to say which
 // peer it is looking at.
 func TestPrincipalClientKindsMapToDistinctRoles(t *testing.T) {
 	seen := map[ConnRole]ClientKind{}
-	for _, k := range []ClientKind{ClientKind_Cli, ClientKind_Tui, ClientKind_Webui, ClientKind_Agent} {
+	for _, k := range []ClientKind{ClientKind_Cli, ClientKind_Tui, ClientKind_Webui, ClientKind_Agent, ClientKind_Credential} {
 		r := ConnRoleForClientKind(k)
 		if r == ConnRole_Unspecified {
 			t.Errorf("%v maps to Unspecified: a connected, identified peer would read as unidentified", k)

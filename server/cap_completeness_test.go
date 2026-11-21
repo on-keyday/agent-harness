@@ -177,10 +177,13 @@ var kindCapClass = map[protocol.TaskControlKind]capClass{
 	protocol.TaskControlKind_ScheduleRun:    capInMap,
 	protocol.TaskControlKind_ScheduleList:   capNone,
 	protocol.TaskControlKind_ScheduleShow:   capNone,
+	// Credential tasks (D13, D18): both need credential_issue.
+	protocol.TaskControlKind_CredentialIssue: capInMap,
+	protocol.TaskControlKind_CredentialRekey: capInMap,
 }
 
 func TestEveryTaskControlKindHasACapVerdict(t *testing.T) {
-	for i := 0; i <= int(protocol.TaskControlKind_ScheduleShow); i++ {
+	for i := 0; i <= int(protocol.TaskControlKind_CredentialRekey); i++ {
 		k := protocol.TaskControlKind(i)
 		if k.String() == fmt.Sprintf("TaskControlKind(%d)", i) {
 			continue // gap in the enum, not a real kind

@@ -59,8 +59,12 @@ var requiredCap = map[protocol.TaskControlKind]protocol.Capability{
 	protocol.TaskControlKind_ScheduleEdit:   protocol.Capability_ScheduleEdit,
 	protocol.TaskControlKind_ScheduleDelete: protocol.Capability_ScheduleEdit,
 	protocol.TaskControlKind_ScheduleRun:    protocol.Capability_ScheduleRun,
-	protocol.TaskControlKind_PruneTasks:     protocol.Capability_Prune,
-	protocol.TaskControlKind_Notify:         protocol.Capability_Notify,
+	// Credential tasks (credential-tasks D13, D18): issuing and re-keying are
+	// one power; re-key is gated as issue, not as resume.
+	protocol.TaskControlKind_CredentialIssue: protocol.Capability_CredentialIssue,
+	protocol.TaskControlKind_CredentialRekey: protocol.Capability_CredentialIssue,
+	protocol.TaskControlKind_PruneTasks:      protocol.Capability_Prune,
+	protocol.TaskControlKind_Notify:          protocol.Capability_Notify,
 	// Emptying another task's progress line: whoever may end the task may
 	// empty its status line, which is the weaker act. Target-gated on
 	// cancel's scope in handleProgressClear.

@@ -12,7 +12,8 @@ func TestSessionAndPTYKindsAreNotTheSameQuestion(t *testing.T) {
 	}{
 		{TaskKind_Oneshot, false, false},
 		{TaskKind_Interactive, true, true},
-		{TaskKind_Stream, true, false}, // a session, but there is no terminal
+		{TaskKind_Stream, true, false},      // a session, but there is no terminal
+		{TaskKind_Credential, false, false}, // no process at all, so neither
 	}
 	for _, c := range cases {
 		if got := IsSessionKind(c.kind); got != c.session {
