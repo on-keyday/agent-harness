@@ -167,8 +167,14 @@ type WALEvent struct {
 	// task_created / task_resumed: the run's child has no PTY (A-D33). Zero =
 	// a PTY, which every run before A-D33 had (a pre-A3 oneshot-kind task ran
 	// without one, and its kind says so).
-	NoPTY bool  `json:"no_pty,omitempty"`
-	Ts    int64 `json:"ts"` // unix nano
+	NoPTY bool `json:"no_pty,omitempty"`
+	// task_created of a credential task, and task_rekeyed: the Ed25519 public
+	// key (hex) and the expiry (unix nanos). CredentialName on task_created
+	// only. A record of any other kind has none of the keys.
+	CredentialPubKey string `json:"credential_pubkey,omitempty"`
+	ExpiresAtNs      int64  `json:"expires_at_ns,omitempty"`
+	CredentialName   string `json:"credential_name,omitempty"`
+	Ts               int64  `json:"ts"` // unix nano
 
 	// Selector is the runner-selection constraint. It is not stored directly as
 	// a JSON struct — see the selectorB64 field for the serialized form.
@@ -250,6 +256,9 @@ type walEventJSON struct {
 	Record                      bool               `json:"record,omitempty"`
 	Oneshot                     bool               `json:"oneshot,omitempty"`
 	NoPTY                       bool               `json:"no_pty,omitempty"`
+	CredentialPubKey            string             `json:"credential_pubkey,omitempty"`
+	ExpiresAtNs                 int64              `json:"expires_at_ns,omitempty"`
+	CredentialName              string             `json:"credential_name,omitempty"`
 	Ts                          int64              `json:"ts"`
 	// SelectorB64 holds the base64-encoded wire bytes of the RunnerSelector.
 	// Empty / absent means Kind == RunnerSelectorKind_Any (zero value).
@@ -321,6 +330,9 @@ func (e WALEvent) MarshalJSON() ([]byte, error) {
 		Record:                      e.Record,
 		Oneshot:                     e.Oneshot,
 		NoPTY:                       e.NoPTY,
+		CredentialPubKey:            e.CredentialPubKey,
+		ExpiresAtNs:                 e.ExpiresAtNs,
+		CredentialName:              e.CredentialName,
 		Ts:                          e.Ts,
 	}
 	// Only encode the selector if it carries a non-Any kind (i.e. it has payload).
@@ -397,6 +409,9 @@ func (e *WALEvent) UnmarshalJSON(b []byte) error {
 	e.Record = j.Record
 	e.Oneshot = j.Oneshot
 	e.NoPTY = j.NoPTY
+	e.CredentialPubKey = j.CredentialPubKey
+	e.ExpiresAtNs = j.ExpiresAtNs
+	e.CredentialName = j.CredentialName
 	e.Ts = j.Ts
 
 	if j.SelectorB64 != "" {

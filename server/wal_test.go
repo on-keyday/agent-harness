@@ -212,6 +212,9 @@ func TestWALEventJSONRoundTripCopiesEveryField(t *testing.T) {
 		Record:                      true,
 		Oneshot:                     true,
 		NoPTY:                       true,
+		CredentialPubKey:            "0101010101010101010101010101010101010101010101010101010101010101",
+		ExpiresAtNs:                 1234567896,
+		CredentialName:              "nightly",
 		Ts:                          1234567890,
 		Selector:                    sel,
 	}

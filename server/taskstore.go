@@ -179,6 +179,17 @@ type TaskEntry struct {
 	// NoPTY: the current run's child has no PTY (A-D33); a queued one is
 	// started without one, and an exact resume takes it unless it says.
 	NoPTY bool
+
+	// Credential tasks (Kind == TaskKind_Credential; credential_store.go).
+	// CredentialPubKey is the Ed25519 public key a connection must sign with;
+	// the server never holds the private half. ExpiresAt ends the credential
+	// (D7, D8). Both are written at issue and replaced by a re-key (D18).
+	// CredentialName is the issuer's label. LastUsedAt is the last accepted
+	// use, memory only (D20).
+	CredentialPubKey [32]byte
+	ExpiresAt        time.Time
+	LastUsedAt       time.Time
+	CredentialName   string
 }
 
 // TaskStore is the in-memory authority for task lifecycle.
@@ -284,12 +295,14 @@ func (s *TaskStore) Create(repo, prompt string, kind protocol.TaskKind, origin p
 // createLocked inserts a task and writes its task_created record. Caller holds
 // s.mu and fires OnCreate after releasing it.
 func (s *TaskStore) createLocked(repo, prompt string, kind protocol.TaskKind, origin protocol.ClientKind, creatorTaskID protocol.TaskID, boundRunnerID string, selector protocol.RunnerSelector, extraArgs []string, g authority.Grant, agentProfile string, run RunSpec) string {
-	return s.createLockedID(newTaskID(), repo, prompt, kind, origin, creatorTaskID, boundRunnerID, selector, extraArgs, g, agentProfile, run)
+	return s.createLockedID(newTaskID(), repo, prompt, kind, origin, creatorTaskID, boundRunnerID, selector, extraArgs, g, agentProfile, run, nil)
 }
 
 // createLockedID is createLocked under a caller-chosen id (a schedule's
 // pre-chosen creation id, S-D22). The caller has checked the id is free.
-func (s *TaskStore) createLockedID(id, repo, prompt string, kind protocol.TaskKind, origin protocol.ClientKind, creatorTaskID protocol.TaskID, boundRunnerID string, selector protocol.RunnerSelector, extraArgs []string, g authority.Grant, agentProfile string, run RunSpec) string {
+// cred is non-nil for a credential task only (CreateCredential): it is
+// created active rather than Queued, and its record carries the key.
+func (s *TaskStore) createLockedID(id, repo, prompt string, kind protocol.TaskKind, origin protocol.ClientKind, creatorTaskID protocol.TaskID, boundRunnerID string, selector protocol.RunnerSelector, extraArgs []string, g authority.Grant, agentProfile string, run RunSpec, cred *credentialFields) string {
 	now := time.Now()
 	s.tasks[id] = &TaskEntry{
 		ID:             id,
@@ -313,6 +326,9 @@ func (s *TaskStore) createLockedID(id, repo, prompt string, kind protocol.TaskKi
 		ExtraArgs:      extraArgs,
 	}
 	s.tasks[id].applyRunSpec(run, now.UnixNano())
+	if cred != nil {
+		cred.apply(s.tasks[id], now)
+	}
 	if creatorTaskID.Id == ([16]byte{}) {
 		s.tasks[id].stampAuthority(AuthorityWrite{Source: protocol.AuthoritySource_OperatorSpawn})
 	} else {
@@ -344,6 +360,9 @@ func (s *TaskStore) createLockedID(id, repo, prompt string, kind protocol.TaskKi
 		applyDelegationToWAL(g.DelegateCaps, g.DelegateScope, &ev)
 		applyLimitsToWAL(g.SpawnDepth, g.MaxDescendants, &ev)
 		s.tasks[id].applyAuthorityToWAL(&ev)
+		if cred != nil {
+			cred.toWAL(&ev, now)
+		}
 		if err := s.wal.Write(ev); err != nil {
 			slog.Error("WAL write failed", "op", "task_created", "task_id", id, "err", err)
 		}
@@ -569,6 +588,21 @@ func (s *TaskStore) SetCaps(id string, u GrantUpdate, by AuthorityWrite) (TaskEn
 		s.mu.Unlock()
 		return TaskEntry{}, false
 	}
+	s.applyGrantUpdateLocked(e, u, by)
+	snapshot := *e
+	s.mu.Unlock()
+	return snapshot, true
+}
+
+// applyGrantUpdateLocked writes u onto e, stamps who wrote it and records the
+// result. It is the one authority write set_caps, its cascade and a
+// credential's re-key share, so the credential mask (D14) is applied here
+// once. Caller holds s.mu.
+func (s *TaskStore) applyGrantUpdateLocked(e *TaskEntry, u GrantUpdate, by AuthorityWrite) {
+	if e.Kind == protocol.TaskKind_Credential {
+		u.To.Caps &^= CredentialMaskedCaps
+		u.To.DelegateCaps &^= CredentialMaskedCaps
+	}
 	if u.Caps {
 		e.Capabilities = u.To.Caps
 	}
@@ -579,9 +613,6 @@ func (s *TaskStore) SetCaps(id string, u GrantUpdate, by AuthorityWrite) (TaskEn
 	e.applyLimits(u)
 	e.stampAuthority(by)
 	s.writeCapsChangedLocked(e)
-	snapshot := *e
-	s.mu.Unlock()
-	return snapshot, true
 }
 
 // writeParentChangedLocked emits one task_parent_changed record carrying the
@@ -1417,6 +1448,16 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 			s.tasks[ev.TaskID].runSpecFromWAL(ev)
 			// A record from before A1 carries no run: a create is run 1.
 			s.tasks[ev.TaskID].Run = max(ev.Run, 1)
+			if t := s.tasks[ev.TaskID]; t.Kind == protocol.TaskKind_Credential {
+				// Created active, not Queued (D19). LastUsedAt is not
+				// recorded (D20) and stays unknown until the next use.
+				t.Status = protocol.TaskStatus_Active
+				started := t.CreatedAt
+				t.StartedAt = &started
+				t.CredentialPubKey = credentialKeyFromWAL(ev.CredentialPubKey)
+				t.ExpiresAt = expiryFromWAL(ev.ExpiresAtNs)
+				t.CredentialName = ev.CredentialName
+			}
 			s.order = append(s.order, ev.TaskID)
 		case "task_assigned":
 			if t, ok := s.tasks[ev.TaskID]; ok {
@@ -1540,6 +1581,12 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 				} else {
 					t.Run++
 				}
+			}
+		case "task_rekeyed":
+			// A credential's re-key (D18). A narrowing that came with it is
+			// the task_caps_changed record before this one.
+			if t, ok := s.tasks[ev.TaskID]; ok {
+				t.rekey(credentialKeyFromWAL(ev.CredentialPubKey), expiryFromWAL(ev.ExpiresAtNs))
 			}
 		case "task_caps_changed":
 			if t, ok := s.tasks[ev.TaskID]; ok {
@@ -1916,8 +1963,9 @@ func (s *TaskStore) switchRunModeLocked(id string, mode protocol.RunMode, cond R
 
 // BackgroundDeadlines reports every background deadline at or before now —
 // the run deadline of a Running, Detached or Held task, the queue deadline of
-// a Queued one — and the earliest still ahead (0 = none). Terminal tasks have
-// none: every path that ends a run clears both deadlines.
+// a Queued one, the expiry of an active credential — and the earliest still
+// ahead (0 = none). Terminal tasks have none: every path that ends a run
+// clears both deadlines, and an ended credential is not active.
 func (s *TaskStore) BackgroundDeadlines(now int64) (due []DeadlineHit, next int64) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -1935,7 +1983,18 @@ func (s *TaskStore) BackgroundDeadlines(now int64) (due []DeadlineHit, next int6
 	}
 	for _, id := range s.order {
 		e, ok := s.tasks[id]
-		if !ok || e.RunMode != protocol.RunMode_Background {
+		if !ok {
+			continue
+		}
+		if e.Kind == protocol.TaskKind_Credential {
+			if e.Status == protocol.TaskStatus_Active {
+				// At least 1, so a zero expiry (which CredentialLive already
+				// reads as expired) is due at once rather than "none".
+				consider(id, max(expiryToWAL(e.ExpiresAt), 1), protocol.EndReason_Expired, 0)
+			}
+			continue
+		}
+		if e.RunMode != protocol.RunMode_Background {
 			continue
 		}
 		switch e.Status {

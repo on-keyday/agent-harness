@@ -49,7 +49,7 @@ func (e *SpawnLimitError) Error() string {
 // Create stays unchecked for tests that build trees directly.
 func (s *TaskStore) CreateWithinLimits(repo, prompt string, kind protocol.TaskKind, origin protocol.ClientKind, creatorTaskID protocol.TaskID, boundRunnerID string, selector protocol.RunnerSelector, extraArgs []string, g authority.Grant, agentProfile string, run RunSpec) (string, error) {
 	id := newTaskID()
-	if err := s.createWithinLimits(id, repo, prompt, kind, origin, creatorTaskID, boundRunnerID, selector, extraArgs, g, agentProfile, run); err != nil {
+	if err := s.createWithinLimits(id, repo, prompt, kind, origin, creatorTaskID, boundRunnerID, selector, extraArgs, g, agentProfile, run, nil); err != nil {
 		return "", err
 	}
 	return id, nil
@@ -64,10 +64,10 @@ var ErrTaskIDInUse = errors.New("task id already exists")
 // TestOnlyCreateWithinLimitsInProduction covers it. Unbound to a runner:
 // the background scheduler places the task.
 func (s *TaskStore) CreateWithinLimitsID(id, repo, prompt string, kind protocol.TaskKind, origin protocol.ClientKind, creator protocol.TaskID, selector protocol.RunnerSelector, extraArgs []string, g authority.Grant, agentProfile string, run RunSpec) error {
-	return s.createWithinLimits(id, repo, prompt, kind, origin, creator, "", selector, extraArgs, g, agentProfile, run)
+	return s.createWithinLimits(id, repo, prompt, kind, origin, creator, "", selector, extraArgs, g, agentProfile, run, nil)
 }
 
-func (s *TaskStore) createWithinLimits(id, repo, prompt string, kind protocol.TaskKind, origin protocol.ClientKind, creatorTaskID protocol.TaskID, boundRunnerID string, selector protocol.RunnerSelector, extraArgs []string, g authority.Grant, agentProfile string, run RunSpec) error {
+func (s *TaskStore) createWithinLimits(id, repo, prompt string, kind protocol.TaskKind, origin protocol.ClientKind, creatorTaskID protocol.TaskID, boundRunnerID string, selector protocol.RunnerSelector, extraArgs []string, g authority.Grant, agentProfile string, run RunSpec, cred *credentialFields) error {
 	s.mu.Lock()
 	if _, taken := s.tasks[id]; taken {
 		s.mu.Unlock()
@@ -85,7 +85,7 @@ func (s *TaskStore) createWithinLimits(id, repo, prompt string, kind protocol.Ta
 			g.SpawnDepth = authority.MinLimit(g.SpawnDepth, authority.DecLimit(c.SpawnDepth))
 		}
 	}
-	s.createLockedID(id, repo, prompt, kind, origin, creatorTaskID, boundRunnerID, selector, extraArgs, g, agentProfile, run)
+	s.createLockedID(id, repo, prompt, kind, origin, creatorTaskID, boundRunnerID, selector, extraArgs, g, agentProfile, run, cred)
 	queueDeadline := s.tasks[id].QueueDeadlineAt != 0
 	onCreate := s.OnCreate
 	s.mu.Unlock()

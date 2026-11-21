@@ -758,8 +758,14 @@ func New(cfg Config) *Server {
 	}
 
 	// Wire task lifecycle hooks.
-	// OnCreate publishes task_queued.
+	// OnCreate publishes task_queued — except for a credential, which is never
+	// queued: it is created (or re-keyed) active, so it publishes task_started
+	// with the status its row holds (credential-tasks D19).
 	s.tasks.OnCreate = func(id string) {
+		if t, ok := s.tasks.Get(id); ok && t.Kind == protocol.TaskKind_Credential {
+			publishTaskEvent(id, protocol.StatusEventKind_TaskStarted, t.Status, 0)
+			return
+		}
 		publishTaskEvent(id, protocol.StatusEventKind_TaskQueued, protocol.TaskStatus_Queued, 0)
 	}
 	s.tasks.OnAssign = func(id, runnerID, worktreeDir string) {
@@ -1044,8 +1050,10 @@ func (s *Server) serve(ctx context.Context, ep objproto.Endpoint, mux *http.Serv
 		go rs.RunRetention(ctx)
 	}
 
-	// Background deadlines and queueing periods (pillar A, A-D13): one
-	// watcher, woken whenever the store sets a deadline.
+	// Background deadlines and queueing periods (pillar A, A-D13), and
+	// credential expiries (credential-tasks D8): one watcher, woken whenever
+	// the store sets a deadline. Its startup pass ends whatever expired while
+	// the server was down, after replay and with the WAL attached.
 	deadlineWake := make(chan struct{}, 1)
 	s.tasks.OnDeadlineSet = func() {
 		select {
@@ -1053,7 +1061,7 @@ func (s *Server) serve(ctx context.Context, ep objproto.Endpoint, mux *http.Serv
 		default:
 		}
 	}
-	go runDeadlineWatcher(ctx, s.tasks, deadlineWake, s.taskHandler.endBackgroundRun)
+	go runDeadlineWatcher(ctx, s.tasks, deadlineWake, s.taskHandler.endDeadlineHit)
 
 	// Coalesces the port-forward counters into forwards.status. One goroutine
 	// for the whole server: the quantity moves per byte, so it can only be

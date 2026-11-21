@@ -1,6 +1,10 @@
 package server
 
-import "github.com/on-keyday/agent-harness/runner/protocol"
+import (
+	"time"
+
+	"github.com/on-keyday/agent-harness/runner/protocol"
+)
 
 // runInputs is everything evaluateRun reads, gathered from the task record
 // and the session's mux at one instant (unix nanos throughout).
@@ -66,6 +70,18 @@ func evaluateRun(in runInputs) (protocol.EndReason, bool) {
 		return protocol.EndReason_TurnDoneQuiet, true
 	}
 	return protocol.EndReason_None, false
+}
+
+// endDeadlineHit is the deadline watcher's end: a credential's expiry is a
+// cancel with reason expired (credential-tasks D11) — a credential has no
+// background run for CancelBackgroundRun's condition to hold — and every
+// other hit ends a background run.
+func (h *TaskHandler) endDeadlineHit(hit DeadlineHit) {
+	if hit.Reason == protocol.EndReason_Expired {
+		h.Tasks.ExpireCredential(hit.ID, time.Now())
+		return
+	}
+	h.endBackgroundRun(hit)
 }
 
 // endBackgroundRun ends a background run for an automatic reason (A-D8): a
