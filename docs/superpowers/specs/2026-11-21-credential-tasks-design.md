@@ -128,6 +128,15 @@ that assumes "Running ⇒ has a runner" must be found and taught the kind.
 A credential task can never be resumed, opened, exec'd into, bound to a
 schedule as its target, or assigned to a runner. Each refusal names the kind.
 
+Why no resume: resume today means "assign to a runner and start the process
+again", and a credential has neither. Given a credential meaning, resume would
+be "make an ended credential valid again", which would make revoke reversible:
+a leaked key, once revoked, could come back; a holder of `resume` over the
+credential (e.g. the agent that issued it, whose subtree it is in) could undo
+the operator's revoke; and re-validating an expired one is the in-place renewal
+the Non-goals exclude. Restoring service means issuing a new credential — after
+a leak a new key pair is needed anyway.
+
 ### Handshake (client)
 
 `harness-cli` takes the credential from, in order: `--credential-file PATH`,
