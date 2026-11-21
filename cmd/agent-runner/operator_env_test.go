@@ -13,9 +13,11 @@ import (
 func TestScrubOperatorSecretDropsOnlyTheOperatorNames(t *testing.T) {
 	t.Setenv(cli.OperatorPSKEnv, "op")
 	t.Setenv(cli.OperatorPSKFileEnv, "/tmp/op")
+	t.Setenv(cli.CredentialEnv, "id:seed")
+	t.Setenv(cli.CredentialFileEnv, "/tmp/cred")
 	t.Setenv("HARNESS_SERVER_CID", "ws:127.0.0.1:8539-*")
 	scrubOperatorSecret()
-	for _, k := range []string{cli.OperatorPSKEnv, cli.OperatorPSKFileEnv} {
+	for _, k := range []string{cli.OperatorPSKEnv, cli.OperatorPSKFileEnv, cli.CredentialEnv, cli.CredentialFileEnv} {
 		if v, ok := os.LookupEnv(k); ok {
 			t.Errorf("%s survived the scrub with %q", k, v)
 		}

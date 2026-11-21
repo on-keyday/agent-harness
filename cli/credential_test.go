@@ -6,7 +6,10 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"encoding/hex"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -35,7 +38,7 @@ func testCredential(t *testing.T) Credential {
 
 func TestParseCredentialRoundTrip(t *testing.T) {
 	c := testCredential(t)
-	s := c.String()
+	s := c.Secret()
 	if len(s) != 32+1+64 || s[32] != ':' {
 		t.Fatalf("String() = %d bytes %q, want <32 hex>:<64 hex>", len(s), s[:8])
 	}
@@ -52,7 +55,7 @@ func TestParseCredentialRoundTrip(t *testing.T) {
 }
 
 func TestParseCredentialRejects(t *testing.T) {
-	good := testCredential(t).String()
+	good := testCredential(t).Secret()
 	id, seed := good[:32], good[33:]
 	for name, in := range map[string]string{
 		"empty":         "",
@@ -89,7 +92,7 @@ func clearCredentialEnv(t *testing.T) {
 func writeCredentialFile(t *testing.T, dir, name string, c Credential, mode os.FileMode) string {
 	t.Helper()
 	p := filepath.Join(dir, name)
-	if err := os.WriteFile(p, []byte(c.String()+"\n"), mode); err != nil {
+	if err := os.WriteFile(p, []byte(c.Secret()+"\n"), mode); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Chmod(p, mode); err != nil {
@@ -110,7 +113,7 @@ func TestLoadCredentialOrder(t *testing.T) {
 		t.Fatalf("no source: got (%v, %v), want (nil, nil)", c, err)
 	}
 
-	t.Setenv(CredentialEnv, valueC.String())
+	t.Setenv(CredentialEnv, valueC.Secret())
 	if c, err := LoadCredential(""); err != nil || c == nil || c.TaskID != valueC.TaskID {
 		t.Fatalf("value env alone: got (%v, %v)", c, err)
 	}
@@ -144,7 +147,7 @@ func TestLoadCredentialRefusesGroupReadableFile(t *testing.T) {
 		if !strings.Contains(err.Error(), "mode") || !strings.Contains(err.Error(), "chmod 600") {
 			t.Errorf("mode %04o: error does not name the mode and the fix: %v", mode, err)
 		}
-		if strings.Contains(err.Error(), c.String()[33:]) {
+		if strings.Contains(err.Error(), c.Secret()[33:]) {
 			t.Errorf("the error contains the seed")
 		}
 	}
@@ -204,5 +207,98 @@ func TestAgentIdentityRefusesPrintedSeed(t *testing.T) {
 	}
 	if err := checkSeedDestination(verb.CredentialIssueAction{}); err != nil {
 		t.Errorf("operator refused: %v", err)
+	}
+}
+
+// A Credential formatted by accident (a log line, an error) never shows its seed.
+func TestCredentialFormattingIsRedacted(t *testing.T) {
+	c := testCredential(t)
+	seed := hex.EncodeToString(c.Key.Seed())
+	got := fmt.Sprintf("%v %s %+v %#v %q", c, c, c, c, c)
+	if strings.Contains(got, seed) || strings.Contains(got, c.Secret()) {
+		t.Fatalf("formatting a Credential printed the seed: %s", got)
+	}
+	if !strings.Contains(got, "credential a0a1a2a3") {
+		t.Fatalf("redacted form should name the task: %s", got)
+	}
+	if !strings.Contains(c.Secret(), seed) {
+		t.Fatalf("Secret() lost the seed")
+	}
+}
+
+// D3 way (2) end to end on one host: keygen writes the seed, bind turns it
+// into a credential file LoadCredential accepts.
+func TestKeygenBindLoad(t *testing.T) {
+	clearCredentialEnv(t)
+	path := filepath.Join(t.TempDir(), "seed")
+	var out bytes.Buffer
+	if err := CredentialKeygenWith(verb.CredentialKeygenAction{Out: path}, &out); err != nil {
+		t.Fatal(err)
+	}
+	id := strings.Repeat("ab", 16)
+	if _, err := LoadCredential(path); err == nil {
+		t.Fatalf("a bare seed file loaded as a credential")
+	}
+	out.Reset()
+	if err := CredentialBindWith(verb.CredentialBindAction{ID: id, File: path}, &out); err != nil {
+		t.Fatal(err)
+	}
+	c, err := LoadCredential(path)
+	if err != nil || c == nil || hex.EncodeToString(c.TaskID.Id[:]) != id {
+		t.Fatalf("bound file does not load: %v", err)
+	}
+	if strings.Contains(out.String(), hex.EncodeToString(c.Key.Seed())) {
+		t.Fatalf("bind printed the seed")
+	}
+	if runtime.GOOS != "windows" {
+		if fi, _ := os.Stat(path); fi.Mode().Perm() != 0o600 {
+			t.Fatalf("mode %v, want 0600", fi.Mode().Perm())
+		}
+	}
+	if ents, _ := os.ReadDir(filepath.Dir(path)); len(ents) != 1 {
+		t.Fatalf("a temp file was left behind: %v", ents)
+	}
+	// Already bound: refused, file untouched.
+	before, _ := os.ReadFile(path)
+	if err := CredentialBindWith(verb.CredentialBindAction{ID: strings.Repeat("cd", 16), File: path}, &out); err == nil || !strings.Contains(err.Error(), "already holds") {
+		t.Fatalf("rebinding: %v", err)
+	}
+	if after, _ := os.ReadFile(path); !bytes.Equal(before, after) {
+		t.Fatalf("a refused bind changed the file")
+	}
+}
+
+func TestBindRefusals(t *testing.T) {
+	dir := t.TempDir()
+	id := strings.Repeat("ab", 16)
+	seedFile := func(name, body string, mode os.FileMode) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(body), mode); err != nil {
+			t.Fatal(err)
+		}
+		os.Chmod(p, mode)
+		return p
+	}
+	good := strings.Repeat("0a", 32) + "\n"
+	if runtime.GOOS != "windows" {
+		p := seedFile("open", good, 0o644)
+		if err := CredentialBindWith(verb.CredentialBindAction{ID: id, File: p}, io.Discard); err == nil || !strings.Contains(err.Error(), "chmod 600") {
+			t.Errorf("group-readable seed file: %v", err)
+		}
+		if b, _ := os.ReadFile(p); string(b) != good {
+			t.Errorf("a refused bind changed the file")
+		}
+	}
+	for name, body := range map[string]string{"short": "0a0a\n", "nothex": strings.Repeat("zz", 32) + "\n", "empty": ""} {
+		err := CredentialBindWith(verb.CredentialBindAction{ID: id, File: seedFile(name, body, 0o600)}, io.Discard)
+		if err == nil || strings.Contains(err.Error(), "zz") {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	if err := CredentialBindWith(verb.CredentialBindAction{ID: "xyz", File: seedFile("ok", good, 0o600)}, io.Discard); err == nil {
+		t.Errorf("bad task id accepted")
+	}
+	if err := CredentialBindWith(verb.CredentialBindAction{ID: id, File: filepath.Join(dir, "missing")}, io.Discard); err == nil {
+		t.Errorf("missing file accepted")
 	}
 }

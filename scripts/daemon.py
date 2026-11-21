@@ -198,7 +198,11 @@ _CLAUDE_MARKER_EXACT = frozenset({"CLAUDECODE", "CLAUDE_EFFORT", "AI_AGENT"})
 # /proc/<pid>/environ for any same-uid process however much it unsets later, so
 # the launch has to leave them out too. Runner-only: harness-server takes
 # HARNESS_OPERATOR_PSK from the environment on purpose.
-_OPERATOR_SECRET_EXACT = frozenset({"HARNESS_OPERATOR_PSK", "HARNESS_OPERATOR_PSK_FILE"})
+_OPERATOR_SECRET_EXACT = frozenset({
+    "HARNESS_OPERATOR_PSK", "HARNESS_OPERATOR_PSK_FILE",
+    # A loaded credential outranks an agent's own identity (cli.EffectiveClientKind).
+    "HARNESS_CREDENTIAL", "HARNESS_CREDENTIAL_FILE",
+})
 _DROP_FOR_BIN = {"agent-runner": _OPERATOR_SECRET_EXACT}
 
 

@@ -55,7 +55,7 @@ func TestAgentVerbsRunUnderCredential(t *testing.T) {
 		t.Setenv(v, "")
 	}
 	t.Setenv("HARNESS_SERVER_CID", "ws:"+addr+"-*")
-	t.Setenv(cli.CredentialEnv, cred.String())
+	t.Setenv(cli.CredentialEnv, cred.Secret())
 
 	// send to a peer's chat topic.
 	var sendOut bytes.Buffer
@@ -85,7 +85,7 @@ func TestAgentVerbsRunUnderCredential(t *testing.T) {
 	for _, v := range []string{"HARNESS_RUNNER_ID", "HARNESS_TASK_ID", "HARNESS_AUTH_TICKET"} {
 		t.Setenv(v, "")
 	}
-	t.Setenv(cli.CredentialEnv, cred.String())
+	t.Setenv(cli.CredentialEnv, cred.Secret())
 	var inOut bytes.Buffer
 	if err := agent.Wait(ctx, []string{"--topic", "chat." + idHex[:8], "--timeout", "3s"}, &inOut); err != nil {
 		t.Fatalf("agent wait on the credential's own chat: %v", err)

@@ -113,7 +113,7 @@ func TestCredentialBeatsOperatorPSK(t *testing.T) {
 		t.Fatalf("control: the PSK alone connected as task %x, want the operator", r.PrincipalTaskId.Id)
 	}
 
-	t.Setenv(cli.CredentialEnv, cred.String())
+	t.Setenv(cli.CredentialEnv, cred.Secret())
 	r := whoami(t, cid)
 	if r.PrincipalTaskId != cred.TaskID {
 		t.Fatalf("with a credential loaded the principal is %x, want the credential task %x", r.PrincipalTaskId.Id, cred.TaskID.Id)
@@ -134,7 +134,7 @@ func TestCredentialBeatsOperatorPSK(t *testing.T) {
 	if !strings.Contains(out.String(), "kind=credential expires=") {
 		t.Fatalf("whoami does not say it is a credential with an expiry:\n%s", out.String())
 	}
-	if strings.Contains(out.String(), cred.String()[33:]) {
+	if strings.Contains(out.String(), cred.Secret()[33:]) {
 		t.Fatalf("whoami printed the seed")
 	}
 	// The expiry is a parseable RFC3339 time.
@@ -153,7 +153,7 @@ func TestCredentialBeatsAgentEnv(t *testing.T) {
 	t.Setenv("HARNESS_RUNNER_ID", strings.Repeat("ab", 16))
 	t.Setenv("HARNESS_TASK_ID", strings.Repeat("cd", 16))
 	t.Setenv("HARNESS_AUTH_TICKET", strings.Repeat("ef", 16))
-	t.Setenv(cli.CredentialEnv, cred.String())
+	t.Setenv(cli.CredentialEnv, cred.Secret())
 
 	kind, tid := cli.EffectiveClientKind(protocol.ClientKind_Cli)
 	if kind != protocol.ClientKind_Credential || tid != cred.TaskID {
@@ -271,7 +271,7 @@ func TestCredentialVerbsEndToEnd(t *testing.T) {
 	raw, _ := hex.DecodeString(pubID)
 	var pubTID protocol.TaskID
 	copy(pubTID.Id[:], raw)
-	t.Setenv(cli.CredentialEnv, cli.Credential{TaskID: pubTID, Key: priv}.String())
+	t.Setenv(cli.CredentialEnv, cli.Credential{TaskID: pubTID, Key: priv}.Secret())
 	if r := whoami(t, cid); r.PrincipalTaskId != pubTID {
 		t.Fatalf("the registered key does not authenticate")
 	}

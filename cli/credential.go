@@ -61,16 +61,25 @@ func ParseCredential(s string) (Credential, error) {
 	return Credential{TaskID: tid, Key: ed25519.NewKeyFromSeed(rawSeed)}, nil
 }
 
-// String is the credential string, seed included. It is for the one place a
-// secret is handed over; anything that logs a Credential goes through
-// LogValue, which does not.
-func (c Credential) String() string {
+// Secret is the credential string, seed included: the one place a secret is
+// handed over (a printed `secret:` line, a credential file). It is not String:
+// anything that formats a Credential with %v, %s or %#v (a log line, an error)
+// gets the redacted form below, never the seed.
+func (c Credential) Secret() string {
 	return hex.EncodeToString(c.TaskID.Id[:]) + ":" + hex.EncodeToString(c.Key.Seed())
 }
 
+// String is the redacted form: the task, no seed. GoString too, so %#v cannot
+// print the key either.
+func (c Credential) String() string {
+	return "credential " + hex.EncodeToString(c.TaskID.Id[:])[:8]
+}
+
+func (c Credential) GoString() string { return c.String() }
+
 // LogValue keeps the seed out of a structured log line.
 func (c Credential) LogValue() slog.Value {
-	return slog.StringValue("credential " + hex.EncodeToString(c.TaskID.Id[:])[:8])
+	return slog.StringValue(c.String())
 }
 
 // SendCredentialHandshake is the credential's counterpart of

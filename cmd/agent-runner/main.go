@@ -327,11 +327,13 @@ func (c *mainConfig) buildProfiles(warn io.Writer) (runner.ProfileSet, error) {
 // os.Environ() plus extras — so there is no per-spawn place to filter it, and
 // a runner never proves that secret itself. An agent holding it could drop its
 // ticket, reconnect as kind=Client and be operator, which is what the secret
-// exists to prevent. scripts/daemon.py additionally keeps it out of the
+// exists to prevent. A credential (HARNESS_CREDENTIAL[_FILE]) is scrubbed for
+// the same reason: a loaded credential outranks an agent's own identity, so one
+// leaked into every agent would swap them all and expose its seed. scripts/daemon.py additionally keeps it out of the
 // runner's INITIAL environment, which /proc/<pid>/environ shows to any
 // same-uid process regardless of what is unset here.
 func scrubOperatorSecret() {
-	for _, k := range []string{cli.OperatorPSKEnv, cli.OperatorPSKFileEnv, cli.RunnerKeyFileEnv} {
+	for _, k := range []string{cli.OperatorPSKEnv, cli.OperatorPSKFileEnv, cli.RunnerKeyFileEnv, cli.CredentialEnv, cli.CredentialFileEnv} {
 		os.Unsetenv(k)
 	}
 }

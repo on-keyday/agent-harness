@@ -1312,6 +1312,10 @@ func (h cliVerbs) CredentialKeygen(a verb.CredentialKeygenAction) error {
 	return cli.CredentialKeygenOut(a, os.Stdout)
 }
 
+func (h cliVerbs) CredentialBind(a verb.CredentialBindAction) error {
+	return cli.CredentialBindWith(a, os.Stdout)
+}
+
 func (h cliVerbs) CredentialNew(a verb.CredentialIssueAction) error {
 	return cli.CredentialIssueOut(h.ctx, h.cid(), a, os.Stdout)
 }

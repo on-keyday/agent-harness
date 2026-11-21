@@ -3373,6 +3373,29 @@ var Verbs = []VerbSpec{
 		Examples: []string{"credential keygen --out ./ci.seed"},
 	},
 	{
+		Path: []string{"credential", "bind"}, CmdlineSurfaces: CLI,
+		NoModalSurface: "looked for: bind rewrites the seed file `credential keygen` wrote, on the host that will use it; TUI and WebUI run elsewhere, so it stays CLI only",
+		Notes: []string{
+			"on the host that will use the credential, after `credential new --pubkey` / `credential rekey --pubkey` printed the task id: turn the seed file `credential keygen` wrote into the credential file `<task-id>:<seed>` (mode 0600, replaced atomically; the seed is never printed)",
+			"refuses a file that already holds `<id>:<seed>`, one that is not a bare 64-hex seed, and one readable by group or other",
+		},
+		Action: "CredentialBindAction",
+		Args:   []Arg{{Name: "credential-id", Type: ArgTaskID, Field: "ID"}},
+		Flags: []Flag{
+			{Name: "file", Type: FlagString, Default: "", Field: "File", Required: true,
+				Help: "the seed file from `credential keygen --out`; rewritten in place as the credential file"},
+		},
+		Validate: func(b Bound) error {
+			if len(b.Args) > 0 {
+				if raw, err := hex.DecodeString(b.Args[0]); err != nil || len(raw) != 16 {
+					return fmt.Errorf("credential bind: credential id: want 32 hex characters")
+				}
+			}
+			return nil
+		},
+		Examples: []string{"credential bind aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --file ./ci.seed"},
+	},
+	{
 		Path: []string{"credential", "new"}, CmdlineSurfaces: CLI,
 		NoModalSurface: "looked for: " + credentialSurfaceReason,
 		Notes: []string{

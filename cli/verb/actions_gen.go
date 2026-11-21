@@ -251,6 +251,14 @@ type ConnsAction struct {
 	Follow bool
 }
 
+// CredentialBindAction is built by: credential bind.
+type CredentialBindAction struct {
+	ActionMarker
+	// the seed file from `credential keygen --out`; rewritten in place as the credential file
+	File string
+	ID   string
+}
+
 // CredentialIssueAction is built by: credential new, credential rekey.
 type CredentialIssueAction struct {
 	ActionMarker
@@ -4899,6 +4907,14 @@ func init() {
 			a.Out = b.Str("out")
 			return a, nil
 		},
+		"credential bind\x00cli": func(b Bound) (Action, error) {
+			a := CredentialBindAction{}
+			a.File = b.Str("file")
+			if len(b.Args) > 0 {
+				a.ID = b.Args[0]
+			}
+			return a, nil
+		},
 		"credential new\x00cli": func(b Bound) (Action, error) {
 			a := CredentialIssueAction{}
 			a.Sub = "new"
@@ -5494,6 +5510,7 @@ const (
 	CmdScheduleLs             = "schedule ls"
 	CmdScheduleShow           = "schedule show"
 	CmdCredentialKeygen       = "credential keygen"
+	CmdCredentialBind         = "credential bind"
 	CmdCredentialNew          = "credential new"
 	CmdCredentialRekey        = "credential rekey"
 	CmdCredentialLs           = "credential ls"
@@ -8304,6 +8321,27 @@ func ParseCmdCredentialKeygen(sf Surface, args []string, ctx map[string]string) 
 	return a, nil
 }
 
+func ParseCmdCredentialBind(sf Surface, args []string, ctx map[string]string) (CredentialBindAction, error) {
+	var zero CredentialBindAction
+	sp, ok := Lookup("credential", "bind")
+	if !ok {
+		return zero, fmt.Errorf("credential bind: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(CredentialBindAction)
+	return a, nil
+}
+
 func ParseCmdCredentialNew(sf Surface, args []string, ctx map[string]string) (CredentialIssueAction, error) {
 	var zero CredentialIssueAction
 	sp, ok := Lookup("credential", "new")
@@ -9053,6 +9091,8 @@ type CLIDispatch[R any] interface {
 	ScheduleShow(ScheduleShowAction) R
 	// credential keygen
 	CredentialKeygen(CredentialKeygenAction) R
+	// credential bind
+	CredentialBind(CredentialBindAction) R
 	// credential new
 	CredentialNew(CredentialIssueAction) R
 	// credential rekey
@@ -9764,6 +9804,12 @@ func DispatchCLI[R any](h CLIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.CredentialKeygen(a), true, nil
+	case CmdCredentialBind:
+		a, perr := ParseCmdCredentialBind(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.CredentialBind(a), true, nil
 	case CmdCredentialNew:
 		a, perr := ParseCmdCredentialNew(CLI, args, ctx)
 		if perr != nil {
@@ -10196,6 +10242,8 @@ func DispatchCLIAction[R any](h CLIDispatch[R], act Action) (r R, handled bool) 
 		return h.ScheduleShow(a), true
 	case CredentialKeygenAction:
 		return h.CredentialKeygen(a), true
+	case CredentialBindAction:
+		return h.CredentialBind(a), true
 	case CredentialIssueAction:
 		switch a.Sub {
 		case "new":
@@ -10908,6 +10956,12 @@ func ParseCLICommand(tokens []string, ctx map[string]string) (act Action, handle
 			return a, true, nil
 		case CmdCredentialKeygen:
 			a, perr := ParseCmdCredentialKeygen(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdCredentialBind:
+			a, perr := ParseCmdCredentialBind(CLI, tokens[n:], ctx)
 			if perr != nil {
 				return nil, true, perr
 			}

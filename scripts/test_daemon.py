@@ -32,6 +32,8 @@ class CleanChildEnvTest(unittest.TestCase):
         os.environ["CLAUDECODE"] = "1"
         os.environ["HARNESS_OPERATOR_PSK"] = "op"
         os.environ["HARNESS_OPERATOR_PSK_FILE"] = "/tmp/op"
+        os.environ["HARNESS_CREDENTIAL"] = "id:seed"
+        os.environ["HARNESS_CREDENTIAL_FILE"] = "/tmp/cred"
         os.environ["HARNESS_SERVER_CID"] = "ws:127.0.0.1:8539-*"
         os.environ["CLAUDE_CONFIG_DIR"] = "/tmp/cfg"
 
@@ -50,7 +52,7 @@ class CleanChildEnvTest(unittest.TestCase):
         self.assertEqual(server_env.get("HARNESS_OPERATOR_PSK"), "op",
                          "harness-server takes the operator secret from the environment")
         runner_env = daemon._clean_child_env(daemon._DROP_FOR_BIN["agent-runner"])
-        for gone in ("HARNESS_OPERATOR_PSK", "HARNESS_OPERATOR_PSK_FILE"):
+        for gone in ("HARNESS_OPERATOR_PSK", "HARNESS_OPERATOR_PSK_FILE", "HARNESS_CREDENTIAL", "HARNESS_CREDENTIAL_FILE"):
             self.assertNotIn(gone, runner_env, f"{gone} would reach every agent the runner spawns")
         self.assertEqual(runner_env.get("HARNESS_SERVER_CID"), "ws:127.0.0.1:8539-*",
                          "what agents DO need stays")

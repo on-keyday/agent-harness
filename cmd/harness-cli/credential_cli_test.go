@@ -49,6 +49,30 @@ func TestCredentialVerbsReadFlagsAfterTheirPositional(t *testing.T) {
 	}
 }
 
+// bind: parsed through the dispatcher with its flag after the positional, and
+// served on this host (the file is rewritten, nothing dials).
+func TestCredentialBindThroughTheDispatcher(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "seed")
+	if err, _ := dispatchCredential(t, "credential", "keygen", "--out", path); err != nil {
+		t.Fatal(err)
+	}
+	id := strings.Repeat("ab", 16)
+	err, handled := dispatchCredential(t, "credential", "bind", id, "--file", path)
+	if !handled || err != nil {
+		t.Fatalf("bind: handled=%v err=%v", handled, err)
+	}
+	data, _ := os.ReadFile(path)
+	if !strings.HasPrefix(string(data), id+":") {
+		t.Fatalf("the file was not bound")
+	}
+	if err, _ := dispatchCredential(t, "credential", "bind", id, "--file", path); err == nil || !strings.Contains(err.Error(), "already holds") {
+		t.Fatalf("rebind: %v", err)
+	}
+	if err, _ := dispatchCredential(t, "credential", "bind", id); err == nil {
+		t.Fatalf("bind without --file accepted")
+	}
+}
+
 // keygen is served on this host and dials nothing.
 func TestCredentialKeygenThroughTheDispatcher(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "seed")
@@ -67,7 +91,7 @@ func TestCredentialKeygenThroughTheDispatcher(t *testing.T) {
 
 // Every credential verb is declared, CLI-reachable and printed by usage.
 func TestCredentialVerbsAreInTheCLI(t *testing.T) {
-	for _, p := range []string{"credential keygen", "credential new", "credential rekey", "credential ls", "credential revoke"} {
+	for _, p := range []string{"credential keygen", "credential bind", "credential new", "credential rekey", "credential ls", "credential revoke"} {
 		sp, ok := verb.Lookup(strings.Fields(p)...)
 		if !ok || !sp.CmdlineSurfaces.Has(verb.CLI) {
 			t.Errorf("%s is not a CLI verb", p)

@@ -11,6 +11,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
 
 	"github.com/on-keyday/agent-harness/cli/verb"
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -132,7 +135,7 @@ func CredentialIssueWith(ctx context.Context, c *Client, a verb.CredentialIssueA
 	fmt.Fprintf(out, "credential %s: issued, expires %s\n", id[:8], got.ExpiresAt.Format("2006-01-02T15:04:05Z07:00"))
 	switch {
 	case f != nil:
-		_, werr := fmt.Fprintf(f, "%s\n", cred.String())
+		_, werr := fmt.Fprintf(f, "%s\n", cred.Secret())
 		if cerr := f.Close(); werr == nil {
 			werr = cerr
 		}
@@ -141,12 +144,82 @@ func CredentialIssueWith(ctx context.Context, c *Client, a verb.CredentialIssueA
 		}
 		fmt.Fprintf(out, "secret written to %s\n", a.Out)
 	case priv != nil:
-		fmt.Fprintf(out, "secret: %s\n", cred.String())
+		fmt.Fprintf(out, "secret: %s\n", cred.Secret())
 	default:
 		// The key is the holder's: it needs the full id, which the first
 		// line shortens.
-		fmt.Fprintf(out, "task id: %s\ncredential string for the holder: %s:<seed written by credential keygen>\n", id, id)
+		fmt.Fprintf(out, "task id: %s\nnext, on the host that ran credential keygen:\n  harness-cli credential bind %s --file <your seed file>\n", id, id)
 	}
+	return nil
+}
+
+// CredentialBindWith is `credential bind <id> --file FILE`: D3 way (2)'s last
+// step. The seed file keygen wrote becomes the credential file
+// `<task-id>:<seed>`, written to a temp file beside it (mode 0600), synced and
+// renamed over it, so a crash leaves the old seed file or the new credential,
+// never half of one. The seed is read and written, never printed, and no error
+// repeats it.
+func CredentialBindWith(a verb.CredentialBindAction, out io.Writer) error {
+	tid, err := parseTaskIDHex(a.ID)
+	if err != nil {
+		return fmt.Errorf("credential bind: credential id: %w", err)
+	}
+	f, err := os.Open(a.File)
+	if err != nil {
+		return fmt.Errorf("credential bind: %w", err)
+	}
+	fi, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return fmt.Errorf("credential bind: %w", err)
+	}
+	if runtime.GOOS != "windows" && fi.Mode().Perm()&0o077 != 0 {
+		f.Close()
+		return fmt.Errorf("credential bind: %s has mode %04o, readable by group or other: chmod 600 it", a.File, fi.Mode().Perm())
+	}
+	data, err := io.ReadAll(io.LimitReader(f, 4097))
+	f.Close()
+	if err != nil {
+		return fmt.Errorf("credential bind: %w", err)
+	}
+	seed := strings.TrimSpace(string(data))
+	if strings.Contains(seed, ":") {
+		return fmt.Errorf("credential bind: %s already holds a credential (<task-id>:<seed>); nothing to bind", a.File)
+	}
+	raw, err := hex.DecodeString(seed)
+	if err != nil || len(raw) != ed25519.SeedSize {
+		return fmt.Errorf("credential bind: %s is not a seed file (want the 64 hex characters credential keygen wrote)", a.File)
+	}
+	cred := Credential{TaskID: tid, Key: ed25519.NewKeyFromSeed(raw)}
+
+	tmp, err := os.CreateTemp(filepath.Dir(a.File), ".credential-bind-*")
+	if err != nil {
+		return fmt.Errorf("credential bind: %w", err)
+	}
+	tmpName := tmp.Name()
+	fail := func(err error) error {
+		tmp.Close()
+		os.Remove(tmpName)
+		return fmt.Errorf("credential bind: %w", err)
+	}
+	if err := tmp.Chmod(0o600); err != nil && runtime.GOOS != "windows" {
+		return fail(err)
+	}
+	if _, err := fmt.Fprintf(tmp, "%s\n", cred.Secret()); err != nil {
+		return fail(err)
+	}
+	if err := tmp.Sync(); err != nil {
+		return fail(err)
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return fmt.Errorf("credential bind: %w", err)
+	}
+	if err := os.Rename(tmpName, a.File); err != nil {
+		os.Remove(tmpName)
+		return fmt.Errorf("credential bind: %w", err)
+	}
+	fmt.Fprintf(out, "credential %s: bound %s; run scripts with HARNESS_CREDENTIAL_FILE=%s\n", hex.EncodeToString(tid.Id[:])[:8], a.File, a.File)
 	return nil
 }
 
