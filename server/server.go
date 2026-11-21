@@ -423,6 +423,7 @@ func New(cfg Config) *Server {
 	}
 	// Wire the conn-drop hook so a set_caps narrowing reaches in-flight work.
 	s.taskHandler.DropConnsForPrincipal = s.dropConnsForPrincipal
+	s.taskHandler.DropStaleCredentialConns = s.dropStaleCredentialConns
 	s.taskHandler.RevokeDataPlaneForTask = s.revokeDataPlaneForTask
 	// Wire ConnListFn so the list_conns RPC handler can call s.ConnList.
 	s.taskHandler.ConnListFn = s.ConnList
@@ -788,13 +789,16 @@ func New(cfg Config) *Server {
 		// (credential-tasks D9). callerCaps already answers none for them
 		// (D8); this takes the connection itself away, and drops its board
 		// state (D10).
-		// Under credentialMu, so a connection accepted just before the end
-		// cannot attach a board state after this revoke.
+		// The revoke under credentialMu, so a connection accepted just before
+		// the end cannot attach a board state after it; the drop after the
+		// unlock, since a wire close may wait on the peer (credentialMu's
+		// rule). Only connections that hold nothing: a re-key reviving the
+		// credential in between keeps its new holder's.
 		if t, ok := s.tasks.Get(id); ok && t.Kind == protocol.TaskKind_Credential {
 			s.taskHandler.credentialMu.Lock()
-			s.dropConnsForPrincipal(id)
 			boardRevokeCredential(s.Board, id)
 			s.taskHandler.credentialMu.Unlock()
+			s.dropStaleCredentialConns(id)
 		}
 	}
 	// A cancel of a task still waiting for its TaskFinished resends the
@@ -1338,6 +1342,23 @@ func (s *Server) serve(ctx context.Context, ep objproto.Endpoint, mux *http.Serv
 // running and simply finds its next harness-cli call reconnecting under the
 // new authority.
 func (s *Server) dropConnsForPrincipal(taskIDHex string) int {
+	return s.dropConnsOf(taskIDHex, func(string) bool { return true })
+}
+
+// dropStaleCredentialConns is TaskHandler.DropStaleCredentialConns: the
+// credential's connections that hold nothing any more (principalRecord — its
+// key replaced, or the credential ended). One that proved the current key of
+// a live credential is left open: after a re-key it is the new holder's.
+func (s *Server) dropStaleCredentialConns(taskIDHex string) int {
+	return s.dropConnsOf(taskIDHex, func(cid string) bool {
+		_, holds := s.taskHandler.principalRecord(cid, taskIDHex)
+		return !holds
+	})
+}
+
+// dropConnsOf closes the connections whose principal is taskIDHex and that
+// victim selects.
+func (s *Server) dropConnsOf(taskIDHex string, victim func(cid string) bool) int {
 	var victims []streamingConn
 	s.activeConnsMu.Lock()
 	for cid, sc := range s.activeConns {
@@ -1347,6 +1368,13 @@ func (s *Server) dropConnsForPrincipal(taskIDHex string) int {
 		}
 	}
 	s.activeConnsMu.Unlock()
+	kept := victims[:0]
+	for _, sc := range victims {
+		if victim(sc.ConnectionID().String()) {
+			kept = append(kept, sc)
+		}
+	}
+	victims = kept
 
 	// Closed outside the lock: teardown re-enters connection bookkeeping that
 	// takes activeConnsMu itself, and so does kickConn.

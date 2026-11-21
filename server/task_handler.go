@@ -260,6 +260,13 @@ type TaskHandler struct {
 	// the old grant do not outlive it. nil in tests that do not need it.
 	DropConnsForPrincipal func(taskIDHex string) int
 
+	// DropStaleCredentialConns, when non-nil, closes the live connections of
+	// the credential taskIDHex that hold nothing any more (principalRecord):
+	// its key was replaced, or the credential ended. A connection that proved
+	// the current key of a live credential stays. Wired by Server. Returns how
+	// many it closed.
+	DropStaleCredentialConns func(taskIDHex string) int
+
 	// RevokeDataPlaneForTask, when non-nil, withdraws every data-plane grant
 	// issued for a task and stops forwarding its packets. Closing the task's
 	// outward connections does not reach those: their bytes cross a connection
@@ -298,26 +305,35 @@ type TaskHandler struct {
 	// proved:
 	//   - acceptance: RecordCredentialIdentity's liveness+key re-check and
 	//     its board attach (OnCredentialHello);
-	//   - re-key: credentialRekey's store re-key, connection drop and board
-	//     revoke;
-	//   - end: the credential branch of TaskStore.OnCancel (drop, revoke).
+	//   - re-key: rekeyLocked's store re-key and board revoke;
+	//   - end: the board revoke in the credential branch of
+	//     TaskStore.OnCancel.
 	// Without it a new-key connection accepted between a re-key's store write
 	// and its board revoke attached to the OLD holder's state (inheriting its
 	// contacts) and was then orphaned by the revoke.
 	//
+	// Rule: no blocking I/O under this lock — nothing that writes to the
+	// network or waits on a peer. A task-event publication waits on every
+	// tasks.status subscriber's stream flow control, and a wire close on the
+	// connection's transport; under this lock one slow peer would stall every
+	// credential handshake, re-key and end, and a peer whose stream ACKs are
+	// read by a goroutine waiting here would never drain. Those run after the
+	// unlock (RekeyCredentialDeferred's publish, DropStaleCredentialConns).
+	// The WAL write inside the store's re-key is a local file append.
+	//
 	// One mutex for the server, not one per credential: these transitions are
 	// rare (a credential handshake, a re-key, a credential's end), each holds
-	// it for map and store operations and one non-blocking wire close per
-	// dropped connection, and a per-id map would need its own lifetime.
+	// it only for in-memory map, store and board operations, and a per-id map
+	// would need its own lifetime.
 	//
 	// Lock order: credentialMu first. It is never taken while holding another
 	// lock (OnCancel runs after TaskStore releases mu; the gate dispatch holds
 	// none), and under it the code takes, one at a time and each released
-	// before the next, TaskStore.mu, clientKindsMu, activeConnsMu, and the
-	// board's locks. None of those paths takes credentialMu.
+	// before the next, TaskStore.mu, clientKindsMu and the board's locks. None
+	// of those paths takes credentialMu.
 	credentialMu sync.Mutex
-	// afterCredentialRekeyStore is a test seam: when set, credentialRekey
-	// calls it under credentialMu between the store's re-key and the drop.
+	// afterCredentialRekeyStore is a test seam: when set, rekeyLocked calls
+	// it under credentialMu between the store's re-key and the board revoke.
 	afterCredentialRekeyStore func()
 }
 

@@ -201,13 +201,7 @@ func (h *TaskHandler) credentialRekey(cid string, req *protocol.CredentialRekeyR
 	}
 
 	expiresAt := now.Add(ttl)
-	// The store's re-key, the drop and the board revoke are one step against a
-	// connection's acceptance (credentialMu): a new-key handshake waits for all
-	// three, so it neither attaches to the old holder's board state nor is
-	// closed by this drop.
-	h.credentialMu.Lock()
-	defer h.credentialMu.Unlock()
-	after, err := h.Tasks.RekeyCredential(idHex, req.Pubkey, expiresAt, &u,
+	after, publish, err := h.rekeyLocked(idHex, req.Pubkey, expiresAt, &u,
 		AuthorityWrite{Source: protocol.AuthoritySource_Resume, Actor: h.lookupPrincipal(cid)})
 	switch {
 	case errors.Is(err, ErrNoSuchTask):
@@ -217,24 +211,42 @@ func (h *TaskHandler) credentialRekey(cid string, req *protocol.CredentialRekeyR
 	case err != nil:
 		return credentialRefusal(protocol.CredentialStatus_NoSuchTask, "%s", err.Error())
 	}
+	// Outside credentialMu: both write to the network (a subscriber's stream,
+	// a wire close) and may wait on it.
+	publish()
 	// The old key's connections already hold nothing (principalRecord compares
 	// the key per request); closing them tells their peers at once (D18: every
-	// connection authenticated with it is closed), and dropping the board state
-	// keeps the old holder's subscriptions and contacts from the new one (D10).
-	// OnCancel does neither here: a live credential's re-key is no cancel.
-	// After the store's re-key, not before: until it, the old key is live, and
-	// an old-key connection made in between could build a fresh state up
-	// again for the new holder to inherit.
+	// connection authenticated with it is closed). Only those: a connection
+	// that proved the new key after the re-key stays open. OnCancel does not do
+	// it here: a live credential's re-key is no cancel.
+	closed := 0
+	if h.DropStaleCredentialConns != nil {
+		closed = h.DropStaleCredentialConns(idHex)
+	}
+	slog.Info("credential re-keyed", "task", idHex, "caps", after.Capabilities.String(), "expires_at", expiresAt, "conns_closed", closed)
+	return credentialOK(idHex, expiresAt)
+}
+
+// rekeyLocked is the part of a re-key ordered against a connection's
+// acceptance (credentialMu): the store's re-key and the board revoke. A
+// new-key handshake waits for both, so it never attaches to the old holder's
+// board state, whose subscriptions and contacts the revoke drops (D10). The
+// revoke follows the store's re-key, not the other way round: until the
+// re-key the old key is live, and an old-key connection could build the state
+// up again for the new holder to inherit. The store's publication is handed
+// back to run after the unlock (RekeyCredentialDeferred).
+func (h *TaskHandler) rekeyLocked(idHex string, pub [32]byte, expiresAt time.Time, u *GrantUpdate, by AuthorityWrite) (TaskEntry, func(), error) {
+	h.credentialMu.Lock()
+	defer h.credentialMu.Unlock()
+	after, publish, err := h.Tasks.RekeyCredentialDeferred(idHex, pub, expiresAt, u, by)
+	if err != nil {
+		return after, publish, err
+	}
 	if h.afterCredentialRekeyStore != nil {
 		h.afterCredentialRekeyStore()
 	}
-	closed := 0
-	if h.DropConnsForPrincipal != nil {
-		closed = h.DropConnsForPrincipal(idHex)
-	}
 	boardRevokeCredential(h.Board, idHex)
-	slog.Info("credential re-keyed", "task", idHex, "caps", after.Capabilities.String(), "expires_at", expiresAt, "conns_closed", closed)
-	return credentialOK(idHex, expiresAt)
+	return after, publish, nil
 }
 
 // rekeyReaches reports whether cid's principal may re-key the task idHex as

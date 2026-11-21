@@ -725,3 +725,53 @@ func TestCredentialPubsubSeesOnlyVisibleTaskEvents(t *testing.T) {
 	e.s.Tasks().Cancel(id, protocol.EndReason_Cancelled, protocol.TaskID{})
 	wantClosed(t, c, 3*time.Second, "the credential was revoked")
 }
+
+// After a re-key the stale drop closes only the connections that hold
+// nothing: the old key's goes, one that already proved the new key stays (a
+// new-key handshake arriving before the re-key's drop is not kicked).
+func TestDropStaleCredentialConnsKeepsTheNewKey(t *testing.T) {
+	ctx, e := startPubsubAuthzServer(t)
+	oldPriv, oldPub := newCredentialKey(t)
+	id, tid := issueCredential(t, e.s.Tasks(), authority.Grant{}, oldPub, time.Now().Add(time.Hour))
+	oldConn := e.dialCredential(ctx, t, tid, oldPriv)
+	if oldConn.status != protocol.PskAuthStatus_Ok {
+		t.Fatalf("old key handshake: %v", oldConn.status)
+	}
+	e.serverCIDOf(ctx, t, tid)
+
+	newPriv, newPub := newCredentialKey(t)
+	if _, err := e.s.Tasks().RekeyCredential(id, newPub, time.Now().Add(time.Hour), nil, AuthorityWrite{}); err != nil {
+		t.Fatal(err)
+	}
+	newConn := e.dialCredential(ctx, t, tid, newPriv)
+	if newConn.status != protocol.PskAuthStatus_Ok {
+		t.Fatalf("new key handshake: %v", newConn.status)
+	}
+	// Both are recorded before the drop runs.
+	for deadline := time.Now().Add(3 * time.Second); ; {
+		n := 0
+		e.s.activeConnsMu.Lock()
+		for cid := range e.s.activeConns {
+			if e.s.taskHandler.lookupPrincipal(cid.String()) == tid {
+				n++
+			}
+		}
+		e.s.activeConnsMu.Unlock()
+		if n == 2 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%d connections recorded for the credential, want 2", n)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if n := e.s.dropStaleCredentialConns(id); n != 1 {
+		t.Fatalf("dropStaleCredentialConns closed %d, want 1 (the old key's)", n)
+	}
+	wantClosed(t, oldConn, 3*time.Second, "its key was replaced")
+	time.Sleep(200 * time.Millisecond) // past kickConn's delayed local close
+	if _, err := cli.WhoAmIWith(ctx, newConn); err != nil {
+		t.Fatalf("the new key's connection was closed too: %v", err)
+	}
+}

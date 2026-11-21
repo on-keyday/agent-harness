@@ -299,7 +299,7 @@ func credUnder(t *testing.T, h *TaskHandler, creatorHex string, g authority.Gran
 func TestCredentialRekeyGatedAsIssue(t *testing.T) {
 	h := newTestHandler(t)
 	var dropped []string
-	h.DropConnsForPrincipal = func(id string) int { dropped = append(dropped, id); return 1 }
+	h.DropStaleCredentialConns = func(id string) int { dropped = append(dropped, id); return 1 }
 	target := plainTask(h)
 	op := credTestConn()
 	_, oldPub := newCredentialKey(t)

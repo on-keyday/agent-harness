@@ -493,3 +493,35 @@ func TestRekeyRaceNewKeyGetsAFreshBoardState(t *testing.T) {
 		t.Errorf("a publish to the credential's chat reached %d states (err %v), want 1", delivered, err)
 	}
 }
+
+// Re-review Important: no blocking I/O under credentialMu. A re-key's task
+// event (OnCreate → publishTaskEvent → a write to every tasks.status
+// subscriber's stream, which waits on its flow control) runs after the
+// unlock: the publication finds credentialMu free.
+func TestRekeyPublishesOutsideCredentialMu(t *testing.T) {
+	s := credentialBoardServer(t)
+	_, tid, _ := credentialOnBoard(t, s, authority.Grant{}, 9480)
+	orig := s.tasks.OnCreate
+	published, heldDuringPublish := 0, false
+	s.tasks.OnCreate = func(id string) {
+		published++
+		if s.taskHandler.credentialMu.TryLock() {
+			s.taskHandler.credentialMu.Unlock()
+		} else {
+			heldDuringPublish = true
+		}
+		orig(id)
+	}
+	_, newPub := newCredentialKey(t)
+	r := s.taskHandler.credentialRekey("ws:127.0.0.1:9489-1",
+		&protocol.CredentialRekeyRequest{TaskId: tid, Pubkey: newPub, TtlMs: uint64(time.Hour / time.Millisecond)}, time.Now())
+	if r.Status != protocol.CredentialStatus_Ok {
+		t.Fatalf("re-key: %v", r.Status)
+	}
+	if published != 1 {
+		t.Fatalf("the re-key published %d task events, want 1", published)
+	}
+	if heldDuringPublish {
+		t.Error("the re-key's task event was published while holding credentialMu")
+	}
+}

@@ -132,16 +132,31 @@ func (s *TaskStore) CreateCredential(creator protocol.TaskID, origin protocol.Cl
 // written BEFORE task_rekeyed, so a crash between the two leaves a narrowed
 // credential under its old key, never the new key under the wider authority.
 func (s *TaskStore) RekeyCredential(id string, pub [32]byte, expiresAt time.Time, u *GrantUpdate, by AuthorityWrite) (TaskEntry, error) {
+	after, publish, err := s.RekeyCredentialDeferred(id, pub, expiresAt, u, by)
+	if err == nil {
+		publish()
+	}
+	return after, err
+}
+
+// RekeyCredentialDeferred is RekeyCredential that hands its OnCreate
+// publication back instead of making it, for a caller holding a lock under
+// which no blocking I/O may run (TaskHandler.credentialMu): the publication
+// writes to every tasks.status subscriber's stream and waits on its flow
+// control. The caller runs publish after releasing that lock. publish is a
+// no-op func when err != nil.
+func (s *TaskStore) RekeyCredentialDeferred(id string, pub [32]byte, expiresAt time.Time, u *GrantUpdate, by AuthorityWrite) (TaskEntry, func(), error) {
+	noop := func() {}
 	now := time.Now()
 	s.mu.Lock()
 	e, ok := s.tasks[id]
 	if !ok {
 		s.mu.Unlock()
-		return TaskEntry{}, ErrNoSuchTask
+		return TaskEntry{}, noop, ErrNoSuchTask
 	}
 	if e.Kind != protocol.TaskKind_Credential {
 		s.mu.Unlock()
-		return TaskEntry{}, ErrNotCredential
+		return TaskEntry{}, noop, ErrNotCredential
 	}
 	if u != nil && u.Any() {
 		s.applyGrantUpdateLocked(e, *u, by)
@@ -157,13 +172,16 @@ func (s *TaskStore) RekeyCredential(id string, pub [32]byte, expiresAt time.Time
 	snapshot := *e
 	onCreate := s.OnCreate
 	s.mu.Unlock()
+	// Non-blocking: OnDeadlineSet is a non-blocking channel send.
+	s.deadlineSet(true)
 	// A revived credential changed status with no other event to say so; the
 	// creation publisher sends the status the row holds, as Resume reuses it.
-	if onCreate != nil {
-		onCreate(id)
+	publish := func() {
+		if onCreate != nil {
+			onCreate(id)
+		}
 	}
-	s.deadlineSet(true)
-	return snapshot, nil
+	return snapshot, publish, nil
 }
 
 // rekey is the state change of a re-key, shared by RekeyCredential and the
