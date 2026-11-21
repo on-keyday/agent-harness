@@ -106,6 +106,7 @@ What is missing is a credential that is attenuable **and** outlives any process.
 | D16 | **Pillar S amendment (S-D17a): `schedule run` of a schedule bound to T needs `resume` OR `resume_exact` over T** (today: `resume` only, `server/schedule_handler.go:678-683`). The firer chooses only the timing; the prompt is the schedule's, and binding T (`:724`) or editing a schedule bound to T (`:856`) already requires full `resume` over T, so whoever set that prompt held full resume. `new`, `edit`, bind and a pending_create run (`spawn`) are unchanged. Applies to every principal, not only credentials — one rule, not two. Recorded as an amendment section in `2026-11-15-pillar-s-schedules-design.md`, as the 2026-11-21 split was | operator, 2026-11-22 |
 | D17 | **Schedules with no target stay operator-only to fire** (`scheduleRunReach`, `:282-288`): a credential fires schedules bound to a task in its `schedule_run` scope | this spec |
 | D18 | **Resume of a credential task re-keys it**: new public key and new expiry required, old key dead for good, gated as issue (D13 attenuation) rather than by `resume`. Supersedes this spec's earlier "a credential task can never be resumed" | operator, 2026-11-22 |
+| D18a | **A non-operator may re-key only a credential in its own creator subtree** (a descendant). Scope ranks are relative to the holder's tree position, so re-keying a non-descendant C hands the caller C's `subtree` reach and spawn room — the adopt-and-inherit amplification `set_parent` is operator-only for (`server/set_parent_handler.go:15-19`). Found in Task 5 review by a probe test (a caller with `credential_issue` scoped `ids:[C]` gained `cancel`/`file_read` over C's child). No exception for a global-scoped caller: spawn limits are counts a scope cannot cover. To hand someone else's credential to an agent, the operator reparents it under that agent (`set_parent` does not clamp caps; the re-key caps check still applies). A refused re-key answers `no_such_task`, as an out-of-reach target does | operator, 2026-11-22 |
 
 ## Design
 
@@ -253,6 +254,8 @@ data-plane listener; a credential arm there is refused. Run
   `spawn` spawns a task whose caps exclude both.
 - Dummy-harness E2E: issue from the CLI with `schedule_run` and `resume_exact`
   scoped to one task T, fire a schedule bound to T from a shell holding only
-  `HARNESS_CREDENTIAL`, see
-  `resumed_by` attributed to a credential in `schedule show`; revoke; the next
+  `HARNESS_CREDENTIAL`, see the firing recorded as `run_now` in `schedule show`
+  (a manual run names no firer, pillar-S S-D7 — an earlier draft wrongly
+  expected `resumed_by` = credential there); a direct `resume_exact` of T by
+  the credential records `resumed_by` = credential; revoke; the next
   call is refused `revoked`. TUI and WebUI issue/list/revoke checked live.
