@@ -128,37 +128,50 @@ func TestArrowsSwitchTables(t *testing.T) {
 	}
 }
 
-// stripHint parses the strip's entries: "<Table>:←" / "<Table>:→" for a table
-// that is not shown, and "[<Shown>:<keys>]" when focus is off the tables, where
-// keys ("Tab" / "S-Tab", optionally "*N") take focus back onto them.
-func stripHint(t *testing.T, s, table string) (arrow tea.KeyType, back bool, n int) {
+// tabBar parses the strip's tab bar (before " | "): the table names in the
+// order listed, which one is bracketed (shown, focus on it), and the keys a
+// name carries ("Tasks:Tab*2", shown while focus is off the tables).
+type tabBarEntry struct {
+	name      string
+	bracketed bool
+	keys      string
+}
+
+func tabBar(t *testing.T, s string) []tabBarEntry {
 	t.Helper()
+	var out []tabBarEntry
 	for _, part := range strings.Fields(strings.SplitN(s, " | ", 2)[0]) {
-		name, keys, ok := strings.Cut(strings.Trim(part, "[]"), ":")
-		if !ok || name != table {
-			continue
+		e := tabBarEntry{}
+		if strings.HasPrefix(part, "[") && strings.HasSuffix(part, "]") {
+			e.bracketed = true
+			part = strings.Trim(part, "[]")
 		}
-		switch keys {
-		case "←":
-			return tea.KeyLeft, false, 0
-		case "→":
-			return tea.KeyRight, false, 0
-		}
-		n = 1
-		if k, cnt, has := strings.Cut(keys, "*"); has {
-			keys = k
-			n, _ = strconv.Atoi(cnt)
-		}
-		switch keys {
-		case "Tab":
-			return 0, false, n
-		case "S-Tab":
-			return 0, true, n
-		}
-		t.Fatalf("strip %q: unreadable keys %q for %s", s, keys, table)
+		e.name, e.keys, _ = strings.Cut(part, ":")
+		out = append(out, e)
 	}
-	t.Fatalf("strip %q gives no keys for %s", s, table)
-	return
+	return out
+}
+
+// pressKeys presses what a strip entry's keys say: "Tab" / "S-Tab", with an
+// optional "*N" repeat count.
+func pressKeys(t *testing.T, a *App, keys string) {
+	t.Helper()
+	n := 1
+	if k, cnt, has := strings.Cut(keys, "*"); has {
+		keys = k
+		var err error
+		if n, err = strconv.Atoi(cnt); err != nil {
+			t.Fatalf("unreadable repeat count in %q", keys)
+		}
+	}
+	switch keys {
+	case "Tab":
+		pressKey(a, tea.KeyTab, n)
+	case "S-Tab":
+		pressKey(a, tea.KeyShiftTab, n)
+	default:
+		t.Fatalf("unreadable keys %q", keys)
+	}
 }
 
 func pressKey(a *App, k tea.KeyType, times int) {
@@ -167,70 +180,106 @@ func pressKey(a *App, k tea.KeyType, times int) {
 	}
 }
 
-// From a table, the strip's arrow for each neighbouring table is PRESSED and
-// must land there: an earlier strip said "Tab switches" and was wrong. The
-// table opposite (two presses away) is not named: four names do not fit 80
-// cells (see tableStrip), and naming it with one arrow would be a lie.
-func TestStripNamesTheNeighbouringTables(t *testing.T) {
-	tables := map[string]focus{"Runners": focusRunners, "Tasks": focusTasks, "Schedules": focusSchedules, "Creds": focusCredentials}
-	for fromName, from := range tables {
+var tableFocusByName = map[string]focus{"Runners": focusRunners, "Tasks": focusTasks, "Schedules": focusSchedules, "Credentials": focusCredentials}
+
+// The tab bar lists every table, by its full name, and brackets exactly the
+// shown one; nothing else on it carries a key.
+func TestTabBarListsEveryTableAndBracketsTheShownOne(t *testing.T) {
+	for _, shown := range tableOrder {
 		a := oneTableApp(120, 40)
-		a.setFocus(from)
-		strip := tableStrip(a.shownTable(), a.focus, nil)
-		if !strings.Contains(strip, "["+fromName+"]") {
-			t.Errorf("from %s: shown table is not bracketed: %q", fromName, strip)
+		a.setFocus(shown)
+		bar := tabBar(t, tableStrip(a.shownTable(), a.focus, nil))
+		if len(bar) != len(tableOrder) {
+			t.Fatalf("shown %d: the bar lists %d tables, want %d: %+v", shown, len(bar), len(tableOrder), bar)
 		}
-		i := tableIndex(from)
-		for toName, to := range tables {
-			if toName == fromName {
-				continue
+		for i, e := range bar {
+			f, ok := tableFocusByName[e.name]
+			if !ok {
+				t.Fatalf("shown %d: %q is not a table's full name", shown, e.name)
 			}
-			if j := tableIndex(to); j != (i+1)%len(tableOrder) && j != (i-1+len(tableOrder))%len(tableOrder) {
-				if strings.Contains(strip, toName+":") {
-					t.Errorf("from %s the strip names %s, two presses away, with one arrow: %q", fromName, toName, strip)
-				}
-				continue
+			if f != tableOrder[i] {
+				t.Errorf("shown %d: entry %d is %s, want table %d", shown, i, e.name, tableOrder[i])
 			}
-			arrow, _, _ := stripHint(t, strip, toName)
+			if e.bracketed != (f == shown) {
+				t.Errorf("shown %d: %s bracketed=%v", shown, e.name, e.bracketed)
+			}
+			if e.keys != "" {
+				t.Errorf("shown %d: %s carries keys %q with focus on a table", shown, e.name, e.keys)
+			}
+		}
+	}
+}
+
+// ←/→ move along the order the bar lists, wrapping at either end: pressing
+// one moves the bracket to the neighbouring name.
+func TestTabBarArrowsMoveAlongTheListedOrder(t *testing.T) {
+	for _, from := range tableOrder {
+		for _, k := range []struct {
+			key  tea.KeyType
+			step int
+		}{{tea.KeyRight, 1}, {tea.KeyLeft, -1}} {
+			a := oneTableApp(120, 40)
 			a.setFocus(from)
-			pressKey(a, arrow, 1)
-			if a.focus != to {
-				t.Errorf("from %s the strip says %s is %v (%q); that lands on %d, want %d",
-					fromName, toName, arrow, strip, a.focus, to)
+			bar := tabBar(t, tableStrip(a.shownTable(), a.focus, nil))
+			i := 0
+			for j, e := range bar {
+				if e.bracketed {
+					i = j
+				}
+			}
+			want := tableFocusByName[bar[(i+k.step+len(bar))%len(bar)].name]
+			pressKey(a, k.key, 1)
+			if a.focus != want {
+				t.Errorf("from %d, %v lands on %d; the bar lists %d next", from, k.key, a.focus, want)
+			}
+			after := tabBar(t, tableStrip(a.shownTable(), a.focus, nil))
+			for _, e := range after {
+				if e.bracketed != (tableFocusByName[e.name] == want) {
+					t.Errorf("after %v from %d the bracket is not on the table shown: %+v", k.key, from, after)
+				}
 			}
 		}
 	}
 }
 
-// Off the tables the bracket carries the keys that go back onto them, from
-// where focus IS; then the arrows apply as before.
-func TestStripKeysFollowFocusOffTheTable(t *testing.T) {
-	for _, off := range []focus{focusNotify, focusCmdresult, focusCmdline} {
-		a := oneTableApp(120, 40)
-		a.setFocus(focusSchedules)
-		a.setFocus(off) // schedules stays shown
-		strip := tableStrip(a.shownTable(), a.focus, nil)
-		_, back, n := stripHint(t, strip, "Schedules")
-		if back {
-			pressKey(a, tea.KeyShiftTab, n)
-		} else {
-			pressKey(a, tea.KeyTab, n)
-		}
-		if a.focus != focusSchedules {
-			t.Fatalf("from %d, strip %q: lands on %d, want schedules", off, strip, a.focus)
-		}
-		arrow, _, _ := stripHint(t, strip, "Tasks")
-		pressKey(a, arrow, 1)
-		if a.focus != focusTasks {
-			t.Errorf("from %d, strip %q: then %v lands on %d, want tasks", off, strip, arrow, a.focus)
+// Off the tables the one hint left: the shown table carries the keys that go
+// back onto it from where focus IS, and pressing them lands there. An earlier
+// strip said "Tab switches" and was wrong.
+func TestTabBarFocusOffHintReturnsFocus(t *testing.T) {
+	for _, shown := range tableOrder {
+		for _, off := range []focus{focusNotify, focusCmdresult, focusCmdline} {
+			a := oneTableApp(120, 40)
+			a.setFocus(shown)
+			a.setFocus(off) // the table stays shown
+			strip := tableStrip(a.shownTable(), a.focus, nil)
+			var keys string
+			for _, e := range tabBar(t, strip) {
+				if e.bracketed {
+					t.Errorf("from %d: %s bracketed with focus off the tables: %q", off, e.name, strip)
+				}
+				if e.keys != "" && tableFocusByName[e.name] != shown {
+					t.Errorf("from %d: %s, not the shown table, carries keys: %q", off, e.name, strip)
+				}
+				if tableFocusByName[e.name] == shown {
+					keys = e.keys
+				}
+			}
+			if keys == "" {
+				t.Fatalf("from %d the shown table carries no keys back: %q", off, strip)
+			}
+			pressKeys(t, a, keys)
+			if a.focus != shown {
+				t.Errorf("from %d, strip %q: its keys land on %d, want %d", off, strip, a.focus, shown)
+			}
 		}
 	}
 }
 
-// A realistic fleet summary (two-digit counts, an offline bucket) and the
-// hints of every focus must fit 80 cells together under both East Asian width
-// readings, the summary whole.
-func TestStripFitsEightyColumns(t *testing.T) {
+// One decision at every width (checklist item 34): the bar is the same text at
+// 80 and 200 columns, and with a realistic fleet summary (two-digit counts, an
+// offline bucket) it fits 80 cells for every focus under both East Asian width
+// readings, every name in full and the summary whole.
+func TestTabBarFitsEightyColumnsAndIsTheSameAtEveryWidth(t *testing.T) {
 	var fleet []protocol.RunnerInfo
 	for i := 0; i < 12; i++ {
 		st := []protocol.RunnerStatus{protocol.RunnerStatus_Idle, protocol.RunnerStatus_Busy, protocol.RunnerStatus_Offline}[i%3]
@@ -238,7 +287,7 @@ func TestStripFitsEightyColumns(t *testing.T) {
 	}
 	const summary = "runners 12: 4 idle 4 busy 4 offline"
 	for _, f := range []focus{focusRunners, focusTasks, focusSchedules, focusCredentials, focusNotify, focusCmdresult, focusCmdline} {
-		for _, shown := range []focus{focusRunners, focusTasks, focusSchedules, focusCredentials} {
+		for _, shown := range tableOrder {
 			if isTableFocus(f) && f != shown {
 				continue
 			}
@@ -248,10 +297,26 @@ func TestStripFitsEightyColumns(t *testing.T) {
 					t.Errorf("focus %d shown %d: strip is %d cells under %s width (> 80): %q", f, shown, w, name, strip)
 				}
 			}
-			if !strings.Contains(strip, summary) {
-				t.Errorf("focus %d shown %d: summary cut: %q", f, shown, strip)
+			if !strings.Contains(strip, summary) || !strings.Contains(strip, "Credentials") {
+				t.Errorf("focus %d shown %d: a name or the summary is cut: %q", f, shown, strip)
 			}
 		}
+	}
+	barLine := func(width int) string {
+		a := oneTableApp(width, 40)
+		a.Update(SnapshotMsg{Runners: fleet})
+		a.setFocus(focusSchedules)
+		a.setFocus(focusCmdline)
+		for _, ln := range strings.Split(a.View(), "\n") {
+			if strings.Contains(ln, summary) {
+				return strings.TrimRight(stripANSI(ln), " ")
+			}
+		}
+		t.Fatalf("no strip line at width %d", width)
+		return ""
+	}
+	if narrow, wide := barLine(80), barLine(200); narrow != wide {
+		t.Errorf("the bar differs between 80 and 200 columns:\n 80: %q\n200: %q", narrow, wide)
 	}
 }
 

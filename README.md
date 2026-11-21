@@ -2178,10 +2178,10 @@ runners, tasks, schedules and credentials tables while one has focus; `Tab` /
 `Shift-Tab` cycle the shown table → notify → cmdresult → cmdline (the four
 tables are one stop). While focus is on notify, cmdresult or cmdline the last-focused table
 stays up, and the tasks table is the one at startup. The line above the table
-brackets the shown one and names its two neighbours with the arrow that switches
-to each (`Name:←` / `Name:→`; the table opposite is not named, to fit 80 cells,
-and credentials read `Creds`); off the tables the bracket also
-carries the keys back onto them (`[Tasks:Tab*2]`, `S-Tab` for Shift-Tab). It
+is a tab bar: all four tables in the order `←` / `→` step through, the shown
+one bracketed (`Runners [Tasks] Schedules Credentials`). Off the tables the
+shown one carries, in place of its brackets, the keys that go back onto it
+(`Tasks:Tab*2`, `S-Tab` for Shift-Tab). It
 always carries the fleet summary
 (`runners N: X idle Y busy …`; idle and busy keep a zero, other statuses
 appear when present). The tasks table's `Run` column (a background task's
@@ -2197,7 +2197,7 @@ task. The creator tree (`T`) is its own order, so `o` does nothing there.
 These are the same rules as `ls --order` and the WebUI's order select.
 
 ```
- Runners:← [Tasks] Schedules:→ | runners 3: 1 idle 2 busy
+ Runners [Tasks] Schedules Credentials | runners 3: 1 idle 2 busy
 ┌───────────────────────────────────────────────────────┐
 │ Status   ID     From  Agent  Act   Repo         About │
 │ Queued   9d50   cli   claude ...   /home/foo    ...   │

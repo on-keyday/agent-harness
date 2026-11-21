@@ -153,7 +153,7 @@ func TestRunColumnStillNeedsWidth(t *testing.T) {
 	assertRowsMatchColumns(t, &m)
 }
 
-// The strip's keys are pressed against the real cycle in TestStripNamesThreeTables.
+// The tab bar's keys are pressed against the real cycle in TestTabBarFocusOffHintReturnsFocus.
 
 // The Repo cell is cut to the column's FITTED width. Cut to the declared width
 // instead, a column fitColumns has narrowed gets cut a second time by bubbles,

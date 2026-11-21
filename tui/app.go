@@ -2150,32 +2150,35 @@ func keysToReach(from, to focus) string {
 	return key
 }
 
-// tableStrip is the one line above the table: the shown table bracketed, the
-// two tables one arrow away from it (Name:← / Name:→), and the fleet summary
-// after " | ". While focus is off the tables (notify / cmdresult / cmdline)
-// the bracket also carries the keys that go back onto them from where focus
-// IS: [Tasks:Tab*2]. Every hint is pressed by the tests.
+// tableNames are the tables as the tab bar names them, in full.
+var tableNames = map[focus]string{focusRunners: "Runners", focusTasks: "Tasks", focusSchedules: "Schedules", focusCredentials: "Credentials"}
+
+// tableStrip is the one line above the table: a tab bar naming every table in
+// tableOrder — the order ←/→ step through — with the shown one bracketed, then
+// the fleet summary after " | ". It carries no per-table key hints: ←/→ move to
+// the neighbour in the order the bar lists.
 //
-// With four tables the one OPPOSITE the shown table (two presses either way)
-// is not named: the strip must fit 80 cells, summary whole, under the wide
-// East Asian reading of the arrows, and the longest strip with all four names
-// is 83 cells under the NARROW one. `?` lists every table, and ←/→ cycle
-// through them all.
+// One hint stays. While focus is off the tables (notify / cmdresult / cmdline)
+// the arrows are that pane's own, and Tab from there may not reach the tables
+// in one press, so the shown table carries the keys that go back onto it from
+// where focus IS, in place of its brackets: Tasks:Tab*2. An earlier strip said
+// "Tab switches" and was wrong; the tests press what this one prints.
+//
+// Width, one decision at every terminal width: with every name in full and the
+// longest realistic summary (two-digit counts and an offline bucket, 35
+// cells) the bar is 76 cells on a table and 80 off one, under both East Asian
+// width readings. Brackets and the keys together would be 82, which is why
+// the keys replace the brackets rather than join them.
 func tableStrip(shown, from focus, rs []protocol.RunnerInfo) string {
-	names := map[focus]string{focusRunners: "Runners", focusTasks: "Tasks", focusSchedules: "Schedules", focusCredentials: "Creds"}
-	i := tableIndex(shown)
-	n := len(tableOrder)
-	var entries []string
-	for j, f := range tableOrder {
+	entries := make([]string, 0, len(tableOrder))
+	for _, f := range tableOrder {
 		switch {
 		case f == shown && isTableFocus(from):
-			entries = append(entries, "["+names[f]+"]")
+			entries = append(entries, "["+tableNames[f]+"]")
 		case f == shown:
-			entries = append(entries, "["+names[f]+":"+keysToReach(from, shown)+"]")
-		case j == (i+1)%n:
-			entries = append(entries, names[f]+":→")
-		case j == (i-1+n)%n:
-			entries = append(entries, names[f]+":←")
+			entries = append(entries, tableNames[f]+":"+keysToReach(from, shown))
+		default:
+			entries = append(entries, tableNames[f])
 		}
 	}
 	return " " + strings.Join(entries, " ") + " | " + cli.RunnerSummary(rs)
@@ -2192,9 +2195,9 @@ func (a *App) View() string {
 	}
 	header := HeaderStyle.Render(fmt.Sprintf("harness-tui · %s · %s · %s", a.server, connectedTag, a.principal))
 
-	// One table at a time: the one the focus last rested on. The strip above
-	// it names both and carries the fleet summary, so the hidden one is never
-	// out of sight, out of mind.
+	// One table at a time: the one the focus last rested on. The tab bar
+	// above it names every table and carries the fleet summary, so the hidden
+	// ones are never out of sight, out of mind.
 	var top string
 	switch a.shownTable() {
 	case focusRunners:
