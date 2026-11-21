@@ -207,13 +207,19 @@ type Server struct {
 	dpRespChMu sync.Mutex
 	dpRespCh   map[objproto.ConnectionID]chan protocol.AuthorizeDataPlaneResponse
 
-	// issuedGrants remembers the data-plane grants handed out per task so a
-	// narrowing caps change can withdraw them. dataPlaneEndpoint holds their
+	// issuedGrants remembers the data-plane grants handed out, keyed by
+	// target task and carrying their requester, so a narrowing caps change or
+	// a credential's end can withdraw them. dataPlaneEndpoint holds their
 	// forwarding entries and only exists once the listener is up, hence an
 	// atomic rather than a constructor field.
 	grantsMu          sync.Mutex
 	issuedGrants      map[string][]issuedGrant
 	dataPlaneEndpoint atomic.Pointer[objproto.Endpoint]
+
+	// beforeCredentialEndRevoke is a test seam: when set, the credential
+	// branch of TaskStore.OnCancel calls it after the task event is
+	// published and before it takes credentialMu.
+	beforeCredentialEndRevoke func()
 
 	// pendingDialOriginMu / pendingDialOrigin carry what the server knew when
 	// it made a connection (DialOrigin: one-shot, dial record, or via) from
@@ -797,12 +803,27 @@ func New(cfg Config) *Server {
 		// The data-plane grants it requested go too (anti-goal 3: nothing it
 		// was handed outlives it); also after the unlock, since telling the
 		// runner is a network write.
+		//
+		// The publication above may wait on subscribers, and a re-key can
+		// revive the credential meanwhile and a new-key connection attach.
+		// So liveness is read again under credentialMu: a live credential's
+		// board state is its new holder's, and the re-key already dropped the
+		// old holder's state and grants (rekeyLocked, credentialRekey).
 		if t, ok := s.tasks.Get(id); ok && t.Kind == protocol.TaskKind_Credential {
+			if s.beforeCredentialEndRevoke != nil {
+				s.beforeCredentialEndRevoke()
+			}
 			s.taskHandler.credentialMu.Lock()
-			boardRevokeCredential(s.Board, id)
+			_, state, found := s.tasks.CredentialLive(id, time.Now())
+			revived := found && state == CredentialLive
+			if !revived {
+				boardRevokeCredential(s.Board, id)
+			}
 			s.taskHandler.credentialMu.Unlock()
 			s.dropStaleCredentialConns(id)
-			s.revokeDataPlaneForTask(id)
+			if !revived {
+				s.revokeDataPlaneForTask(id)
+			}
 		}
 	}
 	// A cancel of a task still waiting for its TaskFinished resends the

@@ -53,9 +53,18 @@ func (h *TaskHandler) handleProgressSet(conn ConnHandle, req *protocol.TaskContr
 		respond(protocol.ProgressSetStatus_BadText, 0)
 		return
 	}
-	pid := h.lookupPrincipal(conn.ConnectionID().String())
+	cid := conn.ConnectionID().String()
+	pid := h.lookupPrincipal(cid)
 	if pid.Id == ([16]byte{}) {
 		respond(protocol.ProgressSetStatus_NoPrincipal, 0)
+		return
+	}
+	// The row is the principal's only while the principal holds anything
+	// (principalRecord): a credential that ended, or whose key this
+	// connection proved was replaced, writes nothing — as if its row were
+	// gone, which for this connection it is.
+	if _, holds := h.principalRecord(cid, hex.EncodeToString(pid.Id[:])); !holds {
+		respond(protocol.ProgressSetStatus_NotFound, 0)
 		return
 	}
 	text := string(ps.Text)

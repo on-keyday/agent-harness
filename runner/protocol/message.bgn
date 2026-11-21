@@ -3033,7 +3033,9 @@ enum ProgressSetStatus:
     no_principal = 1          # caller is not an agent connection (operator)
     bad_text = 2              # > 256 bytes, invalid UTF-8, a control char, or
                               # clear=1 with text. Refused, never sanitized.
-    not_found = 3             # principal's task is no longer in the store
+    not_found = 3             # principal's task is no longer in the store, or
+                              # holds nothing for this connection (a credential
+                              # that ended, or whose key it proved was replaced)
 
 # progress_clear: empty another task's line, as that task's own --clear would
 # (a fresh stamp; armed await-progress watchers fire). Answered with
@@ -3069,7 +3071,8 @@ enum LifecycleSetStatus:
     ok = 0
     no_principal = 1           # caller is not an agent connection (operator)
     bad_request = 2            # state unset or out of range
-    not_found = 3              # principal's task is no longer in the store
+    not_found = 3              # principal's task is no longer in the store, or
+                               # holds nothing for this connection (as progress_set)
     stale = 4                  # reported_at older than the stored one; dropped (D10)
 
 format LifecycleSetResponse:

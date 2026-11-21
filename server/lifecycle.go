@@ -25,9 +25,16 @@ func (h *TaskHandler) handleLifecycleSet(conn ConnHandle, req *protocol.TaskCont
 		respond(protocol.LifecycleSetStatus_BadRequest, 0)
 		return
 	}
-	pid := h.lookupPrincipal(conn.ConnectionID().String())
+	cid := conn.ConnectionID().String()
+	pid := h.lookupPrincipal(cid)
 	if pid.Id == ([16]byte{}) {
 		respond(protocol.LifecycleSetStatus_NoPrincipal, 0)
+		return
+	}
+	// Only while the principal holds anything (principalRecord), as for
+	// progress_set: an ended or re-keyed-away credential writes nothing.
+	if _, holds := h.principalRecord(cid, hex.EncodeToString(pid.Id[:])); !holds {
+		respond(protocol.LifecycleSetStatus_NotFound, 0)
 		return
 	}
 	switch ls.Lifecycle {
