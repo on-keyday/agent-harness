@@ -91,7 +91,8 @@ var capTargetClasses = map[protocol.Capability]capTargetClass{
 	// (resizeAllowed), so --scope-for exec_resize narrows it.
 	protocol.Capability_ExecResize: {kind: capResolvedLiteral},
 	// Issuing names no task; re-key resolves its target, the credential task,
-	// through this bit's scope by name (credential-tasks D18).
+	// through this bit's scope by name, among the caller's own descendants
+	// (credential-tasks D18).
 	protocol.Capability_CredentialIssue: {kind: capResolvedLiteral},
 	protocol.Capability_Notify: {
 		kind:   capNoTargetResolution,

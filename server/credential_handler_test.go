@@ -284,22 +284,37 @@ func TestCredentialIssueBadPubkey(t *testing.T) {
 
 // --- re-key (D18) ---
 
+// credUnder stores a credential whose creator is creatorHex, holding g, as an
+// issue by that task would have (the store, so a test can give the creator
+// less than the credential holds).
+func credUnder(t *testing.T, h *TaskHandler, creatorHex string, g authority.Grant, pub [32]byte) string {
+	t.Helper()
+	id, err := h.Tasks.CreateCredential(taskIDFromHex(creatorHex), protocol.ClientKind_Agent, g, pub, time.Now().Add(time.Hour), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
 func TestCredentialRekeyGatedAsIssue(t *testing.T) {
 	h := newTestHandler(t)
 	var dropped []string
 	h.DropConnsForPrincipal = func(id string) int { dropped = append(dropped, id); return 1 }
 	target := plainTask(h)
 	op := credTestConn()
-	oldPriv, oldPub := newCredentialKey(t)
-	_ = oldPriv
+	_, oldPub := newCredentialKey(t)
+	_, newPub := newCredentialKey(t)
 	held := protocol.Capability_ScheduleRun | protocol.Capability_ResumeExact
 	onT := authority.Scope{Base: protocol.ScopeBase_None, IDs: []string{target}}
-	r, resp := issue(t, h, op, issueRequest(oldPub, ttlMs(time.Hour), held, onT))
+	global := authority.Scope{Base: protocol.ScopeBase_Global}
+
+	// The issuer, through the issue verb: its credential is its child.
+	issuer, _ := credAgent(t, h, authority.Grant{Caps: protocol.Capability_CredentialIssue | held,
+		Scope: global, DelegateCaps: protocol.Capability_All, DelegateScope: global})
+	r, resp := issue(t, h, issuer, issueRequest(oldPub, ttlMs(time.Hour), held, onT))
 	wantCredStatus(t, "issue", r, resp, protocol.CredentialStatus_Ok)
 	cred := hex.EncodeToString(r.TaskId.Id[:])
 	oldConn := recordCredentialConn(t, h, taskIDFromHex(cred), oldPub, 9500)
-	_, newPub := newCredentialKey(t)
-	global := authority.Scope{Base: protocol.ScopeBase_Global}
 
 	// resume is not the power: re-key is gated as issue.
 	resumer, _ := credAgent(t, h, authority.Grant{Caps: protocol.Capability_Resume | protocol.Capability_ResumeExact | protocol.Capability_ScheduleRun,
@@ -307,23 +322,27 @@ func TestCredentialRekeyGatedAsIssue(t *testing.T) {
 	r, resp = rekey(t, h, resumer, rekeyRequest(cred, newPub, ttlMs(time.Hour)))
 	wantDeniedFor(t, "resume without credential_issue", r, resp, protocol.Capability_CredentialIssue)
 
-	// Issue-equivalence, caps: the credential holds resume_exact, this caller does not.
-	narrowCaps, _ := credAgent(t, h, authority.Grant{Caps: protocol.Capability_CredentialIssue | protocol.Capability_ScheduleRun,
+	// Issue-equivalence, caps: an ancestor whose credential holds resume_exact,
+	// which the ancestor itself does not.
+	narrowCaps, narrowCapsID := credAgent(t, h, authority.Grant{Caps: protocol.Capability_CredentialIssue | protocol.Capability_ScheduleRun,
 		Scope: global, DelegateCaps: protocol.Capability_All, DelegateScope: global})
-	r, resp = rekey(t, h, narrowCaps, rekeyRequest(cred, newPub, ttlMs(time.Hour)))
+	c1 := credUnder(t, h, narrowCapsID, authority.Grant{Caps: held, Scope: onT}, oldPub)
+	r, resp = rekey(t, h, narrowCaps, rekeyRequest(c1, newPub, ttlMs(time.Hour)))
 	wantCredStatus(t, "caller lacks a bit the credential holds", r, resp, protocol.CredentialStatus_ScopeNotPermitted)
 
-	// Issue-equivalence, scope: the caller reaches the credential but not its target.
-	narrowScope, _ := credAgent(t, h, authority.Grant{Caps: protocol.Capability_CredentialIssue | held,
-		Scope:        authority.Scope{Base: protocol.ScopeBase_None, IDs: []string{cred}},
-		DelegateCaps: protocol.Capability_All, DelegateScope: global})
-	r, resp = rekey(t, h, narrowScope, rekeyRequest(cred, newPub, ttlMs(time.Hour)))
+	// Issue-equivalence, scope: an ancestor that reaches its credential but
+	// not the credential's target.
+	narrowScope, narrowScopeID := credAgent(t, h, authority.Grant{Caps: protocol.Capability_CredentialIssue | held,
+		Scope: authority.Scope{Base: protocol.ScopeBase_Subtree}, DelegateCaps: protocol.Capability_All, DelegateScope: global})
+	c2 := credUnder(t, h, narrowScopeID, authority.Grant{Caps: held, Scope: onT}, oldPub)
+	r, resp = rekey(t, h, narrowScope, rekeyRequest(c2, newPub, ttlMs(time.Hour)))
 	wantCredStatus(t, "caller's scope misses the credential's target", r, resp, protocol.CredentialStatus_ScopeNotPermitted)
 
-	// The target outside the caller's credential_issue scope is no such task.
-	outOfReach, _ := credAgent(t, h, authority.Grant{Caps: protocol.Capability_CredentialIssue | held,
+	// Its own credential outside its credential_issue scope is no such task.
+	outOfReach, outOfReachID := credAgent(t, h, authority.Grant{Caps: protocol.Capability_CredentialIssue | held,
 		Scope: authority.Scope{Base: protocol.ScopeBase_None}, DelegateCaps: protocol.Capability_All})
-	r, resp = rekey(t, h, outOfReach, rekeyRequest(cred, newPub, ttlMs(time.Hour)))
+	c3 := credUnder(t, h, outOfReachID, authority.Grant{Caps: held, Scope: onT}, oldPub)
+	r, resp = rekey(t, h, outOfReach, rekeyRequest(c3, newPub, ttlMs(time.Hour)))
 	wantCredStatus(t, "credential out of reach", r, resp, protocol.CredentialStatus_NoSuchTask)
 
 	r, resp = rekey(t, h, op, rekeyRequest(target, newPub, ttlMs(time.Hour)))
@@ -341,12 +360,11 @@ func TestCredentialRekeyGatedAsIssue(t *testing.T) {
 		t.Fatal("a refused re-key replaced the key")
 	}
 
-	// A caller that could issue the same credential now may re-key it.
-	equal, _ := credAgent(t, h, authority.Grant{Caps: protocol.Capability_CredentialIssue | held,
-		Scope: global, DelegateCaps: protocol.Capability_All, DelegateScope: global})
+	// The issuer, an ancestor that could issue the same credential now, may
+	// re-key it.
 	start := time.Now()
-	r, resp = rekey(t, h, equal, rekeyRequest(cred, newPub, ttlMs(2*time.Hour)))
-	wantCredStatus(t, "an issuer-equivalent caller", r, resp, protocol.CredentialStatus_Ok)
+	r, resp = rekey(t, h, issuer, rekeyRequest(cred, newPub, ttlMs(2*time.Hour)))
+	wantCredStatus(t, "the issuer", r, resp, protocol.CredentialStatus_Ok)
 	rec, _ := h.Tasks.Get(cred)
 	if rec.CredentialPubKey != newPub || rec.ExpiresAt.Before(start.Add(2*time.Hour)) || rec.Capabilities != held {
 		t.Fatalf("after re-key: key %x expiry %v caps %v", rec.CredentialPubKey, rec.ExpiresAt, rec.Capabilities)
@@ -361,7 +379,8 @@ func TestCredentialRekeyGatedAsIssue(t *testing.T) {
 		t.Fatalf("the old key's connection still holds %v", caps)
 	}
 
-	// The operator re-keys a revoked credential, narrowing it on the way.
+	// The operator re-keys a revoked credential it did not issue, narrowing it
+	// on the way.
 	h.Tasks.Cancel(cred, protocol.EndReason_Cancelled, protocol.TaskID{})
 	_, thirdPub := newCredentialKey(t)
 	rk := rekeyRequest(cred, thirdPub, ttlMs(time.Hour))
@@ -382,17 +401,78 @@ func TestCredentialRekeyGatedAsIssue(t *testing.T) {
 	wantCredStatus(t, "re-key naming schedule_edit", r, resp, protocol.CredentialStatus_MaskedCap)
 }
 
+// D18, the reviewer's probe: a caller that reaches an operator-issued
+// credential C only by an id in its scope is not its creator-tree ancestor.
+// C's subtree scope is relative to C, so attenuation passes it, and the new
+// key's holder would reach C's child D, which the caller cannot. Refused as
+// out of reach; once the operator reparents C under the caller, it works.
+func TestCredentialRekeyByNonAncestorRefused(t *testing.T) {
+	h := newTestHandler(t)
+	op := credTestConn()
+	_, pub := newCredentialKey(t)
+	bits := protocol.Capability_Cancel | protocol.Capability_FileRead
+	r, resp := issue(t, h, op, issueRequest(pub, ttlMs(time.Hour), bits, authority.Scope{Base: protocol.ScopeBase_Subtree}))
+	wantCredStatus(t, "operator issue", r, resp, protocol.CredentialStatus_Ok)
+	cred := hex.EncodeToString(r.TaskId.Id[:])
+	child := h.Tasks.Create("/r", "d", protocol.TaskKind_Interactive, protocol.ClientKind_Credential, taskIDFromHex(cred), "",
+		protocol.RunnerSelector{}, nil, authority.Grant{}, "claude")
+
+	g, gID := credAgent(t, h, authority.Grant{Caps: protocol.Capability_CredentialIssue | bits,
+		Scope:        authority.Scope{Base: protocol.ScopeBase_Subtree, IDs: []string{cred}},
+		DelegateCaps: protocol.Capability_All, DelegateScope: authority.Scope{Base: protocol.ScopeBase_Global}})
+	gCID := g.ConnectionID().String()
+	if !h.inScope(gCID, protocol.Capability_CredentialIssue, cred) {
+		t.Fatal("setup: the caller does not reach the credential through its scope")
+	}
+	for _, bit := range []protocol.Capability{protocol.Capability_Cancel, protocol.Capability_FileRead} {
+		if h.inScope(gCID, bit, child) {
+			t.Fatalf("setup: the caller reaches C's child for %v on its own", bit)
+		}
+	}
+
+	_, newPub := newCredentialKey(t)
+	r, resp = rekey(t, h, g, rekeyRequest(cred, newPub, ttlMs(time.Hour)))
+	wantCredStatus(t, "re-key by a non-ancestor", r, resp, protocol.CredentialStatus_NoSuchTask)
+	if rec, _ := h.Tasks.Get(cred); rec.CredentialPubKey != pub {
+		t.Fatal("a refused re-key replaced the key")
+	}
+	// The key the caller would hold proves nothing, so D stays out of its reach.
+	stray := credTestConn()
+	if st := h.RecordCredentialIdentity(stray.ConnectionID().String(), stray, taskIDFromHex(cred), newPub); st == protocol.ClientHelloStatus_Ok {
+		t.Fatal("the caller's key authenticates as the credential")
+	}
+	for _, bit := range []protocol.Capability{protocol.Capability_Cancel, protocol.Capability_FileRead} {
+		if h.inScope(stray.ConnectionID().String(), bit, child) {
+			t.Fatalf("C's child is in reach for %v through the caller's key", bit)
+		}
+	}
+
+	// The operator re-keys any credential.
+	_, opPub := newCredentialKey(t)
+	r, resp = rekey(t, h, op, rekeyRequest(cred, opPub, ttlMs(time.Hour)))
+	wantCredStatus(t, "operator re-key", r, resp, protocol.CredentialStatus_Ok)
+
+	// The operator hands C to the caller by reparenting it; then it is the
+	// caller's descendant and the re-key is the caller's to make.
+	if got := sendSetParent(t, h, op, protocol.SetParentRequest{TaskId: taskIDFromHex(cred), ParentId: taskIDFromHex(gID)}); got.Status != protocol.SetParentStatus_Ok {
+		t.Fatalf("set_parent: %v", got.Status)
+	}
+	r, resp = rekey(t, h, g, rekeyRequest(cred, newPub, ttlMs(time.Hour)))
+	wantCredStatus(t, "re-key after set_parent under the caller", r, resp, protocol.CredentialStatus_Ok)
+	if rec, _ := h.Tasks.Get(cred); rec.CredentialPubKey != newPub {
+		t.Fatal("the re-key after set_parent did not replace the key")
+	}
+}
+
 // A re-key that widens through --caps is still bounded by what the caller
 // could issue: it gets the intersection, as an issue would.
 func TestCredentialRekeyWideningIsAttenuated(t *testing.T) {
 	h := newTestHandler(t)
-	op := credTestConn()
 	_, pub := newCredentialKey(t)
-	r, _ := issue(t, h, op, issueRequest(pub, ttlMs(time.Hour), protocol.Capability_ScheduleRun, authority.Scope{Base: protocol.ScopeBase_Global}))
-	cred := hex.EncodeToString(r.TaskId.Id[:])
 	global := authority.Scope{Base: protocol.ScopeBase_Global}
-	caller, _ := credAgent(t, h, authority.Grant{Caps: protocol.Capability_CredentialIssue | protocol.Capability_ScheduleRun | protocol.Capability_Cancel,
+	caller, callerID := credAgent(t, h, authority.Grant{Caps: protocol.Capability_CredentialIssue | protocol.Capability_ScheduleRun | protocol.Capability_Cancel,
 		Scope: global, DelegateCaps: protocol.Capability_All, DelegateScope: global})
+	cred := credUnder(t, h, callerID, authority.Grant{Caps: protocol.Capability_ScheduleRun, Scope: global}, pub)
 	_, newPub := newCredentialKey(t)
 	rk := rekeyRequest(cred, newPub, ttlMs(time.Hour))
 	rk.SetCapsPresent(true)
@@ -409,13 +489,11 @@ func TestCredentialRekeyWideningIsAttenuated(t *testing.T) {
 // clamp, is what refuses.
 func TestCredentialRekeyRefusesWiderRank(t *testing.T) {
 	h := newTestHandler(t)
-	op := credTestConn()
 	_, pub := newCredentialKey(t)
-	r, _ := issue(t, h, op, issueRequest(pub, ttlMs(time.Hour), protocol.Capability_ScheduleRun, authority.Scope{Base: protocol.ScopeBase_Global}))
-	cred := hex.EncodeToString(r.TaskId.Id[:])
-	caller, _ := credAgent(t, h, authority.Grant{Caps: protocol.Capability_CredentialIssue | protocol.Capability_ScheduleRun,
-		Scope:        authority.Scope{Base: protocol.ScopeBase_Subtree, IDs: []string{cred}},
+	caller, callerID := credAgent(t, h, authority.Grant{Caps: protocol.Capability_CredentialIssue | protocol.Capability_ScheduleRun,
+		Scope:        authority.Scope{Base: protocol.ScopeBase_Subtree},
 		DelegateCaps: protocol.Capability_All, DelegateScope: authority.Scope{Base: protocol.ScopeBase_Global}})
+	cred := credUnder(t, h, callerID, authority.Grant{Caps: protocol.Capability_ScheduleRun, Scope: authority.Scope{Base: protocol.ScopeBase_Global}}, pub)
 	_, newPub := newCredentialKey(t)
 	r, resp := rekey(t, h, caller, rekeyRequest(cred, newPub, ttlMs(time.Hour)))
 	wantCredStatus(t, "credential's global scope, caller's subtree", r, resp, protocol.CredentialStatus_ScopeNotPermitted)

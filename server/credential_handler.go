@@ -135,13 +135,13 @@ func (h *TaskHandler) credentialIssue(cid string, req *protocol.CredentialIssueR
 
 // credentialRekey is a credential's resume (D18): a new key and a new expiry
 // under the same id, gated as issue rather than as resume. The caller must
-// reach the credential through its credential_issue scope, and must be able
-// to issue the credential's authority now — the recorded grant, or the
-// narrowed one the request writes — so a re-key confers nothing a fresh
-// issue would not.
+// reach the credential through its credential_issue scope, must be its
+// creator-tree ancestor (rekeyReaches), and must be able to issue the
+// credential's authority now — the recorded grant, or the narrowed one the
+// request writes — so a re-key confers nothing a fresh issue would not.
 func (h *TaskHandler) credentialRekey(cid string, req *protocol.CredentialRekeyRequest, now time.Time) protocol.CredentialResponse {
 	idHex := hex.EncodeToString(req.TaskId.Id[:])
-	if !h.inScope(cid, protocol.Capability_CredentialIssue, idHex) {
+	if !h.inScope(cid, protocol.Capability_CredentialIssue, idHex) || !h.rekeyReaches(cid, idHex) {
 		return credentialRefusal(protocol.CredentialStatus_NoSuchTask, "")
 	}
 	rec, ok := h.Tasks.Get(idHex)
@@ -221,6 +221,28 @@ func (h *TaskHandler) credentialRekey(cid string, req *protocol.CredentialRekeyR
 	}
 	slog.Info("credential re-keyed", "task", idHex, "caps", after.Capabilities.String(), "expires_at", expiresAt, "conns_closed", closed)
 	return credentialOK(idHex, expiresAt)
+}
+
+// rekeyReaches reports whether cid's principal may re-key the task idHex as
+// far as the creator tree goes: the operator always; a task only when idHex is
+// its descendant in the live creator index. A fresh issue makes the credential
+// the issuer's child, so the issuer's own reach covers the credential's
+// subtree and its spawn limits count the credential's spawns. A caller that
+// reaches the credential only through an id in its scope has neither: holding
+// the new key would hand it the credential's subtree reach and spawn room. No
+// exception for a global scope: the spawn limits are counts, which no scope
+// covers. An operator hands someone else's credential over by reparenting it.
+//
+// Out of reach answers no_such_task, as an id outside the scope does: an
+// answer saying "exists, but not yours" would be an existence oracle.
+func (h *TaskHandler) rekeyReaches(cid, idHex string) bool {
+	pid := h.lookupPrincipal(cid)
+	if pid.Id == ([16]byte{}) {
+		return true
+	}
+	descendants := map[string]bool{}
+	authority.DescendantsOf(h.childIndex(), hex.EncodeToString(pid.Id[:]), descendants)
+	return descendants[idHex]
 }
 
 // credentialResumeRefusal is the answer every generic resume path gives a
