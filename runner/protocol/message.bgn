@@ -3362,7 +3362,8 @@ format TaskControlRequest:
 # the grant fields below are OpenInteractiveRequest's spawn grant, with the
 # same semantics, so one handler can read both. ttl_ms is required and bounded
 # above by the server (D7); 0 is refused as ttl_invalid. name is an optional
-# label, at most 64 bytes.
+# label: at most 64 bytes of UTF-8 with no C0, DEL or C1 control character,
+# refused as bad_name otherwise (it reaches operators' terminals).
 format CredentialIssueRequest:
     pubkey :[32]u8
     ttl_ms :u64
@@ -3415,6 +3416,7 @@ enum CredentialStatus:
     not_credential      = "not_credential"       # rekey: task_id is not a credential task
     no_such_task        = "no_such_task"         # rekey: unknown, or outside the caller's reach
     masked_cap          = "masked_cap"           # the grant names credential_issue or schedule_edit (D14)
+    bad_name            = "bad_name"             # issue: name over 64 bytes, not UTF-8, or holding a control character
 
 # CredentialResponse answers issue and rekey. task_id is the credential task
 # (new at issue, the same one at rekey); expires_at is unix nanos on the SERVER

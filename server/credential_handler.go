@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
+	"unicode/utf8"
 
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/authority"
@@ -70,6 +71,37 @@ func credentialKeyRefusal(pub [32]byte) *protocol.CredentialResponse {
 	return &r
 }
 
+// credentialNameMax bounds a task name (D21).
+const credentialNameMax = 64
+
+// credentialNameRefusal is bad_name for a name no task may carry: over
+// credentialNameMax bytes, not UTF-8, or holding a C0, DEL or C1 control
+// character. A name is the issuer's text and is printed in operators'
+// terminals (ls, credential ls, a board message's sender), so it is refused
+// here, as a progress line is (validateProgressText), not sanitized into
+// something the issuer did not write.
+func credentialNameRefusal(name []byte) *protocol.CredentialResponse {
+	why := ""
+	switch {
+	case len(name) > credentialNameMax:
+		why = fmt.Sprintf("a name is at most %d bytes, this one is %d", credentialNameMax, len(name))
+	case !utf8.Valid(name):
+		why = "a name must be UTF-8"
+	default:
+		for _, r := range string(name) {
+			if r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) {
+				why = fmt.Sprintf("a name may not hold the control character %U", r)
+				break
+			}
+		}
+	}
+	if why == "" {
+		return nil
+	}
+	r := credentialRefusal(protocol.CredentialStatus_BadName, "%s", why)
+	return &r
+}
+
 // maskedRefusal is masked_cap when a grant half the request writes names a
 // bit no credential may hold (D14). Refused rather than masked: a typed grant
 // either takes effect or errors. The store masks too, as the last line.
@@ -114,6 +146,9 @@ func (h *TaskHandler) credentialIssue(cid string, req *protocol.CredentialIssueR
 		return *refusal
 	}
 	if refusal := credentialKeyRefusal(req.Pubkey); refusal != nil {
+		return *refusal
+	}
+	if refusal := credentialNameRefusal(req.Name); refusal != nil {
 		return *refusal
 	}
 	if refusal := maskedRefusal(req.RequestedCaps | req.DelegateCaps); refusal != nil {

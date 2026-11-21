@@ -159,6 +159,7 @@ var credentialStatusGloss = map[protocol.CredentialStatus]string{
 	protocol.CredentialStatus_NotCredential:     "that task is not a credential",
 	protocol.CredentialStatus_NoSuchTask:        "no such credential within your reach",
 	protocol.CredentialStatus_MaskedCap:         "a credential can never hold credential_issue or schedule_edit",
+	protocol.CredentialStatus_BadName:           "--name is at most 64 bytes of text, with no control characters",
 }
 
 // credentialStatusError is the error for a credential answer: nil for ok,
@@ -407,17 +408,25 @@ func CredentialTimeCell(ns uint64) string {
 func credentialAboutText(t protocol.TaskInfo) string {
 	who := hex.EncodeToString(t.Id.Id[:])[:8]
 	if len(t.Name) > 0 {
-		n := string(t.Name)
-		who = vtgrid.SanitizeTitle(n, len(n))
+		who = taskNameText(t.Name)
 	}
 	return "credential " + who + " expires " + CredentialExpiryLabel(&t)
+}
+
+// taskNameText is a task name as a terminal may print it. The server refuses
+// a control character in a name (bad_name), but a row written before that
+// check, or by a server without it, still carries one; this is the same rule
+// the TUI applies.
+func taskNameText(name []byte) string {
+	n := string(name)
+	return vtgrid.SanitizeTitle(n, len(n))
 }
 
 // CredentialRowLine is one `credential ls` row.
 func CredentialRowLine(t protocol.TaskInfo) string {
 	name := "-"
 	if len(t.Name) > 0 {
-		name = string(t.Name)
+		name = taskNameText(t.Name)
 	}
 	return fmt.Sprintf("%s  %s  name=%s  expires=%s  last_used=%s  caps=%s  scope=%s",
 		hex.EncodeToString(t.Id.Id[:]), strings.TrimSpace(taskStatusStr(t.Status)), name,

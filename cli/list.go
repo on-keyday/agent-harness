@@ -281,7 +281,7 @@ func CredentialColumns(t *protocol.TaskInfo) string {
 		s += "  expires=" + CredentialExpiryLabel(t)
 	}
 	if len(t.Name) > 0 {
-		s += "  name=" + string(t.Name)
+		s += "  name=" + taskNameText(t.Name)
 	}
 	if t.Kind == protocol.TaskKind_Credential {
 		s += "  last_used=" + CredentialLastUsedLabel(t)

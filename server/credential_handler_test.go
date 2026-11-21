@@ -819,3 +819,33 @@ func TestCredentialFiresBoundScheduleEndToEnd(t *testing.T) {
 		}
 	}
 }
+
+// M1: a name reaches operators' terminals, so one over 64 bytes, not UTF-8 or
+// holding a control character is refused at issue, with nothing created.
+func TestCredentialIssueRefusesBadName(t *testing.T) {
+	h := newTestHandler(t)
+	op := credTestConn()
+	_, pub := newCredentialKey(t)
+	for name, n := range map[string]string{
+		"65 bytes":  strings.Repeat("a", 65),
+		"escape":    "ci\x1b]0;pwned\x07",
+		"newline":   "ci\nforged row",
+		"del":       "ci\x7f",
+		"c1 csi":    "ci\u009b2J",
+		"not utf-8": "ci\xff",
+	} {
+		r := issueRequest(pub, ttlMs(time.Hour), 0, authority.Scope{})
+		r.SetName([]byte(n))
+		got, resp := issue(t, h, op, r)
+		wantCredStatus(t, name, got, resp, protocol.CredentialStatus_BadName)
+	}
+	if n := len(h.Tasks.List(0)); n != 0 {
+		t.Fatalf("refused issues created %d tasks", n)
+	}
+	for name, n := range map[string]string{"64 bytes": strings.Repeat("a", 64), "non-ASCII text": "夜間ビルド", "empty": ""} {
+		r := issueRequest(pub, ttlMs(time.Hour), 0, authority.Scope{})
+		r.SetName([]byte(n))
+		got, resp := issue(t, h, op, r)
+		wantCredStatus(t, name, got, resp, protocol.CredentialStatus_Ok)
+	}
+}

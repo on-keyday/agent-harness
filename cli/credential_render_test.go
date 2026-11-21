@@ -124,7 +124,7 @@ func TestWhoAmIRendersACredential(t *testing.T) {
 
 // Each CredentialStatus has a cause the person can act on.
 func TestEveryCredentialStatusHasAMessage(t *testing.T) {
-	for st := protocol.CredentialStatus_TtlInvalid; st <= protocol.CredentialStatus_MaskedCap; st++ {
+	for st := protocol.CredentialStatus_TtlInvalid; st <= protocol.CredentialStatus_BadName; st++ {
 		err := credentialStatusError("new", &protocol.CredentialResponse{Status: st})
 		if err == nil || len(err.Error()) < len("credential new: ")+10 {
 			t.Errorf("%v: %v", st, err)
@@ -132,5 +132,24 @@ func TestEveryCredentialStatusHasAMessage(t *testing.T) {
 	}
 	if err := credentialStatusError("rekey", &protocol.CredentialResponse{Status: protocol.CredentialStatus_NoSuchTask}); !strings.Contains(err.Error(), "no such credential within your reach") {
 		t.Errorf("no_such_task: %v", err)
+	}
+}
+
+// A name written before the server refused control characters still reaches
+// a terminal through these three sites; each prints it sanitized.
+func TestTaskNameIsSanitizedAtEveryCLIRenderSite(t *testing.T) {
+	const hostile = "ci\x1b]0;pwned\x07\u009b2J"
+	ti := credentialTaskInfo(hostile, 0)
+	for site, out := range map[string]string{
+		"ls row":            taskLine(ti, nil),
+		"credential ls row": CredentialRowLine(ti),
+		"board sender":      SenderLabel("credential", "c7000000000000000000000000000000", hostile),
+	} {
+		if strings.ContainsAny(out, "\x1b\x07\u009b") {
+			t.Errorf("%s prints a control character: %q", site, out)
+		}
+		if !strings.Contains(out, "ci]0;pwned2J") {
+			t.Errorf("%s lost the name's text: %q", site, out)
+		}
 	}
 }

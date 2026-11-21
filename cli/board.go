@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/agent-harness/vtgrid"
 	"github.com/on-keyday/objtrsf/objproto"
 )
 
@@ -823,5 +824,5 @@ func credentialSender(fromTaskHex, name string) string {
 	if name == "" {
 		name = SenderParty("credential", fromTaskHex)
 	}
-	return "credential " + name
+	return "credential " + vtgrid.SanitizeTitle(name, len(name))
 }
