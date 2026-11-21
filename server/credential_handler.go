@@ -223,6 +223,14 @@ func (h *TaskHandler) credentialRekey(cid string, req *protocol.CredentialRekeyR
 	if h.DropStaleCredentialConns != nil {
 		closed = h.DropStaleCredentialConns(idHex)
 	}
+	// So do the data-plane grants the old key's connections minted: each is
+	// redeemable at the runner for its TTL with no connection behind it. All
+	// of the credential's grants go, not only the old key's — the record does
+	// not say which key asked, and one minted by the new key in the
+	// microseconds since the re-key costs its holder a retry, not authority.
+	if h.RevokeDataPlaneForTask != nil {
+		closed += h.RevokeDataPlaneForTask(idHex)
+	}
 	slog.Info("credential re-keyed", "task", idHex, "caps", after.Capabilities.String(), "expires_at", expiresAt, "conns_closed", closed)
 	return credentialOK(idHex, expiresAt)
 }

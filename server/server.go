@@ -794,11 +794,15 @@ func New(cfg Config) *Server {
 		// unlock, since a wire close may wait on the peer (credentialMu's
 		// rule). Only connections that hold nothing: a re-key reviving the
 		// credential in between keeps its new holder's.
+		// The data-plane grants it requested go too (anti-goal 3: nothing it
+		// was handed outlives it); also after the unlock, since telling the
+		// runner is a network write.
 		if t, ok := s.tasks.Get(id); ok && t.Kind == protocol.TaskKind_Credential {
 			s.taskHandler.credentialMu.Lock()
 			boardRevokeCredential(s.Board, id)
 			s.taskHandler.credentialMu.Unlock()
 			s.dropStaleCredentialConns(id)
+			s.revokeDataPlaneForTask(id)
 		}
 	}
 	// A cancel of a task still waiting for its TaskFinished resends the
@@ -895,8 +899,8 @@ func (s *Server) Run(ctx context.Context) error {
 	// Wired here rather than in New because the endpoint only exists once the
 	// listener is up, and SetProxy needs it. A nil hook is the splice path, so
 	// a server built without a listener keeps working.
-	s.taskHandler.SetupDataPlane = func(ctx context.Context, clientCID objproto.ConnectionID, entry *RunnerEntry, grant protocol.DataPlaneGrant, direct bool) (uint16, error) {
-		return s.setupDataPlane(ctx, ep, clientCID, entry, grant, direct)
+	s.taskHandler.SetupDataPlane = func(ctx context.Context, clientCID objproto.ConnectionID, entry *RunnerEntry, grant protocol.DataPlaneGrant, direct bool, requester string) (uint16, error) {
+		return s.setupDataPlane(ctx, ep, clientCID, entry, grant, direct, requester)
 	}
 	s.dataPlaneEndpoint.Store(&ep)
 	s.taskHandler.OnDialed = s.onDialed

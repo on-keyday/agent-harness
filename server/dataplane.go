@@ -137,6 +137,7 @@ func (s *Server) setupDataPlane(
 	entry *RunnerEntry,
 	grant protocol.DataPlaneGrant,
 	direct bool,
+	requester string,
 ) (uint16, error) {
 	if ep == nil {
 		return 0, fmt.Errorf("data plane: no endpoint")
@@ -191,6 +192,7 @@ func (s *Server) setupDataPlane(
 		clientCID:    clientCID,
 		slot:         slot,
 		issuedUnixMs: uint64(time.Now().UnixMilli()),
+		requester:    requester,
 	})
 	return slot, nil
 }
@@ -206,6 +208,12 @@ type issuedGrant struct {
 	// grant's expiry: a transfer may legitimately outlive that, and pruning on
 	// it would drop the record of one still running.
 	issuedUnixMs uint64
+	// requester is the principal whose request minted the grant (hex; "" for
+	// the operator). The record is keyed by the grant's TARGET task; this is
+	// the other half, so the requester's authority ending withdraws the grants
+	// it minted (revokeDataPlaneForTask) and not only those into its own
+	// worktree.
+	requester string
 }
 
 // dataPlaneRecordMaxAge bounds the bookkeeping if a runner vanishes mid
@@ -247,15 +255,36 @@ func (s *Server) rememberGrant(taskIDHex string, g issuedGrant) {
 	s.issuedGrants[taskIDHex] = append(s.issuedGrants[taskIDHex], g)
 }
 
-// revokeDataPlaneForTask withdraws every grant issued for a task. All three
-// parts of the revocation happen here: the forwarding entry goes, so no further
-// packet crosses this process; the runner is told, because a client that can
-// reach it without this process would otherwise keep going; and the grant's own
-// TTL stays the backstop for a message that never lands.
+// revokeDataPlaneForTask withdraws every grant issued for a task: those into
+// its worktree (the records keyed by it) and those it requested as a principal
+// into another task's (issuedGrant.requester). The second half is what an end
+// of the requester's authority owes: a narrowing caps change, and a
+// credential's revoke, expiry or re-key — without it a grant minted while the
+// authority held stays redeemable for the rest of its TTL.
+//
+// All three parts of the revocation happen here: the forwarding entry goes, so
+// no further packet crosses this process; the runner is told, because a client
+// that can reach it without this process would otherwise keep going; and the
+// grant's own TTL stays the backstop for a message that never lands.
 func (s *Server) revokeDataPlaneForTask(taskIDHex string) int {
 	s.grantsMu.Lock()
 	grants := s.issuedGrants[taskIDHex]
 	delete(s.issuedGrants, taskIDHex)
+	for task, gs := range s.issuedGrants {
+		kept := gs[:0]
+		for _, g := range gs {
+			if g.requester == taskIDHex {
+				grants = append(grants, g)
+			} else {
+				kept = append(kept, g)
+			}
+		}
+		if len(kept) == 0 {
+			delete(s.issuedGrants, task)
+		} else {
+			s.issuedGrants[task] = kept
+		}
+	}
 	s.grantsMu.Unlock()
 
 	ep := s.dataPlaneEndpoint.Load()

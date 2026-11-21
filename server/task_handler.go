@@ -76,7 +76,10 @@ type TaskHandler struct {
 	// dial. A nil hook, an incompatible transport pair, or an error all fall
 	// back to the splice path -- both routes coexist and this is where the
 	// choice is made. Server.New wires it to Server.setupDataPlane.
-	SetupDataPlane func(ctx context.Context, clientCID objproto.ConnectionID, entry *RunnerEntry, grant protocol.DataPlaneGrant, direct bool) (uint16, error)
+	// requester is the requesting connection's principal (hex; "" for the
+	// operator): the grant is remembered under it as well as under its
+	// target, so the requester's end withdraws it (RevokeDataPlaneForTask).
+	SetupDataPlane func(ctx context.Context, clientCID objproto.ConnectionID, entry *RunnerEntry, grant protocol.DataPlaneGrant, direct bool, requester string) (uint16, error)
 
 	// NotifyHook is the configured external command for the egress leg of
 	// notify (empty = egress disabled). See server/notify_hook.go.
@@ -268,7 +271,8 @@ type TaskHandler struct {
 	DropStaleCredentialConns func(taskIDHex string) int
 
 	// RevokeDataPlaneForTask, when non-nil, withdraws every data-plane grant
-	// issued for a task and stops forwarding its packets. Closing the task's
+	// issued for a task — into its worktree, or requested by it as a
+	// principal — and stops forwarding their packets. Closing the task's
 	// outward connections does not reach those: their bytes cross a connection
 	// whose far end is the RUNNER, so this process is not on it as an
 	// application and has nothing to close. Returns how many it withdrew.
