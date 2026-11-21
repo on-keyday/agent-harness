@@ -1,6 +1,8 @@
 package server
 
 import (
+	"encoding/hex"
+	"fmt"
 	"log/slog"
 	"strings"
 	"testing"
@@ -8,7 +10,9 @@ import (
 
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/authority"
+	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // The agentboard for credential connections (credential-tasks D10): send,
@@ -293,5 +297,129 @@ func TestCredentialBoardRefusedAfterRotation(t *testing.T) {
 	newConn.autoSendStreams = true
 	if resp := credentialSend(t, s, newConn, 9, inbox); !sentOK(resp) {
 		t.Errorf("the new key's connection could not publish: %v", resp.Kind)
+	}
+}
+
+// agentOnBoard records an agent connection for a fresh task holding g, as the
+// merged hello records one: its ticket registered, its ClientHello accepted.
+func agentOnBoard(t *testing.T, s *Server, g authority.Grant, port int) (protocol.TaskID, *fakeConn) {
+	t.Helper()
+	id := s.Tasks().Create("repo", "", protocol.TaskKind_Interactive, protocol.ClientKind_Agent, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, g, "bash")
+	tid := taskIDFromHex(id)
+	rid := testRunnerID(fmt.Sprintf("agent-%d", port))
+	boardRegisterTask(s.Board, rid, id, [16]byte{9}, "bash", agentboard.NewConversation)
+	conn := &fakeConn{id: objproto.MustParseConnectionID(fmt.Sprintf("ws:127.0.0.1:%d-1", port)), autoSendStreams: true}
+	hello := &protocol.ClientHello{Kind: protocol.ClientKind_Agent}
+	hello.SetAgentInfo(protocol.AgentInfo{TaskId: tid, RunnerId: rid})
+	if st := s.taskHandler.RecordClientIdentity(conn.id.String(), conn, hello); st != protocol.ClientHelloStatus_Ok {
+		t.Fatalf("agent hello: %v", st)
+	}
+	return tid, conn
+}
+
+// operatorBoardRead is board read of topic from an operator connection.
+func operatorBoardRead(t *testing.T, s *Server, topic string) []protocol.BoardMessageRow {
+	t.Helper()
+	op := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9499-1"), autoSendStreams: true}
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_BoardRead, RequestId: 1}}
+	br := protocol.BoardReadRequest{RequestId: 1}
+	br.SetTopic([]byte(topic))
+	req.SetBoardRead(br)
+	s.taskHandler.Handle(op, encodeTaskControlRequest(t, req))
+	resp := lastTaskControlResponse(t, op)
+	r := resp.BoardRead()
+	if resp.Kind != protocol.TaskControlKind_BoardRead || r == nil || r.Status != protocol.BoardStatus_Ok {
+		t.Fatalf("board read %s answered %v", topic, resp.Kind)
+	}
+	var body protocol.BoardReadBody
+	op.streamBody(t, r.StreamId, &body)
+	return body.Msgs
+}
+
+// A credential's message names it as one: sender_kind credential and its
+// display name frozen on the row, rendered "credential <name>" by the shared
+// renderers on the agent face and the operator face alike, and "credential
+// <8-hex>" when it has no name.
+func TestCredentialSenderRendersAsCredential(t *testing.T) {
+	s := credentialBoardServer(t)
+	agent, agentConn := agentOnBoard(t, s, authority.Grant{}, 9450)
+	inbox := agentboard.SelfTopic(agent)
+	_, cred, conn := credentialOnBoard(t, s, authority.Grant{
+		Caps:  protocol.Capability_BoardPeer,
+		Scope: authority.Scope{Base: protocol.ScopeBase_None, IDs: []string{hex.EncodeToString(agent.Id[:])}},
+	}, 9451)
+
+	resp := credentialSend(t, s, conn, 1, inbox)
+	if !sentOK(resp) {
+		t.Fatalf("credential send answered %v", resp.Kind)
+	}
+	m, ok := readSeq(t, s, agentConn, 2, resp.AgentSend().Seq)
+	if !ok {
+		t.Fatal("the agent cannot read the credential's message on its own chat")
+	}
+	if m.SenderKind != protocol.SenderKind_Credential || string(m.FromName) != "ci" || m.FromTaskId != cred {
+		t.Fatalf("delivered row: kind %v name %q from %x", m.SenderKind, m.FromName, m.FromTaskId.Id)
+	}
+	if got := cli.SenderDisplay(cli.SenderKindName(m.SenderKind), hex.EncodeToString(m.FromTaskId.Id[:]), string(m.FromName)); got != "credential ci" {
+		t.Errorf("agent face renders the sender as %q, want credential ci", got)
+	}
+	rows := operatorBoardRead(t, s, inbox)
+	if len(rows) != 1 {
+		t.Fatalf("board read returned %d rows", len(rows))
+	}
+	if got := cli.SenderLabel(cli.SenderKindName(rows[0].SenderKind), hex.EncodeToString(rows[0].FromTask.Id[:]), string(rows[0].FromName)); got != "credential ci" {
+		t.Errorf("board read renders the sender as %q, want credential ci", got)
+	}
+
+	// Unnamed: the 8-hex id stands in for the name.
+	_, pub := newCredentialKey(t)
+	id, err := s.Tasks().CreateCredential(protocol.TaskID{}, protocol.ClientKind_Cli, authority.Grant{}, pub, time.Now().Add(time.Hour), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	unnamed := recordCredentialConn(t, s.taskHandler, taskIDFromHex(id), pub, 9452)
+	unnamed.autoSendStreams = true
+	own := agentboard.SelfTopic(taskIDFromHex(id))
+	if resp := credentialSend(t, s, unnamed, 3, own); !sentOK(resp) {
+		t.Fatalf("unnamed credential send answered %v", resp.Kind)
+	}
+	rows = operatorBoardRead(t, s, own)
+	if got := cli.SenderDisplay(cli.SenderKindName(rows[0].SenderKind), hex.EncodeToString(rows[0].FromTask.Id[:]), string(rows[0].FromName)); got != "credential "+id[:8] {
+		t.Errorf("unnamed credential renders as %q, want credential %s", got, id[:8])
+	}
+}
+
+// A reply to a credential's message goes to the credential's chat.<id>, as a
+// reply to an agent's goes to the agent's — with --in-reply-to alone, and by
+// an agent holding no board_peer: reading the message made that chat its
+// contact.
+func TestReplyToCredentialLandsInItsChat(t *testing.T) {
+	s := credentialBoardServer(t)
+	agent, agentConn := agentOnBoard(t, s, authority.Grant{}, 9460)
+	_, cred, conn := credentialOnBoard(t, s, authority.Grant{
+		Caps:  protocol.Capability_BoardPeer,
+		Scope: authority.Scope{Base: protocol.ScopeBase_None, IDs: []string{hex.EncodeToString(agent.Id[:])}},
+	}, 9461)
+
+	resp := credentialSend(t, s, conn, 1, agentboard.SelfTopic(agent))
+	if !sentOK(resp) {
+		t.Fatalf("credential send answered %v", resp.Kind)
+	}
+	asked := resp.AgentSend().Seq
+	if _, ok := readSeq(t, s, agentConn, 2, asked); !ok {
+		t.Fatal("the agent cannot read the credential's message")
+	}
+
+	reply := &protocol.AgentSendRequest{InReplyTo: asked}
+	resp = sendThroughHandler(t, s.taskHandler, agentConn, 3, reply)
+	if !sentOK(resp) {
+		t.Fatalf("the agent's reply answered %v (send status %v)", resp.Kind, resp.AgentSend())
+	}
+	answered := resp.AgentSend().Seq
+	if m, ok := s.Board.Retained(answered); !ok || m.Topic != agentboard.SelfTopic(cred) {
+		t.Fatalf("the reply landed on %q, want the credential's %s", m.Topic, agentboard.SelfTopic(cred))
+	}
+	if m, ok := readSeq(t, s, conn, 4, answered); !ok || m.InReplyTo != asked {
+		t.Fatalf("the credential cannot read the reply (ok=%v in_reply_to=%d)", ok, m.InReplyTo)
 	}
 }

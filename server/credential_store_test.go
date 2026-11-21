@@ -223,8 +223,8 @@ func TestCredentialSurvivesReplay(t *testing.T) {
 	if e.Status != protocol.TaskStatus_Active || e.Kind != protocol.TaskKind_Credential {
 		t.Fatalf("replayed status/kind = %v/%v, want active/credential", e.Status, e.Kind)
 	}
-	if e.CredentialPubKey != credKey(7) || !e.ExpiresAt.Equal(expiresAt) || e.CredentialName != "nightly" {
-		t.Errorf("replayed key %x… expiry %v name %q", e.CredentialPubKey[:4], e.ExpiresAt, e.CredentialName)
+	if e.CredentialPubKey != credKey(7) || !e.ExpiresAt.Equal(expiresAt) || e.Name != "nightly" {
+		t.Errorf("replayed key %x… expiry %v name %q", e.CredentialPubKey[:4], e.ExpiresAt, e.Name)
 	}
 	if !e.LastUsedAt.IsZero() {
 		t.Errorf("LastUsedAt = %v after replay, want zero (memory only, D20)", e.LastUsedAt)

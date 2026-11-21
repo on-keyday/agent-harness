@@ -121,7 +121,8 @@ func (s *Server) establishCredentialBoard(conn ConnHandle, tid protocol.TaskID) 
 //     destination comes off the parent, server-side.
 //   - the parent sender's own chat.<short-id>, which is what every reply did
 //     before reply_to_topic existed and what one still does when the asker
-//     declared nothing. Only when the parent's sender is an AGENT: an operator
+//     declared nothing. Only when the parent's sender is a task publishing for
+//     itself (agentboard.PublishedByTask: an agent or a credential): an operator
 //     or server message may carry a zero from_task, whose chat topic nobody
 //     owns, so with no declaration it answers no_reply_route instead.
 //
@@ -147,7 +148,7 @@ func resolveReplyTarget(b *agentboard.Board, topic string, inReplyTo uint64) (st
 	if parent.ReplyToTopic != "" {
 		return parent.ReplyToTopic, protocol.SendStatus_Ok
 	}
-	if parent.SenderKind != protocol.SenderKind_Agent {
+	if !agentboard.PublishedByTask(parent.SenderKind) {
 		return "", protocol.SendStatus_NoReplyRoute
 	}
 	return agentboard.SelfTopic(parent.FromTask), protocol.SendStatus_Ok

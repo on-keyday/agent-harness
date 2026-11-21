@@ -113,6 +113,7 @@ func RetainedWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) err
 				FromHostname: string(m.FromHostname),
 				FromAgent:    string(m.FromAgentProfile),
 				SenderKind:   cli.SenderKindName(m.SenderKind),
+				FromName:     string(m.FromName),
 				ReplyToTopic: string(m.ReplyToTopic),
 				Size:         m.Size,
 				ReceivedAtMs: m.ReceivedAtUnixMs,
@@ -136,6 +137,7 @@ type retainedLine struct {
 	FromHostname string `json:"from_hostname"`
 	FromAgent    string `json:"from_agent"`
 	SenderKind   string `json:"sender_kind"`
+	FromName     string `json:"from_name,omitempty"`
 	ReplyToTopic string `json:"reply_to_topic,omitempty"`
 	Size         uint32 `json:"size"`
 	ReceivedAtMs uint64 `json:"received_at_ms"`

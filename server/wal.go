@@ -169,11 +169,11 @@ type WALEvent struct {
 	// without one, and its kind says so).
 	NoPTY bool `json:"no_pty,omitempty"`
 	// task_created of a credential task, and task_rekeyed: the Ed25519 public
-	// key (hex) and the expiry (unix nanos). CredentialName on task_created
-	// only. A record of any other kind has none of the keys.
+	// key (hex) and the expiry (unix nanos); a record of any other kind has
+	// neither. Name is the task's display name, on task_created only.
 	CredentialPubKey string `json:"credential_pubkey,omitempty"`
 	ExpiresAtNs      int64  `json:"expires_at_ns,omitempty"`
-	CredentialName   string `json:"credential_name,omitempty"`
+	Name             string `json:"name,omitempty"`
 	Ts               int64  `json:"ts"` // unix nano
 
 	// Selector is the runner-selection constraint. It is not stored directly as
@@ -258,7 +258,7 @@ type walEventJSON struct {
 	NoPTY                       bool               `json:"no_pty,omitempty"`
 	CredentialPubKey            string             `json:"credential_pubkey,omitempty"`
 	ExpiresAtNs                 int64              `json:"expires_at_ns,omitempty"`
-	CredentialName              string             `json:"credential_name,omitempty"`
+	Name                        string             `json:"name,omitempty"`
 	Ts                          int64              `json:"ts"`
 	// SelectorB64 holds the base64-encoded wire bytes of the RunnerSelector.
 	// Empty / absent means Kind == RunnerSelectorKind_Any (zero value).
@@ -332,7 +332,7 @@ func (e WALEvent) MarshalJSON() ([]byte, error) {
 		NoPTY:                       e.NoPTY,
 		CredentialPubKey:            e.CredentialPubKey,
 		ExpiresAtNs:                 e.ExpiresAtNs,
-		CredentialName:              e.CredentialName,
+		Name:                        e.Name,
 		Ts:                          e.Ts,
 	}
 	// Only encode the selector if it carries a non-Any kind (i.e. it has payload).
@@ -411,7 +411,7 @@ func (e *WALEvent) UnmarshalJSON(b []byte) error {
 	e.NoPTY = j.NoPTY
 	e.CredentialPubKey = j.CredentialPubKey
 	e.ExpiresAtNs = j.ExpiresAtNs
-	e.CredentialName = j.CredentialName
+	e.Name = j.Name
 	e.Ts = j.Ts
 
 	if j.SelectorB64 != "" {

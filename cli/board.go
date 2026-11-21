@@ -111,9 +111,13 @@ type BoardMessage struct {
 	// the message was published. Empty = the server could not attribute a
 	// runtime (an operator or server publish; SenderKind says which).
 	FromAgentProfile string
-	// SenderKind is who published it: "agent", "operator" or "server" (see
-	// SenderKindName). Empty only from a server that predates the field.
+	// SenderKind is who published it: "agent", "operator", "server" or
+	// "credential" (see SenderKindName). Empty only from a server that
+	// predates the field.
 	SenderKind string
+	// FromName is the sender task's display name at publish time; empty when
+	// it had none. Shown through SenderLabel / SenderDisplay.
+	FromName string
 	// ReplyToTopic is where a reply to THIS message is routed -- the
 	// destination its SENDER declared with `agent send --reply-to`. Empty =
 	// none declared, so a reply comes back to the sender's own
@@ -440,6 +444,7 @@ func boardMessages(msgs []protocol.BoardMessageRow) []BoardMessage {
 			FromHostname:     string(m.FromHostname),
 			FromAgentProfile: string(m.FromAgentProfile),
 			SenderKind:       SenderKindName(m.SenderKind),
+			FromName:         string(m.FromName),
 			ReplyToTopic:     string(m.ReplyToTopic),
 			ReceivedAtMs:     m.ReceivedAtUnixMs,
 			Payload:          m.Body,
@@ -780,18 +785,43 @@ func SenderKindName(k protocol.SenderKind) string {
 		return "operator"
 	case protocol.SenderKind_Server:
 		return "server"
+	case protocol.SenderKind_Credential:
+		return "credential"
 	default:
 		return fmt.Sprintf("sender_kind(%d)", uint8(k))
 	}
 }
 
 // SenderLabel is the sender as a row names it in full: the kind itself for the
-// operator and the server, whose from_task may be zero, else the task hex as
-// given. SenderParty is the 8-hex short form.
-func SenderLabel(kind, fromTaskHex string) string {
+// operator and the server, whose from_task may be zero, a credential by name
+// (credentialSender), else the task hex as given. SenderDisplay is the short
+// form.
+func SenderLabel(kind, fromTaskHex, name string) string {
 	switch kind {
 	case "operator", "server":
 		return kind
+	case "credential":
+		return credentialSender(fromTaskHex, name)
 	}
 	return fromTaskHex
+}
+
+// SenderDisplay is the short name a surface shows for a sender: SenderParty,
+// except that a credential shows as credentialSender. Not a conversation key —
+// SenderParty is, and a credential's party stays its 8-hex id, the suffix of
+// the chat.<id> its replies go to.
+func SenderDisplay(kind, fromTaskHex, name string) string {
+	if kind == "credential" {
+		return credentialSender(fromTaskHex, name)
+	}
+	return SenderParty(kind, fromTaskHex)
+}
+
+// credentialSender is "credential <name>", or "credential <8-hex>" for an
+// unnamed one (credential-tasks D10).
+func credentialSender(fromTaskHex, name string) string {
+	if name == "" {
+		name = SenderParty("credential", fromTaskHex)
+	}
+	return "credential " + name
 }

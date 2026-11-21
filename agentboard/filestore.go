@@ -82,6 +82,7 @@ type storeRecord struct {
 	FromHostname     string `json:"from_hostname,omitempty"`
 	FromAgentProfile string `json:"from_agent_profile,omitempty"`
 	SenderKind       uint8  `json:"sender_kind,omitempty"`
+	FromName         string `json:"from_name,omitempty"`
 	ReplyToTopic     string `json:"reply_to_topic,omitempty"`
 	ReceivedAtMs     int64  `json:"received_at_ms,omitempty"`
 	NoRetireOnReply  bool   `json:"no_retire_on_reply,omitempty"`
@@ -869,7 +870,7 @@ func msgRecord(m RetainedMessage) storeRecord {
 	rec := storeRecord{
 		T: "msg", Seq: m.Seq, InReplyTo: m.InReplyTo, Payload: m.Payload,
 		FromHostname: m.FromHostname, FromAgentProfile: m.FromAgentProfile,
-		SenderKind: uint8(m.SenderKind), ReplyToTopic: m.ReplyToTopic,
+		SenderKind: uint8(m.SenderKind), FromName: m.FromName, ReplyToTopic: m.ReplyToTopic,
 		ReceivedAtMs: m.ReceivedAt.UnixMilli(), NoRetireOnReply: m.NoRetireOnReply,
 		NoContact: m.NoContact, ExcludeSelf: m.ExcludeSelf,
 	}
@@ -887,7 +888,7 @@ func (rec storeRecord) message(topic string) RetainedMessage {
 		Seq: rec.Seq, InReplyTo: rec.InReplyTo, Topic: topic, Payload: rec.Payload,
 		FromTask: taskFromHex(rec.FromTask), FromHostname: rec.FromHostname,
 		FromAgentProfile: rec.FromAgentProfile, SenderKind: protocol.SenderKind(rec.SenderKind),
-		ReplyToTopic: rec.ReplyToTopic, ReceivedAt: time.UnixMilli(rec.ReceivedAtMs),
+		FromName: rec.FromName, ReplyToTopic: rec.ReplyToTopic, ReceivedAt: time.UnixMilli(rec.ReceivedAtMs),
 		NoRetireOnReply: rec.NoRetireOnReply, NoContact: rec.NoContact, ExcludeSelf: rec.ExcludeSelf,
 	}
 	if raw, err := hex.DecodeString(rec.FromRunner); err == nil && len(raw) == 16 {

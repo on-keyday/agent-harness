@@ -777,7 +777,7 @@ func (m *BoardModal) updateContentFromCursor() {
 		payloadStr = string(msg.Payload)
 	}
 
-	fromShort := cli.SenderParty(msg.SenderKind, msg.FromTaskHex)
+	fromShort := cli.SenderDisplay(msg.SenderKind, msg.FromTaskHex, msg.FromName)
 	at := time.UnixMilli(int64(msg.ReceivedAtMs)).UTC().Format(time.RFC3339)
 	agentName := msg.FromAgentProfile
 	if agentName == "" {
@@ -988,7 +988,7 @@ func (m BoardModal) View() string {
 				cursor = "> "
 			}
 			msg := m.msgs[i]
-			fromShort := cli.SenderParty(msg.SenderKind, msg.FromTaskHex)
+			fromShort := cli.SenderDisplay(msg.SenderKind, msg.FromTaskHex, msg.FromName)
 			agentName := msg.FromAgentProfile
 			if agentName == "" {
 				agentName = "-"

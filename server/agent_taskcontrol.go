@@ -144,6 +144,9 @@ func (h *TaskHandler) handleAgentSend(conn ConnHandle, requestID uint32, r *prot
 	noContact := r.NoContact()
 	excludeSelf := r.ExcludeSelf()
 	streamID := r.PayloadStreamId
+	// A credential's publish says so (credential-tasks D10): it is answered
+	// like an agent's, but no process stands behind it.
+	credential := h.lookupClientKind(conn.ConnectionID().String()) == protocol.ClientKind_Credential
 
 	go func() {
 		payload, err := readAgentPayloadStream(conn, streamID, h.Board.MaxPayload())
@@ -195,6 +198,9 @@ func (h *TaskHandler) handleAgentSend(conn ConnHandle, requestID uint32, r *prot
 		}
 		if excludeSelf {
 			sendOpts = append(sendOpts, agentboard.WithExcludeSelf())
+		}
+		if credential {
+			sendOpts = append(sendOpts, agentboard.WithSenderKind(protocol.SenderKind_Credential))
 		}
 		// Where the SENDER wants replies to this message to go. Recorded on the
 		// retained entry and read back by resolveReplyTarget, so the replier
@@ -254,6 +260,7 @@ func deliveredBody(b *agentboard.Board, st *agentboard.ConnState, msgs []agentbo
 		dm.SetPayload(m.Payload)
 		dm.SetFromHostname([]byte(m.FromHostname))
 		dm.SetFromAgentProfile([]byte(m.FromAgentProfile))
+		dm.SetFromName([]byte(m.FromName))
 		dm.SetReplyToTopic([]byte(m.ReplyToTopic))
 		rows = append(rows, dm)
 	}
@@ -454,6 +461,7 @@ func (h *TaskHandler) handleAgentListRetained(conn ConnHandle, requestID uint32,
 				}
 				meta.SetFromHostname([]byte(m.FromHostname))
 				meta.SetFromAgentProfile([]byte(m.FromAgentProfile))
+				meta.SetFromName([]byte(m.FromName))
 				meta.SetReplyToTopic([]byte(m.ReplyToTopic))
 				metas = append(metas, meta)
 			}

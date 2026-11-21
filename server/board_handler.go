@@ -167,6 +167,7 @@ func boardMessageRows(msgs []agentboard.RetainedMessage) []protocol.BoardMessage
 		row.SetBody(m.Payload)
 		row.SetFromHostname([]byte(m.FromHostname))
 		row.SetFromAgentProfile([]byte(m.FromAgentProfile))
+		row.SetFromName([]byte(m.FromName))
 		row.SetReplyToTopic([]byte(m.ReplyToTopic))
 		if !m.RetractedAt.IsZero() {
 			row.SetRetracted(true)

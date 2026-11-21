@@ -55,6 +55,10 @@ type Board struct {
 	// tasks. Called with no board lock held.
 	onDeliver func(protocol.RunnerID, protocol.TaskID)
 	reach     ReachSource // nil = no reach enforcement; see SetReach
+	// nameOf resolves a sender task's display name, frozen onto each message
+	// it publishes (RetainedMessage.FromName). nil = no names; see
+	// SetNameSource.
+	nameOf func(protocol.TaskID) string
 	// store mirrors retained topics to disk; nil until AttachStore. Topics
 	// without a retention never touch it.
 	store Store
@@ -164,6 +168,34 @@ func (b *Board) SetOnDeliver(fn func(protocol.RunnerID, protocol.TaskID)) {
 	b.mu.Lock()
 	b.onDeliver = fn
 	b.mu.Unlock()
+}
+
+// SetNameSource installs what Send asks for a sender task's display name.
+// Called with no board lock held: it may take the task store's.
+func (b *Board) SetNameSource(fn func(protocol.TaskID) string) {
+	b.mu.Lock()
+	b.nameOf = fn
+	b.mu.Unlock()
+}
+
+// senderName is fromTid's display name, or "" for a zero id or no source.
+func (b *Board) senderName(fromTid protocol.TaskID) string {
+	b.mu.Lock()
+	fn := b.nameOf
+	b.mu.Unlock()
+	if fn == nil || fromTid == (protocol.TaskID{}) {
+		return ""
+	}
+	return fn(fromTid)
+}
+
+// PublishedByTask reports a message a task published on its own behalf on the
+// agent face — an agent's or a credential's (credential-tasks D10). Its
+// from_task is the publisher, so the publisher's chat.<id> is where an
+// answer goes and what the recipient may answer on. An operator-face or
+// server publish may carry a task id it does not speak for.
+func PublishedByTask(k protocol.SenderKind) bool {
+	return k == protocol.SenderKind_Agent || k == protocol.SenderKind_Credential
 }
 
 // Attach is called from the agent_message Hello handler after Validate(rid, tid, ticket)
@@ -359,10 +391,11 @@ func (b *Board) Send(topicName string, payload []byte, fromRid protocol.RunnerID
 	for _, o := range opts {
 		o(&cfg)
 	}
+	cfg.fromName = b.senderName(fromTid)
 	b.mu.Lock()
 	// A member's own publish is answered on the topic unless it names a route.
 	// Not a server notification or an operator-face send made in its name.
-	if cfg.replyToTopic == "" && cfg.senderKind == protocol.SenderKind_Agent &&
+	if cfg.replyToTopic == "" && PublishedByTask(cfg.senderKind) &&
 		fromTid != (protocol.TaskID{}) && b.isMemberLocked(fromTid, topicName) {
 		cfg.replyToTopic = topicName
 	}
@@ -799,6 +832,7 @@ type sendConfig struct {
 	noRetireOnReply bool
 	replyToTopic    string
 	senderKind      protocol.SenderKind
+	fromName        string // set by Send, never by an option
 	noWake          bool
 	noContact       bool
 	excludeSelf     bool

@@ -28,10 +28,14 @@ type RetainedMessage struct {
 	// server could not attribute a runtime (see agentboard.bgn
 	// DeliveredMessage.from_agent_profile).
 	FromAgentProfile string
-	// SenderKind is who published it (agent / operator / server). from_task
+	// SenderKind is who published it (agent / operator / server / credential). from_task
 	// alone cannot say: an operator and a server publish can both carry a zero
 	// task id.
 	SenderKind protocol.SenderKind
+	// FromName is FromTask's display name when the message was published,
+	// frozen for FromAgentProfile's reason. Empty = FromTask has none (or is
+	// zero), or the board has no name source.
+	FromName string
 	// ReplyToTopic is where the SENDER asked replies to this message to go.
 	// Empty = the sender's own chat.<short-id>, which is what resolveReplyTarget
 	// falls back to. Frozen here with the message for the same reason
@@ -144,6 +148,7 @@ func (t *topic) appendLocked(seq uint64, payload []byte, fromRid protocol.Runner
 		FromHostname:     fromHost,
 		FromAgentProfile: fromProfile,
 		SenderKind:       cfg.senderKind,
+		FromName:         cfg.fromName,
 		ReplyToTopic:     cfg.replyToTopic,
 		ReceivedAt:       now,
 		NoRetireOnReply:  cfg.noRetireOnReply,

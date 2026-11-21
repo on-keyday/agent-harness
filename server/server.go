@@ -1832,6 +1832,11 @@ func (s *Server) SetBoard(b *agentboard.Board) {
 	// Reach is decided from the task store on every board read and publish;
 	// without this the board enforces nothing (agentboard.SetReach).
 	b.SetReach(storeReach{s.tasks})
+	// Each message freezes its sender task's display name (from_name).
+	b.SetNameSource(func(tid protocol.TaskID) string {
+		e, _ := s.tasks.Get(hex.EncodeToString(tid.Id[:]))
+		return e.Name
+	})
 }
 
 // onDialed receives every connection the server made (one-shot dial, via

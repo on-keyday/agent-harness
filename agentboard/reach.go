@@ -233,7 +233,7 @@ func (b *Board) NoteDelivered(c *ConnState, msgs []RetainedMessage) {
 		switch {
 		case m.ReplyToTopic != "":
 			c.task.addContact(m.ReplyToTopic, m.Seq)
-		case m.SenderKind == protocol.SenderKind_Agent:
+		case PublishedByTask(m.SenderKind):
 			c.task.addContact(SelfTopic(m.FromTask), m.Seq)
 		}
 	}

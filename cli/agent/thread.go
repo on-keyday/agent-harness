@@ -197,6 +197,7 @@ func retainedMetas(ctx context.Context, c *cli.Client, topic string) ([]cli.Boar
 				FromHostname:     string(m.FromHostname),
 				FromAgentProfile: string(m.FromAgentProfile),
 				SenderKind:       cli.SenderKindName(m.SenderKind),
+				FromName:         string(m.FromName),
 				ReplyToTopic:     string(m.ReplyToTopic),
 				ReceivedAtMs:     m.ReceivedAtUnixMs,
 			})

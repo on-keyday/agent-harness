@@ -1361,15 +1361,20 @@ format TaskInfo:
     reserved :u7
     if schedule_present == 1:
         schedule_id :ScheduleID
-    # Credential tasks (credential-tasks D7, D20), appended; all zero for any
+    # Credential tasks (credential-tasks D7, D20), appended; both zero for any
     # other kind. credential_expires_at is unix nanos on the SERVER clock.
     # credential_last_used_at is the last accepted handshake, kept in memory
     # only: 0 = not used since the server started, which is not "never used".
-    # credential_name is the issuer's optional label (<= 64 bytes).
     credential_expires_at :u64
     credential_last_used_at :u64
-    credential_name_len :u8
-    credential_name :[credential_name_len]u8
+    # name is the task's single display name (<= 64 bytes), empty when it has
+    # none. Kind-agnostic, though today only a credential issue (`--name`) sets
+    # it; no verb sets it on another task. It is NOT the backlog's task labels
+    # (docs/backlog.md "Task labels"): those are many per task, inherited, and
+    # gated by their own bit. A board message freezes its sender's name as
+    # from_name.
+    name_len :u8
+    name :[name_len]u8
 
 format ListResult:
     # Server-initiated send-stream id; client reads ListResultBody bytes
@@ -1725,11 +1730,17 @@ enum RetractedBy:
 # borrowed) from_task. Before this field the server's await-idle publish was
 # recognisable only by from_hostname "server", a convention; the kind carries
 # it. agent is 0 so a row nobody stamped means what every row meant before.
+#
+# credential (appended, credential-tasks D10): a credential task published it
+# on the agent face. Like agent, from_task is the publisher and its chat.<id>
+# is where a reply goes; unlike agent, no process stands behind it (nothing is
+# woken for it), so the two are told apart.
 enum SenderKind:
     :u8
     agent
     operator
     server
+    credential
 
 format BoardMessageRow:
     seq :u64
@@ -1782,6 +1793,11 @@ format BoardMessageRow:
     # Who published it; see SenderKind. from_task is the caller's principal
     # task for an operator publish (zero for a real operator connection).
     sender_kind :SenderKind
+    # from_name is from_task's display name (TaskInfo.name) at publish time,
+    # frozen like from_agent_profile; empty when from_task has none or is
+    # zero. Appended.
+    from_name_len :u8
+    from_name :[from_name_len]u8
 
 # stream_id: see BoardTopicsResponse. 0 when status is not_found.
 format BoardReadResponse:
@@ -2273,6 +2289,9 @@ format DeliveredMessage:
     # Who published it; see SenderKind. from_task is the caller's principal
     # task for an operator publish (zero for a real operator connection).
     sender_kind :SenderKind
+    # See BoardMessageRow.from_name. Appended.
+    from_name_len :u8
+    from_name :[from_name_len]u8
 
 # DeliveredBody is the stream body of wait, inbox, inbox_advance and read_seq —
 # one format for all four, because the rows are the same.
@@ -2414,6 +2433,9 @@ format RetainedMeta:
     # Who published it; see SenderKind. from_task is the caller's principal
     # task for an operator publish (zero for a real operator connection).
     sender_kind :SenderKind
+    # See BoardMessageRow.from_name. Appended.
+    from_name_len :u8
+    from_name :[from_name_len]u8
 
 # stream_id: see BoardTopicsResponse. 0 when status is not_found.
 format AgentListRetainedResponse:

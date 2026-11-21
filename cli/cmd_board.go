@@ -84,6 +84,7 @@ func emitBoardMessageJSON(out io.Writer, topic string, m BoardMessage, subs []Bo
 			"task_id":  m.FromTaskHex,
 			"hostname": m.FromHostname,
 			"agent":    m.FromAgentProfile,
+			"name":     m.FromName,
 		},
 	}
 	PutPayloadFields(rec, m.Payload, false)
@@ -613,7 +614,7 @@ func RenderThreads(out io.Writer, rows []ThreadRow, opts ThreadRenderOptions, ke
 		}
 		fmt.Fprintf(out, "%s#%d%s%s topic=%s from=%s host=%s agent=%s size=%d at=%s%s\n",
 			TreePrefix(r.IsLast), r.Msg.Seq, re, replyTo, r.Topic,
-			SenderParty(r.Msg.SenderKind, r.Msg.FromTaskHex), r.Msg.FromHostname,
+			SenderDisplay(r.Msg.SenderKind, r.Msg.FromTaskHex, r.Msg.FromName), r.Msg.FromHostname,
 			boardAgentOrDash(r.Msg.FromAgentProfile), r.Size,
 			boardMsToRFC3339(r.Msg.ReceivedAtMs), marker)
 		if !opts.HeadersOnly {
@@ -656,6 +657,7 @@ func emitThreadRowJSON(out io.Writer, r ThreadRow, includeBody bool) {
 			"task_id":  r.Msg.FromTaskHex,
 			"hostname": r.Msg.FromHostname,
 			"agent":    r.Msg.FromAgentProfile,
+			"name":     r.Msg.FromName,
 		},
 	}
 	if r.Msg.Retracted {
@@ -799,7 +801,7 @@ func printBoardMessages(out io.Writer, topic string, msgs []BoardMessage, subs [
 			replyTo = fmt.Sprintf(" reply-to=%s", m.ReplyToTopic)
 		}
 		fmt.Fprintf(out, "#%d%s%s from=%s sender=%s host=%s agent=%s size=%d at=%s%s%s\n",
-			m.Seq, re, replyTo, SenderLabel(m.SenderKind, m.FromTaskHex), boardSenderOrDash(m.SenderKind),
+			m.Seq, re, replyTo, SenderLabel(m.SenderKind, m.FromTaskHex, m.FromName), boardSenderOrDash(m.SenderKind),
 			m.FromHostname, boardAgentOrDash(m.FromAgentProfile),
 			len(m.Payload), boardMsToRFC3339(m.ReceivedAtMs),
 			shownTo(m), retracted)

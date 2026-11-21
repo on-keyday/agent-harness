@@ -67,6 +67,7 @@ func emitMessageRecord(w io.Writer, m protocol.DeliveredMessage, payload []byte,
 			"task_id":   hex.EncodeToString(m.FromTaskId.Id[:]),
 			"hostname":  string(m.FromHostname),
 			"agent":     string(m.FromAgentProfile),
+			"name":      string(m.FromName),
 		},
 		// Beside "from", not inside it: who published is not part of the
 		// sender's identity block, and a reader ignoring unknown keys at the

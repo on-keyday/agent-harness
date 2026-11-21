@@ -48,3 +48,22 @@ func TestAttachTicketlessSeedsInboundAndNeverWakes(t *testing.T) {
 		t.Error("the attach after Revoke did not seed the task's chat")
 	}
 }
+
+// A credential member's own publish on a member topic is answered there, as
+// an agent member's is (PublishedByTask).
+func TestCredentialMemberPublishIsAnsweredOnTheTopic(t *testing.T) {
+	r := newFakeReach()
+	me := tidN(1)
+	r.add(me, protocol.TaskID{}, 0)
+	b := reachBoard(t, r)
+	if err := b.Join(me, "grp"); err != nil {
+		t.Fatal(err)
+	}
+	seq, _, err := b.Send("grp", []byte("x"), protocol.RunnerID{}, me, "", "", 0, WithSenderKind(protocol.SenderKind_Credential))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m, ok := b.Retained(seq); !ok || m.ReplyToTopic != "grp" {
+		t.Fatalf("reply_to_topic %q, want grp", m.ReplyToTopic)
+	}
+}

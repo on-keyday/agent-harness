@@ -184,12 +184,16 @@ type TaskEntry struct {
 	// CredentialPubKey is the Ed25519 public key a connection must sign with;
 	// the server never holds the private half. ExpiresAt ends the credential
 	// (D7, D8). Both are written at issue and replaced by a re-key (D18).
-	// CredentialName is the issuer's label. LastUsedAt is the last accepted
-	// use, memory only (D20).
+	// LastUsedAt is the last accepted use, memory only (D20).
 	CredentialPubKey [32]byte
 	ExpiresAt        time.Time
 	LastUsedAt       time.Time
-	CredentialName   string
+
+	// Name is the task's single display name; empty when it has none. Any kind
+	// may carry one, but today only a credential issue sets it. Not the
+	// backlog's task labels (many per task, inherited). A board message
+	// freezes it as from_name.
+	Name string
 }
 
 // TaskStore is the in-memory authority for task lifecycle.
@@ -1466,7 +1470,7 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 				t.StartedAt = &started
 				t.CredentialPubKey = credentialKeyFromWAL(ev.TaskID, ev.CredentialPubKey)
 				t.ExpiresAt = expiryFromWAL(ev.ExpiresAtNs)
-				t.CredentialName = ev.CredentialName
+				t.Name = ev.Name
 			}
 			s.order = append(s.order, ev.TaskID)
 		case "task_assigned":

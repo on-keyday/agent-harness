@@ -145,9 +145,9 @@ func TestToTaskInfoMapsEveryField(t *testing.T) {
 		NoPTY:           true,
 		// The credential fields, set on an interactive entry on purpose: the
 		// mapper copies them whatever the kind (they are zero on any other).
-		ExpiresAt:      now.Add(time.Hour),
-		LastUsedAt:     now.Add(-time.Minute),
-		CredentialName: "nightly",
+		ExpiresAt:  now.Add(time.Hour),
+		LastUsedAt: now.Add(-time.Minute),
+		Name:       "nightly",
 	}
 	info := toTaskInfo(e)
 	assertNoZeroFields(t, info, mergeSkips(map[string]string{

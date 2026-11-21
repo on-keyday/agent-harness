@@ -69,7 +69,7 @@ func (c *credentialFields) apply(e *TaskEntry, now time.Time) {
 	e.StartedAt = &started
 	e.CredentialPubKey = c.pub
 	e.ExpiresAt = c.expiresAt
-	e.CredentialName = c.name
+	e.Name = c.name
 }
 
 // toWAL adds the credential's fields to its task_created record.
@@ -77,7 +77,7 @@ func (c *credentialFields) toWAL(ev *WALEvent, now time.Time) {
 	ev.Ts = now.UnixNano() // replay's CreatedAt and StartedAt
 	ev.CredentialPubKey = hex.EncodeToString(c.pub[:])
 	ev.ExpiresAtNs = expiryToWAL(c.expiresAt)
-	ev.CredentialName = c.name
+	ev.Name = c.name
 }
 
 func expiryToWAL(t time.Time) int64 {

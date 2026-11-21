@@ -278,3 +278,53 @@ func TestFileStore_FlushBatches(t *testing.T) {
 		t.Fatal("Close did not flush the buffered record")
 	}
 }
+
+// The sender's identity on disk across the credential-tasks change (D10):
+// sender_kind gained credential (3) and a record gained from_name. A log
+// written before either — no from_name key, sender_kind 0..2 or absent —
+// must load unchanged, and a new record must load with both.
+func TestFileStore_SenderIdentityAcrossLayouts(t *testing.T) {
+	dir := t.TempDir()
+	s := openTestStore(t, dir, time.Hour)
+	if err := s.SetRetention("layout", Retention{Forever: true}); err != nil {
+		t.Fatal(err)
+	}
+	cred := storeMsg(3, "new")
+	cred.SenderKind, cred.FromName = protocol.SenderKind_Credential, "ci"
+	if err := s.Append("layout", cred); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// Two records exactly as the previous layout wrote them: a server publish
+	// (sender_kind 2) and an agent's, whose zero kind omitempty left out.
+	task := "fa" + strings.Repeat("00", 15)
+	f, err := os.OpenFile(logFileOf(t, dir, "layout"), os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = f.WriteString(`{"t":"msg","seq":1,"payload":"b2xk","from_task":"` + task + `","from_hostname":"server","sender_kind":2,"received_at_ms":1700000000001}` + "\n")
+	_, _ = f.WriteString(`{"t":"msg","seq":2,"payload":"b2xk","from_task":"` + task + `","from_hostname":"h","from_agent_profile":"claude","received_at_ms":1700000000002}` + "\n")
+	_ = f.Close()
+
+	s2 := openTestStore(t, dir, time.Hour)
+	defer s2.Close()
+	topics, err := s2.Load(64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(topics) != 1 || len(topics[0].Ring) != 3 {
+		t.Fatalf("loaded %+v, want 3 messages", topics)
+	}
+	want := map[uint64]struct {
+		kind protocol.SenderKind
+		name string
+	}{1: {protocol.SenderKind_Server, ""}, 2: {protocol.SenderKind_Agent, ""}, 3: {protocol.SenderKind_Credential, "ci"}}
+	for _, m := range topics[0].Ring {
+		w := want[m.Seq]
+		if m.SenderKind != w.kind || m.FromName != w.name || m.FromTask != fsTask {
+			t.Errorf("seq %d: kind %v name %q task %x, want %v %q %x", m.Seq, m.SenderKind, m.FromName, m.FromTask.Id, w.kind, w.name, fsTask.Id)
+		}
+	}
+}

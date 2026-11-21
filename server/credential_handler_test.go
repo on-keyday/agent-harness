@@ -138,8 +138,8 @@ func TestCredentialIssueNeedsIssueBit(t *testing.T) {
 	if !ok || rec.Kind != protocol.TaskKind_Credential || rec.Status != protocol.TaskStatus_Active {
 		t.Fatalf("issued row %+v ok=%v", rec, ok)
 	}
-	if rec.CredentialPubKey != pub || rec.CredentialName != "ci" || rec.CreatorTaskID != (protocol.TaskID{}) {
-		t.Fatalf("issued row key/name/creator %x %q %x", rec.CredentialPubKey, rec.CredentialName, rec.CreatorTaskID.Id)
+	if rec.CredentialPubKey != pub || rec.Name != "ci" || rec.CreatorTaskID != (protocol.TaskID{}) {
+		t.Fatalf("issued row key/name/creator %x %q %x", rec.CredentialPubKey, rec.Name, rec.CreatorTaskID.Id)
 	}
 	if rec.ExpiresAt.Before(start.Add(time.Hour)) || rec.ExpiresAt.After(time.Now().Add(time.Hour)) {
 		t.Fatalf("expiry %v is not now + 1h on the server clock", rec.ExpiresAt)
@@ -717,9 +717,9 @@ func TestListCarriesCredentialFields(t *testing.T) {
 		}
 		if ti.Kind != protocol.TaskKind_Credential || ti.Status != protocol.TaskStatus_Active ||
 			ti.CredentialExpiresAt != uint64(rec.ExpiresAt.UnixNano()) || ti.CredentialLastUsedAt != uint64(used.UnixNano()) ||
-			string(ti.CredentialName) != "nightly" {
+			string(ti.Name) != "nightly" {
 			t.Fatalf("listed credential: kind %v status %v expiry %d last used %d name %q", ti.Kind, ti.Status,
-				ti.CredentialExpiresAt, ti.CredentialLastUsedAt, ti.CredentialName)
+				ti.CredentialExpiresAt, ti.CredentialLastUsedAt, ti.Name)
 		}
 		return
 	}

@@ -143,7 +143,7 @@ func TestTaskInfoCredentialTailRoundTrip(t *testing.T) {
 	ti.OriginKind = ClientKind_Credential
 	ti.CredentialExpiresAt = 1700000000000000001
 	ti.CredentialLastUsedAt = 1700000000000000002
-	ti.SetCredentialName([]byte("ci"))
+	ti.SetName([]byte("ci"))
 	ti.SetSchedulePresent(true)
 	ti.SetScheduleId(schedID(0x22))
 	var got TaskInfo
@@ -151,7 +151,7 @@ func TestTaskInfoCredentialTailRoundTrip(t *testing.T) {
 		func(b []byte) error { return got.DecodeExact(b) },
 		func() []byte { return got.MustAppend(nil) })
 	if got.CredentialExpiresAt != ti.CredentialExpiresAt || got.CredentialLastUsedAt != ti.CredentialLastUsedAt ||
-		string(got.CredentialName) != "ci" || got.Kind != TaskKind_Credential || got.Status != TaskStatus_Active ||
+		string(got.Name) != "ci" || got.Kind != TaskKind_Credential || got.Status != TaskStatus_Active ||
 		got.EndReason != EndReason_Expired || got.ScheduleId() == nil {
 		t.Fatalf("task info tail = %+v", got)
 	}

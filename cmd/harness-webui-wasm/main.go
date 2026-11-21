@@ -2417,7 +2417,7 @@ func harnessBoardThread(this js.Value, args []js.Value) any {
 						"hostname":     r.Msg.FromHostname,
 						"agentProfile": r.Msg.FromAgentProfile,
 						"senderKind":   r.Msg.SenderKind,
-						"senderParty":  cli.SenderParty(r.Msg.SenderKind, r.Msg.FromTaskHex),
+						"senderParty":  cli.SenderDisplay(r.Msg.SenderKind, r.Msg.FromTaskHex, r.Msg.FromName),
 					},
 					"retracted":     r.Msg.Retracted,
 					"retractedAtMs": float64(r.Msg.RetractedAtMs),
@@ -6040,7 +6040,7 @@ func boardMessageJS(m cli.BoardMessage, shownN, shownTotal int) map[string]any {
 		// kind for the operator and the server, whose task id
 		// may be all zeros, else the 8-hex prefix.
 		"senderKind":   m.SenderKind,
-		"senderParty":  cli.SenderParty(m.SenderKind, m.FromTaskHex),
+		"senderParty":  cli.SenderDisplay(m.SenderKind, m.FromTaskHex, m.FromName),
 		"receivedAtMs": float64(m.ReceivedAtMs),
 		"payload":      string(m.Payload),
 		// A withdrawn message. It reaches no agent any more and

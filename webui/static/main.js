@@ -7535,8 +7535,9 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
 
         const fromSpan = document.createElement("span");
         fromSpan.className = "board-msg-from";
-        // senderParty is decided in Go (cli.SenderParty): "operator" /
-        // "server" by kind, else the 8-hex prefix.
+        // senderParty is decided in Go (cli.SenderDisplay): "operator" /
+        // "server" by kind, "credential <name>" for a credential, else the
+        // 8-hex prefix.
         fromSpan.textContent = `from=${m.senderParty || "-"}`;
 
         const hostSpan = document.createElement("span");

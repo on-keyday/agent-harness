@@ -2611,7 +2611,7 @@ func toTaskInfo(t TaskEntry) protocol.TaskInfo {
 	// Credential tasks (credential-tasks D7, D20); zero on any other kind.
 	info.CredentialExpiresAt = unixNano(t.ExpiresAt)
 	info.CredentialLastUsedAt = unixNano(t.LastUsedAt)
-	info.SetCredentialName([]byte(t.CredentialName))
+	info.SetName([]byte(t.Name))
 	return info
 }
 
