@@ -165,6 +165,12 @@ that started you had exported. They name the task you were launched **under**
 treat the inherited id as "self"; if you want that task marked in a list,
 label it rather than filtering on it.
 
+The ticket does not outlive the agent process it came from. A new process, or
+a resume, means a new ticket — and a resume replaces the runner id along with
+it, so the two must be refreshed **together**. Read them from the environment
+at the moment of use and write them nowhere: not to a config file, not to a
+unit file, not into your own cache.
+
 **A tool can run under a credential instead of an inherited ticket.** If it
 must outlive any agent process (cron, CI, a webhook receiver), have the operator
 or a task holding `credential_issue` issue it one (`harness-cli credential new
@@ -175,15 +181,9 @@ the weaker form because it lands in the process environment). A credential
 wins over an inherited `HARNESS_AUTH_TICKET` and over the operator PSK, so the
 tool acts as the credential and nothing else. It is durable (survives a server
 restart and any agent resume), attenuated (only the caps and scope it was
-issued with), and expiring (a `--ttl` is required, at most 90 days). Then
-`HARNESS_TASK_ID` is no longer the task you act under — `whoami` reports the
-credential's task id, caps, scope and expiry.
-
-The ticket does not outlive the agent process it came from. A new process, or
-a resume, means a new ticket — and a resume replaces the runner id along with
-it, so the two must be refreshed **together**. Read them from the environment
-at the moment of use and write them nowhere: not to a config file, not to a
-unit file, not into your own cache.
+issued with), and expiring (a `--ttl` is required, at most 90 days). Under a
+credential `HARNESS_TASK_ID` is no longer the task you act under — `whoami`
+reports the credential's task id, caps, scope and expiry.
 
 ## 8. When the handshake is rejected, say which kind
 
@@ -230,4 +230,7 @@ message that helps is "restart me", not "check your credentials".
 for "no such task", so a task that no longer exists is reported as `BadTicket`
 too. If a harness-server restart is anywhere in the timeline, read it as "that
 task is gone; resume it" before suspecting rotation or PSK configuration. What
-a resume then does to the two credentials is §7.
+a resume then does to the two credentials is §7. This does not apply to a tool
+running under a credential: a credential task survives a server restart, so its
+`BadTicket` is the wrong-key reading above, and the fix is a `credential rekey`
+(or a fresh `credential new`) by whoever may issue it, never a resume.

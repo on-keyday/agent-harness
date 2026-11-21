@@ -332,9 +332,11 @@ type TaskHandler struct {
 	//
 	// Lock order: credentialMu first. It is never taken while holding another
 	// lock (OnCancel runs after TaskStore releases mu; the gate dispatch holds
-	// none), and under it the code takes, one at a time and each released
-	// before the next, TaskStore.mu, clientKindsMu and the board's locks. None
-	// of those paths takes credentialMu.
+	// none; RecordCredentialIdentity releases clientKindsMu before taking
+	// it), and under it the code takes, one at a time and each released
+	// before the next, TaskStore.mu, Server.agentConnsMu (the board attach,
+	// establishCredentialBoard) and the board's locks. None of those paths
+	// takes credentialMu.
 	credentialMu sync.Mutex
 	// afterCredentialRekeyStore is a test seam: when set, rekeyLocked calls
 	// it under credentialMu between the store's re-key and the board revoke.

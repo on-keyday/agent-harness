@@ -1948,7 +1948,9 @@ schedule held full `resume`); a `run` while its task is still to be created
 needs `spawn`. An unbound
 schedule needs neither (nothing runs until a bind, which is checked then). A missing bit answers the same permission denial
 as any other bit (`permission denied: ScheduleCreate requires capability
-spawn`); T outside `resume`'s scope answers `task_not_reachable`. Reach and the
+spawn`); T out of reach answers `task_not_reachable` — for a bind or an edit,
+outside `resume`'s scope; for a `run`, outside both `resume`'s and
+`resume_exact`'s. Reach and the
 own-task refusal are answered first. `rm`, `ls` and `show` are unchanged, and a
 firing checks nothing: the check was made when the schedule was written.
 
@@ -2091,7 +2093,7 @@ read` / `agent wait`. A message from it carries `sender_kind=credential` and
 `credential <id8>` when unnamed).
 
 **Surfaces.** CLI: the verbs above (`keygen` and `bind` run only there, and
-`--out` is a CLI/TUI flag). TUI: a **Credentials** table beside Schedules (see
+`--out` is a CLI/TUI flag; the TUI writes the file on its own host). TUI: a **Credentials** table beside Schedules (see
 **TUI**). WebUI: the **Credentials** button opens a dialog listing the rows
 with **Copy id** / **Revoke** / **Re-key**, and an issue form (caps chips, scope,
 generate or paste a public key); a generated secret is shown once with Copy and
