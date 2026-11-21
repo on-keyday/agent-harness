@@ -281,6 +281,19 @@ type TaskHandler struct {
 	// ones (RecordCredentialIdentity). Every cap and scope check resolves the
 	// caller through it, and Create records it as CreatorTaskID.
 	principals map[string]protocol.TaskID
+	// credentialKeys maps connection ID → the public key a kind=credential
+	// connection proved at its handshake. principalRecord holds the
+	// connection to it: once the credential's stored key is another, the
+	// connection holds nothing. Same lifetime as principals.
+	credentialKeys map[string][32]byte
+}
+
+// lookupCredentialKey is the key connID's credential handshake proved; zero
+// for any other connection.
+func (h *TaskHandler) lookupCredentialKey(connID string) [32]byte {
+	h.clientKindsMu.Lock()
+	defer h.clientKindsMu.Unlock()
+	return h.credentialKeys[connID]
 }
 
 // lookupClientKind returns the ClientKind associated with connID.
@@ -356,21 +369,25 @@ func (h *TaskHandler) RecordClientIdentity(cid string, conn ConnHandle, hello *p
 
 // RecordCredentialIdentity records a connection the gate accepted under
 // AuthRole.credential: its kind is ClientKind_Credential and its principal is
-// the credential task tid, exactly as an agent's is its task (D6). It sends no
-// wire response; the gate's PskAuthResponse is the handshake's answer.
+// the credential task tid, exactly as an agent's is its task (D6). pub is the
+// public key the gate verified the signature against; the connection's
+// authority is bound to it (principalRecord), so it ends when the credential
+// is re-keyed even while the connection is still open (D18: a replaced key is
+// never valid again). It sends no wire response; the gate's PskAuthResponse
+// is the handshake's answer.
 //
 // A zero tid is refused before anything is recorded: a connection whose
 // principal reads as zero is the operator (callerCaps), so this is the line
-// that keeps a credential from ever becoming one.
+// that keeps a credential from ever becoming one. A zero pub is refused too:
+// no live credential has it (CredentialLive), so it can only mean the key
+// never reached here.
 //
-// Liveness is read again AFTER the principal is recorded. A revoke landing
-// between the gate's check and this call ends the task first and then closes
-// the connections whose principal is that task (OnCancel); recording first
-// means either that close finds this connection, or this read sees the task
-// ended and refuses it. Without the second read the connection would stay
-// open, powerless but attached.
-func (h *TaskHandler) RecordCredentialIdentity(cid string, conn ConnHandle, tid protocol.TaskID) protocol.ClientHelloStatus {
-	if tid.Id == ([16]byte{}) {
+// Liveness is read again AFTER the principal is recorded, against pub. A
+// revoke or re-key landing between the gate's check and this call either
+// finds this connection when it closes the task's connections (it is already
+// recorded), or is seen here: the task ended, or its key is no longer pub.
+func (h *TaskHandler) RecordCredentialIdentity(cid string, conn ConnHandle, tid protocol.TaskID, pub [32]byte) protocol.ClientHelloStatus {
+	if tid.Id == ([16]byte{}) || pub == ([32]byte{}) {
 		return protocol.ClientHelloStatus_NotPermitted
 	}
 	h.clientKindsMu.Lock()
@@ -380,13 +397,17 @@ func (h *TaskHandler) RecordCredentialIdentity(cid string, conn ConnHandle, tid 
 	if h.principals == nil {
 		h.principals = make(map[string]protocol.TaskID)
 	}
+	if h.credentialKeys == nil {
+		h.credentialKeys = make(map[string][32]byte)
+	}
 	h.clientKinds[cid] = protocol.ClientKind_Credential
 	h.principals[cid] = tid
+	h.credentialKeys[cid] = pub
 	h.clientKindsMu.Unlock()
 
 	idHex := hex.EncodeToString(tid.Id[:])
 	now := time.Now()
-	if _, state, ok := h.Tasks.CredentialLive(idHex, now); !ok || state != CredentialLive {
+	if cur, state, ok := h.Tasks.CredentialLive(idHex, now); !ok || state != CredentialLive || cur != pub {
 		return protocol.ClientHelloStatus_NotPermitted
 	}
 	h.Tasks.TouchCredential(idHex, now)

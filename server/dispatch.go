@@ -71,11 +71,12 @@ type Dispatcher struct {
 	RecordClientIdentity func(cid string, conn ConnHandle, hello *protocol.ClientHello) protocol.ClientHelloStatus
 
 	// RecordCredentialIdentity records a role=credential connection's
-	// principal: the credential task the gate verified. Wired by Server.New to
+	// principal: the credential task the gate verified, bound to the public
+	// key it verified against. Wired by Server.New to
 	// s.taskHandler.RecordCredentialIdentity. When nil, pskDispatchIdentity
 	// refuses the connection — there is no other path that records a
 	// credential's principal, and one recorded as none would be the operator.
-	RecordCredentialIdentity func(cid string, conn ConnHandle, tid protocol.TaskID) protocol.ClientHelloStatus
+	RecordCredentialIdentity func(cid string, conn ConnHandle, tid protocol.TaskID, pub [32]byte) protocol.ClientHelloStatus
 
 	// Registry and Tasks are used by OnCancel.
 	Registry *Registry

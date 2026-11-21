@@ -22,10 +22,13 @@ import (
 // the field, though it emits an extra TaskControlResponse which legacy clients tolerate).
 //
 // Credential role: records the credential task as the connection's principal
-// (d.RecordCredentialIdentity). There is no hello to re-dispatch, and no
-// fallback: with nothing wired to record the principal the connection would
-// stay authenticated with none, which callerCaps reads as the operator, so it
-// is closed instead.
+// (d.RecordCredentialIdentity), bound to credKey — the public key the gate
+// verified the signature against (pskGate.CredentialKey). The request carries
+// only the task id, so the key comes from the gate, not from req. There is no
+// hello to re-dispatch, and no fallback: with nothing wired to record the
+// principal the connection would stay authenticated with none, which
+// callerCaps reads as the operator, so it is closed instead. credKey is
+// ignored for the other roles.
 //
 // Runner role: re-dispatches via [0x43]+RunnerMessage{Hello} unchanged. The
 // runner NEEDS the RunnerHelloResponse (it carries YourRunnerId consumed at
@@ -34,7 +37,7 @@ import (
 // Wire encoding used for the runner path:
 //
 //	runner_hello → [0x43] + RunnerMessage{Kind:Hello, hello}
-func pskDispatchIdentity(d *Dispatcher, conn ConnHandle, req *protocol.PskAuthRequest) bool {
+func pskDispatchIdentity(d *Dispatcher, conn ConnHandle, req *protocol.PskAuthRequest, credKey [32]byte) bool {
 	switch req.Role {
 	case protocol.AuthRole_Client:
 		hello := req.ClientHello()
@@ -74,7 +77,7 @@ func pskDispatchIdentity(d *Dispatcher, conn ConnHandle, req *protocol.PskAuthRe
 		if a == nil || d.RecordCredentialIdentity == nil {
 			return false
 		}
-		return d.RecordCredentialIdentity(conn.ConnectionID().String(), conn, a.TaskId) == protocol.ClientHelloStatus_Ok
+		return d.RecordCredentialIdentity(conn.ConnectionID().String(), conn, a.TaskId, credKey) == protocol.ClientHelloStatus_Ok
 	}
 	return false
 }
@@ -107,6 +110,11 @@ type pskGate struct {
 	// runnerKey is the enrolled key a role=runner connection signed with;
 	// nil for every other connection.
 	runnerKey ed25519.PublicKey
+	// credentialKey is the stored public key a role=credential connection's
+	// signature verified against; zero for every other connection. The
+	// connection's authority is bound to it (RecordCredentialIdentity), so a
+	// re-key ends it even before the connection is closed.
+	credentialKey [32]byte
 	// runnerKeys is the set of keys allowed to register under role=runner.
 	runnerKeys *RunnerKeyStore
 	// cid names the connection in the gate's own log lines.
@@ -166,6 +174,10 @@ func (g *pskGate) keyEnrolled(key ed25519.PublicKey) bool {
 
 // RunnerKey is the enrolled key a role=runner connection proved; nil otherwise.
 func (g *pskGate) RunnerKey() ed25519.PublicKey { return g.runnerKey }
+
+// CredentialKey is the credential key a role=credential connection proved;
+// zero otherwise.
+func (g *pskGate) CredentialKey() [32]byte { return g.credentialKey }
 
 // Rejected reports the status of the refusal this gate sent, if any.
 func (g *pskGate) Rejected() (protocol.PskAuthStatus, bool) { return g.rejected, g.hasRejected }
@@ -354,6 +366,7 @@ func (g *pskGate) Check(
 			g.respond(sendFn, transcript, protocol.PskAuthStatus_Revoked)
 			return true, true, nil
 		}
+		g.credentialKey = pub
 	}
 
 	// Step 3: Identity required (fail-closed).

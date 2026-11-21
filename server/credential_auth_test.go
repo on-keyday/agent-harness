@@ -381,7 +381,7 @@ func TestCredentialPrincipalIsNeverZero(t *testing.T) {
 func TestRecordCredentialIdentityRefusesZero(t *testing.T) {
 	h := newTestTaskHandler(NewTaskStore())
 	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9300-1")}
-	if st := h.RecordCredentialIdentity(conn.id.String(), conn, protocol.TaskID{}); st == protocol.ClientHelloStatus_Ok {
+	if st := h.RecordCredentialIdentity(conn.id.String(), conn, protocol.TaskID{}, credKey(1)); st == protocol.ClientHelloStatus_Ok {
 		t.Fatal("a zero credential principal was recorded")
 	}
 	if k := h.lookupClientKind(conn.id.String()); k == protocol.ClientKind_Credential {
@@ -391,17 +391,21 @@ func TestRecordCredentialIdentityRefusesZero(t *testing.T) {
 	d := &Dispatcher{RecordCredentialIdentity: h.RecordCredentialIdentity}
 	req := &protocol.PskAuthRequest{Role: protocol.AuthRole_Credential}
 	req.SetCredentialAuth(protocol.CredentialAuth{})
-	if pskDispatchIdentity(d, conn, req) {
+	if pskDispatchIdentity(d, conn, req, credKey(1)) {
 		t.Fatal("pskDispatchIdentity accepted a zero credential principal")
 	}
 	// And an unwired dispatcher closes the connection rather than leaving it
 	// authenticated with no principal, which reads as the operator.
-	priv, pub := newCredentialKey(t)
-	_ = priv
+	_, pub := newCredentialKey(t)
 	_, tid := issueCredential(t, h.Tasks, authority.Grant{}, pub, time.Now().Add(time.Hour))
 	req.SetCredentialAuth(protocol.CredentialAuth{TaskId: tid})
-	if pskDispatchIdentity(&Dispatcher{}, conn, req) {
+	if pskDispatchIdentity(&Dispatcher{}, conn, req, pub) {
 		t.Fatal("pskDispatchIdentity accepted a credential with nothing to record it")
+	}
+	// A live credential with no key carried from the gate is refused: the
+	// connection would be bound to no key at all.
+	if pskDispatchIdentity(d, conn, req, [32]byte{}) {
+		t.Fatal("a credential was recorded with no verified key")
 	}
 }
 
@@ -421,10 +425,10 @@ func TestClientHelloClaimingCredentialKindRefused(t *testing.T) {
 
 // recordCredentialConn records a live credential's connection on h, as the
 // gate's dispatch would.
-func recordCredentialConn(t *testing.T, h *TaskHandler, tid protocol.TaskID, port int) *fakeConn {
+func recordCredentialConn(t *testing.T, h *TaskHandler, tid protocol.TaskID, pub [32]byte, port int) *fakeConn {
 	t.Helper()
 	conn := &fakeConn{id: objproto.MustParseConnectionID(fmt.Sprintf("ws:127.0.0.1:%d-1", port))}
-	if st := h.RecordCredentialIdentity(conn.id.String(), conn, tid); st != protocol.ClientHelloStatus_Ok {
+	if st := h.RecordCredentialIdentity(conn.id.String(), conn, tid, pub); st != protocol.ClientHelloStatus_Ok {
 		t.Fatalf("RecordCredentialIdentity: %v", st)
 	}
 	return conn
@@ -464,7 +468,7 @@ func TestCredentialDeadBeforeTimerSeesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	conn := recordCredentialConn(t, h, taskIDFromHex(id), 9310)
+	conn := recordCredentialConn(t, h, taskIDFromHex(id), pub, 9310)
 	cid := conn.id.String()
 	if !h.authorize(cid, protocol.Capability_Cancel, target) {
 		t.Fatal("a live credential cannot act on its scoped target")
@@ -498,7 +502,7 @@ func TestRevokedCredentialSeesNothing(t *testing.T) {
 	h := newTestTaskHandler(tasks)
 	_, pub := newCredentialKey(t)
 	id, _ := issueCredential(t, tasks, authority.Grant{Caps: protocol.Capability_Cancel, Scope: authority.Scope{Base: protocol.ScopeBase_Global}}, pub, time.Now().Add(time.Hour))
-	conn := recordCredentialConn(t, h, taskIDFromHex(id), 9311)
+	conn := recordCredentialConn(t, h, taskIDFromHex(id), pub, 9311)
 	tasks.Cancel(id, protocol.EndReason_Cancelled, protocol.TaskID{})
 	wantSeesNothing(t, h, conn.id.String())
 }
@@ -511,7 +515,7 @@ func TestMissingPrincipalRecordSeesNothing(t *testing.T) {
 	h := newTestTaskHandler(tasks)
 	_, pub := newCredentialKey(t)
 	id, tid := issueCredential(t, tasks, authority.Grant{Caps: protocol.Capability_Spawn}, pub, time.Now().Add(time.Hour))
-	conn := recordCredentialConn(t, h, tid, 9312)
+	conn := recordCredentialConn(t, h, tid, pub, 9312)
 	// A child it spawned outlives it.
 	tasks.Create("repo", "", protocol.TaskKind_Oneshot, protocol.ClientKind_Credential, tid, "", protocol.RunnerSelector{}, nil, authority.Grant{}, "")
 	tasks.Cancel(id, protocol.EndReason_Cancelled, protocol.TaskID{})
@@ -531,6 +535,71 @@ func TestMissingPrincipalRecordSeesNothing(t *testing.T) {
 	}
 	tasks.Create("repo", "", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent, gone, "", protocol.RunnerSelector{}, nil, authority.Grant{}, "")
 	wantSeesNothing(t, h, agentConn.id.String())
+}
+
+// D18: a re-key that rotates a live credential's key ends the authority of a
+// connection authenticated with the old key at once — with no close at all,
+// so it does not rest on the re-key's connection drop or kickConn's delay.
+// The credential stays live throughout; only the key changed.
+func TestRotatedKeyConnectionHoldsNothing(t *testing.T) {
+	tasks := NewTaskStore()
+	h := newTestTaskHandler(tasks)
+	target := tasks.Create("repo", "", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{}, "")
+	_, oldPub := newCredentialKey(t)
+	id, tid := issueCredential(t, tasks, authority.Grant{
+		Caps:  protocol.Capability_Cancel,
+		Scope: authority.Scope{Base: protocol.ScopeBase_None, IDs: []string{target}},
+	}, oldPub, time.Now().Add(time.Hour))
+	oldConn := recordCredentialConn(t, h, tid, oldPub, 9320)
+	if !h.authorize(oldConn.id.String(), protocol.Capability_Cancel, target) {
+		t.Fatal("the credential cannot act before the rotation")
+	}
+
+	_, newPub := newCredentialKey(t)
+	if _, err := tasks.RekeyCredential(id, newPub, time.Now().Add(time.Hour), nil, AuthorityWrite{}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_Cancel, RequestId: 9}}
+	req.SetCancel(protocol.CancelTask{TaskId: taskIDFromHex(target)})
+	h.Handle(oldConn, encodeTaskControlRequest(t, req))
+	if resp := oldConn.lastTaskControlResponse(t); resp.Kind != protocol.TaskControlKind_PermissionDenied {
+		t.Fatalf("old key's first request after the rotation answered %v, want permission_denied", resp.Kind)
+	}
+	if rec, _ := tasks.Get(target); rec.Status == protocol.TaskStatus_Cancelled {
+		t.Fatal("the replaced key cancelled the target")
+	}
+	wantSeesNothing(t, h, oldConn.id.String())
+
+	// The new key's connection holds the credential's authority.
+	newConn := recordCredentialConn(t, h, tid, newPub, 9321)
+	if !h.authorize(newConn.id.String(), protocol.Capability_Cancel, target) {
+		t.Fatal("the new key's connection cannot act on the scoped target")
+	}
+	if _, allowed := h.visibleToCaller(newConn.id.String()); !allowed[target] {
+		t.Fatalf("the new key's connection sees %v, want the target", allowed)
+	}
+}
+
+// The handshake race: the gate verified the old key, then a rotation landed
+// before the identity was recorded. Recording must refuse (the connection is
+// closed), not accept because the credential is still live.
+func TestOldKeyRecordedAfterRotationIsRefused(t *testing.T) {
+	tasks := NewTaskStore()
+	h := newTestTaskHandler(tasks)
+	_, oldPub := newCredentialKey(t)
+	id, tid := issueCredential(t, tasks, authority.Grant{Caps: protocol.Capability_Cancel}, oldPub, time.Now().Add(time.Hour))
+	_, newPub := newCredentialKey(t)
+	if _, err := tasks.RekeyCredential(id, newPub, time.Now().Add(time.Hour), nil, AuthorityWrite{}); err != nil {
+		t.Fatal(err)
+	}
+	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9322-1")}
+	if st := h.RecordCredentialIdentity(conn.id.String(), conn, tid, oldPub); st == protocol.ClientHelloStatus_Ok {
+		t.Fatal("an identity proved with the replaced key was accepted")
+	}
+	if caps := h.callerCaps(conn.id.String()); caps != protocol.Capability_None {
+		t.Fatalf("the refused connection holds %v", caps)
+	}
 }
 
 // D9: revoke closes a live credential connection, and closes it with a wire

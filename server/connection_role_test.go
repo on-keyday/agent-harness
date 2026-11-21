@@ -13,7 +13,7 @@ func TestPSKDispatchIdentityRejectsFailedPrincipalRegistration(t *testing.T) {
 		return protocol.ClientHelloStatus_BadTicket
 	}}
 	conn := &fakeConn{id: tcid("rejected-principal")}
-	if pskDispatchIdentity(d, conn, buildAgentBinderReq([16]byte{}, testTranscript, protocol.RunnerID{}, protocol.TaskID{})) {
+	if pskDispatchIdentity(d, conn, buildAgentBinderReq([16]byte{}, testTranscript, protocol.RunnerID{}, protocol.TaskID{}), [32]byte{}) {
 		t.Fatal("a revoked ticket was accepted as an unidentified operator")
 	}
 }

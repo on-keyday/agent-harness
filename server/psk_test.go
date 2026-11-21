@@ -437,7 +437,7 @@ func TestPSKDispatchIdentity_OperatorClientKindsSet(t *testing.T) {
 	conn := &fakeConn{id: objproto.MustParseConnectionID(connIDStr)}
 
 	req := buildOperatorClientHello(nil, nil) // no PSK; binder_len=0
-	pskDispatchIdentity(d, conn, req)
+	pskDispatchIdentity(d, conn, req, [32]byte{})
 
 	// TaskHandler must have recorded the ClientKind.
 	th.clientKindsMu.Lock()
@@ -495,7 +495,7 @@ func TestPSKDispatchIdentity_AgentPrincipalSet(t *testing.T) {
 	conn := &fakeConn{id: objproto.MustParseConnectionID(connIDStr)}
 
 	req := buildAgentBinderReq(ticket, nil, protoRID, protoTID)
-	pskDispatchIdentity(d, conn, req)
+	pskDispatchIdentity(d, conn, req, [32]byte{})
 
 	// principals must be set.
 	th.clientKindsMu.Lock()
@@ -571,7 +571,7 @@ func TestPSKDispatchIdentity_RunnerRegistered(t *testing.T) {
 	rh2.SetHostname([]byte("my-runner"))
 
 	req := buildRunnerDispatchReq(rh2)
-	pskDispatchIdentity(d, conn, req)
+	pskDispatchIdentity(d, conn, req, [32]byte{})
 
 	// Registry must have the runner registered.
 	entry, ok := reg.Get(objproto.MustParseConnectionID(connIDStr))
@@ -608,7 +608,7 @@ func TestPSKDispatchIdentity_ClientReceivesNoTaskControlResponse(t *testing.T) {
 	conn := &fakeConn{id: objproto.MustParseConnectionID(connIDStr)}
 
 	req := buildOperatorClientHello(nil, nil) // operator (kind=Cli)
-	pskDispatchIdentity(d, conn, req)
+	pskDispatchIdentity(d, conn, req, [32]byte{})
 
 	// The conn must have received zero messages — pskDispatchIdentity's client
 	// branch calls RecordClientIdentity (no send) and returns.
@@ -653,7 +653,7 @@ func TestPSKDispatchIdentity_RunnerReceivesRunnerHelloResponse(t *testing.T) {
 	rh2.SetHostname([]byte("runner-rhr-test"))
 
 	req := buildRunnerDispatchReq(rh2)
-	pskDispatchIdentity(d, conn, req)
+	pskDispatchIdentity(d, conn, req, [32]byte{})
 
 	// The runner conn must have received a RunnerControl message
 	// (the RunnerHelloResponse from RunnerHandler).

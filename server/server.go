@@ -1602,7 +1602,7 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 				// RunnerHandler.Handle (runner_handler.go:64) — both are invoked
 				// via d.OnTaskControl / d.OnRunnerControl in Dispatch (dispatch.go:58).
 				s.recordAuth(session.ConnectionID(), gate.RunnerKey())
-				if !pskDispatchIdentity(s.dispatcher, wrapped, accepted) {
+				if !pskDispatchIdentity(s.dispatcher, wrapped, accepted, gate.CredentialKey()) {
 					_ = trsf.SendClose(session)
 					cancel()
 				}
