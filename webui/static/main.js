@@ -1040,6 +1040,276 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     loadScheduleList();
   });
 
+  // --- Credentials (credential tasks) ----------------------------------------
+  //
+  // The dialog behind the Credentials button: the rows of `credential ls`
+  // (harness.credentialList, cli's words) with Revoke and Re-key, and the
+  // issue / re-key form. The form serializes to the verb's own argument line
+  // (credentialIssueTokens), so the parser is Go's. Results go to the command
+  // output, naming the credential and the change, as the verbs print them.
+  //
+  // A generated secret has exactly one place on this page: the secret view
+  // below, shown once with copy and download. It never goes to the command
+  // output, the console or browser storage, and the view's elements are
+  // dropped when the dialog closes (or the operator leaves the view).
+  const credentialsModal = document.getElementById("credentials-modal");
+  const credentialsBody = document.getElementById("credentials-modal-body");
+  const credentialsTitle = document.getElementById("credentials-modal-title");
+  const credentialsBack = document.getElementById("credentials-modal-back");
+  const credentialsNewBtn = document.getElementById("credentials-modal-new");
+  const credentialsRefreshBtn = document.getElementById("credentials-modal-refresh");
+  let credentialsView = "list"; // "list" | "form" | "result" | "secret"
+  const credentialsLatest = latestLoad();
+  const credentialNote = (cls, text) => transcriptLine(cls, text);
+  const setCredentialView = (view, title) => {
+    credentialsView = view;
+    credentialsTitle.textContent = title;
+    credentialsBack.hidden = view === "list";
+    credentialsNewBtn.hidden = view !== "list";
+    credentialsRefreshBtn.hidden = view !== "list";
+  };
+  // dropCredentialView empties the body, so no element holds what the last
+  // view showed -- a secret included.
+  const dropCredentialView = () => credentialsBody.replaceChildren();
+  const credentialButton = (label, onClick, cls) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = label;
+    if (cls) b.className = cls;
+    b.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); onClick(b); });
+    return b;
+  };
+  const loadCredentialList = async () => {
+    dropCredentialView();
+    setCredentialView("list", "Credentials");
+    credentialsBody.replaceChildren(credentialNote("schedule-note", "読み込み中…"));
+    const tok = credentialsLatest.begin();
+    try {
+      const { rows } = await window.harness.credentialList({});
+      if (!credentialsLatest.current(tok) || credentialsView !== "list") return;
+      if (!rows.length) {
+        credentialsBody.replaceChildren(credentialNote("schedule-empty", "no credentials — ＋ Issue makes one"));
+        return;
+      }
+      credentialsBody.replaceChildren(...rows.map((r) => {
+        const m = credentialRowModel(r);
+        const el = document.createElement("div");
+        el.className = "schedule-row credential-row";
+        el.title = m.line;
+        const id = document.createElement("span");
+        id.className = "schedule-id";
+        id.textContent = m.id8;
+        const cells = document.createElement("div");
+        cells.className = "schedule-cells";
+        for (const text of [m.status, `name=${m.name}`, `expires=${m.expires}`, `last_used=${m.lastUsed}`, `caps=${m.caps}`, `scope=${m.scope}`]) {
+          const c = document.createElement("span");
+          c.textContent = text;
+          cells.appendChild(c);
+        }
+        const acts = document.createElement("div");
+        acts.className = "credential-actions";
+        acts.appendChild(credentialButton("⧉ Copy id", async (b) => {
+          const ok = await writeClipboardText(m.id);
+          b.textContent = ok ? "✓ copied" : "copy failed";
+          setTimeout(() => { b.textContent = "⧉ Copy id"; }, 1200);
+        }));
+        if (m.live) {
+          acts.appendChild(credentialButton("✕ Revoke", async () => {
+            if (await revokeCredential(m.id)) loadCredentialList();
+          }, "danger"));
+        }
+        acts.appendChild(credentialButton("⟳ Re-key…", () => openCredentialForm("rekey", m.id)));
+        el.append(id, cells, acts);
+        return el;
+      }));
+    } catch (e) {
+      if (credentialsLatest.current(tok)) credentialsBody.replaceChildren(credentialNote("schedule-note", e.message));
+    }
+  };
+  // revokeCredential is the dialog's and the task sheet's revoke: a confirm,
+  // then `credential revoke`'s own line (or its refusal) to the output.
+  const revokeCredential = async (id) => {
+    if (!confirm(`Revoke credential ${id.slice(0, 8)}?\nIts connections close and its next handshake is refused. Re-key brings the id back with a new key.`)) return false;
+    try {
+      appendCmdOutput(await window.harness.credentialRevoke(id), true);
+    } catch (err) {
+      appendCmdOutput(err.message, true);
+      return false;
+    }
+    refreshSnapshot();
+    return true;
+  };
+  // The issue / re-key form. Caps and scope (new only) are the chips, radios
+  // and task checklists the delegation bound uses (buildScopeControls),
+  // serialized with the same capsLabelFor / scopeStateSpec. A re-key keeps
+  // what the credential recorded; narrowing one is typed on the command line.
+  const openCredentialForm = (mode, id) => {
+    dropCredentialView();
+    setCredentialView("form", mode === "rekey" ? `credential rekey ${id.slice(0, 8)}` : "credential new");
+    const form = document.createElement("div");
+    form.className = "credential-form";
+    const field = (labelText, input) => {
+      const row = document.createElement("div");
+      row.className = "credential-field";
+      const l = document.createElement("span");
+      l.textContent = labelText;
+      row.append(l, input);
+      form.appendChild(row);
+      return row;
+    };
+    const textInput = (placeholder) => {
+      const i = document.createElement("input");
+      i.type = "text";
+      i.placeholder = placeholder;
+      i.autocomplete = "off";
+      i.spellcheck = false;
+      return i;
+    };
+    const ttl = textInput("30d, 12h, 1d12h — required, at most 90d");
+    ttl.id = "credential-form-ttl";
+    field("ttl", ttl);
+    const name = textInput("a label shown in credential ls (optional, ≤ 64 bytes)");
+    name.id = "credential-form-name";
+    if (mode !== "rekey") field("name", name);
+    const keyRow = document.createElement("div");
+    keyRow.className = "credential-field";
+    const keyRadio = (value, text, checked) => {
+      const l = document.createElement("label");
+      const r = document.createElement("input");
+      r.type = "radio";
+      r.name = "credential-form-key";
+      r.value = value;
+      r.checked = checked;
+      l.append(r, " " + text);
+      return l;
+    };
+    keyRow.append(keyRadio("generate", "generate a key pair here (the secret is shown once, with copy and download)", true),
+      keyRadio("pubkey", "register the holder's public key", false));
+    form.appendChild(keyRow);
+    const pubkey = textInput("64 hex, from `harness-cli credential keygen --out FILE` on the host that will use it");
+    pubkey.id = "credential-form-pubkey";
+    const pubkeyRow = field("public key", pubkey);
+    pubkeyRow.hidden = true;
+    keyRow.addEventListener("change", () => {
+      pubkeyRow.hidden = form.querySelector('input[name="credential-form-key"]:checked').value !== "pubkey";
+    });
+    const authority = newScopeState();
+    if (mode !== "rekey") {
+      const root = document.createElement("div");
+      root.id = "credential-form-authority";
+      const head = document.createElement("div");
+      head.className = "notify-meta";
+      head.textContent = "caps and scope: at most your own; credential_issue and schedule_edit are never held by a credential";
+      form.append(head, root);
+      // D14: a credential never holds these two; the chips are not offered.
+      buildScopeControls(root, authority, "", () => {}, {
+        caps: "caps", scope: "scope", ids: "scope に入れるタスク", visIds: "見えるだけのタスク",
+        excludeCaps: ["credential_issue", "schedule_edit"],
+      });
+    } else {
+      const note = document.createElement("div");
+      note.className = "notify-meta";
+      note.textContent = "re-key keeps the recorded caps and scope; the old key stops at once. To narrow them, type `credential rekey <id> --ttl … --caps … --scope …`.";
+      form.appendChild(note);
+    }
+    const err = document.createElement("div");
+    err.className = "schedule-note";
+    const submit = credentialButton(mode === "rekey" ? "⟳ Re-key" : "＋ Issue", async () => {
+      err.textContent = "";
+      let tokens;
+      try {
+        tokens = credentialIssueTokens({
+          mode, id, ttl: ttl.value, name: name.value,
+          key: form.querySelector('input[name="credential-form-key"]:checked').value,
+          pubkey: pubkey.value,
+          caps: mode === "rekey" ? "" : capsLabelFor(authority.caps),
+          scope: mode === "rekey" ? "" : scopeStateSpec(authority),
+        });
+      } catch (e) {
+        err.textContent = e.message;
+        return;
+      }
+      submit.disabled = true;
+      try {
+        const r = mode === "rekey"
+          ? await window.harness.credentialRekey(tokens)
+          : await window.harness.credentialNew(tokens);
+        refreshSnapshot();
+        if (r.secret) {
+          appendCmdOutput(`${r.text}\nsecret: shown once in the Credentials dialog (copy or download it there); it is not printed here`, true);
+          showCredentialSecret(r);
+        } else {
+          appendCmdOutput(r.text, true);
+          showCredentialIssued(r);
+        }
+      } catch (e) {
+        err.textContent = e.message;
+        appendCmdOutput(e.message, true);
+      } finally {
+        submit.disabled = false;
+      }
+    });
+    form.append(submit, err);
+    credentialsBody.replaceChildren(form);
+    ttl.focus();
+  };
+  // showCredentialIssued is the --pubkey result: the issued line and the
+  // `credential bind` command the key holder runs. Nothing secret.
+  const showCredentialIssued = (r) => {
+    dropCredentialView();
+    setCredentialView("result", `credential ${String(r.id).slice(0, 8)}: issued`);
+    const pre = document.createElement("pre");
+    pre.className = "schedule-detail";
+    pre.textContent = r.text;
+    credentialsBody.replaceChildren(pre);
+  };
+  // showCredentialSecret is the one place a generated secret is shown.
+  const showCredentialSecret = (r) => {
+    const m = credentialSecretModel(r);
+    dropCredentialView();
+    setCredentialView("secret", m.title);
+    const wrap = document.createElement("div");
+    wrap.className = "credential-secret";
+    const head = document.createElement("div");
+    head.textContent = m.head;
+    const once = document.createElement("div");
+    once.className = "credential-once";
+    once.textContent = m.once;
+    const pre = document.createElement("pre");
+    pre.id = "credential-secret-value";
+    pre.textContent = m.secret;
+    const acts = document.createElement("div");
+    acts.className = "credential-actions";
+    acts.append(
+      credentialButton("⧉ Copy", async (b) => {
+        const ok = await writeClipboardText(pre.textContent);
+        b.textContent = ok ? "✓ copied" : "copy failed";
+      }),
+      credentialButton("⤓ Download", () => downloadText(m.filename, "text/plain", pre.textContent + "\n")),
+    );
+    const hint = document.createElement("div");
+    hint.className = "notify-meta";
+    hint.textContent = m.hint;
+    wrap.append(head, once, pre, acts, hint);
+    credentialsBody.replaceChildren(wrap);
+  };
+  const openCredentials = (opts) => {
+    if (!credentialsModal.open) credentialsModal.showModal();
+    if (opts && opts.rekey) openCredentialForm("rekey", opts.rekey);
+    else loadCredentialList();
+  };
+  // Closing (the button, Esc, or the form's dialog method) drops whatever the
+  // dialog showed: a secret does not outlive the dialog.
+  credentialsModal.addEventListener("close", () => {
+    dropCredentialView();
+    setCredentialView("list", "Credentials");
+  });
+  document.getElementById("credentials-btn").addEventListener("click", () => openCredentials());
+  document.getElementById("credentials-modal-close").addEventListener("click", () => credentialsModal.close());
+  credentialsRefreshBtn.addEventListener("click", () => loadCredentialList());
+  credentialsBack.addEventListener("click", () => loadCredentialList());
+  credentialsNewBtn.addEventListener("click", () => openCredentialForm("new", ""));
+
   const gridShowBtn = document.getElementById("grid-show-btn");
   const gridAllOn   = document.getElementById("grid-all-on");
   const gridAllOff  = document.getElementById("grid-all-off");
@@ -3471,6 +3741,18 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     // A schedule verb typed on the command line changed (or read) the list the
     // open dialog shows.
     schedulesChanged: () => refreshSchedulesDialog(),
+    // A generated secret from a typed `credential new` / `rekey`: shown once
+    // in the Credentials dialog, never in the command output.
+    credentialSecret: (r) => {
+      if (!credentialsModal.open) credentialsModal.showModal();
+      showCredentialSecret(r);
+    },
+    // A credential verb changed the list an open dialog shows. Only the list
+    // view reloads: a secret on screen must not be replaced under the
+    // operator.
+    credentialsChanged: () => {
+      if (credentialsModal.open && credentialsView === "list") loadCredentialList();
+    },
   };
 
   const runCmd = async () => {
@@ -4453,8 +4735,13 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // + the readout into row, bound to a bitmask through the two accessors.
   // Shared by Compose and the re-grant dialog so chip behaviour cannot drift
   // between them. Re-renders the whole row on every change (small list).
-  function buildCapChips(row, getBits, setBits) {
+  // exclude names caps the holder can never have (a credential's masked
+  // bits): no chip, and [all] leaves them out, so the refused state cannot be
+  // built here.
+  function buildCapChips(row, getBits, setBits, exclude) {
     if (!row) return;
+    const ex = new Set(exclude || []);
+    const shown = capDefs.filter((c) => !ex.has(c.name));
     const rerender = () => {
       row.innerHTML = "";
 
@@ -4462,7 +4749,10 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       allBtn.type = "button";
       allBtn.className = "cap-quick";
       allBtn.textContent = "[all]";
-      allBtn.addEventListener("click", () => { setBits(capsAllBits()); rerender(); });
+      allBtn.addEventListener("click", () => {
+        setBits(ex.size ? shown.reduce((m, c) => capOr(m, c.bit), 0) : capsAllBits());
+        rerender();
+      });
       row.appendChild(allBtn);
 
       const noneBtn = document.createElement("button");
@@ -4472,7 +4762,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       noneBtn.addEventListener("click", () => { setBits(0); rerender(); });
       row.appendChild(noneBtn);
 
-      for (const c of capDefs) {
+      for (const c of shown) {
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = "cap-chip" + (capHas(getBits(), c.bit) ? " on" : "");
@@ -4883,20 +5173,27 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
 
   // buildScopeControls renders one scope state's controls into root and
   // calls onChange after every edit. Radio names are derived from root's id,
-  // so two of these on one page do not share a radio group.
-  function buildScopeControls(root, st, excludeId, onChange) {
+  // so two of these on one page do not share a radio group. labels names what
+  // the state IS (the delegation bound by default; a credential's own caps
+  // and scope in the Credentials dialog): the echo's two words and the two
+  // checklists' headings.
+  function buildScopeControls(root, st, excludeId, onChange, labels) {
     if (!root) return;
+    const L = Object.assign({
+      caps: "delegate", scope: "delegate-scope",
+      ids: "渡してよい対象タスク", visIds: "見えるだけなら渡してよいタスク",
+    }, labels || {});
     root.replaceChildren();
     const echo = document.createElement("code");
     echo.className = "scope-echo";
     const paint = () => {
-      echo.textContent = "delegate=" + capsLabelFor(st.caps) + "  delegate-scope=" + scopeStateSpec(st);
+      echo.textContent = L.caps + "=" + capsLabelFor(st.caps) + "  " + L.scope + "=" + scopeStateSpec(st);
     };
     const changed = () => { onChange(); paint(); };
     const chips = document.createElement("div");
     chips.className = "caps-row";
     root.appendChild(chips);
-    buildCapChips(chips, () => st.caps, (v) => { st.caps = v; changed(); });
+    buildCapChips(chips, () => st.caps, (v) => { st.caps = v; changed(); }, L.excludeCaps);
 
     const radioRow = (label, name, values, current, set) => {
       const row = document.createElement("div");
@@ -4942,8 +5239,8 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       buildTaskChecklist(list, set, excludeId, changed);
       root.appendChild(d);
     };
-    section("渡してよい対象タスク", st.ids);
-    section("見えるだけなら渡してよいタスク", st.visIds);
+    section(L.ids, st.ids);
+    section(L.visIds, st.visIds);
 
     paint();
     root.appendChild(echo);
@@ -6872,6 +7169,10 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       // on its value.
       const rowSched = taskScheduleModel(t);
       if (rowSched) metaText += `  ${rowSched.label}`;
+      // A credential's expiry and last use, and any task's name: the ls row's
+      // own words (cli.CredentialColumns), present only for a credential or
+      // a named task.
+      if (t.credentialMeta) metaText += `  ${t.credentialMeta}`;
       if (t.caps) metaText += `  caps=${t.caps}`;
       // Always shown, subtree included: hiding the default read as "this
       // task has no scope", which is never true.
@@ -7028,6 +7329,37 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       schedBtn.addEventListener("click", (e) => { e.stopPropagation(); openSchedules(sheetSched.id); });
       schedRow.append(schedText, schedBtn);
       sheet.appendChild(schedRow);
+    }
+
+    // The authority actions every task's sheet ends with, a credential's
+    // included (D12: a re-grant works on it unchanged).
+    const addAuthorityItems = () => {
+      addItem("🌳 ツリーで見る", "", () => {
+        if (!showTaskInTree(t.id)) appendCmdOutput(`tree: task ${t.id.slice(0, 8)} is not in the tree`, true);
+      });
+      addItem("🎯 到達範囲を見る", "", () => enterReachMode(t.id));
+      addItem("🔮 caps set / spawn をプレビュー", "", () => openRegrantDialog(t, { whatIf: true }));
+      addItem("🔑 caps/scope 再付与", "", () => openRegrantDialog(t));
+      addItem("⇄ 親タスク変更", "", () => openParentDialog(t));
+    };
+
+    // A credential task has no process: no session, worktree, PTY record or
+    // transcript, and resuming it is a re-key. Its sheet is the credential
+    // verbs plus the authority actions.
+    if (t.kind === "Credential") {
+      if (t.credentialMeta) {
+        const meta = document.createElement("div");
+        meta.className = "task-id";
+        meta.textContent = `credential: ${t.credentialMeta}`;
+        sheet.appendChild(meta);
+      }
+      addItem("🔑 Credentials", "", () => openCredentials());
+      addItem("⟳ Re-key…", "", () => openCredentials({ rekey: t.id }));
+      addAuthorityItems();
+      if (!isTerminal) {
+        addItem("✕ Revoke", "danger", () => revokeCredential(t.id));
+      }
+      return;
     }
 
     const liveSession = t.status === "Running" || t.status === "Detached";
@@ -7263,13 +7595,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     // Live re-grant. Shown for every task: a WebUI connection is an operator
     // connection by construction (the PSK gate makes any non-agent client
     // prove operatorPSK), so there is no non-operator state to hide it in.
-    addItem("🌳 ツリーで見る", "", () => {
-      if (!showTaskInTree(t.id)) appendCmdOutput(`tree: task ${t.id.slice(0, 8)} is not in the tree`, true);
-    });
-    addItem("🎯 到達範囲を見る", "", () => enterReachMode(t.id));
-    addItem("🔮 caps set / spawn をプレビュー", "", () => openRegrantDialog(t, { whatIf: true }));
-    addItem("🔑 caps/scope 再付与", "", () => openRegrantDialog(t));
-    addItem("⇄ 親タスク変更", "", () => openParentDialog(t));
+    addAuthorityItems();
 
     // Runs in the task's WORKTREE as its own process — not in the session's
     // shell. Available for every task, including terminal ones: the gate is

@@ -2707,3 +2707,26 @@ label[for="compose-prompt"] { display: block; margin-top: 0.4rem; }
 .schedule-detail .schedule-waits { margin: 0.4rem 0; font-weight: bold; }
 .schedule-detail .schedule-history-line { font-family: monospace; font-size: 0.85rem; overflow-wrap: anywhere; border-top: 1px solid #3a3a3a; padding: 0.2rem 0; }
 .schedule-empty, .schedule-note { font-size: 0.85rem; color: #aaa; }
+
+/* The credentials dialog: rows are `credential ls` cells with their buttons;
+   the issue form; and the one-time view of a generated secret. */
+.credential-row { cursor: default; }
+.credential-row .credential-actions { display: flex; gap: 0.5rem; margin-top: 0.3rem; }
+.credential-form { display: flex; flex-direction: column; gap: 0.45rem; min-width: 0; font-size: 0.9rem; }
+.credential-form .credential-field { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem 0.6rem; }
+/* display:flex above outranks the UA's [hidden] rule: the public-key row is
+   hidden while "generate" is picked. */
+.credential-form .credential-field[hidden] { display: none; }
+.credential-form input[type="text"] {
+  min-width: 0; box-sizing: border-box; flex: 1 1 12rem;
+  background: #1e1e1e; color: #d4d4d4; border: 1px solid #333; border-radius: 3px;
+  padding: 3px 4px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem;
+}
+.credential-form .credential-field label { display: inline-flex; align-items: center; gap: 0.25rem; }
+.credential-secret { display: flex; flex-direction: column; gap: 0.45rem; min-width: 0; }
+.credential-secret pre {
+  margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; user-select: all;
+  font-size: 0.85rem; padding: 0.4rem; border: 1px solid #e5c07b; border-radius: 3px;
+}
+.credential-secret .credential-once { color: #e5c07b; font-size: 0.85rem; }
+.credential-secret .credential-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }

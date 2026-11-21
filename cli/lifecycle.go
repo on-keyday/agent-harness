@@ -76,9 +76,11 @@ func LifecycleWord(st protocol.LifecycleState) string {
 // LifecycleShown reports whether t's lifecycle is rendered at all: not for a
 // finished task, which must not read "working" (D14). A live task that never
 // reported IS rendered, as "-": hooks that do not fire (an agent without them,
-// a runner that predates them) must not look like a quiet task (D28).
+// a runner that predates them) must not look like a quiet task (D28). A
+// credential task has no process, so no hooks that could report: it has no
+// lifecycle to render, rather than one that never reported.
 func LifecycleShown(t *protocol.TaskInfo) bool {
-	return !isTerminalStatus(t.Status)
+	return t.Kind != protocol.TaskKind_Credential && !isTerminalStatus(t.Status)
 }
 
 // LifecycleStr is `lifecycle=waiting (3m ago)` for the CLI `ls` row,

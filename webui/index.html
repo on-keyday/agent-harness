@@ -91,6 +91,7 @@
         <button type="button" id="grid-all-on" class="task-chip">☑ 全</button>
         <button type="button" id="grid-all-off" class="task-chip">☐ 全解除</button>
         <button type="button" id="schedules-btn" class="task-chip" title="server-kept cron schedules: list, detail, run now, delete">⏱ Schedules</button>
+        <button type="button" id="credentials-btn" class="task-chip" title="credential tasks: an expiring identity for a script outside the harness — list, issue, re-key, revoke">🔑 Credentials</button>
       </div>
             <!-- Creator tree: a node-link diagram of who spawned whom. Toggled by
            #task-chip-tree, hidden otherwise. Deliberately NOT a re-ordering of
@@ -746,6 +747,24 @@
       <button type="button" id="schedules-modal-delete" hidden>🗑 Delete</button>
       <button type="button" id="schedules-modal-refresh">↻ 更新</button>
       <button type="button" id="schedules-modal-close">Close</button>
+    </menu>
+  </form>
+</dialog>
+<!-- Credentials (credential tasks): the rows of `credential ls` with Revoke
+     and Re-key, and the issue / re-key form (a public key pasted, or a pair
+     generated in this page). A generated secret is shown in
+     #credentials-modal-body once, with copy and download, and is removed from
+     the page when the dialog closes; it never reaches the command output or
+     browser storage. Results go to the command output. -->
+<dialog id="credentials-modal" class="picker-modal schedules-modal credentials-modal">
+  <form method="dialog" class="picker-form">
+    <h3 class="picker-title" id="credentials-modal-title">Credentials</h3>
+    <div id="credentials-modal-body" class="schedules-body"></div>
+    <menu class="picker-actions">
+      <button type="button" id="credentials-modal-back" hidden>← 一覧</button>
+      <button type="button" id="credentials-modal-new">＋ Issue</button>
+      <button type="button" id="credentials-modal-refresh">↻ 更新</button>
+      <button type="button" id="credentials-modal-close">Close</button>
     </menu>
   </form>
 </dialog>

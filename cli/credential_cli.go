@@ -81,10 +81,11 @@ func CredentialKeygenWith(a verb.CredentialKeygenAction, out io.Writer) error {
 	return nil
 }
 
-// CredentialIssueWith runs credential new / rekey. The key pair is made here
-// (D3): the server is sent the public key only. With --pubkey the key is the
-// holder's and no secret exists on this side; otherwise the seed is handed
-// over once, to --out or to out, after the server has accepted it.
+// CredentialIssueWith runs credential new / rekey for the CLI and the TUI.
+// The key pair is made here (D3, IssueCredential): the server is sent the
+// public key only. With --pubkey the key is the holder's and no secret exists
+// on this side; otherwise the seed is handed over once, to --out or to out,
+// after the server has accepted it.
 func CredentialIssueWith(ctx context.Context, c *Client, a verb.CredentialIssueAction, out io.Writer) error {
 	verbName := "new"
 	if a.Sub == verb.SubRekey {
@@ -97,32 +98,20 @@ func CredentialIssueWith(ctx context.Context, c *Client, a verb.CredentialIssueA
 		return fmt.Errorf("credential %s: %w", verbName, err)
 	}
 
-	var pub ed25519.PublicKey
-	var priv ed25519.PrivateKey
-	if a.Pubkey != "" {
-		raw, err := hex.DecodeString(a.Pubkey)
-		if err != nil || len(raw) != ed25519.PublicKeySize {
-			return fmt.Errorf("credential %s: --pubkey: want 64 hex characters", verbName)
-		}
-		pub = raw
-	} else {
-		var err error
-		if pub, priv, err = ed25519.GenerateKey(rand.Reader); err != nil {
-			return err
-		}
-	}
-
 	// The file is created BEFORE the server is asked, so a path that cannot be
 	// written is refused while there is still nothing to lose; its content is
 	// written once the id is known.
 	var f *os.File
 	if a.Out != "" {
+		if a.Pubkey != "" {
+			return fmt.Errorf("credential %s: --out and --pubkey: one generates the key here and the other registers a key made elsewhere", verbName)
+		}
 		var err error
 		if f, err = createSecretFile(a.Out); err != nil {
 			return fmt.Errorf("credential %s: --out: %w", verbName, err)
 		}
 	}
-	got, err := c.CredentialIssue(ctx, a, pub)
+	h, err := IssueCredential(ctx, c, a)
 	if err != nil {
 		if f != nil {
 			f.Close()
@@ -130,12 +119,11 @@ func CredentialIssueWith(ctx context.Context, c *Client, a verb.CredentialIssueA
 		}
 		return err
 	}
-	cred := Credential{TaskID: got.TaskID, Key: priv}
-	id := hex.EncodeToString(got.TaskID.Id[:])
-	fmt.Fprintf(out, "credential %s: issued, expires %s\n", id[:8], got.ExpiresAt.Format("2006-01-02T15:04:05Z07:00"))
+	id := hex.EncodeToString(h.TaskID.Id[:])
+	fmt.Fprintln(out, CredentialIssuedLine(h.CredentialIssued))
 	switch {
 	case f != nil:
-		_, werr := fmt.Fprintf(f, "%s\n", cred.Secret())
+		_, werr := fmt.Fprintf(f, "%s\n", h.Cred.Secret())
 		if cerr := f.Close(); werr == nil {
 			werr = cerr
 		}
@@ -143,12 +131,12 @@ func CredentialIssueWith(ctx context.Context, c *Client, a verb.CredentialIssueA
 			return fmt.Errorf("credential %s: issued as %s but the secret could not be written to %s: %w (credential rekey %s gives it a new key)", verbName, id, a.Out, werr, id)
 		}
 		fmt.Fprintf(out, "secret written to %s\n", a.Out)
-	case priv != nil:
-		fmt.Fprintf(out, "secret: %s\n", cred.Secret())
+	case h.Cred != nil:
+		fmt.Fprintf(out, "secret: %s\n", h.Cred.Secret())
 	default:
 		// The key is the holder's: it needs the full id, which the first
 		// line shortens.
-		fmt.Fprintf(out, "task id: %s\nnext, on the host that ran credential keygen:\n  harness-cli credential bind %s --file <your seed file>\n", id, id)
+		fmt.Fprintln(out, CredentialBindHint(id))
 	}
 	return nil
 }

@@ -28,6 +28,7 @@ const (
 	focusRunners focus = iota
 	focusTasks
 	focusSchedules
+	focusCredentials
 	focusNotify
 	focusCmdresult
 	focusCmdline
@@ -44,13 +45,15 @@ type App struct {
 	principal   string
 	defaultRepo string
 
-	runners    RunnersModel
-	tasks      TasksModel
-	schedules  SchedulesModel
-	notify     NotifyModel
-	cmdresult  CmdResultModel
-	cmdline    textinput.Model
-	cmdHistory []string
+	runners   RunnersModel
+	tasks     TasksModel
+	schedules SchedulesModel
+	// credentials is the fourth table: the credential tasks of the snapshot.
+	credentials CredentialsModel
+	notify      NotifyModel
+	cmdresult   CmdResultModel
+	cmdline     textinput.Model
+	cmdHistory  []string
 	// cmdHistoryIndex is -1 while editing a fresh command; otherwise it points
 	// at cmdHistory while Up/Down is browsing prior entries.
 	cmdHistoryIndex int
@@ -69,7 +72,7 @@ type App struct {
 	fileEditTmpPath string
 
 	focus focus
-	// lastTable is the table (focusRunners / focusTasks / focusSchedules) focus last rested on;
+	// lastTable is the table (runners / tasks / schedules / credentials) focus last rested on;
 	// shownTable draws it while focus is on notify / cmdresult / cmdline.
 	lastTable focus
 	width     int
@@ -114,6 +117,13 @@ type App struct {
 	schedExec                           func(ctx context.Context, act verb.ScheduleIDAction, out io.Writer) error
 	schedList                           func(ctx context.Context) ([]protocol.ScheduleRow, error)
 	schedListInFlight, schedListPending bool
+	// credRevokeID is the credential (32 hex) whose revoke awaits y/n; "" =
+	// none. While set, inCredRevokeConfirm owns the keys.
+	credRevokeID string
+	// credExec, when set, replaces the cli call of every credential verb (the
+	// x key and the typed verbs). A test seam: it is handed the client the
+	// real call would use, which must be the long-lived a.client.
+	credExec func(ctx context.Context, c *cli.Client, act any, out io.Writer) error
 	// runnersSnapshot holds the latest runners from the most recent snapshot.
 	runnersSnapshot []protocol.RunnerInfo
 
@@ -409,6 +419,7 @@ func New(cfg Config) *App {
 		runners:           NewRunners(),
 		tasks:             NewTasks(),
 		schedules:         NewSchedules(),
+		credentials:       NewCredentials(),
 		detail:            NewDetailPopup(),
 		notify:            NewNotify(),
 		cmdresult:         NewCmdResult(),
@@ -1225,9 +1236,10 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				a.cmdresult.Append(ErrorStyle.Render(msg.Verb + " failed: " + msg.Err.Error()))
 			}
-			// A failed schedule verb may still have changed something
-			// (a rm whose answer was lost): the table follows the server.
-			if strings.HasPrefix(msg.Verb, "schedule ") && a.client != nil {
+			// A failed schedule or credential verb may still have changed
+			// something (a rm whose answer was lost): the tables follow the
+			// server.
+			if (strings.HasPrefix(msg.Verb, "schedule ") || strings.HasPrefix(msg.Verb, "credential ")) && a.client != nil {
 				return a, RefreshSnapshot(a.client)
 			}
 			return a, nil
@@ -1237,8 +1249,9 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// A schedule verb changed (or may have changed) what the Schedules
 		// table lists, and a run/rm moves a bound task too: refresh with the
-		// snapshot, which carries both.
-		if strings.HasPrefix(msg.Verb, "schedule ") && a.client != nil {
+		// snapshot, which carries both. A credential verb changed a task row
+		// (an issue's name and expiry come only with a snapshot).
+		if (strings.HasPrefix(msg.Verb, "schedule ") || strings.HasPrefix(msg.Verb, "credential ")) && a.client != nil {
 			return a, RefreshSnapshot(a.client)
 		}
 		return a, nil
@@ -1940,6 +1953,8 @@ func (a *App) updatePane(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.tasks, cmd = a.tasks.Update(msg)
 	case focusSchedules:
 		a.schedules, cmd = a.schedules.Update(msg)
+	case focusCredentials:
+		a.credentials, cmd = a.credentials.Update(msg)
 	case focusNotify:
 		a.notify, cmd = a.notify.Update(msg)
 	case focusCmdresult:
@@ -1992,8 +2007,8 @@ func (a *App) navigateCmdHistory(previous bool) bool {
 	return true
 }
 
-// tableOrder is the three tables in strip order, the order ←/→ step through.
-var tableOrder = []focus{focusRunners, focusTasks, focusSchedules}
+// tableOrder is the four tables in strip order, the order ←/→ step through.
+var tableOrder = []focus{focusRunners, focusTasks, focusSchedules, focusCredentials}
 
 func tableIndex(f focus) int {
 	for i, t := range tableOrder {
@@ -2004,7 +2019,7 @@ func tableIndex(f focus) int {
 	return 0
 }
 
-// tabStops is the Tab cycle: the three tables count as ONE stop (the table
+// tabStops is the Tab cycle: the four tables count as ONE stop (the table
 // shown), then notify, cmdresult and cmdline.
 const tabStops = 4
 
@@ -2039,6 +2054,7 @@ func (a *App) setFocus(f focus) {
 	a.runners.Blur()
 	a.tasks.Blur()
 	a.schedules.Blur()
+	a.credentials.Blur()
 	a.notify.Blur()
 	a.cmdresult.Blur()
 	a.cmdline.Blur()
@@ -2055,6 +2071,8 @@ func (a *App) setFocus(f focus) {
 		a.tasks.Focus()
 	case focusSchedules:
 		a.schedules.Focus()
+	case focusCredentials:
+		a.credentials.Focus()
 	case focusNotify:
 		a.notify.Focus()
 	case focusCmdresult:
@@ -2075,7 +2093,7 @@ func (a *App) quit() tea.Cmd {
 
 // layout computes per-panel sizes from a.width / a.height. Header 1, table
 // strip 1, notify border-inclusive 6, cmdresult border-inclusive 7, cmdline 1,
-// footer 1 = 17 fixed rows; ONE table (runners, tasks or schedules, see shownTable) takes
+// footer 1 = 17 fixed rows; ONE table (runners, tasks, schedules or credentials, see shownTable) takes
 // the rest, less its own 2 border rows, so tableHeight = a.height - 19 (5 at
 // the 24-row minimum). All three tables are sized to the full width: only one is
 // drawn, and the tasks table is the one that needs the room. The task log
@@ -2092,6 +2110,7 @@ func (a *App) layout() {
 	a.runners.SetSize(a.width-2, tableHeight)
 	a.tasks.SetSize(a.width-2, tableHeight)
 	a.schedules.SetSize(a.width-2, tableHeight)
+	a.credentials.SetSize(a.width-2, tableHeight)
 	a.notify.SetSize(a.width-2, 4)
 	a.cmdresult.SetSize(a.width-2, 5)
 	a.cmdline.Width = a.width - 4
@@ -2106,9 +2125,9 @@ func (a *App) shownTable() focus {
 	return a.lastTable
 }
 
-// isTableFocus reports whether f is one of the three tables.
+// isTableFocus reports whether f is one of the four tables.
 func isTableFocus(f focus) bool {
-	return f == focusRunners || f == focusTasks || f == focusSchedules
+	return f == focusRunners || f == focusTasks || f == focusSchedules || f == focusCredentials
 }
 
 // keysToReach is the Tab / S-Tab (Shift-Tab) presses that take focus from one
@@ -2131,14 +2150,19 @@ func keysToReach(from, to focus) string {
 	return key
 }
 
-// tableStrip is the one line above the table: the three tables with the shown
-// one bracketed, each of the others with the arrow that switches to it
-// (Name:← / Name:→), and the fleet summary after " | ". While focus is off the
-// tables (notify / cmdresult / cmdline) the bracket also carries the keys that
-// go back onto them from where focus IS: [Tasks:Tab*2]. Every hint is pressed
-// by the tests.
+// tableStrip is the one line above the table: the shown table bracketed, the
+// two tables one arrow away from it (Name:← / Name:→), and the fleet summary
+// after " | ". While focus is off the tables (notify / cmdresult / cmdline)
+// the bracket also carries the keys that go back onto them from where focus
+// IS: [Tasks:Tab*2]. Every hint is pressed by the tests.
+//
+// With four tables the one OPPOSITE the shown table (two presses either way)
+// is not named: the strip must fit 80 cells, summary whole, under the wide
+// East Asian reading of the arrows, and the longest strip with all four names
+// is 83 cells under the NARROW one. `?` lists every table, and ←/→ cycle
+// through them all.
 func tableStrip(shown, from focus, rs []protocol.RunnerInfo) string {
-	names := map[focus]string{focusRunners: "Runners", focusTasks: "Tasks", focusSchedules: "Schedules"}
+	names := map[focus]string{focusRunners: "Runners", focusTasks: "Tasks", focusSchedules: "Schedules", focusCredentials: "Creds"}
 	i := tableIndex(shown)
 	n := len(tableOrder)
 	var entries []string
@@ -2150,7 +2174,7 @@ func tableStrip(shown, from focus, rs []protocol.RunnerInfo) string {
 			entries = append(entries, "["+names[f]+":"+keysToReach(from, shown)+"]")
 		case j == (i+1)%n:
 			entries = append(entries, names[f]+":→")
-		default:
+		case j == (i-1+n)%n:
 			entries = append(entries, names[f]+":←")
 		}
 	}
@@ -2177,10 +2201,12 @@ func (a *App) View() string {
 		top = a.runners.View()
 	case focusSchedules:
 		top = a.schedules.View()
+	case focusCredentials:
+		top = a.credentials.View()
 	default:
 		top = a.tasks.View()
 	}
-	if a.runners.IsFocused() || a.tasks.IsFocused() || a.schedules.IsFocused() {
+	if a.runners.IsFocused() || a.tasks.IsFocused() || a.schedules.IsFocused() || a.credentials.IsFocused() {
 		top = PanelStyleFocused.Render(top)
 	} else {
 		top = PanelStyle.Render(top)
@@ -2207,6 +2233,9 @@ func (a *App) View() string {
 		// The question is on screen, not only in cmdresult, which may be
 		// scrolled or narrow.
 		footer = WarnStyle.Render(clipLine(schedDeletePrompt(a.schedDeleteID), 0, a.width))
+	}
+	if a.credRevokeID != "" {
+		footer = WarnStyle.Render(clipLine(credRevokePrompt(a.credRevokeID), 0, a.width))
 	}
 
 	view := strings.Join([]string{
@@ -2458,6 +2487,9 @@ func (a *App) refreshTasksTable() {
 		all = append(all, a.agedTask(id, t, now))
 	}
 	sort.Slice(all, func(i, j int) bool { return all[i].CreatedAt > all[j].CreatedAt })
+	// Every credential, ended ones included, before the history cut below:
+	// `credential ls` lists them all, and a revoked one is what `r` re-keys.
+	a.credentials.SetRows(all)
 	// The cut is on history: the 100 newest finished tasks, and every task
 	// that has not ended however old (as the server's list). The caps audit's
 	// pins survive it too: an old task it pointed at is the case it exists for.
@@ -2737,7 +2769,7 @@ var tuiKeyHelp = []string{
 func cmdlineHelpLines() []string {
 	out := []string{
 		"commands: session / file / git / forward / exec / conns / grid / workspace / " +
-			"cancel / notify / prune / restore / repo / caps / caps set-defaults / refresh / clear / help / quit",
+			"cancel / notify / prune / restore / repo / caps / caps set-defaults / credential / refresh / clear / help / quit",
 	}
 	for _, path := range verb.PathsForSurface(verb.TUI) {
 		sp, ok := verb.Lookup(strings.Fields(path)...)

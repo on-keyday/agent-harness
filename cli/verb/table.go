@@ -3355,9 +3355,11 @@ var Verbs = []VerbSpec{
 	},
 	// --- credentials (docs/superpowers/specs/2026-11-21-credential-tasks-design.md) ---
 	//
-	// CLI only in this change: the TUI table and the WebUI dialog widen every
-	// row but keygen with their handlers (the surfaces task). The authority
-	// flags are the spawn rows (credentialAuthorityFlags), not copies.
+	// keygen and bind write a secret file on the host that will use the
+	// credential, so they are CLI only; new / rekey / ls / revoke are on all
+	// three command lines, beside the TUI's credentials table and the WebUI's
+	// Credentials dialog. The authority flags are the spawn rows
+	// (credentialAuthorityFlags), not copies.
 	{
 		Path: []string{"credential", "keygen"}, CmdlineSurfaces: CLI,
 		NoModalSurface: "looked for: keygen writes a private key file on the host that will use it; TUI and WebUI run elsewhere, so it stays CLI only",
@@ -3396,11 +3398,17 @@ var Verbs = []VerbSpec{
 		Examples: []string{"credential bind aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --file ./ci.seed"},
 	},
 	{
-		Path: []string{"credential", "new"}, CmdlineSurfaces: CLI,
-		NoModalSurface: "looked for: " + credentialSurfaceReason,
+		Path: []string{"credential", "new"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		WebUIDispatch: WebUIDispatch{Fn: "credentialNew"},
+		// The TUI issues from its command line (N in the credentials table
+		// prefills it), so the table is not this verb's surface there.
+		ModalSurfaces: []ModalSurface{
+			{Surface: WebUI, At: "webui/index.html#credentials-modal"},
+		},
+		SurfaceNotes: credentialSecretNotes,
 		Notes: []string{
 			"issue a credential task: an expiring identity for a script outside the harness, holding at most your own caps within your scope (needs credential_issue). It never holds credential_issue or schedule_edit",
-			"without --pubkey a key pair is generated here and the secret `<task-id>:<seed>` is handed over once: printed, or written to --out. An agent identity may not print it (use --out or --pubkey)",
+			"without --pubkey a key pair is generated here and the secret `<task-id>:<seed>` is handed over once (where, below); with --pubkey nothing secret exists on this side and the output names the `credential bind` command the key holder runs",
 			"the script then runs with HARNESS_CREDENTIAL_FILE=<file> (or HARNESS_CREDENTIAL, or --credential-file): it connects as this task and as nothing else",
 		},
 		Action:    "CredentialIssueAction",
@@ -3414,8 +3422,13 @@ var Verbs = []VerbSpec{
 		},
 	},
 	{
-		Path: []string{"credential", "rekey"}, CmdlineSurfaces: CLI,
-		NoModalSurface: "looked for: " + credentialSurfaceReason,
+		Path: []string{"credential", "rekey"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		WebUIDispatch: WebUIDispatch{Fn: "credentialRekey"},
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/credentials.go:CredentialsModel"},
+			{Surface: WebUI, At: "webui/index.html#credentials-modal"},
+		},
+		SurfaceNotes: credentialSecretNotes,
 		Notes: []string{
 			"give a credential a new key and a new expiry under the same id; the old key stops at once. Works on a live, revoked or expired one. Needs credential_issue, and the credential must be your own descendant (the operator: any)",
 			"--caps / --scope / ... only narrow what the credential recorded; naming none keeps it",
@@ -3431,8 +3444,12 @@ var Verbs = []VerbSpec{
 		},
 	},
 	{
-		Path: []string{"credential", "ls"}, CmdlineSurfaces: CLI,
-		NoModalSurface: "looked for: " + credentialSurfaceReason,
+		Path: []string{"credential", "ls"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		WebUIDispatch: WebUIDispatch{Fn: "credentialList"},
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/credentials.go:CredentialsModel"},
+			{Surface: WebUI, At: "webui/index.html#credentials-modal"},
+		},
 		Notes: []string{
 			"one row per credential task you can reach: id, status, name, expiry, last use (unknown after a server restart), caps and scope. Needs no capability",
 		},
@@ -3443,8 +3460,12 @@ var Verbs = []VerbSpec{
 		Examples: []string{"credential ls", "credential ls --json"},
 	},
 	{
-		Path: []string{"credential", "revoke"}, CmdlineSurfaces: CLI,
-		NoModalSurface: "looked for: " + credentialSurfaceReason,
+		Path: []string{"credential", "revoke"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		WebUIDispatch: WebUIDispatch{Fn: "credentialRevoke"},
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/credentials.go:CredentialsModel"},
+			{Surface: WebUI, At: "webui/index.html#credentials-modal"},
+		},
 		Notes: []string{
 			"end a credential now (the existing cancel, refused for a task that is not a credential): its connections close and its next handshake is refused `revoked`. Needs cancel over it; `credential rekey` brings the id back with a new key",
 		},

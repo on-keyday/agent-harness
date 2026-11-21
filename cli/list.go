@@ -270,11 +270,12 @@ func renderListJSONOrdered(lr *protocol.ListResultBody, out io.Writer, o TaskOrd
 	renderListJSONGroups(&ordered, out, groups)
 }
 
-// credentialColumns are the row's credential fields: a credential's expiry
+// CredentialColumns are the row's credential fields: a credential's expiry
 // and last use (`unknown` while the server has not seen it since it started —
 // zero is a reading, never elided), and the task's name when it has one (D21:
 // any kind). Gated on the kind and on the name existing, never on a value.
-func credentialColumns(t *protocol.TaskInfo) string {
+// Exported for the WebUI's task row, which appends the same words.
+func CredentialColumns(t *protocol.TaskInfo) string {
 	s := ""
 	if t.Kind == protocol.TaskKind_Credential {
 		s += "  expires=" + CredentialExpiryLabel(t)
@@ -332,7 +333,7 @@ func taskLine(t protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo) st
 	if h := TaskScheduleHex(&t); h != "" {
 		sched = "  schedule=" + h[:8]
 	}
-	sched += credentialColumns(&t)
+	sched += CredentialColumns(&t)
 	act := ""
 	if t.LastOutputAt > 0 {
 		act = "  act=" + ActivityStr(t.OutputIdleMs)

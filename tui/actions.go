@@ -23,19 +23,27 @@ import (
 func (a *App) dispatchMainKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 	key := msg.String()
 	scope := scopeForFocus(a.focus)
+	// The row for this key whose scope holds the focused pane runs. A letter
+	// may have one row per table (x deletes a schedule and revokes a
+	// credential), so a row whose scope misses is not the answer yet: only
+	// when no row matches is the first one's OutsideHint said.
+	var outside *keyBinding
 	for i := range mainKeyBindings {
 		b := &mainKeyBindings[i]
 		if b.Do == nil || !slices.Contains(b.Keys, key) {
 			continue
 		}
 		if b.Scope&scope == 0 {
-			if b.OutsideHint != "" && a.focus != focusCmdline {
-				a.cmdresult.Append(WarnStyle.Render(b.OutsideHint))
-				return nil, true
+			if outside == nil {
+				outside = b
 			}
-			return nil, false
+			continue
 		}
 		return b.Do(a, msg)
+	}
+	if outside != nil && outside.OutsideHint != "" && a.focus != focusCmdline {
+		a.cmdresult.Append(WarnStyle.Render(outside.OutsideHint))
+		return nil, true
 	}
 	return nil, false
 }
@@ -429,6 +437,8 @@ func (a *App) onDetail(msg tea.KeyMsg) (tea.Cmd, bool) {
 		return nil, true
 	case focusSchedules:
 		return a.onScheduleDetail()
+	case focusCredentials:
+		return a.onCredentialDetail()
 	}
 	return nil, false
 }
@@ -672,6 +682,13 @@ func (a *App) onBackgroundOpen(msg tea.KeyMsg) (tea.Cmd, bool) {
 	// is pressed in says which new thing.
 	if a.focus == focusSchedules {
 		a.bgform.OpenSchedule(repo)
+		return nil, true
+	}
+	// In the Credentials table it is a new credential, issued from the
+	// command line: the ttl (and a --pubkey, or none to generate) is the
+	// operator's to type.
+	if a.focus == focusCredentials {
+		a.prefillCmdline("credential new --ttl ")
 		return nil, true
 	}
 	if repo == "" {

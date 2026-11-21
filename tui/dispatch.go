@@ -1313,3 +1313,44 @@ func (h tuiVerbs) ScheduleShow(v verb.ScheduleShowAction) tea.Cmd {
 		return cli.ScheduleShowWith(ctx, c, full, v.JSON, out)
 	})
 }
+
+// --- Credentials (docs/superpowers/specs/2026-11-21-credential-tasks-design.md) ---
+//
+// The command line reaches cli's credential functions through the long-lived
+// client (credentialRecord -> DoRecord), as the schedule verbs do. keygen and
+// bind are CLI only: they write a secret file on the host that will use it.
+// Issue and re-key go through cli.CredentialIssueWith, so a generated secret
+// is printed once, into the results pane (in memory, never a log or history
+// file), or written to --out on this host.
+
+func (h tuiVerbs) credentialIssue(verbName string, v verb.CredentialIssueAction) tea.Cmd {
+	return h.a.credentialRecord(verbName, v, func(ctx context.Context, c *cli.Client, out io.Writer) error {
+		return cli.CredentialIssueWith(ctx, c, v, out)
+	})
+}
+
+func (h tuiVerbs) CredentialNew(v verb.CredentialIssueAction) tea.Cmd {
+	return h.credentialIssue("credential new", v)
+}
+
+func (h tuiVerbs) CredentialRekey(v verb.CredentialIssueAction) tea.Cmd {
+	return h.credentialIssue("credential rekey", v)
+}
+
+func (h tuiVerbs) CredentialLs(v verb.CredentialLsAction) tea.Cmd {
+	return h.a.credentialRecord("credential ls", v, func(ctx context.Context, c *cli.Client, out io.Writer) error {
+		return cli.CredentialLsWith(ctx, c, v.JSON, out)
+	})
+}
+
+// CredentialRevoke takes an id prefix, as the other TUI verbs do, resolved
+// over the snapshot's tasks; cli.CredentialRevokeWith then checks the id is a
+// credential in reach before the cancel.
+func (h tuiVerbs) CredentialRevoke(v verb.CredentialRevokeAction) tea.Cmd {
+	full, errStr := h.a.resolveCredentialPrefix(v.ID)
+	if errStr != "" {
+		h.a.cmdresult.Append(ErrorStyle.Render(errStr))
+		return nil
+	}
+	return h.a.credentialRevokeCmd(full)
+}

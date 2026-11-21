@@ -46,7 +46,7 @@ func TestNoRawTableSetRowsRemain(t *testing.T) {
 			// is the pane's public entry point, not a bubbles table call; those
 			// funnel into rebuild.
 			if strings.Contains(trimmed, "a.tasks.SetRows(") || strings.Contains(trimmed, "a.runners.SetRows(") ||
-				strings.Contains(trimmed, "a.schedules.SetRows(") {
+				strings.Contains(trimmed, "a.schedules.SetRows(") || strings.Contains(trimmed, "a.credentials.SetRows(") {
 				continue
 			}
 			t.Errorf("%s:%d sets table rows directly — use setTableRows so the "+

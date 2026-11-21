@@ -1186,3 +1186,12 @@ test("capHas / capOr / capXor are exact past bit 31", () => {
   eq(page.capXor(b40, b31), b40 + b31);
   eq(page.capOr(0, 0), 0);
 });
+
+test("credential ls and --json reach the bridge's list, whose text is the output", async () => {
+  for (const [line, json] of [["credential ls", false], ["credential ls --json", true]]) {
+    const { out, err, calls } = await run(line, { credentialList: { rows: [], text: "no credentials" } });
+    assert.equal(err, undefined, `${line}: ${err}`);
+    eq(named(calls, "credentialList")[0], ["credentialList", { json }], line);
+    assert.equal(out, "no credentials", line);
+  }
+});

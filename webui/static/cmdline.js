@@ -340,6 +340,36 @@ async function runVerbCommandDispatch(tokens, ctx) {
       if (ctx.schedulesChanged) ctx.schedulesChanged();
       break;
     }
+    case "credential": {
+      // new / rekey / ls / revoke (keygen and bind are CLI only: they write a
+      // secret file on the host that will use it). Parsed by the shared
+      // declaration first, then the bridge parses the tail again into the
+      // typed action. A generated secret is never this output: it goes to
+      // the Credentials dialog (ctx.credentialSecret), shown once, and the
+      // output says where it went.
+      const b = parseOrHelp(ctx, tokens, {});
+      const rest = tokens.slice(2);
+      switch (tokens[1]) {
+        case "new":
+        case "rekey": {
+          const r = tokens[1] === "new"
+            ? await ctx.harness.credentialNew(rest)
+            : await ctx.harness.credentialRekey(rest);
+          if (r && r.secret) {
+            ctx.credentialSecret(r);
+            out = `${r.text}\nsecret: shown once in the Credentials dialog (copy or download it there); it is not printed here`;
+          } else {
+            out = r && r.text;
+          }
+          break;
+        }
+        case "ls": out = (await ctx.harness.credentialList({ json: !!b.flags.json })).text; break;
+        case "revoke": out = await ctx.harness.credentialRevoke(b.args[0]); break;
+        default: throw new Error(`credential: unknown sub-verb ${tokens[1]}`);
+      }
+      if (ctx.credentialsChanged) ctx.credentialsChanged();
+      break;
+    }
     case "scope":
     case "caps": {
       // Which of the three, by the SUB-VERB word rather than by counting

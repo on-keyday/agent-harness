@@ -721,6 +721,9 @@ func taskStatusStr(s protocol.TaskStatus) string {
 		return "Detachd"
 	case protocol.TaskStatus_Held:
 		return "Held"
+	case protocol.TaskStatus_Active:
+		// A live credential task (D19): no process, so not Running.
+		return "Active"
 	}
 	return "?"
 }

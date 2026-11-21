@@ -4979,6 +4979,133 @@ func init() {
 			}
 			return a, nil
 		},
+		"credential new\x00tui": func(b Bound) (Action, error) {
+			a := CredentialIssueAction{}
+			a.Sub = "new"
+			a.TTL = b.Str("ttl")
+			a.Name = b.Str("name")
+			a.Out = b.Str("out")
+			a.Pubkey = b.Str("pubkey")
+			a.CapsPresent = b.Set["caps"]
+			if b.Set["caps"] {
+				v, err := parseCapsFlag(b.Str("caps"))
+				if err != nil {
+					return nil, fmt.Errorf("credential new: --caps: %w", err)
+				}
+				a.Caps = v
+			}
+			a.ScopePresent = b.Set["scope"] || b.Set["scope-for"]
+			if b.Set["scope"] {
+				v, err := parseScopeFlag(b.Str("scope"))
+				if err != nil {
+					return nil, fmt.Errorf("credential new: --scope: %w", err)
+				}
+				a.Scope = v
+			}
+			if b.Set["scope-for"] {
+				v, err := parseScopeForList(stringsOf(b.Custom["scope-for"]))
+				if err != nil {
+					return nil, fmt.Errorf("credential new: --scope-for: %w", err)
+				}
+				a.Overrides = v
+			}
+			a.DelegateCapsPresent = b.Set["delegate-caps"]
+			if b.Set["delegate-caps"] {
+				v, err := parseCapsFlag(b.Str("delegate-caps"))
+				if err != nil {
+					return nil, fmt.Errorf("credential new: --delegate-caps: %w", err)
+				}
+				a.DelegateCaps = v
+			}
+			a.DelegateScopePresent = b.Set["delegate-scope"]
+			if b.Set["delegate-scope"] {
+				v, err := parseScopeFlag(b.Str("delegate-scope"))
+				if err != nil {
+					return nil, fmt.Errorf("credential new: --delegate-scope: %w", err)
+				}
+				a.DelegateScope = v
+			}
+			a.SpawnDepthPresent = b.Set["spawn-depth"]
+			if b.Set["spawn-depth"] {
+				v, err := parseSpawnLimitFlag(b.Str("spawn-depth"))
+				if err != nil {
+					return nil, fmt.Errorf("credential new: --spawn-depth: %w", err)
+				}
+				a.SpawnDepth = v
+			}
+			a.MaxDescendantsPresent = b.Set["max-descendants"]
+			if b.Set["max-descendants"] {
+				v, err := parseSpawnLimitFlag(b.Str("max-descendants"))
+				if err != nil {
+					return nil, fmt.Errorf("credential new: --max-descendants: %w", err)
+				}
+				a.MaxDescendants = v
+			}
+			return a, nil
+		},
+		"credential new\x00webui": func(b Bound) (Action, error) {
+			a := CredentialIssueAction{}
+			a.Sub = "new"
+			a.TTL = b.Str("ttl")
+			a.Name = b.Str("name")
+			a.Pubkey = b.Str("pubkey")
+			a.CapsPresent = b.Set["caps"]
+			if b.Set["caps"] {
+				v, err := parseCapsFlag(b.Str("caps"))
+				if err != nil {
+					return nil, fmt.Errorf("credential new: --caps: %w", err)
+				}
+				a.Caps = v
+			}
+			a.ScopePresent = b.Set["scope"] || b.Set["scope-for"]
+			if b.Set["scope"] {
+				v, err := parseScopeFlag(b.Str("scope"))
+				if err != nil {
+					return nil, fmt.Errorf("credential new: --scope: %w", err)
+				}
+				a.Scope = v
+			}
+			if b.Set["scope-for"] {
+				v, err := parseScopeForList(stringsOf(b.Custom["scope-for"]))
+				if err != nil {
+					return nil, fmt.Errorf("credential new: --scope-for: %w", err)
+				}
+				a.Overrides = v
+			}
+			a.DelegateCapsPresent = b.Set["delegate-caps"]
+			if b.Set["delegate-caps"] {
+				v, err := parseCapsFlag(b.Str("delegate-caps"))
+				if err != nil {
+					return nil, fmt.Errorf("credential new: --delegate-caps: %w", err)
+				}
+				a.DelegateCaps = v
+			}
+			a.DelegateScopePresent = b.Set["delegate-scope"]
+			if b.Set["delegate-scope"] {
+				v, err := parseScopeFlag(b.Str("delegate-scope"))
+				if err != nil {
+					return nil, fmt.Errorf("credential new: --delegate-scope: %w", err)
+				}
+				a.DelegateScope = v
+			}
+			a.SpawnDepthPresent = b.Set["spawn-depth"]
+			if b.Set["spawn-depth"] {
+				v, err := parseSpawnLimitFlag(b.Str("spawn-depth"))
+				if err != nil {
+					return nil, fmt.Errorf("credential new: --spawn-depth: %w", err)
+				}
+				a.SpawnDepth = v
+			}
+			a.MaxDescendantsPresent = b.Set["max-descendants"]
+			if b.Set["max-descendants"] {
+				v, err := parseSpawnLimitFlag(b.Str("max-descendants"))
+				if err != nil {
+					return nil, fmt.Errorf("credential new: --max-descendants: %w", err)
+				}
+				a.MaxDescendants = v
+			}
+			return a, nil
+		},
 		"credential rekey\x00cli": func(b Bound) (Action, error) {
 			a := CredentialIssueAction{}
 			a.Sub = "rekey"
@@ -5045,12 +5172,167 @@ func init() {
 			}
 			return a, nil
 		},
+		"credential rekey\x00tui": func(b Bound) (Action, error) {
+			a := CredentialIssueAction{}
+			a.Sub = "rekey"
+			a.TTL = b.Str("ttl")
+			a.Out = b.Str("out")
+			a.Pubkey = b.Str("pubkey")
+			a.CapsPresent = b.Set["caps"]
+			if b.Set["caps"] {
+				v, err := parseCapsFlag(b.Str("caps"))
+				if err != nil {
+					return nil, fmt.Errorf("credential rekey: --caps: %w", err)
+				}
+				a.Caps = v
+			}
+			a.ScopePresent = b.Set["scope"] || b.Set["scope-for"]
+			if b.Set["scope"] {
+				v, err := parseScopeFlag(b.Str("scope"))
+				if err != nil {
+					return nil, fmt.Errorf("credential rekey: --scope: %w", err)
+				}
+				a.Scope = v
+			}
+			if b.Set["scope-for"] {
+				v, err := parseScopeForList(stringsOf(b.Custom["scope-for"]))
+				if err != nil {
+					return nil, fmt.Errorf("credential rekey: --scope-for: %w", err)
+				}
+				a.Overrides = v
+			}
+			a.DelegateCapsPresent = b.Set["delegate-caps"]
+			if b.Set["delegate-caps"] {
+				v, err := parseCapsFlag(b.Str("delegate-caps"))
+				if err != nil {
+					return nil, fmt.Errorf("credential rekey: --delegate-caps: %w", err)
+				}
+				a.DelegateCaps = v
+			}
+			a.DelegateScopePresent = b.Set["delegate-scope"]
+			if b.Set["delegate-scope"] {
+				v, err := parseScopeFlag(b.Str("delegate-scope"))
+				if err != nil {
+					return nil, fmt.Errorf("credential rekey: --delegate-scope: %w", err)
+				}
+				a.DelegateScope = v
+			}
+			a.SpawnDepthPresent = b.Set["spawn-depth"]
+			if b.Set["spawn-depth"] {
+				v, err := parseSpawnLimitFlag(b.Str("spawn-depth"))
+				if err != nil {
+					return nil, fmt.Errorf("credential rekey: --spawn-depth: %w", err)
+				}
+				a.SpawnDepth = v
+			}
+			a.MaxDescendantsPresent = b.Set["max-descendants"]
+			if b.Set["max-descendants"] {
+				v, err := parseSpawnLimitFlag(b.Str("max-descendants"))
+				if err != nil {
+					return nil, fmt.Errorf("credential rekey: --max-descendants: %w", err)
+				}
+				a.MaxDescendants = v
+			}
+			if len(b.Args) > 0 {
+				a.ID = b.Args[0]
+			}
+			return a, nil
+		},
+		"credential rekey\x00webui": func(b Bound) (Action, error) {
+			a := CredentialIssueAction{}
+			a.Sub = "rekey"
+			a.TTL = b.Str("ttl")
+			a.Pubkey = b.Str("pubkey")
+			a.CapsPresent = b.Set["caps"]
+			if b.Set["caps"] {
+				v, err := parseCapsFlag(b.Str("caps"))
+				if err != nil {
+					return nil, fmt.Errorf("credential rekey: --caps: %w", err)
+				}
+				a.Caps = v
+			}
+			a.ScopePresent = b.Set["scope"] || b.Set["scope-for"]
+			if b.Set["scope"] {
+				v, err := parseScopeFlag(b.Str("scope"))
+				if err != nil {
+					return nil, fmt.Errorf("credential rekey: --scope: %w", err)
+				}
+				a.Scope = v
+			}
+			if b.Set["scope-for"] {
+				v, err := parseScopeForList(stringsOf(b.Custom["scope-for"]))
+				if err != nil {
+					return nil, fmt.Errorf("credential rekey: --scope-for: %w", err)
+				}
+				a.Overrides = v
+			}
+			a.DelegateCapsPresent = b.Set["delegate-caps"]
+			if b.Set["delegate-caps"] {
+				v, err := parseCapsFlag(b.Str("delegate-caps"))
+				if err != nil {
+					return nil, fmt.Errorf("credential rekey: --delegate-caps: %w", err)
+				}
+				a.DelegateCaps = v
+			}
+			a.DelegateScopePresent = b.Set["delegate-scope"]
+			if b.Set["delegate-scope"] {
+				v, err := parseScopeFlag(b.Str("delegate-scope"))
+				if err != nil {
+					return nil, fmt.Errorf("credential rekey: --delegate-scope: %w", err)
+				}
+				a.DelegateScope = v
+			}
+			a.SpawnDepthPresent = b.Set["spawn-depth"]
+			if b.Set["spawn-depth"] {
+				v, err := parseSpawnLimitFlag(b.Str("spawn-depth"))
+				if err != nil {
+					return nil, fmt.Errorf("credential rekey: --spawn-depth: %w", err)
+				}
+				a.SpawnDepth = v
+			}
+			a.MaxDescendantsPresent = b.Set["max-descendants"]
+			if b.Set["max-descendants"] {
+				v, err := parseSpawnLimitFlag(b.Str("max-descendants"))
+				if err != nil {
+					return nil, fmt.Errorf("credential rekey: --max-descendants: %w", err)
+				}
+				a.MaxDescendants = v
+			}
+			if len(b.Args) > 0 {
+				a.ID = b.Args[0]
+			}
+			return a, nil
+		},
 		"credential ls\x00cli": func(b Bound) (Action, error) {
 			a := CredentialLsAction{}
 			a.JSON = b.Bool("json")
 			return a, nil
 		},
+		"credential ls\x00tui": func(b Bound) (Action, error) {
+			a := CredentialLsAction{}
+			a.JSON = b.Bool("json")
+			return a, nil
+		},
+		"credential ls\x00webui": func(b Bound) (Action, error) {
+			a := CredentialLsAction{}
+			a.JSON = b.Bool("json")
+			return a, nil
+		},
 		"credential revoke\x00cli": func(b Bound) (Action, error) {
+			a := CredentialRevokeAction{}
+			if len(b.Args) > 0 {
+				a.ID = b.Args[0]
+			}
+			return a, nil
+		},
+		"credential revoke\x00tui": func(b Bound) (Action, error) {
+			a := CredentialRevokeAction{}
+			if len(b.Args) > 0 {
+				a.ID = b.Args[0]
+			}
+			return a, nil
+		},
+		"credential revoke\x00webui": func(b Bound) (Action, error) {
 			a := CredentialRevokeAction{}
 			if len(b.Args) > 0 {
 				a.ID = b.Args[0]
@@ -11292,6 +11574,14 @@ type TUIDispatch[R any] interface {
 	ScheduleLs(ScheduleLsAction) R
 	// schedule show
 	ScheduleShow(ScheduleShowAction) R
+	// credential new
+	CredentialNew(CredentialIssueAction) R
+	// credential rekey
+	CredentialRekey(CredentialIssueAction) R
+	// credential ls
+	CredentialLs(CredentialLsAction) R
+	// credential revoke
+	CredentialRevoke(CredentialRevokeAction) R
 	// session stream attach
 	SessionStreamAttach(SessionAction) R
 	// session stream interrupt
@@ -11853,6 +12143,30 @@ func DispatchTUI[R any](h TUIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.ScheduleShow(a), true, nil
+	case CmdCredentialNew:
+		a, perr := ParseCmdCredentialNew(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.CredentialNew(a), true, nil
+	case CmdCredentialRekey:
+		a, perr := ParseCmdCredentialRekey(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.CredentialRekey(a), true, nil
+	case CmdCredentialLs:
+		a, perr := ParseCmdCredentialLs(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.CredentialLs(a), true, nil
+	case CmdCredentialRevoke:
+		a, perr := ParseCmdCredentialRevoke(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.CredentialRevoke(a), true, nil
 	case CmdSessionStreamAttach:
 		a, perr := ParseCmdSessionStreamAttach(TUI, args, ctx)
 		if perr != nil {
@@ -12131,6 +12445,17 @@ func DispatchTUIAction[R any](h TUIDispatch[R], act Action) (r R, handled bool) 
 		return h.ScheduleLs(a), true
 	case ScheduleShowAction:
 		return h.ScheduleShow(a), true
+	case CredentialIssueAction:
+		switch a.Sub {
+		case "new":
+			return h.CredentialNew(a), true
+		case "rekey":
+			return h.CredentialRekey(a), true
+		}
+	case CredentialLsAction:
+		return h.CredentialLs(a), true
+	case CredentialRevokeAction:
+		return h.CredentialRevoke(a), true
 	}
 	// A surface-local action (the TUI's clear / quit / grid), which the
 	// declaration does not describe.
@@ -12689,6 +13014,30 @@ func ParseTUICommand(tokens []string, ctx map[string]string) (act Action, handle
 			return a, true, nil
 		case CmdScheduleShow:
 			a, perr := ParseCmdScheduleShow(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdCredentialNew:
+			a, perr := ParseCmdCredentialNew(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdCredentialRekey:
+			a, perr := ParseCmdCredentialRekey(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdCredentialLs:
+			a, perr := ParseCmdCredentialLs(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdCredentialRevoke:
+			a, perr := ParseCmdCredentialRevoke(TUI, tokens[n:], ctx)
 			if perr != nil {
 				return nil, true, perr
 			}

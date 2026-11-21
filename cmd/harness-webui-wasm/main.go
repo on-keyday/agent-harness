@@ -135,6 +135,10 @@ func main() {
 		"scheduleRun":        js.FuncOf(harnessScheduleRun),
 		"scheduleList":       js.FuncOf(harnessScheduleList),
 		"scheduleShow":       js.FuncOf(harnessScheduleShow),
+		"credentialNew":      js.FuncOf(harnessCredentialNew),
+		"credentialRekey":    js.FuncOf(harnessCredentialRekey),
+		"credentialList":     js.FuncOf(harnessCredentialList),
+		"credentialRevoke":   js.FuncOf(harnessCredentialRevoke),
 		"sendInteractive":    js.FuncOf(harnessSendInteractive),
 		"resizeInteractive":  js.FuncOf(harnessResizeInteractive),
 		"detachInteractive":  js.FuncOf(harnessDetachInteractive),
@@ -1764,7 +1768,16 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					// "" when bound to none: the row prints its first 8
 					// characters and the sheet the whole id (item 22/23).
 					"scheduleId": cli.TaskScheduleHex(&t),
-					"createdBy":  creatorShort(t.CreatorTaskId),
+					// The task's display name (D21, any kind) and a
+					// credential's expiry / last use: raw nanos (0 = not a
+					// credential, or a last use not seen since the server
+					// started) beside credentialMeta, the ls row's own words
+					// (cli.CredentialColumns) the row appends as they are.
+					"name":                 string(t.Name),
+					"credentialExpiresAt":  float64(t.CredentialExpiresAt),
+					"credentialLastUsedAt": float64(t.CredentialLastUsedAt),
+					"credentialMeta":       strings.TrimSpace(cli.CredentialColumns(&t)),
+					"createdBy":            creatorShort(t.CreatorTaskId),
 					// createdById is the RAW full id beside the short label:
 					// the parent-picker dialog highlights the current parent
 					// by exact id (a truncated prefix could match the wrong

@@ -109,7 +109,7 @@ func TestTabTreatsTheTablesAsOneStop(t *testing.T) {
 func TestArrowsSwitchTables(t *testing.T) {
 	a := oneTableApp(120, 40)
 	a.setFocus(focusRunners)
-	want := []focus{focusTasks, focusSchedules, focusRunners}
+	want := []focus{focusTasks, focusSchedules, focusCredentials, focusRunners}
 	for _, w := range want {
 		a.Update(tea.KeyMsg{Type: tea.KeyRight})
 		if a.focus != w {
@@ -117,8 +117,8 @@ func TestArrowsSwitchTables(t *testing.T) {
 		}
 	}
 	a.Update(tea.KeyMsg{Type: tea.KeyLeft})
-	if a.focus != focusSchedules {
-		t.Fatalf("left from runners = %d, want schedules (wraps)", a.focus)
+	if a.focus != focusCredentials {
+		t.Fatalf("left from runners = %d, want credentials (wraps)", a.focus)
 	}
 	// Off the tables the arrows are the pane's own (the command line's cursor).
 	a.setFocus(focusCmdline)
@@ -167,10 +167,12 @@ func pressKey(a *App, k tea.KeyType, times int) {
 	}
 }
 
-// From a table, the strip's arrow for each other table is PRESSED and must land
-// there: an earlier strip said "Tab switches" and was wrong.
-func TestStripNamesThreeTables(t *testing.T) {
-	tables := map[string]focus{"Runners": focusRunners, "Tasks": focusTasks, "Schedules": focusSchedules}
+// From a table, the strip's arrow for each neighbouring table is PRESSED and
+// must land there: an earlier strip said "Tab switches" and was wrong. The
+// table opposite (two presses away) is not named: four names do not fit 80
+// cells (see tableStrip), and naming it with one arrow would be a lie.
+func TestStripNamesTheNeighbouringTables(t *testing.T) {
+	tables := map[string]focus{"Runners": focusRunners, "Tasks": focusTasks, "Schedules": focusSchedules, "Creds": focusCredentials}
 	for fromName, from := range tables {
 		a := oneTableApp(120, 40)
 		a.setFocus(from)
@@ -178,8 +180,15 @@ func TestStripNamesThreeTables(t *testing.T) {
 		if !strings.Contains(strip, "["+fromName+"]") {
 			t.Errorf("from %s: shown table is not bracketed: %q", fromName, strip)
 		}
+		i := tableIndex(from)
 		for toName, to := range tables {
 			if toName == fromName {
+				continue
+			}
+			if j := tableIndex(to); j != (i+1)%len(tableOrder) && j != (i-1+len(tableOrder))%len(tableOrder) {
+				if strings.Contains(strip, toName+":") {
+					t.Errorf("from %s the strip names %s, two presses away, with one arrow: %q", fromName, toName, strip)
+				}
 				continue
 			}
 			arrow, _, _ := stripHint(t, strip, toName)
@@ -228,8 +237,8 @@ func TestStripFitsEightyColumns(t *testing.T) {
 		fleet = append(fleet, protocol.RunnerInfo{Status: st})
 	}
 	const summary = "runners 12: 4 idle 4 busy 4 offline"
-	for _, f := range []focus{focusRunners, focusTasks, focusSchedules, focusNotify, focusCmdresult, focusCmdline} {
-		for _, shown := range []focus{focusRunners, focusTasks, focusSchedules} {
+	for _, f := range []focus{focusRunners, focusTasks, focusSchedules, focusCredentials, focusNotify, focusCmdresult, focusCmdline} {
+		for _, shown := range []focus{focusRunners, focusTasks, focusSchedules, focusCredentials} {
 			if isTableFocus(f) && f != shown {
 				continue
 			}
@@ -597,12 +606,14 @@ func TestTaskEventsApplyTheScheduleBinding(t *testing.T) {
 }
 
 func TestMainKeysDoNotCollideForSchedules(t *testing.T) {
-	// n and x: distinct from every other main key (TestMainKeysAreUnique) and
-	// each dispatched ONLY in the schedules scope.
+	// n and x: distinct from every other main key (TestMainKeysAreUnique), and
+	// in the schedules pane each is dispatched by its schedule row alone. x
+	// has a second row, in the credentials scope only (revoke):
+	// TestSameKeyRowsHaveDisjointScopes keeps the two apart.
 	for _, k := range []string{mainKeys.ScheduleRunNow, mainKeys.ScheduleDelete} {
 		for _, b := range mainKeyBindings {
 			for _, bk := range b.Keys {
-				if bk == k && b.Scope != scopeSchedules {
+				if bk == k && b.Scope != scopeSchedules && b.Scope != scopeCredentials {
 					t.Errorf("key %q also bound with scope %v", k, b.Scope)
 				}
 			}

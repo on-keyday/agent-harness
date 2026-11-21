@@ -627,6 +627,9 @@ function composeTargetOptions(tasks) {
   const out = [{ value: "", label: "新規に作る" }];
   for (const t of tasks || []) {
     if (!ended.has(t.status) && t.runMode !== "background") continue;
+    // A credential has no process to resume; the server refuses it as a
+    // schedule's task, naming the kind.
+    if (t.kind === "Credential") continue;
     const about = paneAboutText(t);
     out.push({ value: t.id, label: `${t.id.slice(0, 8)} ${repoTail(t.repoPath || "")}${about ? " " + about : ""}` });
   }
@@ -799,4 +802,69 @@ function taskIdDialogModel(t) {
 function latestLoad() {
   let n = 0;
   return { begin: () => ++n, current: (t) => t === n };
+}
+
+// --- Credential tasks (docs/superpowers/specs/2026-11-21-credential-tasks-design.md)
+//
+// The words are Go's (cli.CredentialExpiryLabel / CredentialLastUsedLabel /
+// CredentialRowLine, via harness.credentialList); these models only arrange
+// them, and say `unknown` / `-` rather than leave a cell blank.
+
+// credentialRowModel is one row of the Credentials dialog from the bridge's
+// row. A zero last-use reading is `unknown` (the server keeps it in memory, so
+// it means "not seen since the server started", never "never used"); live is
+// whether there is anything to revoke.
+function credentialRowModel(r) {
+  return {
+    id: r.id,
+    id8: String(r.id).slice(0, 8),
+    status: r.status,
+    live: r.status === "Active",
+    name: r.name || "-",
+    expires: r.expires,
+    lastUsed: r.lastUsedAt ? r.lastUsed : "unknown",
+    caps: r.caps,
+    scope: r.scope,
+    line: r.line,
+  };
+}
+
+// credentialIssueTokens serializes the dialog's issue / re-key form to the
+// argument line of `credential new` / `credential rekey`, so the PARSER stays
+// in Go (cli/verb) and the form cannot send what the CLI refuses. f.mode is
+// "new" or "rekey" (f.id then names the credential); f.key is "generate" or
+// "pubkey" (f.pubkey the 64 hex). caps and scope are new-only: a re-key from
+// the dialog keeps what the credential recorded (narrowing one is typed on
+// the command line).
+function credentialIssueTokens(f) {
+  const ttl = String(f.ttl || "").trim();
+  if (!ttl) throw new Error("credential: a ttl is required (30d, 12h, 1d12h; at most 90d)");
+  const out = f.mode === "rekey" ? [f.id, "--ttl", ttl] : ["--ttl", ttl];
+  if (f.mode !== "rekey") {
+    const name = String(f.name || "").trim();
+    if (name) out.push("--name", name);
+    if (f.caps) out.push("--caps", f.caps);
+    if (f.scope) out.push("--scope", f.scope);
+  }
+  if (f.key === "pubkey") {
+    const pk = String(f.pubkey || "").trim();
+    if (!pk) throw new Error("credential: paste the holder's public key (64 hex, from `credential keygen`)");
+    out.push("--pubkey", pk);
+  }
+  return out;
+}
+
+// credentialSecretModel is the one-time view of a generated secret: what to
+// show, the download's file name, and how a script uses it. The secret is
+// shown here and nowhere else; the page drops it when the dialog closes.
+function credentialSecretModel(r) {
+  const id8 = String(r.id).slice(0, 8);
+  return {
+    title: `credential ${id8}: secret`,
+    head: r.text,
+    secret: r.secret,
+    filename: `credential-${id8}.cred`,
+    once: "shown once: copy or download it now. Closing this dialog removes it, and nothing here keeps a copy.",
+    hint: "save it as a file only you can read (chmod 600), then run the script with HARNESS_CREDENTIAL_FILE=<that file>",
+  };
 }

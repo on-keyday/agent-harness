@@ -24,6 +24,8 @@ var appOverlays = []overlay{
 	// A pending schedule delete owns the next key, whatever else is open: the
 	// question is asked from the main view, with nothing above it.
 	{func(a *App) bool { return a.schedDeleteID != "" }, (*App).inSchedDeleteConfirm},
+	// A pending credential revoke, likewise: asked from the main view.
+	{func(a *App) bool { return a.credRevokeID != "" }, (*App).inCredRevokeConfirm},
 	// Opened from the d popup and drawn over it, so it comes first.
 	{func(a *App) bool { return a.recordKeep.IsOpen() }, (*App).inRecordKeep},
 	{func(a *App) bool { return a.detail.IsOpen() }, (*App).inDetail},

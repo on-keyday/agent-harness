@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -15,6 +16,7 @@ import (
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/cli/verb"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/agent-harness/vtgrid"
 )
 
 // Credential tasks (docs/superpowers/specs/2026-11-21-credential-tasks-design.md):
@@ -302,6 +304,62 @@ func (c *Client) CredentialIssue(ctx context.Context, a verb.CredentialIssueActi
 	return CredentialIssued{TaskID: r.TaskId, ExpiresAt: time.Unix(0, int64(r.ExpiresAt))}, nil
 }
 
+// CredentialHandover is an issue or re-key as its issuer receives it: the
+// task and its expiry, and -- only when the key pair was generated on this
+// side -- the credential whose Secret() is handed over once. Cred is nil when
+// the holder's public key was registered (--pubkey): no secret exists here.
+type CredentialHandover struct {
+	CredentialIssued
+	Cred *Credential
+}
+
+// IssueCredential runs credential new / rekey with either way of D3: --pubkey
+// registers the holder's key, otherwise a pair is generated here and only its
+// public half is sent. It is the core every surface shares; where the secret
+// then goes (stdout, a --out file, the WebUI's one-time view) is the caller's.
+func IssueCredential(ctx context.Context, c *Client, a verb.CredentialIssueAction) (CredentialHandover, error) {
+	verbName := "new"
+	if a.Sub == verb.SubRekey {
+		verbName = "rekey"
+	}
+	var pub ed25519.PublicKey
+	var priv ed25519.PrivateKey
+	if a.Pubkey != "" {
+		raw, err := hex.DecodeString(a.Pubkey)
+		if err != nil || len(raw) != ed25519.PublicKeySize {
+			return CredentialHandover{}, fmt.Errorf("credential %s: --pubkey: want 64 hex characters", verbName)
+		}
+		pub = raw
+	} else {
+		var err error
+		if pub, priv, err = ed25519.GenerateKey(rand.Reader); err != nil {
+			return CredentialHandover{}, err
+		}
+	}
+	got, err := c.CredentialIssue(ctx, a, pub)
+	if err != nil {
+		return CredentialHandover{}, err
+	}
+	h := CredentialHandover{CredentialIssued: got}
+	if priv != nil {
+		h.Cred = &Credential{TaskID: got.TaskID, Key: priv}
+	}
+	return h, nil
+}
+
+// CredentialIssuedLine is the first line every surface prints for an issue or
+// a re-key: `credential <id8>: issued, expires <RFC3339>`. No secret.
+func CredentialIssuedLine(got CredentialIssued) string {
+	return fmt.Sprintf("credential %s: issued, expires %s", hex.EncodeToString(got.TaskID.Id[:])[:8], got.ExpiresAt.Format(time.RFC3339))
+}
+
+// CredentialBindHint is what follows CredentialIssuedLine when the holder's
+// public key was registered: the full id (the id8 above is not enough to
+// bind) and the command the holder runs where `credential keygen` ran.
+func CredentialBindHint(id string) string {
+	return fmt.Sprintf("task id: %s\nnext, on the host that ran credential keygen:\n  harness-cli credential bind %s --file <your seed file>", id, id)
+}
+
 // --- the rows ---
 
 // CredentialRows are the credential tasks in a snapshot, in its order.
@@ -329,6 +387,30 @@ func CredentialLastUsedLabel(t *protocol.TaskInfo) string {
 		return "unknown"
 	}
 	return time.Unix(0, int64(t.CredentialLastUsedAt)).Format(time.RFC3339)
+}
+
+// CredentialTimeCell is a credential time for a table cell, where RFC3339
+// does not fit: `2006-01-02 15:04` on the reader's clock, or `unknown` for a
+// zero reading (a last use the server has not seen since it started). The
+// detail views carry the full RFC3339 labels above.
+func CredentialTimeCell(ns uint64) string {
+	if ns == 0 {
+		return "unknown"
+	}
+	return time.Unix(0, int64(ns)).Format("2006-01-02 15:04")
+}
+
+// credentialAboutText is a credential row's About text (TaskNowText): it has
+// no prompt, title or progress, so the row says what it is and when it ends,
+// by name -- or by its id8, as a board sender does, when it has none. The
+// name is an issuer's text and reaches a terminal, so it is sanitized.
+func credentialAboutText(t protocol.TaskInfo) string {
+	who := hex.EncodeToString(t.Id.Id[:])[:8]
+	if len(t.Name) > 0 {
+		n := string(t.Name)
+		who = vtgrid.SanitizeTitle(n, len(n))
+	}
+	return "credential " + who + " expires " + CredentialExpiryLabel(&t)
 }
 
 // CredentialRowLine is one `credential ls` row.

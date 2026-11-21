@@ -198,6 +198,11 @@ export function recordingCtx(page, overrides = {}) {
       return overrides.spawnDefaults ?? { caps: 0, capsLabel: "none", scope: "" };
     },
     setSpawnDefaults: (d) => { calls.push(["setSpawnDefaults", d]); },
+    // The Credentials dialog's one-time view of a generated secret, and its
+    // reload: recorded, so a test can see the secret went THERE and not to
+    // the output.
+    credentialSecret: record("credentialSecret"),
+    credentialsChanged: record("credentialsChanged"),
     connsView: (o) => { calls.push(["connsView", o]); },
     overviewView: () => { calls.push(["overviewView"]); },
     routeAmbiguous: (e, req, reissue) => {

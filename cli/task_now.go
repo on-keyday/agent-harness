@@ -67,6 +67,8 @@ func promptCell(t protocol.TaskInfo) string {
 		// thing on the other end, and the row is where an operator first
 		// notices which one they are looking at.
 		return "<stream>"
+	case protocol.TaskKind_Credential:
+		return credentialAboutText(t)
 	}
 	return promptText(t.Prompt)
 }

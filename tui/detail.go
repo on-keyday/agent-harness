@@ -388,15 +388,33 @@ func formatTaskDetail(t protocol.TaskInfo, runnerByID map[string]protocol.Runner
 	// not the mode's default (A-D33), as on the `ls` row.
 	fmt.Fprintf(&sb, "kind:          %s%s\n", taskKindStr(t.Kind), cli.RunMark(&t))
 	fmt.Fprintf(&sb, "status:        %s\n", taskStatusStr(t.Status))
+	// The task's display name (D21, any kind), when it has one; sanitized,
+	// since an issuer typed it and it reaches this terminal.
+	if len(t.Name) > 0 {
+		n := string(t.Name)
+		fmt.Fprintf(&sb, "name:          %s\n", vtgrid.SanitizeTitle(n, len(n)))
+	}
+	// A credential's expiry and last use, as `credential ls` words them; a
+	// last use the server has not seen since it started is `unknown`, said.
+	if t.Kind == protocol.TaskKind_Credential {
+		fmt.Fprintf(&sb, "expires:       %s\n", cli.CredentialExpiryLabel(&t))
+		fmt.Fprintf(&sb, "last used:     %s\n", cli.CredentialLastUsedLabel(&t))
+	}
 	if len(t.AgentProfile) > 0 {
 		fmt.Fprintf(&sb, "agent:         %s\n", string(t.AgentProfile))
 	}
+	// A credential task has no process (D19): no runner, run, worktree or
+	// exec, so the lines about those are not printed for it -- the subject
+	// does not exist, which is not the same as a zero (checklist 31).
+	proc := t.Kind != protocol.TaskKind_Credential
 	// Spelled out rather than folded into the agent line's "+skills" suffix:
 	// the table has no room to distinguish "the runner declares no injection"
 	// from "no runner has been assigned yet", and a detail view is where that
 	// difference belongs. Always printed — a hidden default reads as "this
 	// task has no such property".
-	fmt.Fprintf(&sb, "skills:        %s\n", skillsInjectedDetail(t))
+	if proc {
+		fmt.Fprintf(&sb, "skills:        %s\n", skillsInjectedDetail(t))
+	}
 	// A held task's deadline, which is the only question the operator has
 	// about one: status=held cannot tell 5 seconds of window from 85, and that
 	// is the whole decision. Gated on the hold EXISTING rather than on its
@@ -423,7 +441,9 @@ func formatTaskDetail(t protocol.TaskInfo, runnerByID map[string]protocol.Runner
 		fmt.Fprintf(&sb, "run:           %s\n", r)
 	}
 	// The run number names the run's PTY record (A-D20): <id>#<n>.
-	fmt.Fprintf(&sb, "run number:    %d\n", t.Run)
+	if proc {
+		fmt.Fprintf(&sb, "run number:    %d\n", t.Run)
+	}
 	// What the task's hooks last reported, beside its own line and the
 	// output age, so the three can be read against each other.
 	// Gated like the badge: not for a finished task, which must not read
@@ -483,7 +503,9 @@ func formatTaskDetail(t protocol.TaskInfo, runnerByID map[string]protocol.Runner
 	fmt.Fprintf(&sb, "spawn limits:  depth=%s max-descendants=%s descendants=%d\n",
 		authority.LimitLabel(t.SpawnDepth), authority.LimitLabel(t.MaxDescendants), t.Descendants)
 	fmt.Fprintf(&sb, "granter:       %s\n", cli.AuthorityLabel(t))
-	fmt.Fprintf(&sb, "repo:          %s\n", string(t.RepoPath))
+	if proc {
+		fmt.Fprintf(&sb, "repo:          %s\n", string(t.RepoPath))
+	}
 	if len(t.WorktreeDir) > 0 {
 		fmt.Fprintf(&sb, "worktree:      %s\n", string(t.WorktreeDir))
 	}
@@ -492,11 +514,15 @@ func formatTaskDetail(t protocol.TaskInfo, runnerByID map[string]protocol.Runner
 	// are running in its tree, and none is a real answer to that. Eliding it
 	// would make "nothing is running" read as "this popup does not report
 	// execs" (surface-parity item 31).
-	fmt.Fprintf(&sb, "execs:         %d running\n", t.ExecCount)
+	if proc {
+		fmt.Fprintf(&sb, "execs:         %d running\n", t.ExecCount)
+	}
 	fmt.Fprintf(&sb, "created:       %s\n", formatNanoTs(t.CreatedAt))
 	if t.StartedAt > 0 {
 		fmt.Fprintf(&sb, "started:       %s\n", formatNanoTs(t.StartedAt))
-		fmt.Fprintf(&sb, "assigned to:   %s\n", assignedToDetail(t, runnerByID))
+		if proc {
+			fmt.Fprintf(&sb, "assigned to:   %s\n", assignedToDetail(t, runnerByID))
+		}
 	}
 	if t.EndedAt > 0 {
 		fmt.Fprintf(&sb, "ended:         %s\n", formatNanoTs(t.EndedAt))
@@ -550,6 +576,8 @@ func taskKindStr(k protocol.TaskKind) string {
 		return "interactive"
 	case protocol.TaskKind_Stream:
 		return "stream"
+	case protocol.TaskKind_Credential:
+		return "credential"
 	default:
 		return fmt.Sprintf("unknown(%d)", k)
 	}

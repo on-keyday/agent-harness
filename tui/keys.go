@@ -285,13 +285,16 @@ const (
 	scopeRunners keyScope = 1 << iota
 	scopeTasks
 	scopeSchedules
+	scopeCredentials
 	scopeNotify
 	scopeCmdresult
 	scopeCmdline
 )
 
 const (
-	scopeAllPanes = scopeRunners | scopeTasks | scopeSchedules | scopeNotify | scopeCmdresult | scopeCmdline
+	scopeAllPanes = scopeRunners | scopeTasks | scopeSchedules | scopeCredentials | scopeNotify | scopeCmdresult | scopeCmdline
+	// scopeTables is the four tables, the panes ←/→ switch between.
+	scopeTables = scopeRunners | scopeTasks | scopeSchedules | scopeCredentials
 	// scopeGlobal is every pane but the command line, where a letter must
 	// stay typeable text.
 	scopeGlobal = scopeAllPanes &^ scopeCmdline
@@ -349,8 +352,8 @@ var mainKeyBindings = []keyBinding{
 	{Keys: []string{mainKeys.RawConnect}, Scope: scopeTasks, Do: (*App).onRawConnect, Short: "t raw connect", Long: "raw-connect to a forwarded port"},
 	{Keys: []string{mainKeys.GridSubtree, mainKeys.GridDescendants}, Scope: scopeTasks, Do: (*App).onGridSubtree, Short: "z/Z subtree grid",
 		Long: "grid of the selected task's subtree — z includes the task itself, Z is its descendants only (for when you are watching that one elsewhere); g is the whole fleet"},
-	{Keys: []string{mainKeys.BackgroundOpen}, Scope: scopeTasks | scopeSchedules, Do: (*App).onBackgroundOpen, Short: "N new",
-		Long: "in the tasks table, open a background session (a prompt and a deadline, queued until a runner is free, ended by its conditions); in the schedules table, create a schedule (schedule new)"},
+	{Keys: []string{mainKeys.BackgroundOpen}, Scope: scopeTasks | scopeSchedules | scopeCredentials, Do: (*App).onBackgroundOpen, Short: "N new",
+		Long: "in the tasks table, open a background session (a prompt and a deadline, queued until a runner is free, ended by its conditions); in the schedules table, create a schedule (schedule new); in the credentials table, put `credential new --ttl ` on the command line to complete"},
 	{Keys: []string{mainKeys.RunMode}, Scope: scopeTasks, Do: (*App).onRunMode, Short: "E run mode", Long: "switch the selected running session between foreground and background (background asks for a deadline)"},
 
 	// --- cmdline ---
@@ -363,12 +366,21 @@ var mainKeyBindings = []keyBinding{
 	{Keys: []string{mainKeys.ScheduleDelete}, Scope: scopeSchedules, Do: (*App).onScheduleDelete,
 		Short: "x delete", Long: "delete the selected schedule after a y/n confirm (schedule rm): its task stays and a run in progress is not cancelled"},
 
-	// --- runners + tasks + schedules ---
-	{Keys: []string{mainKeys.Detail}, Scope: scopeRunners | scopeTasks | scopeSchedules, Do: (*App).onDetail, Short: "d detail", Long: "detail popup for the selected runner / task / schedule (in a task's, s lists its agents' transcripts; a schedule's shows its history and wait statistics)"},
+	// --- credentials pane ---
+	// The same letters as other tables' keys, in a scope none of them has:
+	// dispatchMainKey runs the row whose scope holds the focused pane, and
+	// TestSameKeyRowsHaveDisjointScopes keeps the scopes apart.
+	{Keys: []string{mainKeys.ScheduleDelete}, Scope: scopeCredentials, Do: (*App).onCredentialRevoke,
+		Short: "x revoke", Long: "revoke the selected credential after a y/n confirm (credential revoke): its connections close and its next handshake is refused; r brings the id back"},
+	{Keys: []string{mainKeys.ResumeAssignedContinue}, Scope: scopeCredentials, Do: (*App).onCredentialRekey,
+		Short: "r rekey", Long: "put `credential rekey <id> --ttl ` on the command line for the selected credential: complete the ttl (and --pubkey HEX to register a key made elsewhere); a generated secret is printed once in the results pane"},
+
+	// --- runners + tasks + schedules + credentials ---
+	{Keys: []string{mainKeys.Detail}, Scope: scopeTables, Do: (*App).onDetail, Short: "d detail", Long: "detail popup for the selected runner / task / schedule / credential (in a task's, s lists its agents' transcripts; a schedule's shows its history and wait statistics; a credential's, its name, expiry and last use)"},
 
 	// --- global (every pane but the command line) ---
 	{Keys: []string{"tab", "shift+tab"}, Scope: scopeGlobal, Short: "tab focus", Long: "cycle focus: the shown table, notifications, results, command line (shift-tab reverses)"},
-	{Keys: []string{"left", "right"}, Scope: scopeRunners | scopeTasks | scopeSchedules, Short: "←/→ table", Long: "switch between the runners, tasks and schedules tables"},
+	{Keys: []string{"left", "right"}, Scope: scopeTables, Short: "←/→ table", Long: "switch between the runners, tasks, schedules and credentials tables"},
 	{Keys: []string{mainKeys.Submit}, Scope: scopeGlobal, Do: (*App).onSubmit, Short: "s one-shot", Long: "open the one-shot popup (a detached session new --oneshot)"},
 	{Keys: []string{mainKeys.Session}, Scope: scopeGlobal, Do: (*App).onSession, Short: "S session", Long: "open a new detachable session"},
 	{Keys: []string{mainKeys.Grid}, Scope: scopeGlobal, Do: (*App).onGrid, Short: "g grid", Long: "live session viewer grid"},
@@ -394,6 +406,8 @@ func scopeForFocus(f focus) keyScope {
 		return scopeTasks
 	case focusSchedules:
 		return scopeSchedules
+	case focusCredentials:
+		return scopeCredentials
 	case focusNotify:
 		return scopeNotify
 	case focusCmdresult:
@@ -478,6 +492,7 @@ func keyHelpBody() string {
 		{title: "runners", scope: scopeRunners, only: true},
 		{title: "tasks  ", scope: scopeTasks, only: true},
 		{title: "sched  ", scope: scopeSchedules, only: true},
+		{title: "creds  ", scope: scopeCredentials, only: true},
 		{title: "cmdline", scope: scopeCmdline, only: true},
 	}
 	var sb strings.Builder

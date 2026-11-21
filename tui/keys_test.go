@@ -48,6 +48,22 @@ func TestMainKeysAreUnique(t *testing.T) {
 	}
 }
 
+// TestSameKeyRowsHaveDisjointScopes: a letter may have one row per table
+// (x deletes a schedule and revokes a credential), and dispatchMainKey runs
+// the row whose scope holds the focused pane. Two rows of one key sharing a
+// pane would leave the later one dead there.
+func TestSameKeyRowsHaveDisjointScopes(t *testing.T) {
+	seen := map[string]keyScope{}
+	for _, b := range mainKeyBindings {
+		for _, k := range b.Keys {
+			if prev := seen[k]; prev&b.Scope != 0 {
+				t.Errorf("key %q: two rows share scope bits %b", k, prev&b.Scope)
+			}
+			seen[k] |= b.Scope
+		}
+	}
+}
+
 // TestFooterHintsFitsWidth is the regression test for the overflow: the hint
 // was a fixed ~270-char string while the layout budgets one row for it, so on
 // any real terminal it wrapped and pushed the view off-screen.
