@@ -1644,6 +1644,9 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 				// via d.OnTaskControl / d.OnRunnerControl in Dispatch (dispatch.go:58).
 				s.recordAuth(session.ConnectionID(), gate.RunnerKey())
 				if !pskDispatchIdentity(s.dispatcher, wrapped, accepted, gate.CredentialKey()) {
+					// Before the close: a message pipelined behind the
+					// request must find the gate shut (RefuseIdentity).
+					gate.RefuseIdentity()
 					_ = trsf.SendClose(session)
 					cancel()
 				}

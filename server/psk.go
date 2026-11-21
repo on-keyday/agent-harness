@@ -98,9 +98,14 @@ func pskDispatchIdentity(d *Dispatcher, conn ConnHandle, req *protocol.PskAuthRe
 //
 // An identity is required in every case.
 //
-// authed starts false until Check succeeds.
+// authed starts false until Check succeeds, and goes back to false for good
+// when the accepted request's identity cannot be recorded (RefuseIdentity).
 type pskGate struct {
 	authed bool
+	// identityRefused is set by RefuseIdentity: the handshake was accepted
+	// but its identity was not recorded, so the connection is being closed
+	// and nothing more it sent may be processed.
+	identityRefused bool
 	// rejected is the status of the last refusal sent, for a dial record to
 	// report as its last error (spec 2026-11-04 §1.2 step 2).
 	rejected    protocol.PskAuthStatus
@@ -144,6 +149,20 @@ func newPSKGate() *pskGate {
 }
 
 func (g *pskGate) Authed() bool { return g.authed }
+
+// RefuseIdentity takes back an accepted handshake whose identity could not be
+// recorded (pskDispatchIdentity answered false: an agent's ticket revoked
+// between Check and the record, a credential ended or re-keyed in that window,
+// a hello the recorder refuses). Closing the connection is not enough on its
+// own: messages the peer pipelined behind its PskAuthRequest may already be
+// queued, and the receive loop can still hand them over after the close. With
+// the gate still authed they would pass AllowsMessage and be dispatched on a
+// connection with no principal recorded — which callerCaps reads as the
+// operator. After this, Check drops everything and AllowsMessage refuses it.
+func (g *pskGate) RefuseIdentity() {
+	g.authed = false
+	g.identityRefused = true
+}
 
 // Role is the authenticated role: AuthRole_Client, AuthRole_Runner or
 // AuthRole_Credential. Meaningful only once Authed.
@@ -271,6 +290,11 @@ func (g *pskGate) Check(
 ) (isPSKMsg bool, shouldClose bool, accepted *protocol.PskAuthRequest) {
 	if g.authed {
 		// Gate already open; pass through silently.
+		return false, false, nil
+	}
+	if g.identityRefused {
+		// The connection is already being closed (RefuseIdentity); a queued
+		// message is dropped, and a second PskAuthRequest is not a second try.
 		return false, false, nil
 	}
 	if len(data) == 0 {
