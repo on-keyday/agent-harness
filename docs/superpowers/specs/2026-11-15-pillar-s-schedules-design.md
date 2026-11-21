@@ -97,6 +97,31 @@ this walk records those corrections and the read-reach follow-up.
 Agent-launch audit S1–S6 does not fire: no agent preset, argv, credentials,
 launch environment or addressing contract changed.
 
+## Amendment — 2026-11-22: manual firing accepts resume_exact
+
+Decided by: operator, 2026-11-22. Source: decision D16 of
+`2026-11-21-credential-tasks-design.md`. This supersedes S-D17a for
+`schedule run` only.
+
+- `schedule run` of a schedule bound to T needs `resume` OR `resume_exact`
+  over T, with T inside the scope of a bit the caller holds (previously
+  `resume` only). A caller holding neither answers the permission denial
+  naming both bits (`resume|resume_exact`); T outside the scope answers
+  `task_not_reachable`.
+- Reason: the firer chooses only the timing. The prompt is the schedule's,
+  and whoever bound T (`schedule new --task T` or an edit that binds T) or
+  last edited a schedule bound to T already needed full `resume` over T.
+- Unchanged: `schedule new`, `schedule edit` and binding still need `resume`
+  (`resume_exact` is not enough, since they set the prompt a firing passes);
+  a run while the task is still to be created needs `spawn`; an unbound
+  schedule needs neither; S-D20 and reach are checked first.
+- The rule applies to every principal, not only credential tasks.
+
+Implementation: `scheduleRunPower` in `server/schedule_handler.go`, used only
+by `scheduleRunCheck`; `schedulePower` now serves new and edit. Tests:
+`TestSchedulePowerResumeExactRunsButDoesNotEdit`,
+`TestScheduleRunExactOutOfScopeIsNotReachable`.
+
 ## Why
 
 GD's second motive: work a machine starts on a schedule and that ends itself

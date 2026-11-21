@@ -1931,11 +1931,15 @@ binding. Deleting a schedule leaves its task.
 **A schedule verb also needs the power it exercises** (S-D17a), for every
 caller alike: `schedule new` without `--task` needs `spawn` (the first firing
 creates a task); `schedule new --task T` and an edit that binds T need `resume`
-with T inside that bit's scope (`resume_exact` is not enough: a firing passes
-its own prompt); an `edit` or `run` of an existing schedule needs what creating
+with T inside that bit's scope (`resume_exact` is not enough for these: a firing passes
+its own prompt); an `edit` of an existing schedule needs what creating
 it would need now — `spawn` while its task is still to be created, `resume`
 over its bound task; an edit that binds a task needs no `spawn`, since nothing
-will be created, but `resume` over the old and the new task. An unbound
+will be created, but `resume` over the old and the new task. A `run` of a
+schedule bound to T needs `resume` or `resume_exact` with T inside the scope of
+a bit held (the firer picks only the timing; whoever bound T or last edited the
+schedule held full `resume`); a `run` while its task is still to be created
+needs `spawn`. An unbound
 schedule needs neither (nothing runs until a bind, which is checked then). A missing bit answers the same permission denial
 as any other bit (`permission denied: ScheduleCreate requires capability
 spawn`); T outside `resume`'s scope answers `task_not_reachable`. Reach and the

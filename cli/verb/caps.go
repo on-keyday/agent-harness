@@ -196,7 +196,7 @@ func CapDescription(c protocol.Capability) string {
 			"Strong: a schedule fires on its own, with the authority stored when it was created or edited"
 	case protocol.Capability_ScheduleRun:
 		return "explicitly fire a saved schedule (schedule run), within this bit's scope; " +
-			"also needs spawn before its task is created, or resume over its bound task. " +
+			"also needs spawn before its task is created, or resume or resume_exact over its bound task. " +
 			"Does not authorize creating, editing, deleting or unbinding schedules"
 	case protocol.Capability_All:
 		return "full capability set (operator-equivalent)"

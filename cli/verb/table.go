@@ -3298,7 +3298,7 @@ var Verbs = []VerbSpec{
 			{Surface: WebUI, At: "webui/index.html#schedules-modal"},
 		},
 		Notes: []string{
-			"fire a schedule now, outside its times (recorded run_now); its next firing is unchanged. Needs the schedule_run capability and reach to the schedule's task",
+			"fire a schedule now, outside its times (recorded run_now); its next firing is unchanged. Needs the schedule_run capability and reach to the schedule's task, plus spawn before its task is created or resume or resume_exact over its bound task",
 		},
 		Action:   "ScheduleIDAction",
 		Const:    map[string]string{"Sub": "run"},

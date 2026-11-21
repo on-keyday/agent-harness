@@ -134,7 +134,7 @@ func TestSchedulePowerRun(t *testing.T) {
 	}
 	bound := e.seed(t, 1, protocol.ScheduleTaskState_Bound, task, "")
 	r, c := run(sid, bound.ID)
-	wantDenied(t, "run of a bound schedule without resume", r, c, protocol.Capability_Resume)
+	wantDenied(t, "run of a bound schedule without resume", r, c, protocol.Capability_Resume|protocol.Capability_ResumeExact)
 	withResume, _ := e.agent(t, powerGrant(protocol.Capability_Resume, protocol.ScopeBase_Global))
 	r, c = run(e.connIDOf(withResume), bound.ID)
 	wantAllowed(t, "run of a bound schedule with resume", r, c, protocol.ScheduleStatus_Ok)
@@ -261,8 +261,10 @@ func TestSchedulePowerBindPendingNeedsNoSpawn(t *testing.T) {
 	wantAllowed(t, "bind a pending schedule with resume only", r, d, protocol.ScheduleStatus_Ok)
 }
 
-// resume_exact alone does not satisfy edit or run of a bound schedule.
-func TestSchedulePowerResumeExactRefused(t *testing.T) {
+// resume_exact alone does not satisfy edit or bind of a bound schedule (a
+// firing passes the schedule's prompt, which an editor chose), but it does
+// satisfy run: the firer picks timing only.
+func TestSchedulePowerResumeExactRunsButDoesNotEdit(t *testing.T) {
 	e := newSchedEnv(t)
 	task := e.terminal(t, protocol.RunMode_Background, "")
 	sc := e.seed(t, 1, protocol.ScheduleTaskState_Bound, task, "")
@@ -273,7 +275,28 @@ func TestSchedulePowerResumeExactRefused(t *testing.T) {
 	r, d := e.editDeny(t, e.connIDOf(conn), sc.ID, cron, "")
 	wantDenied(t, "edit with resume_exact only", r, d, protocol.Capability_Resume)
 	r, d = e.h.scheduleRun(e.connIDOf(conn), schedHexID(t, sc.ID))
-	wantDenied(t, "run with resume_exact only", r, d, protocol.Capability_Resume)
+	wantAllowed(t, "run with resume_exact only", r, d, protocol.ScheduleStatus_Ok)
+}
+
+// The run target gate reads resume_exact's own scope: a holder whose
+// resume_exact reaches task A only cannot run a schedule bound to B.
+func TestScheduleRunExactOutOfScopeIsNotReachable(t *testing.T) {
+	e := newSchedEnv(t)
+	a := e.terminal(t, protocol.RunMode_Background, "")
+	b := e.terminal(t, protocol.RunMode_Background, "")
+	scB := e.seed(t, 1, protocol.ScheduleTaskState_Bound, b, "")
+	scA := e.seed(t, 2, protocol.ScheduleTaskState_Bound, a, "")
+	g := powerGrant(protocol.Capability_ResumeExact, protocol.ScopeBase_Global)
+	g.Scope.Overrides = append(g.Scope.Overrides, authority.ScopeOverride{
+		Caps: protocol.Capability_ResumeExact, Base: protocol.ScopeBase_None, IDs: []string{a},
+	})
+	conn, _ := e.agent(t, g)
+	r, d := e.h.scheduleRun(e.connIDOf(conn), schedHexID(t, scB.ID))
+	if d != 0 || r.Status != protocol.ScheduleStatus_TaskNotReachable {
+		t.Errorf("run bound to B: denied %v status %v, want task_not_reachable", d, r.Status)
+	}
+	r, d = e.h.scheduleRun(e.connIDOf(conn), schedHexID(t, scA.ID))
+	wantAllowed(t, "run bound to A", r, d, protocol.ScheduleStatus_Ok)
 }
 
 // The denials reach the caller as the task-control permission denial, over
@@ -309,7 +332,7 @@ func TestSchedulePowerDenialsOverTheWire(t *testing.T) {
 	}
 	denied("edit bound", protocol.TaskControlKind_ScheduleEdit, edit(bound.ID), protocol.Capability_Resume)
 	denied("edit pending", protocol.TaskControlKind_ScheduleEdit, edit(pend.ID), protocol.Capability_Spawn)
-	denied("run bound", protocol.TaskControlKind_ScheduleRun, run(bound.ID), protocol.Capability_Resume)
+	denied("run bound", protocol.TaskControlKind_ScheduleRun, run(bound.ID), protocol.Capability_Resume|protocol.Capability_ResumeExact)
 	denied("run pending", protocol.TaskControlKind_ScheduleRun, run(pend.ID), protocol.Capability_Spawn)
 	if len(e.fires) != 0 {
 		t.Fatalf("a denied run fired: %v", e.fires)
@@ -334,7 +357,7 @@ func TestSchedulePowerRunChecksStateAtFiring(t *testing.T) {
 		}
 	}
 	r, d := e.h.scheduleRun(e.connIDOf(conn), schedHexID(t, sc.ID))
-	wantDenied(t, "run of a schedule bound after the first read", r, d, protocol.Capability_Resume)
+	wantDenied(t, "run of a schedule bound after the first read", r, d, protocol.Capability_Resume|protocol.Capability_ResumeExact)
 	if len(e.fires) != 0 {
 		t.Fatalf("fired: %v", e.fires)
 	}

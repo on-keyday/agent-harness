@@ -675,13 +675,13 @@ func scheduleSpecTask(spec *protocol.ScheduleSpec) string {
 	return ""
 }
 
-// schedulePower is S-D17a: besides the schedule bit, a verb needs the power it
-// exercises. Each need is a bit (a missing one is returned as the capability
-// to deny with) and, for resume, a target inside that bit's scope (a target
-// outside answers task_not_reachable; the resume_exact bit is not enough,
-// since a firing passes its own prompt). It runs after reach and self (S-D20),
-// so a missing bit never tells a caller anything about a schedule it cannot
-// see.
+// schedulePower is S-D17a for new and edit: besides the schedule bit, a verb
+// needs the power it exercises. Each need is a bit (a missing one is returned
+// as the capability to deny with) and, for resume, a target inside that bit's
+// scope (a target outside answers task_not_reachable). resume_exact is not
+// enough here: binding a task or editing a schedule bound to one chooses the
+// prompt a firing passes. It runs after reach and self (S-D20), so a missing
+// bit never tells a caller anything about a schedule it cannot see.
 //
 //   - spawn: the schedule is to create its task (no --task on a create, or a
 //     stored pending_create schedule).
@@ -689,7 +689,9 @@ func scheduleSpecTask(spec *protocol.ScheduleSpec) string {
 //
 // An unbound schedule needs neither: an edit that binds nothing changes
 // nothing that runs until a later bind (which is itself checked here), and a
-// run of it only records skipped_no_task.
+// run of it only records skipped_no_task. `schedule run` has its own rule,
+// scheduleRunPower: the firer picks timing only, and the prompt was set by
+// someone who held full resume over T at bind (below) or edit.
 func (h *TaskHandler) schedulePower(cid string, cur *Schedule, bindTask string) (protocol.Capability, *protocol.ScheduleResponse) {
 	callerCaps := h.callerCaps(cid)
 	// A bind means nothing will be created, so a bind needs no spawn even on a
@@ -714,6 +716,31 @@ func (h *TaskHandler) schedulePower(cid string, cur *Schedule, bindTask string) 
 	for _, t := range over {
 		if !h.inScope(cid, protocol.Capability_Resume, t) {
 			r := scheduleRefusal(protocol.ScheduleStatus_TaskNotReachable, "no task %s within your reach", short(t))
+			return 0, &r
+		}
+	}
+	return 0, nil
+}
+
+// scheduleRunPower is S-D17a for `schedule run` (amended 2026-11-22): a
+// pending_create schedule needs spawn, an unbound one needs nothing, and one
+// bound to T needs resume OR resume_exact with T inside the scope of a bit the
+// caller holds (resumeTargetAllowed). A missing bit is returned as the mask a
+// resume of that exactness needs; a target out of scope answers
+// task_not_reachable.
+func (h *TaskHandler) scheduleRunPower(cid string, sc *Schedule) (protocol.Capability, *protocol.ScheduleResponse) {
+	callerCaps := h.callerCaps(cid)
+	switch sc.State {
+	case protocol.ScheduleTaskState_PendingCreate:
+		if !hasCap(callerCaps, protocol.Capability_Spawn) {
+			return protocol.Capability_Spawn, nil
+		}
+	case protocol.ScheduleTaskState_Bound:
+		if need := resumeRequestCap(taskIDFromHex(sc.TaskID), true); !hasAnyCap(callerCaps, need) {
+			return need, nil
+		}
+		if !h.resumeTargetAllowed(cid, true, sc.TaskID) {
+			r := scheduleRefusal(protocol.ScheduleStatus_TaskNotReachable, "no task %s within your reach", short(sc.TaskID))
 			return 0, &r
 		}
 	}
@@ -1019,7 +1046,8 @@ func (h *TaskHandler) scheduleRun(cid string, id protocol.ScheduleID) (protocol.
 }
 
 // scheduleRunCheck is `schedule run`'s FireCheck: reach (no_such_schedule),
-// the schedule's own task (S-D20), then what S-D17a needs, in that order.
+// the schedule's own task (S-D20), then what S-D17a needs for a run
+// (scheduleRunPower), in that order.
 func (h *TaskHandler) scheduleRunCheck(cid string) FireCheck {
 	return func(sc Schedule) *FireVeto {
 		if !h.scheduleRunReach(cid, sc) {
@@ -1030,7 +1058,7 @@ func (h *TaskHandler) scheduleRunCheck(cid string) FireCheck {
 			r := scheduleRefusal(protocol.ScheduleStatus_SelfRefused, "a schedule's own task cannot run it")
 			return &FireVeto{Refusal: &r}
 		}
-		if c, refusal := h.schedulePower(cid, &sc, ""); c != 0 || refusal != nil {
+		if c, refusal := h.scheduleRunPower(cid, &sc); c != 0 || refusal != nil {
 			return &FireVeto{Refusal: refusal, Deny: c}
 		}
 		return nil
