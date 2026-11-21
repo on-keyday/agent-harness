@@ -27,9 +27,9 @@
 
 1. **A credential whose task record is gone** (pruned after revoke while a connection stayed open): expected `callerCaps` = None and an empty visible set — today `scopeSetWith` falls back to `DefaultScope()` (Subtree) for a missing record (`server/capabilities.go:305`). Test in Task 4.
 2. **Server restart with a live credential**: expected it is still `active` and authenticates; one whose expiry passed during downtime is ended `expired` at start, not left active until the next request. Test in Task 3.
-3. **A shell carrying both operator PSK and `HARNESS_CREDENTIAL`** (an operator testing a script from their own terminal): expected the connection is the credential (whoami shows the credential task, `schedule_edit` refused), never silently the operator. Test in Task 6.
-4. **An agent task's shell that sets `HARNESS_CREDENTIAL`** (`HARNESS_TASK_ID` + ticket also present): expected the credential identity, not the agent. Test in Task 6.
-5. **TTL edges**: `--ttl 0`, negative, unparseable, `91d`: expected refusal naming the 90-day bound; expiry computed on the server clock from a duration, never a client-supplied absolute time. Tests in Task 5 (server) and Task 6 (flag parsing).
+3. **A shell carrying both operator PSK and `HARNESS_CREDENTIAL`** (an operator testing a script from their own terminal): expected the connection is the credential (whoami shows the credential task, `schedule_edit` refused), never silently the operator. Test in Task 7.
+4. **An agent task's shell that sets `HARNESS_CREDENTIAL`** (`HARNESS_TASK_ID` + ticket also present): expected the credential identity, not the agent. Test in Task 7.
+5. **TTL edges**: `--ttl 0`, negative, unparseable, `91d`: expected refusal naming the 90-day bound; expiry computed on the server clock from a duration, never a client-supplied absolute time. Tests in Task 5 (server) and Task 7 (flag parsing).
 
 ---
 
@@ -151,7 +151,6 @@ Independent of the rest; lands first.
   - `TestCredentialDeadBeforeTimerSeesNothing` (D8): expiry in the past, watcher not running → first request denied, `visibleToCaller` empty.
   - `TestMissingPrincipalRecordSeesNothing` (Review Focus 1).
   - `TestRevokeClosesLiveCredentialConn` (D9).
-  - `TestCredentialConnBoardVerbsRefused` (D10): an agentboard send/read from a credential connection is refused with a status naming the reason (no agent identity), not a silent drop.
   - D6 classification: every `ClientKind_Agent` site (`server/psk.go:187,264`, `server/server.go:1731`, `server/task_handler.go:318,334`, `server/taskstore.go:264`, `cli/psk.go`) and every `AuthRole_Client` site (`server/psk.go` `AllowsMessage`/`binderKey`, `server/pubsub_authz.go:21`) gets a one-line verdict in the commit message: "principal task → also credential" or "runner process → agent only". `server/server.go:1731` (conn listing principal) is the former: credential conns show their principal task.
   - `cli/credential_auth_test.go`: sign/verify round trip; flipped transcript byte fails; runner-auth signature over the same transcript does not verify as credential-auth.
 - [ ] **Step 2:** scoped `make test` → FAIL.
@@ -189,7 +188,30 @@ Independent of the rest; lands first.
 
 ---
 
-### Task 6: Client — handshake, CLI verbs, rendering
+### Task 6: Agentboard for credential connections (D10)
+
+**Files:**
+- Modify: `server/agent_handler.go` (new `establishCredentialBoard`), `server/task_handler.go` (`RecordCredentialIdentity` calls it through a new `OnCredentialHello` hook, wired in `server/server.go` beside `OnAgentHello` `:351`), `server/server.go` (`OnCancel` wiring: `Board.Revoke(zero, tid)` for a credential), `server/credential_handler.go` (re-key also revokes the board state), the board sender rendering (where a retained message's sender is formatted for `agent read` / `board read` — find it from `from_task` rendering in `cli/`), the wake path (skip for the zero runner identity)
+- Test: `server/credential_board_test.go`
+
+**Interfaces:**
+- Consumes: Task 4 `RecordCredentialIdentity`.
+- Produces: `func (s *Server) establishCredentialBoard(conn ConnHandle, tid protocol.TaskID)` — `ac := s.getOrCreateAgentConn(conn); ac.helloed = true; ac.state = s.Board.Attach(protocol.RunnerID{}, tid, "", "")`. No ticket is registered and `boardRegisterTask`'s zero-runner guard is not touched.
+
+- [ ] **Step 1: Write the failing tests:**
+  - `TestCredentialBoardSendWithinPeerScope`: credential with `board_peer` scoped to agent A sends to `chat.<A8>` → ok; to `chat.<B8>` → refused as an agent would be.
+  - `TestCredentialBoardReadAndWait`: a message published to the credential's own `chat.<id8>` is returned by read and unblocks a wait.
+  - `TestCredentialBoardPublishWakesNothing`: publishing to a credential's inbox makes no runner call and logs no error.
+  - `TestCredentialBoardStateDroppedOnRevokeAndRekey`.
+  - `TestCredentialSenderRendersAsCredential`: a message sent by a credential named `ci` renders sender `credential ci` (id prefix when unnamed).
+- [ ] **Step 2:** scoped `make test` → FAIL.
+- [ ] **Step 3:** implement.
+- [ ] **Step 4:** scoped → PASS; full `make test` → PASS.
+- [ ] **Step 5:** Commit `server: agentboard for credential connections (no wake)`.
+
+---
+
+### Task 7: Client — handshake, CLI verbs, rendering
 
 **Files:**
 - Create: `cli/credential.go` (client methods + `…With` / `…Out` forms + renderers), `cli/credential_source.go` (`//go:build !js`; loading the credential), `cli/verb/credential_test.go`
@@ -216,11 +238,12 @@ Independent of the rest; lands first.
 - [ ] **Step 2:** scoped `make test` → FAIL.
 - [ ] **Step 3:** implement; `go generate ./cli/verb/` for `actions_gen.go`.
 - [ ] **Step 4:** scoped → PASS; full `make test` → PASS.
-- [ ] **Step 5:** run once against `scripts/dummy-harness.sh` in the exact spelling the usage prints (pitfall 13): keygen → new --pubkey → `HARNESS_CREDENTIAL_FILE=… harness-cli whoami` → `credential revoke` → whoami refused `revoked`. Commit `cli: credential handshake and credential verbs`.
+- [ ] **Step 4b:** the `agent` verbs (`send`, `read`, `wait`, `subscribe`) work under a credential identity: wherever they require an agent context (`EffectiveClientKind` == Agent / `HARNESS_TASK_ID`), accept a loaded credential too. Test `TestAgentVerbsRunUnderCredential` (send to a peer, read own inbox) against the in-process server.
+- [ ] **Step 5:** run once against `scripts/dummy-harness.sh` in the exact spelling the usage prints (pitfall 13): keygen → new --pubkey → `HARNESS_CREDENTIAL_FILE=… harness-cli whoami` → `agent send` to a live agent's chat topic → `credential revoke` → whoami refused `revoked`. Commit `cli: credential handshake and credential verbs`.
 
 ---
 
-### Task 7: TUI and WebUI surfaces
+### Task 8: TUI and WebUI surfaces
 
 **Files:**
 - Modify: `tui/dispatch.go` (credential handlers via `DoRecord(a.client, …)` — the long-lived client, never a fresh dial), `tui/detail.go:389` + `:545` (kind label; expires / last used / name lines), `tui/tasks.go` (no new column: status column shows `active`; `About` shows `credential <name> expires <date>`), `tui/cmdline_help` text
@@ -229,7 +252,7 @@ Independent of the rest; lands first.
 - Test: `webui/static/credential_test.mjs`, `tui/credential_test.go`, `cli/verb` modal-surface entries (`ModalSurfaces: {WebUI, "webui/index.html#credentials-modal"}`; TUI: `NoModalSurface: "looked for: a TUI credentials table; issue/rekey/revoke are by the command line, rows appear in the task table"`)
 
 **Interfaces:**
-- Consumes: Task 6 `cli` credential methods and verb rows.
+- Consumes: Task 7 `cli` credential methods and verb rows.
 
 - [ ] **Step 1: Write the failing tests:** `credential_test.mjs` — `credentialRowModel` renders expiry/name/last-used (`unknown` for 0); the generate path's result string matches `/^[0-9a-f]{32}:[0-9a-f]{64}$/` and is not written to `localStorage`; `cmd_test.mjs` gains `credential ls`. `tui/credential_test.go` — detail popup shows `kind: credential` and `expires:`; `credential revoke <id>` from the cmdline goes through `a.client`.
 - [ ] **Step 2:** run `make test` (includes the node tests) → FAIL.
@@ -239,7 +262,7 @@ Independent of the rest; lands first.
 
 ---
 
-### Task 8: Docs, parity walk, skew check
+### Task 9: Docs, parity walk, skew check
 
 **Files:**
 - Modify: `README.md` (credential section; per-binary summaries; TUI cmdline verb list), `.claude/skills/harness-cli-from-a-tool/SKILL.md` §7–§8 + `runner/agentskills` source and mirrors (a tool may run under a credential instead of an inherited ticket; `revoked` row in the rejection table: "the credential was revoked: re-key or re-issue; a restart will not help"), `.claude/skills/surface-parity-checklist/firing-log.md`, the spec (Status: implemented, with the surface matrix as shipped)
