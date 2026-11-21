@@ -94,13 +94,18 @@ func expiryFromWAL(ns int64) time.Time {
 	return time.Unix(0, ns)
 }
 
-// credentialKeyFromWAL decodes a recorded public key; a malformed one replays
-// as the zero key.
-func credentialKeyFromWAL(h string) [32]byte {
+// credentialKeyFromWAL decodes a recorded public key. A malformed one is
+// logged and replays as the zero key, which CredentialLive treats as no
+// credential at all.
+func credentialKeyFromWAL(taskID, h string) [32]byte {
 	var k [32]byte
-	if raw, err := hex.DecodeString(h); err == nil && len(raw) == len(k) {
-		copy(k[:], raw)
+	raw, err := hex.DecodeString(h)
+	if err != nil || len(raw) != len(k) {
+		slog.Error("WAL: credential public key does not decode; the credential is unusable until re-keyed",
+			"task_id", taskID, "hex_len", len(h), "valid_hex", err == nil) // the decoder's error quotes a key byte
+		return k
 	}
+	copy(k[:], raw)
 	return k
 }
 
@@ -183,14 +188,17 @@ func (s *TaskStore) TouchCredential(id string, at time.Time) {
 }
 
 // CredentialLive reports a credential's current key and what it is good for
-// at now. ok=false for a missing task or one that is not a credential. The
+// at now. ok=false for a missing task, one that is not a credential, or one
+// whose key is all zero — what a record whose key did not decode replays as.
+// The zero key is a small-order Ed25519 point that ed25519.Verify accepts
+// forged signatures under, so it must answer as unknown, never as live. The
 // expiry is compared here as well as ended by the deadline watcher, so a key
 // stops working at its expiry whether or not the watcher has run (D8).
 func (s *TaskStore) CredentialLive(id string, now time.Time) (pub [32]byte, state CredentialState, ok bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	e, found := s.tasks[id]
-	if !found || e.Kind != protocol.TaskKind_Credential {
+	if !found || e.Kind != protocol.TaskKind_Credential || e.CredentialPubKey == ([32]byte{}) {
 		return [32]byte{}, 0, false
 	}
 	switch {

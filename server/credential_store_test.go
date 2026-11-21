@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -360,3 +361,32 @@ func TestRekeyRefusesNonCredential(t *testing.T) {
 		}
 	}
 }
+
+// The all-zero key is a small-order point that ed25519.Verify accepts forged
+// signatures under, so a record whose key does not decode must not leave a
+// usable credential: CredentialLive answers it as no credential at all.
+func TestMalformedWALKeyIsNoCredential(t *testing.T) {
+	expires := time.Now().Add(time.Hour).UnixNano()
+	created := WALEvent{Type: "task_created", TaskID: newTaskID(), Kind: uint8(protocol.TaskKind_Credential),
+		Capabilities: uint64(protocol.Capability_Spawn), CredentialPubKey: "zz01", ExpiresAtNs: expires, Ts: time.Now().UnixNano()}
+	good := WALEvent{Type: "task_created", TaskID: newTaskID(), Kind: uint8(protocol.TaskKind_Credential),
+		Capabilities: uint64(protocol.Capability_Spawn), ExpiresAtNs: expires, Ts: time.Now().UnixNano()}
+	k := credKey(5)
+	good.CredentialPubKey = hexKey(k)
+	rekeyed := WALEvent{Type: "task_rekeyed", TaskID: good.TaskID, CredentialPubKey: hexKey(k)[:62], ExpiresAtNs: expires}
+
+	s := NewTaskStore()
+	s.ReplayEvents([]WALEvent{created, good})
+	if _, _, ok := s.CredentialLive(created.TaskID, time.Now()); ok {
+		t.Error("task_created with a malformed key replayed as a usable credential")
+	}
+	wantCredential(t, s, good.TaskID, time.Now(), k, CredentialLive)
+
+	s = NewTaskStore()
+	s.ReplayEvents([]WALEvent{good, rekeyed})
+	if _, _, ok := s.CredentialLive(good.TaskID, time.Now()); ok {
+		t.Error("task_rekeyed with a malformed key replayed as a usable credential")
+	}
+}
+
+func hexKey(k [32]byte) string { return fmt.Sprintf("%x", k[:]) }

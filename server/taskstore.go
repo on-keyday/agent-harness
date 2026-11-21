@@ -1454,7 +1454,7 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 				t.Status = protocol.TaskStatus_Active
 				started := t.CreatedAt
 				t.StartedAt = &started
-				t.CredentialPubKey = credentialKeyFromWAL(ev.CredentialPubKey)
+				t.CredentialPubKey = credentialKeyFromWAL(ev.TaskID, ev.CredentialPubKey)
 				t.ExpiresAt = expiryFromWAL(ev.ExpiresAtNs)
 				t.CredentialName = ev.CredentialName
 			}
@@ -1586,7 +1586,7 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 			// A credential's re-key (D18). A narrowing that came with it is
 			// the task_caps_changed record before this one.
 			if t, ok := s.tasks[ev.TaskID]; ok {
-				t.rekey(credentialKeyFromWAL(ev.CredentialPubKey), expiryFromWAL(ev.ExpiresAtNs))
+				t.rekey(credentialKeyFromWAL(ev.TaskID, ev.CredentialPubKey), expiryFromWAL(ev.ExpiresAtNs))
 			}
 		case "task_caps_changed":
 			if t, ok := s.tasks[ev.TaskID]; ok {
