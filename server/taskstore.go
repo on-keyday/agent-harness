@@ -271,9 +271,9 @@ func newTaskID() string {
 // ClientKind_Unspecified when the caller is unknown (e.g. tests, internal
 // scheduler bookkeeping).
 //
-// creatorTaskID is the task id of the agent principal that created this task
-// (non-zero only when origin == ClientKind_Agent). Pass a zero value for
-// operator-created tasks.
+// creatorTaskID is the task id of the principal that created this task
+// (non-zero only when origin is ClientKind_Agent or ClientKind_Credential).
+// Pass a zero value for operator-created tasks.
 //
 // boundRunnerID pins the task to a specific runner (empty = no pinning).
 // selector is the runner-selection constraint; use a zero value for "any".

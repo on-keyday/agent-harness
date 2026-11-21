@@ -276,9 +276,10 @@ type TaskHandler struct {
 	// (the zero value of a missing map entry).
 	clientKindsMu sync.Mutex
 	clientKinds   map[string]protocol.ClientKind
-	// principals maps connection ID → the TaskID of the agent principal for
-	// kind=agent connections. Populated at ClientHello and used at Create time
-	// to record CreatorTaskID on agent-created tasks.
+	// principals maps connection ID → the TaskID of the principal for
+	// kind=agent connections (populated at ClientHello) and kind=credential
+	// ones (RecordCredentialIdentity). Every cap and scope check resolves the
+	// caller through it, and Create records it as CreatorTaskID.
 	principals map[string]protocol.TaskID
 }
 
@@ -290,8 +291,9 @@ func (h *TaskHandler) lookupClientKind(connID string) protocol.ClientKind {
 	return h.clientKinds[connID]
 }
 
-// lookupPrincipal returns the agent principal TaskID associated with connID.
-// Unknown connections (or non-agent connections) return a zero TaskID.
+// lookupPrincipal returns the principal TaskID associated with connID: the
+// task of an agent or credential connection. Unknown connections and operator
+// connections return a zero TaskID.
 func (h *TaskHandler) lookupPrincipal(connID string) protocol.TaskID {
 	h.clientKindsMu.Lock()
 	defer h.clientKindsMu.Unlock()
@@ -312,7 +314,10 @@ func (h *TaskHandler) RecordClientIdentity(cid string, conn ConnHandle, hello *p
 	status := protocol.ClientHelloStatus_Ok
 	// S-D18: ClientKind.schedule is the server's own mark on what a schedule
 	// started (resumed_by_kind / origin_kind); no connection may claim it.
-	if hello.Kind == protocol.ClientKind_Schedule {
+	// ClientKind.credential is given only by the credential handshake
+	// (RecordCredentialIdentity): a hello claiming it proved no key, and would
+	// be attributed as a credential while holding no principal.
+	if hello.Kind == protocol.ClientKind_Schedule || hello.Kind == protocol.ClientKind_Credential {
 		return protocol.ClientHelloStatus_NotPermitted
 	}
 	if hello.Kind == protocol.ClientKind_Agent {
@@ -347,6 +352,48 @@ func (h *TaskHandler) RecordClientIdentity(cid string, conn ConnHandle, hello *p
 		}
 	}
 	return status
+}
+
+// RecordCredentialIdentity records a connection the gate accepted under
+// AuthRole.credential: its kind is ClientKind_Credential and its principal is
+// the credential task tid, exactly as an agent's is its task (D6). It sends no
+// wire response; the gate's PskAuthResponse is the handshake's answer.
+//
+// A zero tid is refused before anything is recorded: a connection whose
+// principal reads as zero is the operator (callerCaps), so this is the line
+// that keeps a credential from ever becoming one.
+//
+// Liveness is read again AFTER the principal is recorded. A revoke landing
+// between the gate's check and this call ends the task first and then closes
+// the connections whose principal is that task (OnCancel); recording first
+// means either that close finds this connection, or this read sees the task
+// ended and refuses it. Without the second read the connection would stay
+// open, powerless but attached.
+func (h *TaskHandler) RecordCredentialIdentity(cid string, conn ConnHandle, tid protocol.TaskID) protocol.ClientHelloStatus {
+	if tid.Id == ([16]byte{}) {
+		return protocol.ClientHelloStatus_NotPermitted
+	}
+	h.clientKindsMu.Lock()
+	if h.clientKinds == nil {
+		h.clientKinds = make(map[string]protocol.ClientKind)
+	}
+	if h.principals == nil {
+		h.principals = make(map[string]protocol.TaskID)
+	}
+	h.clientKinds[cid] = protocol.ClientKind_Credential
+	h.principals[cid] = tid
+	h.clientKindsMu.Unlock()
+
+	idHex := hex.EncodeToString(tid.Id[:])
+	now := time.Now()
+	if _, state, ok := h.Tasks.CredentialLive(idHex, now); !ok || state != CredentialLive {
+		return protocol.ClientHelloStatus_NotPermitted
+	}
+	h.Tasks.TouchCredential(idHex, now)
+	if h.OnConnIdentified != nil {
+		h.OnConnIdentified(conn.ConnectionID())
+	}
+	return protocol.ClientHelloStatus_Ok
 }
 
 // denyTaskControl rejects a capability-gated request with a typed

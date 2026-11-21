@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"log/slog"
+	"time"
 
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/cli"
@@ -19,6 +20,12 @@ import (
 // RecordClientIdentity is not wired (nil), falls back to re-dispatch via the
 // TaskControl wire path (old behaviour; still correct for tests that do not wire
 // the field, though it emits an extra TaskControlResponse which legacy clients tolerate).
+//
+// Credential role: records the credential task as the connection's principal
+// (d.RecordCredentialIdentity). There is no hello to re-dispatch, and no
+// fallback: with nothing wired to record the principal the connection would
+// stay authenticated with none, which callerCaps reads as the operator, so it
+// is closed instead.
 //
 // Runner role: re-dispatches via [0x43]+RunnerMessage{Hello} unchanged. The
 // runner NEEDS the RunnerHelloResponse (it carries YourRunnerId consumed at
@@ -61,6 +68,13 @@ func pskDispatchIdentity(d *Dispatcher, conn ConnHandle, req *protocol.PskAuthRe
 		}
 		d.Dispatch(conn, data)
 		return true
+
+	case protocol.AuthRole_Credential:
+		a := req.CredentialAuth()
+		if a == nil || d.RecordCredentialIdentity == nil {
+			return false
+		}
+		return d.RecordCredentialIdentity(conn.ConnectionID().String(), conn, a.TaskId) == protocol.ClientHelloStatus_Ok
 	}
 	return false
 }
@@ -71,7 +85,9 @@ func pskDispatchIdentity(d *Dispatcher, conn ConnHandle, req *protocol.PskAuthRe
 //   - an operator kind (cli/tui/webui): a binder keyed by the operator PSK
 //     (nothing when none is configured: --dangerously-permit-no-operator-psk);
 //   - role=client, kind=agent: a binder keyed by the task's ticket (TicketFor);
-//   - role=runner: an Ed25519 signature by an enrolled key (RunnerAuth).
+//   - role=runner: an Ed25519 signature by an enrolled key (RunnerAuth);
+//   - role=credential: an Ed25519 signature by the key stored on a live
+//     credential task (CredentialAuth, credential-tasks D4).
 //
 // The two roles every binary spoke before runner enrollment (AuthRole 0 and 1)
 // are gone: a request carrying one decodes to no arm and is refused
@@ -107,6 +123,10 @@ type pskGate struct {
 	// TicketFor is the ticket a role=client agent's binder must be keyed by.
 	// nil (test wiring without a Board) refuses every role=client agent.
 	TicketFor func(rid protocol.RunnerID, tid protocol.TaskID) ([16]byte, bool)
+	// CredentialFor is a credential task's stored public key and what it is
+	// good for at now (TaskStore.CredentialLive). nil refuses every
+	// role=credential request.
+	CredentialFor func(tid protocol.TaskID, now time.Time) ([32]byte, CredentialState, bool)
 }
 
 func newPSKGate() *pskGate {
@@ -117,8 +137,8 @@ func newPSKGate() *pskGate {
 
 func (g *pskGate) Authed() bool { return g.authed }
 
-// Role is the authenticated role, AuthRole_Client or AuthRole_Runner.
-// Meaningful only once Authed.
+// Role is the authenticated role: AuthRole_Client, AuthRole_Runner or
+// AuthRole_Credential. Meaningful only once Authed.
 func (g *pskGate) Role() protocol.AuthRole { return g.role }
 
 // agentBinderOK checks a role=client agent's binder against the ticket the
@@ -151,21 +171,25 @@ func (g *pskGate) RunnerKey() ed25519.PublicKey { return g.runnerKey }
 func (g *pskGate) Rejected() (protocol.PskAuthStatus, bool) { return g.rejected, g.hasRejected }
 
 // AllowsMessage binds application traffic to the role authenticated by Check.
-// Both roles may speak pubsub (authorizeJoin refuses every JOIN a runner
+// Every role may speak pubsub (authorizeJoin refuses every JOIN a runner
 // makes) and answer telemetry, but
-// only clients issue task control and only runners report task state. Hello
-// messages belong exclusively to the initial handshake: accepting another one
-// would let a peer replace its authenticated identity on the same connection.
+// only clients and credentials issue task control and only runners report
+// task state. A credential speaks task control as a client with a principal
+// does: what it may do is its task's caps and scope, checked per request.
+// Hello messages belong exclusively to the initial handshake: accepting
+// another one would let a peer replace its authenticated identity on the same
+// connection.
 func (g *pskGate) AllowsMessage(data []byte) bool {
 	if !g.authed || len(data) == 0 {
 		return false
 	}
 	switch appwire.AppKind(data[0]) {
 	case appwire.AppKind_Pubsub, appwire.AppKind_Telemetry:
-		return g.role == protocol.AuthRole_Client || g.role == protocol.AuthRole_Runner
+		return g.role == protocol.AuthRole_Client || g.role == protocol.AuthRole_Runner ||
+			g.role == protocol.AuthRole_Credential
 	case appwire.AppKind_TaskControl:
 		// TaskControlRequest starts with a one-byte TaskControlKind.
-		return g.role == protocol.AuthRole_Client && len(data) > 1 &&
+		return (g.role == protocol.AuthRole_Client || g.role == protocol.AuthRole_Credential) && len(data) > 1 &&
 			protocol.TaskControlKind(data[1]) != protocol.TaskControlKind_ClientHello
 	case appwire.AppKind_RunnerControl:
 		// RunnerMessage starts with a one-byte RunnerMessageType.
@@ -222,7 +246,8 @@ func (g *pskGate) respond(sendFn func([]byte), transcript []byte, status protoco
 // Processing order (load-bearing per spec):
 //  1. Decode PskAuthRequest
 //  2. Binder verification (before any identity action); for kind=agent this
-//     is the ticket check, for role=runner the signature and enrollment (2b)
+//     is the ticket check, for role=runner the signature and enrollment (2b),
+//     for role=credential the signature and the credential's state (2c)
 //  3. Identity required (fail-closed)
 //  4. Accept: mark authed, reply ok, return decoded request for caller dispatch
 //
@@ -298,6 +323,39 @@ func (g *pskGate) Check(
 		g.runnerKey = append(ed25519.PublicKey(nil), key...)
 	}
 
+	// Step 2c: a credential task's key (role=credential, D4/D5). The stored key
+	// is looked up and the signature verified BEFORE the credential's state is
+	// read, so expired / revoked are told only to a peer holding the private
+	// half. An unknown task, a task that is not a credential (the zero id
+	// included: no task has it) and a bad signature all answer bad_ticket, so
+	// the answer is no existence oracle.
+	if req.Role == protocol.AuthRole_Credential {
+		auth := req.CredentialAuth()
+		if auth == nil {
+			g.respond(sendFn, transcript, protocol.PskAuthStatus_NoIdentity)
+			return true, true, nil
+		}
+		var pub [32]byte
+		var state CredentialState
+		ok := false
+		if g.CredentialFor != nil && auth.TaskId.Id != ([16]byte{}) {
+			pub, state, ok = g.CredentialFor(auth.TaskId, time.Now())
+		}
+		if !ok || !cli.VerifyCredentialAuth(ed25519.PublicKey(pub[:]), transcript, auth.Sig[:]) {
+			g.respond(sendFn, transcript, protocol.PskAuthStatus_BadTicket)
+			return true, true, nil
+		}
+		switch state {
+		case CredentialLive:
+		case CredentialExpired:
+			g.respond(sendFn, transcript, protocol.PskAuthStatus_Expired)
+			return true, true, nil
+		default:
+			g.respond(sendFn, transcript, protocol.PskAuthStatus_Revoked)
+			return true, true, nil
+		}
+	}
+
 	// Step 3: Identity required (fail-closed).
 	// At least one role+hello must be present.
 	switch req.Role {
@@ -328,6 +386,8 @@ func (g *pskGate) Check(
 			g.respond(sendFn, transcript, protocol.PskAuthStatus_NoIdentity)
 			return true, true, nil
 		}
+	case protocol.AuthRole_Credential:
+		// Step 2c proved the task id: the identity is that task.
 	default:
 		// Unknown role — fail-closed.
 		slog.Warn("pskGate: unknown role", "role", req.Role)

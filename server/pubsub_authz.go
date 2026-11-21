@@ -18,8 +18,13 @@ import (
 // may JOIN nothing: the one topic it joined, its task's log, was retired in A3
 // (A-D30). No connection is granted Publish, so nothing a subscriber writes on
 // its stream reaches a topic; every topic's publisher is the server.
+//
+// A credential connection joins under the client's rules (credential-tasks
+// D10): it has a principal task, so the visibility helpers answer for that
+// task — notifications only with a global visibility rank, and task events
+// filtered per publish to the tasks its `ls` shows.
 func (s *Server) authorizeJoin(role protocol.AuthRole, cid objproto.ConnectionID, topic string) pubsub.JoinGrant {
-	if role != protocol.AuthRole_Client {
+	if role != protocol.AuthRole_Client && role != protocol.AuthRole_Credential {
 		return pubsub.JoinGrant{}
 	}
 	if topic == topics.Notifications() {

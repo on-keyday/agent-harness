@@ -490,8 +490,10 @@ func New(cfg Config) *Server {
 		// it. See server/telemetry.go.
 		OnTelemetryResponse:  s.deliverTelemetryResponse,
 		RecordClientIdentity: s.taskHandler.RecordClientIdentity,
-		Registry:             s.registry,
-		Tasks:                s.tasks,
+		// The credential handshake's principal (credential-tasks D4, D6).
+		RecordCredentialIdentity: s.taskHandler.RecordCredentialIdentity,
+		Registry:                 s.registry,
+		Tasks:                    s.tasks,
 		// Board is wired after construction via Server.SetBoard (Task 9).
 	}
 
@@ -778,6 +780,13 @@ func New(cfg Config) *Server {
 	s.tasks.OnCancel = func(id string) {
 		publishTaskEvent(id, protocol.StatusEventKind_TaskEnded, protocol.TaskStatus_Cancelled, 0)
 		s.dispatcher.OnCancel(id)
+		// A credential has no runner to tell; ending it (revoke, or expiry
+		// through the same cancel) closes the connections it authenticated
+		// (credential-tasks D9). callerCaps already answers none for them
+		// (D8); this takes the connection itself away.
+		if t, ok := s.tasks.Get(id); ok && t.Kind == protocol.TaskKind_Credential {
+			s.dropConnsForPrincipal(id)
+		}
 	}
 	// A cancel of a task still waiting for its TaskFinished resends the
 	// CancelTask; nothing is published, the transition already was.
@@ -1302,7 +1311,14 @@ func (s *Server) serve(ctx context.Context, ep objproto.Endpoint, mux *http.Serv
 }
 
 // dropConnsForPrincipal closes every live connection whose principal is
-// taskIDHex and returns how many were closed.
+// taskIDHex and returns how many were closed. Its callers: set_caps when a
+// re-grant removes authority, and the end of a credential task (OnCancel).
+//
+// Each one is closed as kickConn closes it: a wire close first, so the peer
+// learns now instead of from its GC about a minute later. For set_caps that is
+// a narrowed agent's harness-cli reconnecting at once under the new grant
+// rather than sitting on a dead connection; for a credential it is the script
+// told its key is finished.
 //
 // One close tears down every stream on that connection at once — attach, file
 // transfer, port forwards — which is why a revoked grant is enforced here
@@ -1324,12 +1340,9 @@ func (s *Server) dropConnsForPrincipal(taskIDHex string) int {
 	s.activeConnsMu.Unlock()
 
 	// Closed outside the lock: teardown re-enters connection bookkeeping that
-	// takes activeConnsMu itself.
+	// takes activeConnsMu itself, and so does kickConn.
 	for _, sc := range victims {
-		if err := sc.Close(); err != nil {
-			slog.Warn("set_caps: closing a revoked task's connection failed",
-				"task", taskIDHex, "cid", sc.ConnectionID().String(), "err", err)
-		}
+		s.kickConn(sc.ConnectionID())
 	}
 	return len(victims)
 }
@@ -1534,6 +1547,9 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 	if s.Board != nil {
 		gate.TicketFor = s.Board.Registry().Ticket
 	}
+	gate.CredentialFor = func(tid protocol.TaskID, now time.Time) ([32]byte, CredentialState, bool) {
+		return s.tasks.CredentialLive(hex.EncodeToString(tid.Id[:]), now)
+	}
 	// Pubsub only flows once the gate has fixed the role (AllowsMessage), so
 	// reading it per JOIN reads the authenticated one.
 	subscriber.SetAuthorizer(func(topic string) pubsub.JoinGrant {
@@ -1736,7 +1752,10 @@ func (s *Server) connInfoFor(sc streamingConn, allowed map[string]bool, globalVi
 		// Unspecified means the handshake has not completed, which is the only
 		// thing "not identified" means here.
 		identified = role != protocol.ConnRole_Unspecified
-		if kind == protocol.ClientKind_Agent {
+		// A credential connection has a principal task as an agent's does
+		// (credential-tasks D6), so its row names it and confined callers see
+		// it exactly when they see that task.
+		if kind == protocol.ClientKind_Agent || kind == protocol.ClientKind_Credential {
 			principal = s.taskHandler.lookupPrincipal(cidStr)
 		}
 	}

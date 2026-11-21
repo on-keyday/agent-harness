@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/hex"
 	"log/slog"
+	"time"
 
 	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -204,17 +205,40 @@ func hasCap(have, want protocol.Capability) bool {
 
 // callerCaps resolves the connection's principal task and returns its
 // capability set. Operator connections (no principal task → zero TaskID) are
-// the trusted root and receive the full set.
+// the trusted root and receive the full set. A principal that holds nothing
+// (principalRecord) receives none.
 func (h *TaskHandler) callerCaps(connID string) protocol.Capability {
 	pid := h.lookupPrincipal(connID)
 	if pid.Id == ([16]byte{}) {
 		return protocol.Capability_All
 	}
-	t, ok := h.Tasks.Get(hex.EncodeToString(pid.Id[:]))
+	t, ok := h.principalRecord(hex.EncodeToString(pid.Id[:]))
 	if !ok {
 		return protocol.Capability_None
 	}
 	return t.Capabilities
+}
+
+// principalRecord is the task a non-operator principal acts through, and
+// ok=false when it holds nothing: its record is gone (pruned while a
+// connection stayed open), or it is a credential that is not live now.
+//
+// A credential's liveness is read here, per request, and not left to its
+// status: an ended TaskEntry keeps its Capabilities and Scope, and a
+// credential whose expiry passed is still Active until the deadline watcher
+// ends it (credential-tasks D8, anti-goal 3). Other kinds are not asked —
+// their authority is unchanged by this.
+func (h *TaskHandler) principalRecord(idHex string) (TaskEntry, bool) {
+	t, ok := h.Tasks.Get(idHex)
+	if !ok {
+		return TaskEntry{}, false
+	}
+	if t.Kind == protocol.TaskKind_Credential {
+		if _, state, ok := h.Tasks.CredentialLive(idHex, time.Now()); !ok || state != CredentialLive {
+			return TaskEntry{}, false
+		}
+	}
+	return t, true
 }
 
 // childIndex builds the creatorHex → []childHex map used by the subtree walk
@@ -306,10 +330,15 @@ func (h *TaskHandler) scopeSetWith(connID string, want protocol.Capability, chil
 	}
 	callerHex := hex.EncodeToString(pid.Id[:])
 
-	scope := authority.DefaultScope()
-	if t, ok := h.Tasks.Get(callerHex); ok {
-		scope = t.Scope
+	// A principal that holds nothing reaches nothing, itself included — not
+	// the default scope a missing record once fell back to, which handed a
+	// connection whose task was pruned its whole former subtree to read.
+	// Reads gated by scope alone (ls, conns, task events) go dark with it.
+	t, ok := h.principalRecord(callerHex)
+	if !ok {
+		return false, map[string]bool{}
 	}
+	scope := t.Scope
 
 	if want == protocol.Capability_None {
 		return h.visibilitySet(callerHex, scope)
@@ -363,7 +392,8 @@ func (h *TaskHandler) authorize(connID string, want protocol.Capability, targetH
 
 // granter is the connection's principal as the task that will write a grant:
 // nil for an operator, which is unbounded in what it grants as in what it
-// holds. A principal whose record is gone keeps callerCaps but reaches and
+// holds. A principal that holds nothing (principalRecord: its record is gone,
+// or a credential that is not live) keeps callerCaps but reaches and
 // delegates nothing.
 func (h *TaskHandler) granter(cid string, callerCaps protocol.Capability) *authority.Granter {
 	pid := h.lookupPrincipal(cid)
@@ -373,7 +403,7 @@ func (h *TaskHandler) granter(cid string, callerCaps protocol.Capability) *autho
 	hexID := hex.EncodeToString(pid.Id[:])
 	held := authority.Grant{Caps: callerCaps, Scope: authority.Scope{Base: protocol.ScopeBase_None},
 		DelegateScope: authority.Scope{Base: protocol.ScopeBase_None}}
-	if t, ok := h.Tasks.Get(hexID); ok {
+	if t, ok := h.principalRecord(hexID); ok {
 		held = t.Grant()
 		held.Caps = callerCaps
 	}
@@ -431,7 +461,7 @@ func (h *TaskHandler) listVisibleToCaller(connID string) (all bool, allowed map[
 		return true, nil, ""
 	}
 	pid := h.lookupPrincipal(connID)
-	self, ok := h.Tasks.Get(hex.EncodeToString(pid.Id[:]))
+	self, ok := h.principalRecord(hex.EncodeToString(pid.Id[:]))
 	if !ok || self.CreatorTaskID.Id == ([16]byte{}) {
 		return false, allowed, ""
 	}
