@@ -270,6 +270,24 @@ func renderListJSONOrdered(lr *protocol.ListResultBody, out io.Writer, o TaskOrd
 	renderListJSONGroups(&ordered, out, groups)
 }
 
+// credentialColumns are the row's credential fields: a credential's expiry
+// and last use (`unknown` while the server has not seen it since it started —
+// zero is a reading, never elided), and the task's name when it has one (D21:
+// any kind). Gated on the kind and on the name existing, never on a value.
+func credentialColumns(t *protocol.TaskInfo) string {
+	s := ""
+	if t.Kind == protocol.TaskKind_Credential {
+		s += "  expires=" + CredentialExpiryLabel(t)
+	}
+	if len(t.Name) > 0 {
+		s += "  name=" + string(t.Name)
+	}
+	if t.Kind == protocol.TaskKind_Credential {
+		s += "  last_used=" + CredentialLastUsedLabel(t)
+	}
+	return s
+}
+
 // taskLine renders one task row without its leading indent. Extracted from
 // renderList so the flat listing and the --tree listing cannot drift into two
 // different column sets: the tree only prepends a gutter to this.
@@ -314,6 +332,7 @@ func taskLine(t protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo) st
 	if h := TaskScheduleHex(&t); h != "" {
 		sched = "  schedule=" + h[:8]
 	}
+	sched += credentialColumns(&t)
 	act := ""
 	if t.LastOutputAt > 0 {
 		act = "  act=" + ActivityStr(t.OutputIdleMs)
@@ -576,7 +595,15 @@ type taskJSON struct {
 	// ScheduleID is the schedule the task is bound to (32 hex), absent while
 	// it is bound to none: the binding is what is absent, not a zero value.
 	ScheduleID string `json:"schedule_id,omitempty"`
-	Activity   string `json:"activity,omitempty"`
+	// Name is the task's display name (D21), absent while it has none.
+	// CredentialExpiresAt and CredentialLastUsedAt are present on a credential
+	// task only (RFC3339; last use is `unknown` until the server sees the
+	// credential after it started — the field is never dropped for being
+	// unknown).
+	Name                 string `json:"name,omitempty"`
+	CredentialExpiresAt  string `json:"credential_expires_at,omitempty"`
+	CredentialLastUsedAt string `json:"credential_last_used_at,omitempty"`
+	Activity             string `json:"activity,omitempty"`
 	// Observers on the live session. NOT omitempty: 0 is a real answer ("a
 	// session nobody is watching") and an absent key would read as "not
 	// reported". Both are 0 for a task with no live session at all — `status`
@@ -759,50 +786,57 @@ func newTaskJSON(t *protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo
 		activity = ActivityStr(t.OutputIdleMs)
 	}
 	scheduleID := TaskScheduleHex(t)
+	var credExpires, credLastUsed string
+	if t.Kind == protocol.TaskKind_Credential {
+		credExpires, credLastUsed = CredentialExpiryLabel(t), CredentialLastUsedLabel(t)
+	}
 	return taskJSON{
-		ScheduleID:     scheduleID,
-		Id:             taskIDHexOrEmpty(t.Id.Id[:]),
-		Status:         taskStatusJSON(t.Status),
-		Kind:           taskKindJSON(t.Kind),
-		Repo:           string(t.RepoPath),
-		From:           originStr(t.OriginKind),
-		Agent:          agent,
-		AssignedTo:     taskIDStr(t.AssignedTo.Id[:]),
-		SkillsInjected: skills,
-		ResumedBy:      resumedBy,
-		Activity:       activity,
-		Viewers:        t.Viewers,
-		Cowriters:      t.Cowriters,
-		ExecCount:      t.ExecCount,
-		HeldUntil:      heldUntilStr(t.HoldDeadlineNs),
-		Caps:           CapsLabel(t.Capabilities),
-		Scope:          ScopeLabel(t.Scope),
-		ScopeByCap:     ResolvedScopeByCap(t.Capabilities, t.Scope, t.Overrides),
-		DelegateCaps:   CapsLabel(t.DelegateCaps),
-		DelegateScope:  ScopeLabel(t.DelegateScope),
-		SpawnDepth:     LimitJSON(t.SpawnDepth),
-		MaxDescendants: LimitJSON(t.MaxDescendants),
-		Descendants:    t.Descendants,
-		CreatedBy:      taskIDHexOrEmpty(t.CreatorTaskId.Id[:]),
-		Prompt:         string(t.Prompt),
-		ExitCode:       t.ExitCode,
-		ErrorMessage:   string(t.ErrorMessage),
-		CreatedAt:      t.CreatedAt,
-		StartedAt:      t.StartedAt,
-		EndedAt:        t.EndedAt,
-		LastOutputAt:   t.LastOutputAt,
-		OutputIdleMs:   t.OutputIdleMs,
-		Progress:       string(t.Progress),
-		ProgressAt:     t.ProgressAt,
-		ProgressAgeMs:  t.ProgressAgeMs,
-		LiveTerminal:   t.LiveTerminal(),
-		Title:          string(t.Title),
-		Lifecycle:      LifecycleWord(t.Lifecycle),
-		LifecycleAt:    t.LifecycleAt,
-		LifecycleAgeMs: t.LifecycleAgeMs,
-		ProgramState:   ProgramWord(t.ProgramState),
-		ProgramKind:    ProgramKindWord(t.ProgramKind),
-		ProgramMsg:     string(t.ProgramMsg),
+		ScheduleID:           scheduleID,
+		Name:                 string(t.Name),
+		CredentialExpiresAt:  credExpires,
+		CredentialLastUsedAt: credLastUsed,
+		Id:                   taskIDHexOrEmpty(t.Id.Id[:]),
+		Status:               taskStatusJSON(t.Status),
+		Kind:                 taskKindJSON(t.Kind),
+		Repo:                 string(t.RepoPath),
+		From:                 originStr(t.OriginKind),
+		Agent:                agent,
+		AssignedTo:           taskIDStr(t.AssignedTo.Id[:]),
+		SkillsInjected:       skills,
+		ResumedBy:            resumedBy,
+		Activity:             activity,
+		Viewers:              t.Viewers,
+		Cowriters:            t.Cowriters,
+		ExecCount:            t.ExecCount,
+		HeldUntil:            heldUntilStr(t.HoldDeadlineNs),
+		Caps:                 CapsLabel(t.Capabilities),
+		Scope:                ScopeLabel(t.Scope),
+		ScopeByCap:           ResolvedScopeByCap(t.Capabilities, t.Scope, t.Overrides),
+		DelegateCaps:         CapsLabel(t.DelegateCaps),
+		DelegateScope:        ScopeLabel(t.DelegateScope),
+		SpawnDepth:           LimitJSON(t.SpawnDepth),
+		MaxDescendants:       LimitJSON(t.MaxDescendants),
+		Descendants:          t.Descendants,
+		CreatedBy:            taskIDHexOrEmpty(t.CreatorTaskId.Id[:]),
+		Prompt:               string(t.Prompt),
+		ExitCode:             t.ExitCode,
+		ErrorMessage:         string(t.ErrorMessage),
+		CreatedAt:            t.CreatedAt,
+		StartedAt:            t.StartedAt,
+		EndedAt:              t.EndedAt,
+		LastOutputAt:         t.LastOutputAt,
+		OutputIdleMs:         t.OutputIdleMs,
+		Progress:             string(t.Progress),
+		ProgressAt:           t.ProgressAt,
+		ProgressAgeMs:        t.ProgressAgeMs,
+		LiveTerminal:         t.LiveTerminal(),
+		Title:                string(t.Title),
+		Lifecycle:            LifecycleWord(t.Lifecycle),
+		LifecycleAt:          t.LifecycleAt,
+		LifecycleAgeMs:       t.LifecycleAgeMs,
+		ProgramState:         ProgramWord(t.ProgramState),
+		ProgramKind:          ProgramKindWord(t.ProgramKind),
+		ProgramMsg:           string(t.ProgramMsg),
 
 		AuthoritySource:      t.AuthoritySource.String(),
 		AuthorityActor:       taskIDHexOrEmpty(t.AuthorityActor.Id[:]),
@@ -1089,6 +1123,8 @@ func taskKindStr(k protocol.TaskKind) string {
 		// Padded to the same width as its neighbours: this column is
 		// fixed-width and a short value shifts every field after it.
 		return "stream     "
+	case protocol.TaskKind_Credential:
+		return "credential "
 	}
 	return "?          "
 }
@@ -1109,6 +1145,8 @@ func taskStatusStr(s protocol.TaskStatus) string {
 		return "Detached "
 	case protocol.TaskStatus_Held:
 		return "Held     "
+	case protocol.TaskStatus_Active:
+		return "Active   "
 	}
 	return "?"
 }

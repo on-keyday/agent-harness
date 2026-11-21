@@ -251,6 +251,67 @@ type ConnsAction struct {
 	Follow bool
 }
 
+// CredentialIssueAction is built by: credential new, credential rekey.
+type CredentialIssueAction struct {
+	ActionMarker
+	// how long the credential lives, from now on the server's clock: a Go duration or days (`30d`); requir…
+	TTL string
+	// a label shown in `credential ls` and `ls` (at most 64 bytes)
+	Name string
+	// generate the key pair here and write the secret to this file (mode 0600; an existing file is never o…
+	Out string
+	// register this Ed25519 public key (64 hex, from `credential keygen` on the host that will use it) ins…
+	Pubkey string
+	// whether --caps was typed, which its zero value cannot say
+	CapsPresent bool
+	// comma-separated capability names to grant (e.g. spawn,file_read / all / none)
+	Caps *protocol.Capability
+	// whether --scope was typed, which its zero value cannot say
+	ScopePresent bool
+	// which tasks those capabilities may target; default subtree (self + descendants)
+	Scope *protocol.TaskScope
+	// narrow ONE capability (or a comma-separated list of them) to a tighter scope than --scope
+	Overrides []protocol.ScopeOverride
+	// whether --delegate-caps was typed, which its zero value cannot say
+	DelegateCapsPresent bool
+	// capabilities the new task may put into the tasks IT creates (default none)
+	DelegateCaps *protocol.Capability
+	// whether --delegate-scope was typed, which its zero value cannot say
+	DelegateScopePresent bool
+	// the most scope it may give them, in --scope's grammar (default subtree)
+	DelegateScope *protocol.TaskScope
+	// whether --spawn-depth was typed, which its zero value cannot say
+	SpawnDepthPresent bool
+	// generations that may still be created below the new task: N or unbounded (default: one less than you…
+	SpawnDepth *protocol.SpawnLimit
+	// whether --max-descendants was typed, which its zero value cannot say
+	MaxDescendantsPresent bool
+	// tasks the new task's subtree may hold, ended ones included until pruned: N or unbounded (default unb…
+	MaxDescendants *protocol.SpawnLimit
+	Sub            string
+	ID             string
+}
+
+// CredentialKeygenAction is built by: credential keygen.
+type CredentialKeygenAction struct {
+	ActionMarker
+	// file the seed is written to (mode 0600); an existing file is refused
+	Out string
+}
+
+// CredentialLsAction is built by: credential ls.
+type CredentialLsAction struct {
+	ActionMarker
+	// one JSON document with every field, none elided
+	JSON bool
+}
+
+// CredentialRevokeAction is built by: credential revoke.
+type CredentialRevokeAction struct {
+	ActionMarker
+	ID string
+}
+
 // ExecRunAction is built by: exec, exec kill, exec ls.
 type ExecRunAction struct {
 	ActionMarker
@@ -4833,6 +4894,153 @@ func init() {
 			}
 			return a, nil
 		},
+		"credential keygen\x00cli": func(b Bound) (Action, error) {
+			a := CredentialKeygenAction{}
+			a.Out = b.Str("out")
+			return a, nil
+		},
+		"credential new\x00cli": func(b Bound) (Action, error) {
+			a := CredentialIssueAction{}
+			a.Sub = "new"
+			a.TTL = b.Str("ttl")
+			a.Name = b.Str("name")
+			a.Out = b.Str("out")
+			a.Pubkey = b.Str("pubkey")
+			a.CapsPresent = b.Set["caps"]
+			if b.Set["caps"] {
+				v, err := parseCapsFlag(b.Str("caps"))
+				if err != nil {
+					return nil, fmt.Errorf("credential new: --caps: %w", err)
+				}
+				a.Caps = v
+			}
+			a.ScopePresent = b.Set["scope"] || b.Set["scope-for"]
+			if b.Set["scope"] {
+				v, err := parseScopeFlag(b.Str("scope"))
+				if err != nil {
+					return nil, fmt.Errorf("credential new: --scope: %w", err)
+				}
+				a.Scope = v
+			}
+			if b.Set["scope-for"] {
+				v, err := parseScopeForList(stringsOf(b.Custom["scope-for"]))
+				if err != nil {
+					return nil, fmt.Errorf("credential new: --scope-for: %w", err)
+				}
+				a.Overrides = v
+			}
+			a.DelegateCapsPresent = b.Set["delegate-caps"]
+			if b.Set["delegate-caps"] {
+				v, err := parseCapsFlag(b.Str("delegate-caps"))
+				if err != nil {
+					return nil, fmt.Errorf("credential new: --delegate-caps: %w", err)
+				}
+				a.DelegateCaps = v
+			}
+			a.DelegateScopePresent = b.Set["delegate-scope"]
+			if b.Set["delegate-scope"] {
+				v, err := parseScopeFlag(b.Str("delegate-scope"))
+				if err != nil {
+					return nil, fmt.Errorf("credential new: --delegate-scope: %w", err)
+				}
+				a.DelegateScope = v
+			}
+			a.SpawnDepthPresent = b.Set["spawn-depth"]
+			if b.Set["spawn-depth"] {
+				v, err := parseSpawnLimitFlag(b.Str("spawn-depth"))
+				if err != nil {
+					return nil, fmt.Errorf("credential new: --spawn-depth: %w", err)
+				}
+				a.SpawnDepth = v
+			}
+			a.MaxDescendantsPresent = b.Set["max-descendants"]
+			if b.Set["max-descendants"] {
+				v, err := parseSpawnLimitFlag(b.Str("max-descendants"))
+				if err != nil {
+					return nil, fmt.Errorf("credential new: --max-descendants: %w", err)
+				}
+				a.MaxDescendants = v
+			}
+			return a, nil
+		},
+		"credential rekey\x00cli": func(b Bound) (Action, error) {
+			a := CredentialIssueAction{}
+			a.Sub = "rekey"
+			a.TTL = b.Str("ttl")
+			a.Out = b.Str("out")
+			a.Pubkey = b.Str("pubkey")
+			a.CapsPresent = b.Set["caps"]
+			if b.Set["caps"] {
+				v, err := parseCapsFlag(b.Str("caps"))
+				if err != nil {
+					return nil, fmt.Errorf("credential rekey: --caps: %w", err)
+				}
+				a.Caps = v
+			}
+			a.ScopePresent = b.Set["scope"] || b.Set["scope-for"]
+			if b.Set["scope"] {
+				v, err := parseScopeFlag(b.Str("scope"))
+				if err != nil {
+					return nil, fmt.Errorf("credential rekey: --scope: %w", err)
+				}
+				a.Scope = v
+			}
+			if b.Set["scope-for"] {
+				v, err := parseScopeForList(stringsOf(b.Custom["scope-for"]))
+				if err != nil {
+					return nil, fmt.Errorf("credential rekey: --scope-for: %w", err)
+				}
+				a.Overrides = v
+			}
+			a.DelegateCapsPresent = b.Set["delegate-caps"]
+			if b.Set["delegate-caps"] {
+				v, err := parseCapsFlag(b.Str("delegate-caps"))
+				if err != nil {
+					return nil, fmt.Errorf("credential rekey: --delegate-caps: %w", err)
+				}
+				a.DelegateCaps = v
+			}
+			a.DelegateScopePresent = b.Set["delegate-scope"]
+			if b.Set["delegate-scope"] {
+				v, err := parseScopeFlag(b.Str("delegate-scope"))
+				if err != nil {
+					return nil, fmt.Errorf("credential rekey: --delegate-scope: %w", err)
+				}
+				a.DelegateScope = v
+			}
+			a.SpawnDepthPresent = b.Set["spawn-depth"]
+			if b.Set["spawn-depth"] {
+				v, err := parseSpawnLimitFlag(b.Str("spawn-depth"))
+				if err != nil {
+					return nil, fmt.Errorf("credential rekey: --spawn-depth: %w", err)
+				}
+				a.SpawnDepth = v
+			}
+			a.MaxDescendantsPresent = b.Set["max-descendants"]
+			if b.Set["max-descendants"] {
+				v, err := parseSpawnLimitFlag(b.Str("max-descendants"))
+				if err != nil {
+					return nil, fmt.Errorf("credential rekey: --max-descendants: %w", err)
+				}
+				a.MaxDescendants = v
+			}
+			if len(b.Args) > 0 {
+				a.ID = b.Args[0]
+			}
+			return a, nil
+		},
+		"credential ls\x00cli": func(b Bound) (Action, error) {
+			a := CredentialLsAction{}
+			a.JSON = b.Bool("json")
+			return a, nil
+		},
+		"credential revoke\x00cli": func(b Bound) (Action, error) {
+			a := CredentialRevokeAction{}
+			if len(b.Args) > 0 {
+				a.ID = b.Args[0]
+			}
+			return a, nil
+		},
 		"session snapshot\x00cli": func(b Bound) (Action, error) {
 			a := SessionAction{}
 			a.Sub = "snapshot"
@@ -5285,6 +5493,11 @@ const (
 	CmdScheduleRm             = "schedule rm"
 	CmdScheduleLs             = "schedule ls"
 	CmdScheduleShow           = "schedule show"
+	CmdCredentialKeygen       = "credential keygen"
+	CmdCredentialNew          = "credential new"
+	CmdCredentialRekey        = "credential rekey"
+	CmdCredentialLs           = "credential ls"
+	CmdCredentialRevoke       = "credential revoke"
 	CmdSessionSnapshot        = "session snapshot"
 	CmdSessionStreamAttach    = "session stream attach"
 	CmdSessionStreamInterrupt = "session stream interrupt"
@@ -5351,6 +5564,7 @@ const (
 	SubRead            = "read"
 	SubReconnect       = "reconnect"
 	SubRefresh         = "refresh"
+	SubRekey           = "rekey"
 	SubRepo            = "repo"
 	SubResize          = "resize"
 	SubRetain          = "retain"
@@ -8069,6 +8283,111 @@ func ParseCmdScheduleShow(sf Surface, args []string, ctx map[string]string) (Sch
 	return a, nil
 }
 
+func ParseCmdCredentialKeygen(sf Surface, args []string, ctx map[string]string) (CredentialKeygenAction, error) {
+	var zero CredentialKeygenAction
+	sp, ok := Lookup("credential", "keygen")
+	if !ok {
+		return zero, fmt.Errorf("credential keygen: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(CredentialKeygenAction)
+	return a, nil
+}
+
+func ParseCmdCredentialNew(sf Surface, args []string, ctx map[string]string) (CredentialIssueAction, error) {
+	var zero CredentialIssueAction
+	sp, ok := Lookup("credential", "new")
+	if !ok {
+		return zero, fmt.Errorf("credential new: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(CredentialIssueAction)
+	return a, nil
+}
+
+func ParseCmdCredentialRekey(sf Surface, args []string, ctx map[string]string) (CredentialIssueAction, error) {
+	var zero CredentialIssueAction
+	sp, ok := Lookup("credential", "rekey")
+	if !ok {
+		return zero, fmt.Errorf("credential rekey: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(CredentialIssueAction)
+	return a, nil
+}
+
+func ParseCmdCredentialLs(sf Surface, args []string, ctx map[string]string) (CredentialLsAction, error) {
+	var zero CredentialLsAction
+	sp, ok := Lookup("credential", "ls")
+	if !ok {
+		return zero, fmt.Errorf("credential ls: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(CredentialLsAction)
+	return a, nil
+}
+
+func ParseCmdCredentialRevoke(sf Surface, args []string, ctx map[string]string) (CredentialRevokeAction, error) {
+	var zero CredentialRevokeAction
+	sp, ok := Lookup("credential", "revoke")
+	if !ok {
+		return zero, fmt.Errorf("credential revoke: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(CredentialRevokeAction)
+	return a, nil
+}
+
 func ParseCmdSessionSnapshot(sf Surface, args []string, ctx map[string]string) (SessionAction, error) {
 	var zero SessionAction
 	sp, ok := Lookup("session", "snapshot")
@@ -8732,6 +9051,16 @@ type CLIDispatch[R any] interface {
 	ScheduleLs(ScheduleLsAction) R
 	// schedule show
 	ScheduleShow(ScheduleShowAction) R
+	// credential keygen
+	CredentialKeygen(CredentialKeygenAction) R
+	// credential new
+	CredentialNew(CredentialIssueAction) R
+	// credential rekey
+	CredentialRekey(CredentialIssueAction) R
+	// credential ls
+	CredentialLs(CredentialLsAction) R
+	// credential revoke
+	CredentialRevoke(CredentialRevokeAction) R
 	// session snapshot
 	SessionSnapshot(SessionAction) R
 	// session stream attach
@@ -9429,6 +9758,36 @@ func DispatchCLI[R any](h CLIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.ScheduleShow(a), true, nil
+	case CmdCredentialKeygen:
+		a, perr := ParseCmdCredentialKeygen(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.CredentialKeygen(a), true, nil
+	case CmdCredentialNew:
+		a, perr := ParseCmdCredentialNew(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.CredentialNew(a), true, nil
+	case CmdCredentialRekey:
+		a, perr := ParseCmdCredentialRekey(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.CredentialRekey(a), true, nil
+	case CmdCredentialLs:
+		a, perr := ParseCmdCredentialLs(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.CredentialLs(a), true, nil
+	case CmdCredentialRevoke:
+		a, perr := ParseCmdCredentialRevoke(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.CredentialRevoke(a), true, nil
 	case CmdSessionSnapshot:
 		a, perr := ParseCmdSessionSnapshot(CLI, args, ctx)
 		if perr != nil {
@@ -9835,6 +10194,19 @@ func DispatchCLIAction[R any](h CLIDispatch[R], act Action) (r R, handled bool) 
 		return h.ScheduleLs(a), true
 	case ScheduleShowAction:
 		return h.ScheduleShow(a), true
+	case CredentialKeygenAction:
+		return h.CredentialKeygen(a), true
+	case CredentialIssueAction:
+		switch a.Sub {
+		case "new":
+			return h.CredentialNew(a), true
+		case "rekey":
+			return h.CredentialRekey(a), true
+		}
+	case CredentialLsAction:
+		return h.CredentialLs(a), true
+	case CredentialRevokeAction:
+		return h.CredentialRevoke(a), true
 	case AgentAction:
 		switch a.Sub {
 		case "inbox":
@@ -10530,6 +10902,36 @@ func ParseCLICommand(tokens []string, ctx map[string]string) (act Action, handle
 			return a, true, nil
 		case CmdScheduleShow:
 			a, perr := ParseCmdScheduleShow(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdCredentialKeygen:
+			a, perr := ParseCmdCredentialKeygen(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdCredentialNew:
+			a, perr := ParseCmdCredentialNew(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdCredentialRekey:
+			a, perr := ParseCmdCredentialRekey(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdCredentialLs:
+			a, perr := ParseCmdCredentialLs(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdCredentialRevoke:
+			a, perr := ParseCmdCredentialRevoke(CLI, tokens[n:], ctx)
 			if perr != nil {
 				return nil, true, perr
 			}

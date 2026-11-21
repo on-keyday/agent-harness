@@ -6,7 +6,7 @@ import (
 	"io"
 	"strconv"
 
-	"github.com/on-keyday/agent-harness/cli/cliopts"
+	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/cli/verb"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
@@ -85,7 +85,7 @@ func ReadWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) error {
 func readPage(ctx context.Context, a verb.AgentAction, stdout io.Writer) error {
 	topic := a.Topic
 	if a.Self {
-		tid, err := cliopts.ResolveTaskID("")
+		tid, err := cli.SelfTaskID()
 		if err != nil {
 			return err
 		}

@@ -1,0 +1,179 @@
+//go:build !js
+
+package cli
+
+import (
+	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+
+	"github.com/on-keyday/agent-harness/cli/verb"
+	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
+)
+
+// The credential verbs for the CLI: keygen and the secret's hand-over touch
+// the host's files and stdout, which is why they are here and not in
+// credential.go. Each verb has the three forms the schedule family has: the
+// With form on a *Client a surface already holds, the Out form that dials.
+
+// checkSeedDestination is D3a: an agent identity may not have a seed printed
+// into its own transcript, so --out or --pubkey is required there. Not a
+// security boundary (an agent can run `credential keygen` itself; whether it
+// may mint a credential at all is the credential_issue grant) — accident
+// prevention.
+func checkSeedDestination(a verb.CredentialIssueAction) error {
+	if a.Out != "" || a.Pubkey != "" {
+		return nil
+	}
+	if kind, _ := EffectiveClientKind(protocol.ClientKind_Cli); kind == protocol.ClientKind_Agent {
+		return errors.New("an agent identity may not print a private key: use --out FILE or --pubkey HEX")
+	}
+	return nil
+}
+
+// createSecretFile creates path for a secret: new, mode 0600, never an
+// existing file (a seed already there may be the only copy of another
+// credential).
+func createSecretFile(path string) (*os.File, error) {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return nil, fmt.Errorf("%s exists; a secret is never overwritten (remove it, or name another file)", path)
+		}
+		return nil, err
+	}
+	return f, nil
+}
+
+// CredentialKeygenWith is `credential keygen --out FILE`: a fresh key pair on
+// the host that will use the credential. The seed goes to the file (hex, one
+// line), the public key (64 hex) to out; the seed is never printed.
+func CredentialKeygenWith(a verb.CredentialKeygenAction, out io.Writer) error {
+	if a.Out == "" {
+		return errors.New("credential keygen: --out FILE is required (the seed is written there, never printed)")
+	}
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return err
+	}
+	f, err := createSecretFile(a.Out)
+	if err != nil {
+		return fmt.Errorf("credential keygen: %w", err)
+	}
+	_, werr := fmt.Fprintf(f, "%s\n", hex.EncodeToString(priv.Seed()))
+	if cerr := f.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr != nil {
+		os.Remove(a.Out)
+		return fmt.Errorf("credential keygen: %w", werr)
+	}
+	fmt.Fprintln(out, hex.EncodeToString(pub))
+	return nil
+}
+
+// CredentialIssueWith runs credential new / rekey. The key pair is made here
+// (D3): the server is sent the public key only. With --pubkey the key is the
+// holder's and no secret exists on this side; otherwise the seed is handed
+// over once, to --out or to out, after the server has accepted it.
+func CredentialIssueWith(ctx context.Context, c *Client, a verb.CredentialIssueAction, out io.Writer) error {
+	verbName := "new"
+	if a.Sub == verb.SubRekey {
+		verbName = "rekey"
+	}
+	if err := checkSeedDestination(a); err != nil {
+		return err
+	}
+	if _, err := credentialTTLMs(a.TTL); err != nil {
+		return fmt.Errorf("credential %s: %w", verbName, err)
+	}
+
+	var pub ed25519.PublicKey
+	var priv ed25519.PrivateKey
+	if a.Pubkey != "" {
+		raw, err := hex.DecodeString(a.Pubkey)
+		if err != nil || len(raw) != ed25519.PublicKeySize {
+			return fmt.Errorf("credential %s: --pubkey: want 64 hex characters", verbName)
+		}
+		pub = raw
+	} else {
+		var err error
+		if pub, priv, err = ed25519.GenerateKey(rand.Reader); err != nil {
+			return err
+		}
+	}
+
+	// The file is created BEFORE the server is asked, so a path that cannot be
+	// written is refused while there is still nothing to lose; its content is
+	// written once the id is known.
+	var f *os.File
+	if a.Out != "" {
+		var err error
+		if f, err = createSecretFile(a.Out); err != nil {
+			return fmt.Errorf("credential %s: --out: %w", verbName, err)
+		}
+	}
+	got, err := c.CredentialIssue(ctx, a, pub)
+	if err != nil {
+		if f != nil {
+			f.Close()
+			os.Remove(a.Out)
+		}
+		return err
+	}
+	cred := Credential{TaskID: got.TaskID, Key: priv}
+	id := hex.EncodeToString(got.TaskID.Id[:])
+	fmt.Fprintf(out, "credential %s: issued, expires %s\n", id[:8], got.ExpiresAt.Format("2006-01-02T15:04:05Z07:00"))
+	switch {
+	case f != nil:
+		_, werr := fmt.Fprintf(f, "%s\n", cred.String())
+		if cerr := f.Close(); werr == nil {
+			werr = cerr
+		}
+		if werr != nil {
+			return fmt.Errorf("credential %s: issued as %s but the secret could not be written to %s: %w (credential rekey %s gives it a new key)", verbName, id, a.Out, werr, id)
+		}
+		fmt.Fprintf(out, "secret written to %s\n", a.Out)
+	case priv != nil:
+		fmt.Fprintf(out, "secret: %s\n", cred.String())
+	default:
+		// The key is the holder's: it needs the full id, which the first
+		// line shortens.
+		fmt.Fprintf(out, "task id: %s\ncredential string for the holder: %s:<seed written by credential keygen>\n", id, id)
+	}
+	return nil
+}
+
+func credentialDial(ctx context.Context, peerCID objproto.ConnectionID, fn func(*Client) error) error {
+	return recordDial(ctx, peerCID, fn)
+}
+
+// CredentialKeygenOut, CredentialIssueOut, CredentialLsOut and
+// CredentialRevokeOut are the fresh-dial forms for the CLI. keygen is local
+// and dials nothing.
+func CredentialKeygenOut(a verb.CredentialKeygenAction, out io.Writer) error {
+	return CredentialKeygenWith(a, out)
+}
+
+func CredentialIssueOut(ctx context.Context, peerCID objproto.ConnectionID, a verb.CredentialIssueAction, out io.Writer) error {
+	// Refused before dialing: neither an agent printing a seed nor a
+	// malformed ttl is worth a connection.
+	if err := checkSeedDestination(a); err != nil {
+		return err
+	}
+	return credentialDial(ctx, peerCID, func(c *Client) error { return CredentialIssueWith(ctx, c, a, out) })
+}
+
+func CredentialLsOut(ctx context.Context, peerCID objproto.ConnectionID, asJSON bool, out io.Writer) error {
+	return credentialDial(ctx, peerCID, func(c *Client) error { return CredentialLsWith(ctx, c, asJSON, out) })
+}
+
+func CredentialRevokeOut(ctx context.Context, peerCID objproto.ConnectionID, id string, out io.Writer) error {
+	return credentialDial(ctx, peerCID, func(c *Client) error { return CredentialRevokeWith(ctx, c, id, out) })
+}

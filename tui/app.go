@@ -2769,12 +2769,15 @@ func cmdlineHelpLines() []string {
 // claim one thing while the connection is another.
 func principalLabel() string {
 	kind, tid := cli.EffectiveClientKind(protocol.ClientKind_Tui)
-	if kind != protocol.ClientKind_Agent {
+	if kind != protocol.ClientKind_Agent && kind != protocol.ClientKind_Credential {
 		return "operator"
 	}
 	hexID := hex.EncodeToString(tid.Id[:])
 	if len(hexID) > 8 {
 		hexID = hexID[:8]
+	}
+	if kind == protocol.ClientKind_Credential {
+		return "credential " + hexID
 	}
 	return "agent " + hexID
 }

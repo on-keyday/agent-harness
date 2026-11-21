@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/on-keyday/agent-harness/cli/cliopts"
+	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/cli/verb"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
@@ -38,7 +38,7 @@ func PurgeWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) error 
 		return purgeArchive(ctx, a, stdout)
 	}
 	if *self {
-		tid, err := cliopts.ResolveTaskID("")
+		tid, err := cli.SelfTaskID()
 		if err != nil {
 			return err
 		}

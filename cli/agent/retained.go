@@ -10,7 +10,6 @@ import (
 	"os"
 
 	"github.com/on-keyday/agent-harness/cli"
-	"github.com/on-keyday/agent-harness/cli/cliopts"
 	"github.com/on-keyday/agent-harness/cli/verb"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
@@ -40,7 +39,7 @@ func RetainedWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) err
 		return errors.New("--self and --topic are mutually exclusive")
 	}
 	if *self {
-		tid, err := cliopts.ResolveTaskID("")
+		tid, err := cli.SelfTaskID()
 		if err != nil {
 			return err
 		}

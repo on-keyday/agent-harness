@@ -60,9 +60,10 @@ func resolveBinderPSK() []byte {
 }
 
 // EffectiveClientKind reports which principal a client dialed from THIS
-// process announces: the operator kind it asked for, or Agent when the in-task
-// env (HARNESS_RUNNER_ID / HARNESS_TASK_ID / HARNESS_AUTH_TICKET) is fully
-// populated and overrides it. The task id is returned too, zero for an
+// process announces: Credential when one is loaded (--credential-file,
+// HARNESS_CREDENTIAL_FILE, HARNESS_CREDENTIAL), else the operator kind it
+// asked for, or Agent when the in-task env (HARNESS_RUNNER_ID /
+// HARNESS_TASK_ID / HARNESS_AUTH_TICKET) is fully populated and overrides it. The task id is returned too, zero for an
 // operator.
 //
 // Exported so a surface can SAY which principal it is. Connecting as an agent
@@ -71,6 +72,15 @@ func resolveBinderPSK() []byte {
 // buildMergedClientHello makes the same decision through this function, so the
 // header cannot disagree with the handshake.
 func EffectiveClientKind(operatorKind protocol.ClientKind) (protocol.ClientKind, protocol.TaskID) {
+	// A loaded credential outranks everything else this process carries: an
+	// operator PSK in the environment (an operator trying a script from their
+	// own terminal) and a full in-task agent env (an agent's shell that sets
+	// HARNESS_CREDENTIAL) both connect AS the credential. A credential that
+	// cannot be loaded is not decided here: Dial reports it, before it
+	// connects as anything.
+	if cred, err := activeCredential(); err == nil && cred != nil {
+		return protocol.ClientKind_Credential, cred.TaskID
+	}
 	if rid, err := cliopts.ResolveRunnerID(""); err == nil && !rid.IsZero() {
 		if tid, err := cliopts.ResolveTaskID(""); err == nil {
 			if _, err := cliopts.ResolveAuthTicket(); err == nil {

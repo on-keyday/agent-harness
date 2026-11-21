@@ -121,6 +121,12 @@ func (e *PskRejectedError) Error() string { return "psk: server rejected: " + e.
 // when the server was upgraded) — the exact failure this fatal/retryable split
 // was drawn to prevent.
 //
+// A credential task's Revoked and Expired are credential failures and stay
+// fatal, by not being listed below: the server answers them only to a peer that
+// proved the key, so the key is genuine and the task is over — no retry brings
+// it back, and a loop that kept dialing would be a script hammering a dead
+// identity. Re-keying (`credential rekey`) is a human's act.
+//
 // NotEnrolled is not a credential failure either: the runner proved its key,
 // and the server does not list it YET. Enrolling it (runner enroll) is how a
 // new runner gets in, and that happens while it waits.

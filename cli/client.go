@@ -90,6 +90,9 @@ func Dial(ctx context.Context, peerCID objproto.ConnectionID, kind protocol.Clie
 	if err != nil {
 		return nil, err
 	}
+	if err := credentialForDial(); err != nil {
+		return nil, err
+	}
 	pc, err := DialPeerConn(ctx, peerCID)
 	if err != nil {
 		return nil, err
@@ -103,6 +106,9 @@ func Dial(ctx context.Context, peerCID objproto.ConnectionID, kind protocol.Clie
 func DialWith(ctx context.Context, ep objproto.Endpoint, peerCID objproto.ConnectionID, kind protocol.ClientKind) (*Client, error) {
 	serverKey, err := serverPubKeyForDial()
 	if err != nil {
+		return nil, err
+	}
+	if err := credentialForDial(); err != nil {
 		return nil, err
 	}
 	pc, err := DialPeerConnWith(ctx, ep, peerCID)
@@ -125,6 +131,17 @@ func serverPubKeyForDial() (ed25519.PublicKey, error) {
 	return key, nil
 }
 
+// credentialForDial refuses, before any network work, a credential that is
+// named but unusable (a group-readable file, a malformed value): a
+// configuration error no retry fixes, so it is the PersistLoop-fatal
+// *PSKAuthError, exactly as serverPubKeyForDial's is.
+func credentialForDial() error {
+	if _, err := activeCredential(); err != nil {
+		return &PSKAuthError{Err: err}
+	}
+	return nil
+}
+
 // dialOn is everything Dial does AFTER the connection exists: the merged
 // PSK+identity handshake and the control-handler wiring. Both entry points
 // share it, so the two cannot drift in what they authenticate.
@@ -132,6 +149,15 @@ func dialOn(ctx context.Context, pc *peer.Conn, kind protocol.ClientKind, server
 	// The same decision buildMergedClientHello makes, through the same
 	// function, for the reason its own comment gives: the header cannot
 	// disagree with the handshake, and neither can this.
+	//
+	// A credential is loaded here, before anything is sent, so one that cannot
+	// be read (a group-readable file, a malformed value) is a configuration
+	// error no retry fixes — and never a connection as something else.
+	cred, cerr := activeCredential()
+	if cerr != nil {
+		pc.Close()
+		return nil, &PSKAuthError{Err: cerr}
+	}
 	announced, _ := EffectiveClientKind(kind)
 	c := &Client{
 		conn:    pc,
@@ -166,10 +192,18 @@ func dialOn(ctx context.Context, pc *peer.Conn, kind protocol.ClientKind, server
 		case <-pskCtx.Done():
 		}
 	}()
-	pskErr := SendMergedHandshake(pskCtx, func(b []byte) error {
+	sendFn := func(b []byte) error {
 		_, _, err := pc.Connection().SendMessage(b)
 		return err
-	}, psk, pc.Connection().GetTranscript(), kind, serverKey, pskRespCh)
+	}
+	var pskErr error
+	if cred != nil {
+		// Never the operator binder and never an agent hello: the credential
+		// names the principal, and nothing else this process holds is sent.
+		pskErr = credentialRefusalError(*cred, SendCredentialHandshake(pskCtx, sendFn, pc.Connection().GetTranscript(), *cred, serverKey, pskRespCh))
+	} else {
+		pskErr = SendMergedHandshake(pskCtx, sendFn, psk, pc.Connection().GetTranscript(), kind, serverKey, pskRespCh)
+	}
 	pskCancel()
 	if pskErr != nil {
 		pc.Close()

@@ -818,10 +818,10 @@ func (h cliVerbs) CapsReach(a verb.CapsReachAction) error {
 		if err != nil {
 			return err
 		}
-		// An agent's listing is partial; the parent comparison is only made
-		// over an operator's (BuildReachReport).
+		// An agent's (or a credential's) listing is partial; the parent
+		// comparison is only made over an operator's (BuildReachReport).
 		kind, _ := cli.EffectiveClientKind(protocol.ClientKind_Cli)
-		r, err := cli.BuildReachReport(body.Tasks, a.TaskID, focus, kind != protocol.ClientKind_Agent)
+		r, err := cli.BuildReachReport(body.Tasks, a.TaskID, focus, kind != protocol.ClientKind_Agent && kind != protocol.ClientKind_Credential)
 		if err != nil {
 			return err
 		}
@@ -840,7 +840,7 @@ func (h cliVerbs) CapsWhatIf(a verb.CapsWhatIfAction) error {
 			return err
 		}
 		kind, _ := cli.EffectiveClientKind(protocol.ClientKind_Cli)
-		r.Partial = kind == protocol.ClientKind_Agent
+		r.Partial = kind == protocol.ClientKind_Agent || kind == protocol.ClientKind_Credential
 		return cli.WriteWhatIf(os.Stdout, r, a.JSON)
 	})
 }
@@ -1304,6 +1304,28 @@ func (h cliVerbs) TranscriptGet(a verb.TranscriptGetAction) error {
 	return cli.TranscriptToFile(a.Output, func(w io.Writer) error {
 		return cli.TranscriptGetOut(h.ctx, h.cid(), a.TaskID, a.Session, a.File, w)
 	})
+}
+
+// --- Credentials (docs/superpowers/specs/2026-11-21-credential-tasks-design.md) ---
+
+func (h cliVerbs) CredentialKeygen(a verb.CredentialKeygenAction) error {
+	return cli.CredentialKeygenOut(a, os.Stdout)
+}
+
+func (h cliVerbs) CredentialNew(a verb.CredentialIssueAction) error {
+	return cli.CredentialIssueOut(h.ctx, h.cid(), a, os.Stdout)
+}
+
+func (h cliVerbs) CredentialRekey(a verb.CredentialIssueAction) error {
+	return cli.CredentialIssueOut(h.ctx, h.cid(), a, os.Stdout)
+}
+
+func (h cliVerbs) CredentialLs(a verb.CredentialLsAction) error {
+	return cli.CredentialLsOut(h.ctx, h.cid(), a.JSON, os.Stdout)
+}
+
+func (h cliVerbs) CredentialRevoke(a verb.CredentialRevokeAction) error {
+	return cli.CredentialRevokeOut(h.ctx, h.cid(), a.ID, os.Stdout)
 }
 
 // --- Schedules (pillar S) ------------------------------------------------------

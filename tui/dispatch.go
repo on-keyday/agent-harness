@@ -963,7 +963,7 @@ func (h tuiVerbs) CapsReach(v verb.CapsReachAction) tea.Cmd {
 	// The aged listing, as every view reads it, so granter=… (age) advances
 	// between snapshots.
 	kind, _ := cli.EffectiveClientKind(protocol.ClientKind_Tui)
-	r, err := cli.BuildReachReport(a.auditTasks(), full, focus, kind != protocol.ClientKind_Agent)
+	r, err := cli.BuildReachReport(a.auditTasks(), full, focus, kind != protocol.ClientKind_Agent && kind != protocol.ClientKind_Credential)
 	if err != nil {
 		a.cmdresult.Append(ErrorStyle.Render(err.Error()))
 		return nil
@@ -996,7 +996,7 @@ func (h tuiVerbs) CapsWhatIf(v verb.CapsWhatIfAction) tea.Cmd {
 		return nil
 	}
 	kind, _ := cli.EffectiveClientKind(protocol.ClientKind_Tui)
-	r.Partial = kind == protocol.ClientKind_Agent
+	r.Partial = kind == protocol.ClientKind_Agent || kind == protocol.ClientKind_Credential
 	var b strings.Builder
 	_ = cli.WriteWhatIf(&b, r, false)
 	for _, l := range strings.Split(strings.TrimRight(b.String(), "\n"), "\n") {

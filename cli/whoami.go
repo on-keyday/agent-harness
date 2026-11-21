@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"time"
 
 	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -111,11 +112,11 @@ func WriteWhoAmI(out io.Writer, resp protocol.WhoAmIResponse, asJSON bool) error
 		// it), so a script can compare it against a sha without parsing the
 		// "unknown …" prose the text form prints.
 		_, err = fmt.Fprintf(out,
-			"{\"operator\":%t,\"principal_task_id\":%q,\"creator_task_id\":%q,\"capabilities\":%q,\"scope\":%q,\"scope_by_cap\":%s,\"delegate_caps\":%q,\"delegate_scope\":%q,\"spawn_depth\":%s,\"max_descendants\":%s,\"descendants\":%d,\"spawn_room\":%s,\"server_revision\":%q,\"server_dirty\":%t}\n",
+			"{\"operator\":%t,\"principal_task_id\":%q,\"creator_task_id\":%q,\"capabilities\":%q,\"scope\":%q,\"scope_by_cap\":%s,\"delegate_caps\":%q,\"delegate_scope\":%q,\"spawn_depth\":%s,\"max_descendants\":%s,\"descendants\":%d,\"spawn_room\":%s,\"server_revision\":%q,\"server_dirty\":%t,\"principal_kind\":%q,\"credential_expires_at\":%q}\n",
 			operator, taskHex, creatorHex, CapsLabel(resp.Capabilities), ScopeLabel(resp.Scope), byCap,
 			CapsLabel(resp.DelegateCaps), ScopeLabel(resp.DelegateScope),
 			limitJSONText(resp.SpawnDepth), limitJSONText(resp.MaxDescendants), resp.Descendants, limitJSONText(resp.SpawnRoom),
-			string(resp.ServerRevision), resp.ServerDirty())
+			string(resp.ServerRevision), resp.ServerDirty(), whoamiKindWord(resp), whoamiCredentialExpiry(resp))
 		return err
 	}
 	caps := "caps=" + CapsLabel(resp.Capabilities)
@@ -142,9 +143,32 @@ func WriteWhoAmI(out io.Writer, resp protocol.WhoAmIResponse, asJSON bool) error
 	if !isZeroTaskID(resp.CreatorTaskId) {
 		by = "  by=" + hex.EncodeToString(resp.CreatorTaskId.Id[:])[:8]
 	}
+	// A credential says so, with the time it ends: the one thing about its
+	// authority that is not in the caps and scope.
+	if resp.PrincipalKind == protocol.ClientKind_Credential {
+		by += "  kind=credential expires=" + whoamiCredentialExpiry(resp)
+	}
 	_, err := fmt.Fprintf(out, "task=%s%s  %s\nserver=%s\n",
 		hex.EncodeToString(resp.PrincipalTaskId.Id[:]), by, caps, ServerRevisionLabel(resp))
 	return err
+}
+
+// whoamiCredentialExpiry is a credential principal's expiry as RFC3339, empty
+// for any other principal.
+func whoamiCredentialExpiry(resp protocol.WhoAmIResponse) string {
+	if resp.PrincipalKind != protocol.ClientKind_Credential || resp.CredentialExpiresAt == 0 {
+		return ""
+	}
+	return time.Unix(0, int64(resp.CredentialExpiresAt)).Format(time.RFC3339)
+}
+
+// whoamiKindWord is the principal's connection kind as its wire name, empty
+// for the operator (no principal task).
+func whoamiKindWord(resp protocol.WhoAmIResponse) string {
+	if isZeroTaskID(resp.PrincipalTaskId) {
+		return ""
+	}
+	return EnumWireName(resp.PrincipalKind.String())
 }
 
 // limitJSONText is LimitJSON written into hand-built JSON: the number or null.

@@ -20,6 +20,10 @@ import (
 // HARNESS_AUTH_TICKET are populated — which, for a verb that only works
 // inside a task, is always.
 //
+// A loaded credential (HARNESS_CREDENTIAL / HARNESS_CREDENTIAL_FILE /
+// --credential-file) replaces the agent identity here as everywhere: the same
+// Dial announces it, and --self names the credential's own task (SelfTaskID).
+//
 // ClientKind_Cli is what ConnectAgent announced too. It is the fallback the
 // hello uses when the agent env is absent, not a claim to be an operator.
 func connectClient(ctx context.Context, serverCID string) (*cli.Client, error) {

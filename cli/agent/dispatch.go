@@ -9,7 +9,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/on-keyday/agent-harness/cli/cliopts"
+	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/cli/verb"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
@@ -110,7 +110,7 @@ func DispatchWith(ctx context.Context, a verb.AgentSendAction, stdin io.Reader, 
 		return err
 	}
 
-	selfTid, err := cliopts.ResolveTaskID("")
+	selfTid, err := cli.SelfTaskID()
 	if err != nil {
 		return err
 	}

@@ -3353,6 +3353,82 @@ var Verbs = []VerbSpec{
 		},
 		Examples: []string{"schedule show aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 	},
+	// --- credentials (docs/superpowers/specs/2026-11-21-credential-tasks-design.md) ---
+	//
+	// CLI only in this change: the TUI table and the WebUI dialog widen every
+	// row but keygen with their handlers (the surfaces task). The authority
+	// flags are the spawn rows (credentialAuthorityFlags), not copies.
+	{
+		Path: []string{"credential", "keygen"}, CmdlineSurfaces: CLI,
+		NoModalSurface: "looked for: keygen writes a private key file on the host that will use it; TUI and WebUI run elsewhere, so it stays CLI only",
+		Notes: []string{
+			"on the host that will use the credential: generate an Ed25519 key pair, write the seed to --out (mode 0600, never overwritten) and print the public key (64 hex) for `credential new --pubkey`; the seed never leaves this host",
+			"the file holds the seed alone: once `credential new --pubkey` has printed the task id, the credential is `<task-id>:<seed>`",
+		},
+		Action: "CredentialKeygenAction",
+		Flags: []Flag{
+			{Name: "out", Type: FlagString, Default: "", Field: "Out", Required: true,
+				Help: "file the seed is written to (mode 0600); an existing file is refused"},
+		},
+		Examples: []string{"credential keygen --out ./ci.seed"},
+	},
+	{
+		Path: []string{"credential", "new"}, CmdlineSurfaces: CLI,
+		NoModalSurface: "looked for: " + credentialSurfaceReason,
+		Notes: []string{
+			"issue a credential task: an expiring identity for a script outside the harness, holding at most your own caps within your scope (needs credential_issue). It never holds credential_issue or schedule_edit",
+			"without --pubkey a key pair is generated here and the secret `<task-id>:<seed>` is handed over once: printed, or written to --out. An agent identity may not print it (use --out or --pubkey)",
+			"the script then runs with HARNESS_CREDENTIAL_FILE=<file> (or HARNESS_CREDENTIAL, or --credential-file): it connects as this task and as nothing else",
+		},
+		Action:    "CredentialIssueAction",
+		Const:     map[string]string{"Sub": "new"},
+		Flags:     credentialIssueFlags(true),
+		Exclusive: []Rule{{Flags: []string{"out", "pubkey"}, Reason: "one generates the key here and the other registers a key made elsewhere"}},
+		Validate:  credentialIssueValidate("credential new"),
+		Examples: []string{
+			"credential new --ttl 30d --name nightly --caps schedule_run,resume_exact --out ./nightly.cred",
+			"credential new --ttl 7d --pubkey 0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+		},
+	},
+	{
+		Path: []string{"credential", "rekey"}, CmdlineSurfaces: CLI,
+		NoModalSurface: "looked for: " + credentialSurfaceReason,
+		Notes: []string{
+			"give a credential a new key and a new expiry under the same id; the old key stops at once. Works on a live, revoked or expired one. Needs credential_issue, and the credential must be your own descendant (the operator: any)",
+			"--caps / --scope / ... only narrow what the credential recorded; naming none keeps it",
+		},
+		Action:    "CredentialIssueAction",
+		Const:     map[string]string{"Sub": "rekey"},
+		Args:      []Arg{{Name: "credential-id", Type: ArgTaskID, Field: "ID"}},
+		Flags:     credentialIssueFlags(false),
+		Exclusive: []Rule{{Flags: []string{"out", "pubkey"}, Reason: "one generates the key here and the other registers a key made elsewhere"}},
+		Validate:  credentialIssueValidate("credential rekey"),
+		Examples: []string{
+			"credential rekey aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --ttl 30d --out ./nightly.cred",
+		},
+	},
+	{
+		Path: []string{"credential", "ls"}, CmdlineSurfaces: CLI,
+		NoModalSurface: "looked for: " + credentialSurfaceReason,
+		Notes: []string{
+			"one row per credential task you can reach: id, status, name, expiry, last use (unknown after a server restart), caps and scope. Needs no capability",
+		},
+		Action: "CredentialLsAction",
+		Flags: []Flag{
+			{Name: "json", Type: FlagBool, Default: false, Field: "JSON", Help: "one JSON document with every field, none elided"},
+		},
+		Examples: []string{"credential ls", "credential ls --json"},
+	},
+	{
+		Path: []string{"credential", "revoke"}, CmdlineSurfaces: CLI,
+		NoModalSurface: "looked for: " + credentialSurfaceReason,
+		Notes: []string{
+			"end a credential now (the existing cancel, refused for a task that is not a credential): its connections close and its next handshake is refused `revoked`. Needs cancel over it; `credential rekey` brings the id back with a new key",
+		},
+		Action:   "CredentialRevokeAction",
+		Args:     []Arg{{Name: "credential-id", Type: ArgTaskID, Field: "ID"}},
+		Examples: []string{"credential revoke aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+	},
 	{
 		// CLI only. It renders a session's screen to STDOUT for something that
 		// reads text -- an agent driving a loop, a script. The TUI has its own
@@ -3898,6 +3974,7 @@ func init() {
 		"agent-to-agent message ops, run from inside a task's own shell.",
 		"Env-primary (HARNESS_*): SERVER_CID, TASK_ID, RUNNER_ID, HOSTNAME, WS_PATH, REPO_PATH.",
 		"HARNESS_AUTH_TICKET is env-only -- no flag accepts it, so an agent cannot be told to present someone else's.",
+		"Under a loaded credential (HARNESS_CREDENTIAL / HARNESS_CREDENTIAL_FILE / --credential-file) they act as that credential task, with no process to wake: --self is its own chat topic.",
 	}
 	FamilyNotes["server"] = []string{
 		"server-side operations, addressed to the server rather than to a task",

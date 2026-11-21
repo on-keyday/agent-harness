@@ -127,6 +127,15 @@ var verbConsumers = []verbConsumer{
 	{"prune-local", verb.CLI, []string{"../../cmd/harness-cli/dispatch.go", "../../cmd/harness-cli/main.go"}},
 	{"session stream approve", verb.CLI, []string{"../../cmd/harness-cli/dispatch.go", "../../cmd/harness-cli/session.go"}},
 	{"session stream approve", verb.TUI, []string{"../../tui/dispatch.go", "../../tui/app.go", "../../tui/client.go"}},
+	// Credentials: the handler in dispatch.go hands the whole action to the
+	// cli package, whose credential.go (the wire request) and credential_cli.go
+	// (keygen, the secret's hand-over) read the fields. CLI only until the
+	// surfaces task widens them.
+	{"credential keygen", verb.CLI, []string{"../../cmd/harness-cli/dispatch.go", "../../cli/credential_cli.go"}},
+	{"credential new", verb.CLI, []string{"../../cmd/harness-cli/dispatch.go", "../../cli/credential.go", "../../cli/credential_cli.go"}},
+	{"credential rekey", verb.CLI, []string{"../../cmd/harness-cli/dispatch.go", "../../cli/credential.go", "../../cli/credential_cli.go"}},
+	{"credential ls", verb.CLI, []string{"../../cmd/harness-cli/dispatch.go"}},
+	{"credential revoke", verb.CLI, []string{"../../cmd/harness-cli/dispatch.go"}},
 }
 
 // actionFor names the action type a verb path builds, so the walk knows which
@@ -156,6 +165,11 @@ var actionFor = map[string]any{
 	"notify":                  verb.NotifyAction{},
 	"session attach":          verb.SessionAction{},
 	"session stream approve":  verb.SessionAction{},
+	"credential keygen":       verb.CredentialKeygenAction{},
+	"credential new":          verb.CredentialIssueAction{},
+	"credential rekey":        verb.CredentialIssueAction{},
+	"credential ls":           verb.CredentialLsAction{},
+	"credential revoke":       verb.CredentialRevokeAction{},
 }
 
 // surfaceLocal names fields one surface legitimately ignores for one verb,

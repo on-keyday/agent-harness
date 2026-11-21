@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/on-keyday/agent-harness/cli/cliopts"
+	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/cli/verb"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
@@ -30,7 +30,7 @@ func subscribeOrUnsub(ctx context.Context, args []string, stdout io.Writer, remo
 func subscribeOrUnsubWith(ctx context.Context, a verb.AgentAction, stdout io.Writer, remove bool) error {
 	serverCID, pattern, self := &a.ServerCID, &a.Topic, &a.Self
 	if *self {
-		tid, err := cliopts.ResolveTaskID("")
+		tid, err := cli.SelfTaskID()
 		if err != nil {
 			return err
 		}

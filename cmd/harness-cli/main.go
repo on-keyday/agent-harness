@@ -36,6 +36,8 @@ func main() {
 	wsPath := flag.String("ws-path", "", "WebSocket URL path (env: HARNESS_WS_PATH; workspace: ws-path; default /ws)")
 	configPath := flag.String("config", "", "workspace config file (env: HARNESS_CONFIG; default ./.harness/config)")
 	wsName := flag.String("workspace", "", "workspace whose server-cid / ws-path / repo to use (see `workspace ls`)")
+	credentialFile := flag.String("credential-file", "",
+		"file holding a credential <task-id>:<seed> (mode 0600): connect as that credential task (env: HARNESS_CREDENTIAL_FILE, then HARNESS_CREDENTIAL)")
 	logLevel := flag.String("log-level", "", "slog level for this process: debug, info, warn or error (env: HARNESS_LOG_LEVEL; default warn)")
 	flag.Usage = usage
 	flag.Parse()
@@ -46,6 +48,10 @@ func main() {
 	// every invocation, landing in an agent's context and in every hook's
 	// output. So this process starts at WARN, and the trail is one flag or one
 	// variable away. The server and the runner are other binaries and keep INFO.
+	// Installed before any verb dials: a loaded credential decides which
+	// principal every connection from this process is (cli.LoadCredential).
+	cli.SetCredentialFile(*credentialFile)
+
 	lvl, err := parseLogLevel(cliopts.ResolveString(*logLevel, "HARNESS_LOG_LEVEL"))
 	if err != nil {
 		die(err)
@@ -288,7 +294,7 @@ func parseLogLevel(s string) (slog.Level, error) {
 func usage() { usageTo(os.Stderr) }
 
 func usageTo(w io.Writer) {
-	fmt.Fprintln(w, "usage: harness-cli [--server-cid CID] [--ws-path PATH] [--config PATH] [--workspace NAME] <subcommand> [args]")
+	fmt.Fprintln(w, "usage: harness-cli [--server-cid CID] [--ws-path PATH] [--config PATH] [--workspace NAME] [--credential-file PATH] <subcommand> [args]")
 	fmt.Fprintln(w, "")
 	// The global flags are not verbs -- they are parsed by the top-level
 	// FlagSet before a subcommand is chosen -- so they are the one part of
@@ -298,6 +304,8 @@ func usageTo(w io.Writer) {
 	fmt.Fprintln(w, "  --ws-path     HARNESS_WS_PATH     (workspace: ws-path; default /ws)")
 	fmt.Fprintln(w, "  --config      HARNESS_CONFIG      (default ./.harness/config; never read inside a task)")
 	fmt.Fprintln(w, "  --workspace   NAME                which workspace in that file supplies server-cid / ws-path / repo")
+	fmt.Fprintln(w, "  --credential-file  HARNESS_CREDENTIAL_FILE, then HARNESS_CREDENTIAL (<task-id>:<seed>)")
+	fmt.Fprintln(w, "                    connect as that credential task and as nothing else: the operator PSK and an agent's env are not sent")
 	fmt.Fprintln(w, "  --log-level   HARNESS_LOG_LEVEL   (default warn; info adds each connection's start and end)")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Subcommands:")

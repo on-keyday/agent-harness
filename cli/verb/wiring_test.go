@@ -324,6 +324,9 @@ var probeValues = map[string]string{
 	"task":      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", // schedule new/edit: 32 hex
 	"resize":    "40x150",
 	"size":      "40x150",
+	// credential new / rekey: a duration and a 32-byte key, both read by Validate.
+	"ttl":    "30d",
+	"pubkey": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
 }
 
 // positionalsFor synthesises one acceptable value per required positional.
