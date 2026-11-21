@@ -2,7 +2,9 @@ package verb
 
 import (
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +20,12 @@ const credentialMaxTTLDays = 90
 // for days (`30d`, `1d12h`, `0.5d`). A credential always expires, so zero and
 // negative are refused here with the bound named; whether the value exceeds
 // the server's bound is the server's answer.
+//
+// Two values that parse are still refused here, each with its own words,
+// because they would reach the server as something else: under 1ms (the wire
+// carries whole milliseconds, so it would arrive as 0, "an expiry is
+// required"), and more days than a time.Duration holds (about 106751; the
+// conversion would wrap to a negative or garbage duration).
 func ParseCredentialTTL(s string) (time.Duration, error) {
 	bad := func(why string) (time.Duration, error) {
 		return 0, fmt.Errorf("--ttl %q: %s (a credential expires: a positive duration of at most %dd, such as 30d, 12h or 1d12h)", s, why, credentialMaxTTLDays)
@@ -26,14 +34,26 @@ func ParseCredentialTTL(s string) (time.Duration, error) {
 		return bad("not a duration")
 	}
 	d, err := parseDaysDuration(s)
-	if err != nil {
+	switch {
+	case errors.Is(err, errDurationTooLong) && strings.HasPrefix(s, "-"):
+		return bad("must be positive")
+	case errors.Is(err, errDurationTooLong):
+		return bad("too long")
+	case err != nil:
 		return bad("not a duration")
 	}
 	if d <= 0 {
 		return bad("must be positive")
 	}
+	if d < time.Millisecond {
+		return bad("shorter than 1ms, the smallest expiry there is")
+	}
 	return d, nil
 }
+
+// errDurationTooLong is a day count, or a day count plus a remainder, past
+// what a time.Duration holds.
+var errDurationTooLong = errors.New("longer than a time.Duration holds")
 
 // parseDaysDuration is time.ParseDuration with `d` (24h) added as a unit.
 // Days are split off the front: Go's own units are exact, and a day here is
@@ -50,14 +70,24 @@ func parseDaysDuration(s string) (time.Duration, error) {
 		return 0, fmt.Errorf("bad days")
 	}
 	days, err := strconv.ParseFloat(num, 64)
-	if err != nil || days != days || days > 1e6 {
+	if err != nil || days != days || math.IsInf(days, 0) {
 		return 0, fmt.Errorf("bad days")
 	}
-	d := time.Duration(days * float64(24*time.Hour))
+	// Checked in float64 before the conversion, which is undefined past the
+	// int64 range (amd64 yields math.MinInt64). float64(MaxInt64) is 2^63,
+	// so anything below it converts.
+	nanos := days * float64(24*time.Hour)
+	if nanos >= float64(math.MaxInt64) {
+		return 0, errDurationTooLong
+	}
+	d := time.Duration(nanos)
 	if rest := body[i+1:]; rest != "" {
 		r, err := time.ParseDuration(rest)
 		if err != nil || r < 0 || strings.HasPrefix(rest, "-") || strings.HasPrefix(rest, "+") {
 			return 0, fmt.Errorf("bad remainder")
+		}
+		if d > math.MaxInt64-r {
+			return 0, errDurationTooLong
 		}
 		d += r
 	}

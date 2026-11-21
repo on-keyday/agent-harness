@@ -38,6 +38,37 @@ func TestDurationWithDaySuffix(t *testing.T) {
 	}
 }
 
+// M8: the two edges that parse but would reach the server as something else
+// are refused here, each with its own words: under 1ms (the wire carries whole
+// milliseconds, so it would arrive as 0 = "an expiry is required"), and more
+// days than a time.Duration holds (the conversion would wrap negative =
+// "must be positive").
+func TestCredentialTTLEdges(t *testing.T) {
+	if d, err := ParseCredentialTTL("1ms"); err != nil || d != time.Millisecond {
+		t.Errorf("1ms: (%v, %v), want 1ms", d, err)
+	}
+	for in, want := range map[string]string{
+		"500us":                    "shorter than 1ms",
+		"999999ns":                 "shorter than 1ms",
+		"106752d":                  "too long",
+		"200000d":                  "too long",
+		"999999d":                  "too long",
+		"106751d23h59m59s":         "too long",
+		"-200000d":                 "must be positive",
+		"1e300d":                   "not a duration", // exponent: refused as before
+		"106751.99999999999d":      "too long",
+		"2562047h47m16.854775808s": "not a duration", // past ParseDuration's own range
+	} {
+		_, err := ParseCredentialTTL(in)
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: %v, want a refusal saying %q", in, err, want)
+		}
+	}
+	if d, err := ParseCredentialTTL("106751d"); err != nil || d != 106751*24*time.Hour {
+		t.Errorf("106751d (fits a Duration; the server bounds it): (%v, %v)", d, err)
+	}
+}
+
 func TestCredentialVerbsParseWithFlagsAfterPositionals(t *testing.T) {
 	const id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	pub := strings.Repeat("0a", 32)
