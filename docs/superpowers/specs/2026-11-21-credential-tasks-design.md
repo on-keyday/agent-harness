@@ -43,8 +43,8 @@ What is missing is a credential that is attenuable **and** outlives any process.
 ## Non-goals
 
 - Agentboard access from a credential connection (see D10).
-- Renewal / rotation of a credential in place. A new credential is issued and
-  the old one revoked.
+- Re-validating a key once it has stopped being the credential's key. Renewal
+  and rotation go through resume (D18), which always takes a new key.
 - A credential bound to a single verb or a single schedule beyond what caps +
   scope already express.
 
@@ -94,13 +94,14 @@ What is missing is a credential that is attenuable **and** outlives any process.
 | D8 | **Liveness is checked at three points**: the handshake (D4), a server timer that ends the task at its expiry (also run once at start for anything already past), and `callerCaps` itself — for a credential principal, a task that is not live yields `Capability_None`. The third is what keeps a connection opened just before expiry from outliving it, and it does not depend on the timer firing | this spec |
 | D9 | **Ending a credential closes its live connections.** Revoke and expiry both close every connection whose principal is that task, in addition to D8 | this spec |
 | D10 | **No agentboard in v1.** `Board.Attach` and the `chat.<id>` inbox are keyed by `(runner, task)` and model a process that receives messages; a credential has neither. Board verbs from a credential connection are refused with a status that says so. Revisit on a concrete need | this spec |
-| D11 | **Revoke is cancel.** The existing cancel verb on a credential task ends it (status `Cancelled`, end reason `cancelled`). Expiry ends it with status `Succeeded` and a new `EndReason.expired = 11` | this spec |
+| D11 | **Revoke is cancel.** The existing cancel verb on a credential task ends it (status `Cancelled`, end reason `cancelled`). Expiry ends it with status `Succeeded` and a new `EndReason.expired = 11`. Either is final for the key; the identity can be re-keyed (D18) | this spec |
 | D12 | **Re-grant works unchanged.** `set_caps` on a credential task narrows/widens what the script can do without reissuing the key | this spec |
 | D13 | **Issuing needs a new grantable bit, `credential_issue`**, and goes through the spawn attenuation path (`CreateWithinLimits`, granter reach, spawn limits): the new task is a child of the issuer, holding at most the issuer's caps within its scope. An operator issues a root-level credential. Not `spawn`: a spawned child stays inside the harness, a credential's secret leaves it. Not operator-only (repo rule: operator-only is reserved for re-grant authority) | this spec (proposed; operator has not ruled) |
 | D14 | **A credential can never hold `credential_issue`, `spawn` or `schedule_edit`**: they are masked at issue and by `set_caps` on a credential task. `credential_issue` because a credential that can issue a successor before it expires never expires; `spawn` / `schedule_edit` because what they create keeps running after the credential ends (a schedule's firings check nothing, S-D17a), and v1 does not reach into the task tree or the schedule store on revoke. Lift on a concrete need | this spec (proposed; operator has not ruled) |
 | D15 | **An issuer ending does not end its credentials.** A task's end is not final: a background run ends at its turn end (`evaluateRun`, `server/run_end.go:25-69`, ended through `CancelBackgroundRun` as `Cancelled` with a `turn_done_*` end reason, `server/taskstore.go:998-1019`) and is resumed by its next firing or resume; a foreground task ends when its process exits and may be resumed too. Tying credentials to the issuer's status would kill them between runs. A credential outliving its issuer is bounded by its own expiry | this spec (proposed; operator has not ruled) |
 | D16 | **Pillar S amendment (S-D17a): `schedule run` of a schedule bound to T needs `resume` OR `resume_exact` over T** (today: `resume` only, `server/schedule_handler.go:678-683`). The firer chooses only the timing; the prompt is the schedule's, and binding T (`:724`) or editing a schedule bound to T (`:856`) already requires full `resume` over T, so whoever set that prompt held full resume. `new`, `edit`, bind and a pending_create run (`spawn`) are unchanged. Applies to every principal, not only credentials — one rule, not two. Recorded as an amendment section in `2026-11-15-pillar-s-schedules-design.md`, as the 2026-11-21 split was | operator, 2026-11-22 |
 | D17 | **Schedules with no target stay operator-only to fire** (`scheduleRunReach`, `:282-288`): a credential fires schedules bound to a task in its `schedule_run` scope | this spec |
+| D18 | **Resume of a credential task re-keys it**: new public key and new expiry required, old key dead for good, gated as issue (D13 attenuation) rather than by `resume`. Supersedes this spec's earlier "a credential task can never be resumed" | operator, 2026-11-22 |
 
 ## Design
 
@@ -121,21 +122,38 @@ check):
 
 Status while live: whatever existing status the builder finds least disruptive
 for a task with no runner (`Running` with no `AssignedTo` is the candidate; it
-must not be picked up by the queue, the runner-death path, resume, session
-open, exec, file transfer, or held-across-restart). Every task-status consumer
+must not be picked up by the queue, the runner-death path, the agent resume
+path, session open, exec, file transfer, or held-across-restart). Every task-status consumer
 that assumes "Running ⇒ has a runner" must be found and taught the kind.
 
-A credential task can never be resumed, opened, exec'd into, bound to a
-schedule as its target, or assigned to a runner. Each refusal names the kind.
+A credential task can never be opened, exec'd into, bound to a schedule as its
+target, or assigned to a runner. Each refusal names the kind. Resume has its
+own meaning for the kind (D18).
 
-Why no resume: resume today means "assign to a runner and start the process
-again", and a credential has neither. Given a credential meaning, resume would
-be "make an ended credential valid again", which would make revoke reversible:
-a leaked key, once revoked, could come back; a holder of `resume` over the
-credential (e.g. the agent that issued it, whose subtree it is in) could undo
-the operator's revoke; and re-validating an expired one is the in-place renewal
-the Non-goals exclude. Restoring service means issuing a new credential — after
-a leak a new key pair is needed anyway.
+### Resume = re-key (D18)
+
+Resuming a credential task registers a **new public key** and a **new expiry**
+under the same task id — the credential analogue of an agent resume minting a
+new ticket. Both are required; the request is refused without them.
+
+- The previous key stops working at once, and every connection authenticated
+  with it is closed (as D9). A key is never valid again once replaced.
+- Works on an ended credential (revoked or expired: re-issue under the same
+  identity) and on a live one (rotation).
+- **Gated as issue, not as resume.** In an agent resume the new ticket goes to
+  the runner's process; here the resumer supplies the key and so obtains the
+  credential's authority. Plain `resume` keeps the recorded caps
+  (`cli/verb/caps.go:103`), which would let a resumer acquire caps wider than
+  its own. So credential resume requires `credential_issue` and that the
+  resumer could issue a credential with the task's caps and scope now (the D13
+  attenuation check against the recorded caps/scope, or against `--caps` /
+  `--scope` when the resume narrows them). Resume therefore confers nothing a
+  fresh issue would not.
+- A credential cannot resume itself or another credential: it can never hold
+  `credential_issue` (D14). Expiry stays mandatory.
+- What the id keeps: caps, scope, name, the creator link, its children, and its
+  attribution history (`resumed_by` in schedule history, the task list).
+- The two ways of D3 apply: `--out` (generate) or `--pubkey` (register).
 
 ### Handshake (client)
 
@@ -153,7 +171,9 @@ scope and expiry.
 
 | Verb | Effect |
 |---|---|
-| `credential new --ttl D [--name N] [--caps …] [--scope …]` | generate a key pair, issue, print `<task-id>:<seed>` once |
+| `credential keygen --out FILE` | on the script's host: generate a key pair, write the seed (0600), print the public key (D3 way 2) |
+| `credential new --ttl D [--name N] [--caps …] [--scope …] [--out FILE \| --pubkey HEX]` | issue. Without `--pubkey`, generate a pair and hand the seed over once — printed as `<task-id>:<seed>`, or written to `--out` (D3 way 1; D3a under an agent identity) |
+| `credential rekey <id> --ttl D [--out FILE \| --pubkey HEX]` | resume = re-key (D18); also reachable as the generic resume of a credential task |
 | `credential ls` | credential tasks in reach: name, id, caps, scope, expires, last used, status |
 | `credential revoke <id>` | cancel (D11); also reachable as the generic task cancel |
 
@@ -162,9 +182,10 @@ following `cli/verb/table.go`.
 
 ### Surfaces
 
-CLI, TUI and WebUI all get issue, list and revoke (repo rule: features span all
-three UIs). The seed is shown exactly once, with a copy affordance in TUI/WebUI,
-and is never written to a log, a history, or browser storage.
+CLI, TUI and WebUI all get issue (both D3 ways), re-key, list and revoke (repo
+rule: features span all three UIs). A seed generated at issue is handed over
+once — shown with a copy affordance, or written to a file (CLI `--out`, WebUI a
+download) — and is never written to a log, a history, or browser storage.
 Credential tasks also appear in the ordinary task list, marked by kind, with
 their expiry. `surface-parity-checklist` (items 1–39) is walked for the new
 kind, the new fields and the new verb family.
@@ -173,7 +194,8 @@ kind, the new fields and the new verb family.
 
 All appended: `AuthRole.credential`, `CredentialAuth`, `PskAuthStatus.revoked`,
 `ClientKind.credential`, `TaskKind.credential`, `EndReason.expired`, the issue
-request/response (public key in, task id out), the `TaskInfo` fields for
+request/response (public key in, task id out), the re-key request (task id,
+public key, expiry in) and its WAL event, the `TaskInfo` fields for
 expiry / last used / name. The runner decodes `PskAuthRequest` on its
 data-plane listener; a credential arm there is refused. Run
 `scripts/wire-skew-check.sh`.
@@ -219,7 +241,12 @@ data-plane listener; a credential arm there is refused. Run
 - D9: revoke closes a live connection.
 - Restart: issue, restart the server, the credential still authenticates; one
   expired while the server was down is ended at start.
-- Refusals: resume / open / exec / schedule-bind of a credential task.
+- Refusals: open / exec / schedule-bind of a credential task.
+- D18: resume without a new key or expiry is refused; after a resume the old
+  key is refused and its live connection closed, the new key works with the
+  same task id; a resumer holding `resume` but not `credential_issue`, or whose
+  caps do not cover the credential's, is refused; resume of a revoked and of
+  an expired credential both work.
 - D16: `schedule run` of a schedule bound to T succeeds with `resume_exact`
   over T and no `resume`; `schedule edit` of it with only `resume_exact` is
   still denied `resume`; a pending_create run still needs `spawn`.
