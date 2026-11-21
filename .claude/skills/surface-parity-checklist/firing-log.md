@@ -4485,3 +4485,78 @@ omitted: —
 missed: 31 (run-only discovery), 36 (embedded skill), 37 (amendment) in the
         initial commit; corrected by this follow-up. README already documented
         narrowed old grants; the amendment and commit body now state it too.
+
+### 2026-11-22 (pre-landing) — credential tasks: `TaskKind.credential`, `TaskStatus.active`, `name` / `credential_expires_at` / `credential_last_used_at` / `principal_kind`, the `credential` verb family
+
+Spec `2026-11-21-credential-tasks-design.md` (D1–D21). One walk over Tasks 7–9
+(CLI `f946904c`+, TUI/WebUI `14ee28b4`, docs this commit). Verdicts per number;
+S1–S6 `n/a`: no agent preset, bin, argv template or launch env changed (the
+runner scrubs `HARNESS_CREDENTIAL*` from what an agent inherits, which is an env
+REMOVAL covered by `TestScrubOperatorSecretDropsOnlyTheOperatorNames`).
+done:    1 (`cli/verb/table.go` rows `credential new|rekey|ls|revoke` on
+         CLI|TUI|WebUI; `keygen`/`bind` CLI-only; `--out` CLI|TUI with a
+         SurfaceReason), 2 (out xor pubkey in `Exclusive`; ttl bound in
+         `ParseCredentialTTL` and the server), 3 (via 4/5/6/9), 4 (`tui/keys.go`
+         x / r / N / d / ←→, `TestSameKeyRowsHaveDisjointScopes`), 5 (revoke y/n
+         overlay; no picker), 6 (`#credentials-modal`, issue form from
+         `buildCapChips` / `buildScopeControls`), 7 (`WebUIDispatch` on the four
+         rows; `case "credential"` in `cmdline.js`), 10 (stdout / cmdresult /
+         DOM), 11 (`ls` row: kind column `credential`, `expires= name=
+         last_used=`, no `lifecycle=-`), 12 (`ls --json`: `name`,
+         `credential_expires_at`, `credential_last_used_at`; `credential ls
+         --json`), 13 (`whoami` task branch: `kind=credential expires=`;
+         `--json` `principal_kind`, `credential_expires_at`), 15 (FOUND HERE:
+         `CapDescription` for `cancel` did not name revoke; now "on a credential
+         task this is revoke (credential revoke)"; `credential_issue`'s own
+         description landed with the bit), 16 (`Active` status word, About
+         `credential <name|id8> expires …`), 17 (detail: kind, name, expires,
+         last used `unknown` at 0; process-only lines absent), 20 (`expires=
+         name= last_used=` in `renderTaskList` meta), 21 (credential task sheet:
+         Credentials, Re-key…, Revoke), 22 (raw `credentialExpiresAt` /
+         `credentialLastUsedAt` ns + `name` in the snapshot), 23 (wasm snapshot
+         map + `credentialMeta` from `cli.CredentialColumns`), 24 (`--out` per
+         path: CLI/TUI file, WebUI refused and downloaded; generic resume paths
+         refuse a credential and name `credential rekey`), 25 (re-key request
+         carries presence for caps/scope; dialog re-key sends none), 26
+         (issue takes only typed or dialog-chosen authority, never
+         `sessionCaps`/`spawnCaps`), 27 (one core `cli.IssueCredential`; CLI,
+         TUI and wasm reach it), 28 (WAL: appended `task_created` fields, replay
+         tested; `LastUsedAt` deliberately not persisted, D20), 28a
+         (`credentialIssueRequest` is the only builder; reached by every surface
+         through `Client.CredentialIssue`), 29 (`credential <id8>: issued /
+         revoked …`, `revoke … cancelled; nothing revoked`), 30 (TUI `cmdresult`,
+         WebUI `appendCmdOutput`; the secret alone goes to the dialog), 31 (`-`
+         name, `unknown` last use; process lines gated on the subject existing;
+         the JSON field never dropped for being unknown), 32 (one serializer:
+         `Credential.Secret()`, `cli.ScopeSpec` over the bridge,
+         `credentialIssueTokens` parsed by the real bridge), 33 (`--out` on the
+         WebUI errors; out+pubkey refused), 34 (`credColsFor` +
+         `swapColumnsAndRebuild`, `TestCredentialsColumnsAndRowsAgreeAcrossWidths`),
+         34a (chips / radios / checklists; `credential_issue` / `schedule_edit`
+         unbuildable, checked at 390px), 35 (README: **Credential tasks**,
+         architecture bullets, TUI paragraph and cmdline verb list, caps
+         sentence), 36 (`harness-cli` `references/reach.md` gained `credential`
+         and `from_name`; `harness-cli-from-a-tool` §7–§8 gained credential use
+         and the `Revoked` row; source under `runner/agentskills/`, both mirrors
+         byte-identical), 37 (spec: Status implemented, `AttachTicketless`
+         correction to D10, `credential bind` in D3 and Verbs, shipped surface
+         matrix), 39 (the spec's Surfaces paragraph checked row by row against
+         the code and the Task 8 live checks: TUI credentials table beside
+         schedules with revoke / detail / re-key, WebUI dialog, issue both D3
+         ways on TUI and WebUI, secret never in a log / history / storage,
+         credential tasks in the ordinary list with expiry; the shipped matrix
+         is now written into the spec)
+omitted: 8 (n/a really: the bridge re-parses the argument line, nothing
+         positional is interpreted), 14 (`session ls` lists interactive
+         sessions; a credential is none), 18/18a (a credential has no runner),
+         19 (TUI authority picker row for a credential reads `<id8> Active` with
+         blank agent and repo — no kind or name; a credential is a legitimate
+         scope target, so the row exists, and it is unambiguous only by id —
+         cosmetic, left), 38 (no screen), WebUI issue form carries caps and
+         scope only — delegate caps/scope, spawn limits and `--scope-for` are
+         typed (spec Surfaces "Not offered" row), `keygen` / `bind` on TUI and
+         WebUI (they run on the script's host; spec D3 gives the UIs a paste
+         field instead)
+missed:  15 (the `cancel` catalog description, found by this walk, not by an
+         operator), 36 (`from-a-tool` skill had no credential path until this
+         commit)

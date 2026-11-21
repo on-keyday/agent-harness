@@ -109,7 +109,7 @@ func CapDescription(c protocol.Capability) string {
 		return "resume a finished task exactly as recorded (--resume <id> --exact): " +
 			"only the runner, --resume-conversation, x11, -d and the initial size may be chosen"
 	case protocol.Capability_Cancel:
-		return "cancel / kill tasks"
+		return "cancel / kill tasks; on a credential task this is revoke (credential revoke)"
 	case protocol.Capability_ExecView:
 		return "observe an agent's output, live or recorded: a PTY session " +
 			"(snapshot, grid panes, attach --view), an event-stream session, " +

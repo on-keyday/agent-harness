@@ -165,6 +165,20 @@ that started you had exported. They name the task you were launched **under**
 treat the inherited id as "self"; if you want that task marked in a list,
 label it rather than filtering on it.
 
+**A tool can run under a credential instead of an inherited ticket.** If it
+must outlive any agent process (cron, CI, a webhook receiver), have the operator
+or a task holding `credential_issue` issue it one (`harness-cli credential new
+--ttl 30d --caps … --scope … --out FILE`) and start the tool with
+`HARNESS_CREDENTIAL_FILE=FILE` (or `harness-cli --credential-file FILE`;
+`HARNESS_CREDENTIAL` carries the same `<task-id>:<seed>` value inline, which is
+the weaker form because it lands in the process environment). A credential
+wins over an inherited `HARNESS_AUTH_TICKET` and over the operator PSK, so the
+tool acts as the credential and nothing else. It is durable (survives a server
+restart and any agent resume), attenuated (only the caps and scope it was
+issued with), and expiring (a `--ttl` is required, at most 90 days). Then
+`HARNESS_TASK_ID` is no longer the task you act under — `whoami` reports the
+credential's task id, caps, scope and expiry.
+
 The ticket does not outlive the agent process it came from. A new process, or
 a resume, means a new ticket — and a resume replaces the runner id along with
 it, so the two must be refreshed **together**. Read them from the environment
@@ -188,9 +202,18 @@ status decides what you tell them:
 
 | status | what happened | what to say |
 |---|---|---|
-| `BadPsk`, `BadTicket`, `Expired` | the credential your process was launched with is no longer good | restart the tool |
+| `BadPsk`, `BadTicket`, `Expired` | the credential your process was launched with is no longer good | restart the tool (**not** for a credential: below) |
+| `Revoked` | the credential was revoked | re-key or re-issue it (`credential rekey <id> --ttl … --out FILE`); a restart will not help |
 | `NotPermitted` | the grant is live but does not cover this call | a restart will not help; the grant has to change |
 | `NoIdentity` | not your credential at all — the server is too old to decode the hello your side sent | the server needs upgrading, and the same call will work once it is |
+
+**Under a credential the ticket rows change meaning.** `Expired` means the
+credential's `--ttl` ran out: it needs a re-key by whoever may issue it, not a
+restart (the file the tool reads has not changed, and re-reading it gets the
+same refusal). `BadTicket` is a wrong key, an unknown id, or an id that is not a
+credential task, deliberately indistinguishable; after a `credential rekey` the
+old key is `BadTicket` for good, so a tool still holding the previous file
+reports exactly that.
 
 `NoIdentity` is the one worth separating, because reading it as "bad
 credentials, restart" sends someone to the wrong layer entirely: nothing about

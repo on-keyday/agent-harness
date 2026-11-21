@@ -131,6 +131,9 @@ messaging, WASM transport, PSK auth, etc. are alongside it under
       | purge | dispatch | subscribe | unsubscribe | topics
       | subscriptions | contacts | archives}`. See `runner/agentskills/harness-cli/SKILL.md`
       for conventions.
+    - Credentials: `credential {keygen,new,bind,rekey,ls,revoke}` and the
+      global `--credential-file` — a principal for an external script that
+      outlives any agent process (see **Credential tasks**).
     - Workspace config: `workspace {save,ls,show,rm}` and `workspace forward
       {add,rm}` read and write `.harness/config`, and the global `--config` /
       `--workspace` add a
@@ -146,9 +149,10 @@ messaging, WASM transport, PSK auth, etc. are alongside it under
       nothing); `caps` lists the grantable names and scope forms, and
       `caps set` re-grants all of it on a live task. See **Capabilities and
       scope** below.
-  - `cmd/harness-tui`: Bubble Tea interactive frontend (sections below).
+  - `cmd/harness-tui`: Bubble Tea interactive frontend (sections below);
+    runners, tasks, schedules and credentials tables.
   - `cmd/harness-webui-wasm`: in-browser WebUI compiled to WASM, served
-    by `harness-server`.
+    by `harness-server`; has a Credentials dialog beside Schedules.
 
 Connections use the `objproto` secure transport (ECDH +
 AES-128-GCM) from the companion module
@@ -174,6 +178,8 @@ connection can be replayed on another:
   enrolled (see **Runner enrollment** below).
 - **An in-task agent** proves the per-task ticket the runner handed it
   (`HARNESS_AUTH_TICKET`) without sending it.
+- **A credential** (an external script, see **Credential tasks**) signs with
+  the Ed25519 key of a credential task; the server holds only the public half.
 - **A data-plane connection** (file transfer straight to a runner) proves the
   grant the server minted for that one request, the same way.
 - **Operator surfaces** (CLI / TUI / WebUI) prove the operator secret,
@@ -1152,7 +1158,7 @@ board as the operator, keeping a board topic past its TTL (`board_persist`), put
 keeping a session's PTY record — switching recording on or keeping a record longer (`record_persist`) — and
 deleting one, switching recording off or shortening its retention (`record_delete`),
 reading the agents' own transcripts of a task's working directory (`transcript_read`),
-creating, editing, running and deleting a server-kept cron schedule and unbinding a task from one (`schedule_edit` / `schedule_run`, see **Schedules**)) — and a **target scope** bounding WHICH tasks those
+creating, editing, running and deleting a server-kept cron schedule and unbinding a task from one (`schedule_edit` / `schedule_run`, see **Schedules**) and issuing or re-keying a credential task (`credential_issue`, see **Credential tasks**)) — and a **target scope** bounding WHICH tasks those
 capabilities may be pointed at.
 
 Attaching to a session is three capabilities, not one, because the three
@@ -1973,6 +1979,129 @@ or a pasted id — and its button reads **schedule を作る** (no other field
 turns a button into a schedule); the task row and sheet name the bound
 schedule; `schedule …` works on the command line.
 
+## Credential tasks
+
+A **credential task** is a task with caps and scope like any other but no
+runner and no process: a `TaskEntry` of kind `credential`, status `Active`
+while live, whose secret is an Ed25519 private key held only by whoever it was
+issued to. A script outside the harness (cron on another host, CI, a webhook
+receiver) that holds the key connects as that task, and every capability and
+scope check applies to it unchanged — so it can be given exactly what its one
+call needs, for example `schedule_run` plus `resume_exact` over one task to
+fire one schedule. It is the thing an agent's ticket is not: durable (the
+ticket dies with its process and a server restart), attenuated, and expiring.
+Spec: `docs/superpowers/specs/2026-11-21-credential-tasks-design.md`.
+
+The server stores the public key only, so a copy of its state directory is not
+enough to act as a credential, and it never generates a key pair: the issuing
+client does, or the key holder does.
+
+**Issuing, both ways.** An expiry is required (`--ttl`, e.g. `30d`; at most 90
+days, no default).
+
+```bash
+# (1) generate at issue: the key is made where you run this, and handed over
+# once. --out writes `<task-id>:<seed>` (mode 0600, never overwritten);
+# without --out it is printed once as that string (refused under an agent
+# identity: use --out or --pubkey there).
+harness-cli credential new --ttl 30d --name nightly-fire \
+    --caps schedule_run,resume_exact --scope ids:<task-id> --out ./nightly.cred
+
+# (2) register a public key: the seed is made on the script's own host and
+# never leaves it.
+harness-cli credential keygen --out ./seed        # on the script's host; prints the public key
+harness-cli credential new --ttl 30d --name nightly-fire \
+    --caps schedule_run,resume_exact --scope ids:<task-id> --pubkey <public-key-hex>
+harness-cli credential bind <credential-id> --file ./seed   # rewrites ./seed as <id>:<seed>, atomically, 0600
+```
+
+`credential new` takes the spawn grammar for authority (`--caps`, `--scope`,
+`--scope-for`, `--delegate-caps`, `--delegate-scope`, spawn limits). Issuing
+needs the grantable `credential_issue` bit, and the new task is a child of the
+issuer holding at most the issuer's own caps inside its scope; an operator
+issues a root-level one. `credential_issue` and `schedule_edit` can never be
+held by a credential (masked at issue, re-key and `caps set`): the first
+because a credential that can issue a successor never expires, the second
+because a schedule it created would keep firing after the credential ends.
+`spawn` is allowed.
+
+**Using it from a script.** The client reads the credential from, in order,
+`--credential-file PATH`, `HARNESS_CREDENTIAL_FILE`, `HARNESS_CREDENTIAL`
+(`<task-id>:<seed>`); a file readable by group or other is refused. A credential
+beats any operator secret or agent ticket in the environment, so the script
+acts as the credential and nothing else; `harness-server`'s address comes from
+`HARNESS_SERVER_CID` (and `HARNESS_SERVER_PUBKEY`) as for any client.
+`harness-cli whoami` reports the credential task id, caps, scope and expiry.
+`agent-runner` and the daemon helpers scrub the credential variables before
+spawning an agent.
+
+```bash
+export HARNESS_SERVER_CID=... HARNESS_CREDENTIAL_FILE=./nightly.cred
+harness-cli whoami
+harness-cli schedule run <schedule-id>      # needs schedule_run, and resume or resume_exact over the schedule's task
+```
+
+**Firing a schedule.** `schedule run` of a schedule bound to task T needs
+`schedule_run` with T in its scope and `resume` or `resume_exact` over T (see
+**Schedules**), so a credential holding `schedule_run,resume_exact` scoped to
+`ids:T` can fire it and can do nothing else to it: it cannot edit or rebind it.
+A schedule with no task stays operator-only to fire. The firing is recorded as
+`run_now` in `schedule show`; a direct `resume_exact` of T by the credential
+records `resumed_by=credential`.
+
+**Listing, revoking, re-keying.**
+
+```bash
+harness-cli credential ls [--json]          # name, id, status, expires, last used, caps, scope
+harness-cli credential revoke <credential-id>
+harness-cli credential rekey <credential-id> --ttl 30d --out ./new.cred   # or --pubkey HEX
+```
+
+Revoke is the ordinary `cancel` of the credential task (anyone whose `cancel`
+scope reaches it, the operator always), so issuing does not imply revoking.
+Expiry is a cancel with its own end reason. Either way every live connection of
+the credential is closed at once, and its next handshake is refused:
+`expired` once the time has passed, `revoked` after a revoke; an unknown id, a
+wrong key or an id that is not a credential is `bad_ticket` for all three, so
+nothing says whether an id exists. A connection opened just before expiry does
+not outlive it: authority reads as none once the task is no longer live.
+`credential rekey` is resume for this kind: it takes a new public key and a new
+expiry, kills the old key for good (closing connections made with it) and keeps
+the id, caps, scope, name, children and history. It works on an ended
+credential (re-issue under the same identity) and on a live one (rotation), and
+the generic resume paths refuse a credential and name this verb. It is gated
+as issue — `credential_issue`, and the re-keyer must be able to issue a
+credential with those caps and scope now. **A non-operator may re-key only a
+credential in its own creator subtree** (a descendant): re-keying anyone
+else's would hand the caller that credential's `subtree` reach and spawn room.
+To delegate someone else's credential to an agent, the operator reparents it
+under that agent with `caps set-parent`, then the agent may re-key it. `caps
+set` on a credential narrows or widens what it can do without re-keying.
+An issuer ending does not end its credentials; each is bounded by its own
+expiry. A last-use time is kept in memory only and reads `unknown` after a
+server restart; everything else survives one.
+
+**Board use, without a wake.** A credential can `agent send`, `read`, `wait` and
+`subscribe` (reach by task id, so `board_peer` and its scope apply as for an
+agent), which lets a script tell a running agent about an external event or wait
+for a task to end instead of polling. Nothing is ever woken for a credential —
+there is no process — so a reply sits on its `chat.<first-8-hex>` for `agent
+read` / `agent wait`. A message from it carries `sender_kind=credential` and
+`from_name` (the credential's name), rendered `credential <name>` (or
+`credential <id8>` when unnamed).
+
+**Surfaces.** CLI: the verbs above (`keygen` and `bind` run only there, and
+`--out` is a CLI/TUI flag). TUI: a **Credentials** table beside Schedules (see
+**TUI**). WebUI: the **Credentials** button opens a dialog listing the rows
+with **Copy id** / **Revoke** / **Re-key**, and an issue form (caps chips, scope,
+generate or paste a public key); a generated secret is shown once with Copy and
+Download and is never written to a log, history or browser storage; the task
+row and sheet mark the kind and expiry; `credential …` works on the command
+line. Credential tasks also appear in `ls` (kind column `credential`, then
+`expires=`, `name=`, `last_used=`) and in the TUI and WebUI task lists, marked by kind.
+A credential task can never be opened, exec'd into, bound to a schedule as its
+target or assigned to a runner.
+
 ## Sandboxing (rootless podman)
 
 An **opt-in** kit under `scripts/sandbox/` runs a runner's spawned agent
@@ -2043,12 +2172,13 @@ bin/harness-tui --server-cid 'ws:HOSTNAME:8539-*' --repo /abs/path/to/repo
 ```
 
 Layout — one table at a time, full width. `←` / `→` switch between the
-runners, tasks and schedules tables while one has focus; `Tab` / `Shift-Tab`
-cycle the shown table → notify → cmdresult → cmdline (the three tables are one
-stop). While focus is on notify, cmdresult or cmdline the last-focused table
+runners, tasks, schedules and credentials tables while one has focus; `Tab` /
+`Shift-Tab` cycle the shown table → notify → cmdresult → cmdline (the four
+tables are one stop). While focus is on notify, cmdresult or cmdline the last-focused table
 stays up, and the tasks table is the one at startup. The line above the table
-names all three, brackets the shown one, gives each of the others the arrow
-that switches to it (`Name:←` / `Name:→`); off the tables the bracket also
+brackets the shown one and names its two neighbours with the arrow that switches
+to each (`Name:←` / `Name:→`; the table opposite is not named, to fit 80 cells,
+and credentials read `Creds`); off the tables the bracket also
 carries the keys back onto them (`[Tasks:Tab*2]`, `S-Tab` for Shift-Tab). It
 always carries the fleet summary
 (`runners N: X idle Y busy …`; idle and busy keep a zero, other statuses
@@ -2094,6 +2224,17 @@ sends it as `schedule new` would be typed, and a refusal keeps the form open
 with the reason. Edit is the command line's `schedule edit`. The task detail
 popup names the schedule a task is bound to.
 
+The **Credentials** table (the fourth, reached with `←` / `→`; `credential ls`'s
+rows, taken from the same snapshot as the tasks table) lists `ID`, `Status`,
+`Name`, `Expires`, `Last used` (`unknown` until the credential is next used after
+a server restart) and `Caps`, plus `Scope` from a 120-cell terminal. With the
+cursor on a row, `d` opens its detail, `x` revokes it after a `y` (any other key
+keeps it), `r` puts `credential rekey <id> --ttl ` on the command line and `N`
+puts `credential new --ttl ` there — issue and re-key are typed, there is no
+form. A generated secret appears once in the cmdresult pane (or goes to
+`--out FILE`). `keygen` and `bind` are CLI-only. The tasks table shows a
+credential as `Active` with an About text `credential <name|id8> expires <time>`.
+
 Keys for orientation — `Tab` cycles focus, `s` the one-shot popup (a
 detached `session new --oneshot`), `S` opens
 a detachable session, `r`/`R` reattach/resume the selected task, `d`
@@ -2113,7 +2254,7 @@ stale.
 
 The cmdline accepts `session {new,attach,ls,kill}
 / session await-idle [ls,kill] / await-progress [ls,kill] / session stream attach / file {ls,push,pull,delete} / git / exec
-/ record {ls,get,rm,keep,on,off} / schedule {new,ls,show,edit,run,rm} / transcript {ls,get}
+/ record {ls,get,rm,keep,on,off} / schedule {new,ls,show,edit,run,rm} / credential {new,rekey,ls,revoke} / transcript {ls,get}
 / forward {ls,kill,tap} / conns
 / grid / overview / caps / scope
 / caps set / caps set-parent / caps audit / caps reach / caps what-if / workspace {save,apply,detach,ls,show,rm} / workspace forward {add,rm}

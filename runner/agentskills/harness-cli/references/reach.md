@@ -95,7 +95,9 @@ empty `from.agent` means the server could not attribute a runtime.
 
 Every record also carries `sender_kind`, set by the server: `agent` for a peer,
 `operator` for a message published **in the operator's name**, `server` for a
-server notice such as an `await-idle` notification. Read it before
+server notice such as an `await-idle` notification, `credential` for a message
+from an external script holding a credential task's key (no runner, no process).
+Read it before
 `from.task_id`: an operator or server message may carry an all-zero task id,
 which names no task and no `chat.<short-id>` to answer on.
 
@@ -104,3 +106,13 @@ which names no task and no `chat.<short-id>` to answer on.
 operator granted `board_send` to speak for them — a delegate, not the human
 typing. The server stamps both; neither can be forged from a plain `agent
 send`.
+
+`credential` carries the credential task's own id in `from.task_id`, so a reply
+to `chat.<first-8-hex>` reaches the script's board state: it reads it with
+`agent read` / `agent wait`, because nothing is woken for a credential. Its
+`from.agent`, hostname and profile are empty (there is no runner); the record's
+`from_name` (`name` in the JSON forms) is the credential's display name, set when
+it was issued, empty when it has none. Surfaces render the sender as
+`credential <name>`, or `credential <first-8-hex>` when unnamed. `from_name` is
+the sending task's name at publish time and exists for any kind, so an agent's
+row may carry one too once names are settable on other tasks.
