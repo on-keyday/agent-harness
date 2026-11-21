@@ -423,3 +423,73 @@ func TestReplyToCredentialLandsInItsChat(t *testing.T) {
 		t.Fatalf("the credential cannot read the reply (ok=%v in_reply_to=%d)", ok, m.InReplyTo)
 	}
 }
+
+// Review Important 1: a new-key connection accepted between a re-key's store
+// write and its board revoke must not attach to the old holder's board state.
+// The seam runs the new key's acceptance at exactly that point; credentialMu
+// makes it wait for the revoke, so it gets a fresh state — no old contact, no
+// old subscription — that a publish to its chat reaches.
+func TestRekeyRaceNewKeyGetsAFreshBoardState(t *testing.T) {
+	s := credentialBoardServer(t)
+	agent, _ := agentOnBoard(t, s, authority.Grant{}, 9470)
+	_, tid, oldConn := credentialOnBoard(t, s, authority.Grant{}, 9471)
+	inbox := agentboard.SelfTopic(tid)
+
+	// The old holder builds state: a subscription, and a contact (a reply
+	// route) on the agent's chat, which it may then publish to without
+	// board_peer.
+	s.taskHandler.handleAgentSubscribe(oldConn, 1, "ci.events", false)
+	seq, _, err := s.Board.Send(inbox, []byte("ask"), protocol.RunnerID{}, protocol.TaskID{}, "", "", 0,
+		agentboard.WithSenderKind(protocol.SenderKind_Operator), agentboard.WithReplyTo(agentboard.SelfTopic(agent)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := readSeq(t, s, oldConn, 2, seq); !ok {
+		t.Fatal("the old holder cannot read its message")
+	}
+	if resp := credentialSend(t, s, oldConn, 3, agentboard.SelfTopic(agent)); !sentOK(resp) {
+		t.Fatalf("the old holder's contact does not open the agent's chat: %v", resp.Kind)
+	}
+
+	_, newPub := newCredentialKey(t)
+	newConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9472-1"), autoSendStreams: true}
+	accepted := make(chan protocol.ClientHelloStatus, 1)
+	s.taskHandler.afterCredentialRekeyStore = func() {
+		go func() { accepted <- s.taskHandler.RecordCredentialIdentity(newConn.id.String(), newConn, tid, newPub) }()
+		// Give the acceptance every chance to finish inside the window; with
+		// credentialMu it cannot, and the re-key goes on after the wait.
+		select {
+		case st := <-accepted:
+			accepted <- st
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+	r := s.taskHandler.credentialRekey("ws:127.0.0.1:9479-1",
+		&protocol.CredentialRekeyRequest{TaskId: tid, Pubkey: newPub, TtlMs: uint64(time.Hour / time.Millisecond)}, time.Now())
+	if r.Status != protocol.CredentialStatus_Ok {
+		t.Fatalf("re-key: %v", r.Status)
+	}
+	select {
+	case st := <-accepted:
+		if st != protocol.ClientHelloStatus_Ok {
+			t.Fatalf("the new key's acceptance: %v", st)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the new key's acceptance never finished")
+	}
+	row, ok := boardRowOf(s, tid)
+	if !ok {
+		t.Fatal("no board state for the credential after the new key's acceptance: its connection holds an orphaned one")
+	}
+	if rowHasPattern(row, "ci.events") || len(row.Contacts) != 0 {
+		t.Errorf("the new holder's state carries the old holder's: patterns %+v contacts %v", row.Patterns, row.Contacts)
+	}
+	resp := credentialSend(t, s, newConn, 4, agentboard.SelfTopic(agent))
+	if resp.Kind != protocol.TaskControlKind_PermissionDenied {
+		t.Errorf("the new holder published on the old holder's contact: %v", resp.Kind)
+	}
+	if _, delivered, err := s.Board.Send(inbox, []byte("to the new key"), protocol.RunnerID{}, protocol.TaskID{}, "", "", 0,
+		agentboard.WithSenderKind(protocol.SenderKind_Operator)); err != nil || delivered != 1 {
+		t.Errorf("a publish to the credential's chat reached %d states (err %v), want 1", delivered, err)
+	}
+}

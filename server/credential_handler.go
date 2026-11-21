@@ -201,6 +201,12 @@ func (h *TaskHandler) credentialRekey(cid string, req *protocol.CredentialRekeyR
 	}
 
 	expiresAt := now.Add(ttl)
+	// The store's re-key, the drop and the board revoke are one step against a
+	// connection's acceptance (credentialMu): a new-key handshake waits for all
+	// three, so it neither attaches to the old holder's board state nor is
+	// closed by this drop.
+	h.credentialMu.Lock()
+	defer h.credentialMu.Unlock()
 	after, err := h.Tasks.RekeyCredential(idHex, req.Pubkey, expiresAt, &u,
 		AuthorityWrite{Source: protocol.AuthoritySource_Resume, Actor: h.lookupPrincipal(cid)})
 	switch {
@@ -219,6 +225,9 @@ func (h *TaskHandler) credentialRekey(cid string, req *protocol.CredentialRekeyR
 	// After the store's re-key, not before: until it, the old key is live, and
 	// an old-key connection made in between could build a fresh state up
 	// again for the new holder to inherit.
+	if h.afterCredentialRekeyStore != nil {
+		h.afterCredentialRekeyStore()
+	}
 	closed := 0
 	if h.DropConnsForPrincipal != nil {
 		closed = h.DropConnsForPrincipal(idHex)

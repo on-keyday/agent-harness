@@ -788,9 +788,13 @@ func New(cfg Config) *Server {
 		// (credential-tasks D9). callerCaps already answers none for them
 		// (D8); this takes the connection itself away, and drops its board
 		// state (D10).
+		// Under credentialMu, so a connection accepted just before the end
+		// cannot attach a board state after this revoke.
 		if t, ok := s.tasks.Get(id); ok && t.Kind == protocol.TaskKind_Credential {
+			s.taskHandler.credentialMu.Lock()
 			s.dropConnsForPrincipal(id)
 			boardRevokeCredential(s.Board, id)
+			s.taskHandler.credentialMu.Unlock()
 		}
 	}
 	// A cancel of a task still waiting for its TaskFinished resends the

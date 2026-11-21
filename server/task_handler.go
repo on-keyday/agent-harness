@@ -292,6 +292,33 @@ type TaskHandler struct {
 	// connection to it: once the credential's stored key is another, the
 	// connection holds nothing. Same lifetime as principals.
 	credentialKeys map[string][32]byte
+
+	// credentialMu serialises the transitions of a credential's identity, so
+	// the board state a connection attaches to always belongs to the key it
+	// proved:
+	//   - acceptance: RecordCredentialIdentity's liveness+key re-check and
+	//     its board attach (OnCredentialHello);
+	//   - re-key: credentialRekey's store re-key, connection drop and board
+	//     revoke;
+	//   - end: the credential branch of TaskStore.OnCancel (drop, revoke).
+	// Without it a new-key connection accepted between a re-key's store write
+	// and its board revoke attached to the OLD holder's state (inheriting its
+	// contacts) and was then orphaned by the revoke.
+	//
+	// One mutex for the server, not one per credential: these transitions are
+	// rare (a credential handshake, a re-key, a credential's end), each holds
+	// it for map and store operations and one non-blocking wire close per
+	// dropped connection, and a per-id map would need its own lifetime.
+	//
+	// Lock order: credentialMu first. It is never taken while holding another
+	// lock (OnCancel runs after TaskStore releases mu; the gate dispatch holds
+	// none), and under it the code takes, one at a time and each released
+	// before the next, TaskStore.mu, clientKindsMu, activeConnsMu, and the
+	// board's locks. None of those paths takes credentialMu.
+	credentialMu sync.Mutex
+	// afterCredentialRekeyStore is a test seam: when set, credentialRekey
+	// calls it under credentialMu between the store's re-key and the drop.
+	afterCredentialRekeyStore func()
 }
 
 // lookupCredentialKey is the key connID's credential handshake proved; zero
@@ -392,10 +419,9 @@ func (h *TaskHandler) RecordClientIdentity(cid string, conn ConnHandle, hello *p
 // revoke or re-key landing between the gate's check and this call either
 // finds this connection when it closes the task's connections (it is already
 // recorded), or is seen here: the task ended, or its key is no longer pub.
-// Only an accepted connection gets a board identity (OnCredentialHello). A
-// revoke or re-key landing between this check and that attach leaves a board
-// state holding only the seeded topics, nothing of an earlier holder's, and
-// every board request is gated per connection anyway (boardState).
+// Only an accepted connection gets a board identity (OnCredentialHello), and
+// the re-check and that attach hold credentialMu, so no re-key or end lands
+// between them.
 func (h *TaskHandler) RecordCredentialIdentity(cid string, conn ConnHandle, tid protocol.TaskID, pub [32]byte) protocol.ClientHelloStatus {
 	if tid.Id == ([16]byte{}) || pub == ([32]byte{}) {
 		return protocol.ClientHelloStatus_NotPermitted
@@ -417,13 +443,18 @@ func (h *TaskHandler) RecordCredentialIdentity(cid string, conn ConnHandle, tid 
 
 	idHex := hex.EncodeToString(tid.Id[:])
 	now := time.Now()
+	// The check and the board attach are one step against a re-key or an end
+	// (credentialMu).
+	h.credentialMu.Lock()
 	if cur, state, ok := h.Tasks.CredentialLive(idHex, now); !ok || state != CredentialLive || cur != pub {
+		h.credentialMu.Unlock()
 		return protocol.ClientHelloStatus_NotPermitted
 	}
 	h.Tasks.TouchCredential(idHex, now)
 	if h.OnCredentialHello != nil {
 		h.OnCredentialHello(conn, tid)
 	}
+	h.credentialMu.Unlock()
 	if h.OnConnIdentified != nil {
 		h.OnConnIdentified(conn.ConnectionID())
 	}
