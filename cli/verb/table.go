@@ -22,7 +22,8 @@ import (
 // one family whose TUI parser had no arity check at all.
 var Verbs = []VerbSpec{
 	{
-		Path:           []string{"prune"},
+		Path: []string{"prune"},
+		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_PruneTasks},
 		WebUIDispatch:  WebUIDispatch{Fn: "prune"},
 		SurfaceNotes:   map[Surface][]string{WebUI: {"forget terminal tasks older than DUR"}, TUI: {"ask the server to forget tasks (ids, or --before; active tasks need --force)"}},
 		NoModalSurface: "the TUI has an action for this (Do…) but dispatch.go is its only caller, so it IS the command line running the verb — already CmdlineSurfaces",
@@ -68,7 +69,8 @@ var Verbs = []VerbSpec{
 	// and three everywhere else. Declared with Arg.CmdlineSurfaces rather than as a
 	// separate verb, because it is one operation reached from three places.
 	{
-		Path:          []string{"file", "push"},
+		Path: []string{"file", "push"},
+		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_OpenFileTransfer},
 		WebUIDispatch: WebUIDispatch{Fn: "filePushBytes"},
 		SurfaceNotes:  map[Surface][]string{WebUI: {"upload a local file (file picker opens)"}, TUI: {"copy a local file/dir into the worktree (-r tar, -f overwrite, -p mkdir parents)"}},
 		ModalSurfaces: []ModalSurface{
@@ -106,7 +108,8 @@ var Verbs = []VerbSpec{
 		},
 	},
 	{
-		Path:          []string{"file", "pull"},
+		Path: []string{"file", "pull"},
+		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_OpenFileTransfer},
 		WebUIDispatch: WebUIDispatch{Fn: "filePullBytes"},
 		SurfaceNotes:  map[Surface][]string{WebUI: {"download a remote file, or -r for a directory as a .tar"}, TUI: {"copy from the worktree to a local path"}},
 		ModalSurfaces: []ModalSurface{
@@ -153,7 +156,8 @@ var Verbs = []VerbSpec{
 		},
 	},
 	{
-		Path:          []string{"file", "ls"},
+		Path: []string{"file", "ls"},
+		MCP:  &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_ListFiles},
 		WebUIDispatch: WebUIDispatch{Fn: "fileLs"},
 		SurfaceNotes:  map[Surface][]string{WebUI: {"list a worktree directory"}, TUI: {"list a directory in the task's worktree (root if rel omitted)"}},
 		ModalSurfaces: []ModalSurface{
@@ -182,7 +186,8 @@ var Verbs = []VerbSpec{
 		Validate: validateRoute,
 	},
 	{
-		Path:          []string{"file", "mkdir"},
+		Path: []string{"file", "mkdir"},
+		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_OpenFileTransfer},
 		WebUIDispatch: WebUIDispatch{Fn: "fileMkdir"},
 		SurfaceNotes:  map[Surface][]string{WebUI: {"create a worktree directory (-p: parents, idempotent)"}, TUI: {"create a directory in the worktree (-p: mkdir -p)"}},
 		ModalSurfaces: []ModalSurface{
@@ -207,7 +212,8 @@ var Verbs = []VerbSpec{
 		Examples: []string{"file mkdir -p aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa docs/sub"},
 	},
 	{
-		Path:          []string{"file", "delete"},
+		Path: []string{"file", "delete"},
+		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_OpenFileTransfer},
 		WebUIDispatch: WebUIDispatch{Fn: "fileDelete"},
 		SurfaceNotes:  map[Surface][]string{WebUI: {"remove a file (no -r) or directory (-r [-f])"}, TUI: {"remove a file (no -r) or directory (-r empty / -r -f recursive)"}},
 		ModalSurfaces: []ModalSurface{
@@ -240,6 +246,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path:          []string{"file", "edit"},
+		MCPNotATool:   "it runs $EDITOR on this process's terminal; inside the MCP server stdin and stdout are the JSON-RPC stream",
 		WebUIDispatch: WebUIDispatch{Fn: "fileEditLoad"},
 		SurfaceNotes:  map[Surface][]string{WebUI: {"pull a text file into the browser editor and push it back"}, TUI: {"open a text file in the editor popup and push it back (ctrl+j save, ctrl+o $EDITOR)"}},
 		ModalSurfaces: []ModalSurface{
@@ -264,6 +271,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path:          []string{"file", "new"},
+		MCPNotATool:   "it runs $EDITOR on this process's terminal; inside the MCP server stdin and stdout are the JSON-RPC stream",
 		WebUIDispatch: WebUIDispatch{Fn: "filePushBytes"},
 		SurfaceNotes:  map[Surface][]string{WebUI: {"write a new text file in a browser editor and upload it"}, TUI: {"write a new text file in the editor popup and push it"}},
 		ModalSurfaces: []ModalSurface{
@@ -304,7 +312,8 @@ var Verbs = []VerbSpec{
 	// surface. The WebUI accepted it and threw it away, which was worse than
 	// refusing it.
 	{
-		Path:          []string{"git", "log"},
+		Path: []string{"git", "log"},
+		MCP:  &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_GitQuery},
 		WebUIDispatch: WebUIDispatch{Fn: "gitQuery"},
 		Notes:         []string{"the task's commits"},
 		SurfaceNotes:  map[Surface][]string{WebUI: {"also reachable from the Git tab"}, TUI: {"the task's commits (also: tasks-pane G)"}},
@@ -325,7 +334,8 @@ var Verbs = []VerbSpec{
 		Examples: []string{"git log aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "git log aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --max 20"},
 	},
 	{
-		Path:          []string{"git", "diff"},
+		Path: []string{"git", "diff"},
+		MCP:  &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_GitQuery},
 		WebUIDispatch: WebUIDispatch{Fn: "gitQuery"},
 		SurfaceNotes:  map[Surface][]string{WebUI: {"revisions counted as git counts them: none=unstaged, one=<base> vs working tree, two=commit vs commit"}, TUI: {"revisions counted as git counts them: none=unstaged, one=<base> vs working tree, two=commit vs commit"}},
 		ModalSurfaces: []ModalSurface{
@@ -378,7 +388,8 @@ var Verbs = []VerbSpec{
 		},
 	},
 	{
-		Path:          []string{"git", "show"},
+		Path: []string{"git", "show"},
+		MCP:  &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_GitQuery},
 		WebUIDispatch: WebUIDispatch{Fn: "gitQuery"},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/gitmodal.go:GitModal"},
@@ -401,7 +412,8 @@ var Verbs = []VerbSpec{
 		Examples: []string{"git show aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "git show aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa HEAD"},
 	},
 	{
-		Path:          []string{"git", "status"},
+		Path: []string{"git", "status"},
+		MCP:  &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_GitQuery},
 		WebUIDispatch: WebUIDispatch{Fn: "gitQuery"},
 		Notes:         []string{"uncommitted and untracked paths (untracked appear in no diff)"},
 		SurfaceNotes:  map[Surface][]string{WebUI: {"also reachable from the Git tab"}, TUI: {"uncommitted and untracked paths (untracked appear in no diff)"}},
@@ -421,7 +433,8 @@ var Verbs = []VerbSpec{
 		Examples: []string{"git status aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 	},
 	{
-		Path:          []string{"git", "subrepos"},
+		Path: []string{"git", "subrepos"},
+		MCP:  &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_GitQuery},
 		WebUIDispatch: WebUIDispatch{Fn: "gitQuery"},
 		SurfaceNotes:  map[Surface][]string{WebUI: {"list git repos nested inside the worktree"}, TUI: {"git repos nested inside the worktree ([REPO] rows; Enter descends, u goes up)"}},
 		ModalSurfaces: []ModalSurface{
@@ -444,7 +457,8 @@ var Verbs = []VerbSpec{
 		Examples: []string{"git subrepos aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 	},
 	{
-		Path:          []string{"git", "file"},
+		Path: []string{"git", "file"},
+		MCP:  &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_GitQuery},
 		WebUIDispatch: WebUIDispatch{Fn: "gitQuery"},
 		Notes:         []string{"one file's whole content"},
 		SurfaceNotes:  map[Surface][]string{WebUI: {"also: click a file header in a diff"}, TUI: {"one file's whole content (also: o in the modal, from the diff you are reading)"}},
@@ -491,6 +505,7 @@ var Verbs = []VerbSpec{
 	// --- exec (exec_run) ---
 	{
 		Path:           []string{"exec"},
+		MCPNotATool:    "it splices this process's stdin and stdout to the command until it exits, then exits with its code",
 		WebUIDispatch:  WebUIDispatch{Fn: "execRun"},
 		SurfaceNotes:   map[Surface][]string{WebUI: {"run a command in the task's worktree as its own process, NOT in the session's shell (stdout 1| / stderr 2|)"}, TUI: {"run a command in the task's worktree as its own process, NOT in the session's shell (stdout 1| / stderr 2|). --shell hands it to the runner's own shell so pipes and redirects mean something; --sshd-parent gives the line a parent named sshd for a client that checks its ancestry (Windows only; needs --shell)"}},
 		NoModalSurface: "the TUI has an action for this (Do…) but dispatch.go is its only caller, so it IS the command line running the verb — already CmdlineSurfaces",
@@ -538,7 +553,8 @@ var Verbs = []VerbSpec{
 		Examples: []string{"exec aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -- ls -la"},
 	},
 	{
-		Path:          []string{"exec", "ls"},
+		Path: []string{"exec", "ls"},
+		MCP:  &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_ExecRunList},
 		WebUIDispatch: WebUIDispatch{Fn: "execRunList"},
 		SurfaceNotes:  map[Surface][]string{WebUI: {"list the running execs / stop one (the task row shows execs=N)"}, TUI: {"list the running execs (Obs column shows Nx while any run)"}},
 		ModalSurfaces: []ModalSurface{
@@ -563,7 +579,8 @@ var Verbs = []VerbSpec{
 		Examples: []string{"exec ls", "exec ls --json"},
 	},
 	{
-		Path:          []string{"exec", "kill"},
+		Path: []string{"exec", "kill"},
+		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_ExecRunKill},
 		WebUIDispatch: WebUIDispatch{Fn: "execRunKill"},
 		SurfaceNotes:  map[Surface][]string{TUI: {"stop one running exec"}},
 		ModalSurfaces: []ModalSurface{
@@ -584,7 +601,8 @@ var Verbs = []VerbSpec{
 		Examples:        []string{"exec kill 3"},
 	},
 	{
-		Path: []string{"exec", "tap"},
+		Path:        []string{"exec", "tap"},
+		MCPNotATool: "it streams until interrupted; a tool is one request and one reply",
 		Notes: []string{
 			"stream the payload crossing one running exec: stdin, stdout and stderr, live",
 			"a tap sees only what crosses AFTER it opens; nothing is recorded server-side",
@@ -644,7 +662,8 @@ var Verbs = []VerbSpec{
 		// read before the FlagSet was built, which meant the positional had to
 		// come FIRST -- the inverse of what ParsePermuted guarantees
 		// everywhere else. Declaring it removes that constraint.
-		Path: []string{"forward"},
+		Path:        []string{"forward"},
+		MCPNotATool: "it blocks until something else happens; a tool that can wait forever is a hung server (it holds the forwards open until they are killed)",
 		ModalSurfaces: []ModalSurface{
 			// The counterpart of -W, not of -L/-R: RawConnectModal is the raw
 			// stdio endpoint with a pane for the peer's output, and it builds
@@ -714,6 +733,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"forward", "ls"},
+		MCP:  &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_ListPortForwards},
 		// Page-owned, the way conns is, because the PAGE decides which of two
 		// answers this is: the bare form reads the snapshot it already polls,
 		// and --drops is a live call. A Cache declaration said only the first
@@ -751,7 +771,8 @@ var Verbs = []VerbSpec{
 		Examples: []string{"forward ls", "forward ls --json", "forward ls --drops"},
 	},
 	{
-		Path:          []string{"forward", "kill"},
+		Path: []string{"forward", "kill"},
+		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_KillPortForward},
 		WebUIDispatch: WebUIDispatch{Fn: "forwardKill"},
 		SurfaceNotes:  map[Surface][]string{TUI: {"close one registered forward by id (also: tasks-pane P/B on the owning task)"}},
 		ModalSurfaces: []ModalSurface{
@@ -777,6 +798,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path:          []string{"forward", "tap"},
+		MCPNotATool:   "it streams until interrupted; a tool is one request and one reply",
 		WebUIDispatch: WebUIDispatch{Cache: "lastForwards", Stale: "one snapshot poll"},
 		SurfaceNotes:  map[Surface][]string{WebUI: {"show the bytes crossing a forward, live, in a panel under its row (needs the forward_tap capability; nothing is recorded — a tap sees only what crosses after it opens)"}, TUI: {"stream the bytes crossing a forward, live; nothing is recorded server-side, so a tap sees only what crosses after it opens"}},
 		ModalSurfaces: []ModalSurface{
@@ -837,7 +859,8 @@ var Verbs = []VerbSpec{
 
 	// --- server ---
 	{
-		Path:           []string{"server", "dial-runner"},
+		Path: []string{"server", "dial-runner"},
+		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_DialRunner},
 		WebUIDispatch:  WebUIDispatch{Fn: "serverDialRunner"},
 		SurfaceNotes:   map[Surface][]string{WebUI: {"ask the server to reverse-dial a Listen-mode runner; --via routes through a registered relay-runner"}, TUI: {"ask the server to reverse-dial a runner that is listening instead of dialing out — for a runner an outbound ACL blocks"}},
 		NoModalSurface: "the TUI has an action for this (Do…) but dispatch.go is its only caller, so it IS the command line running the verb — already CmdlineSurfaces",
@@ -864,7 +887,8 @@ var Verbs = []VerbSpec{
 
 	// --- runner keys (2026-10-27-runner-enrollment-design.md) ---
 	{
-		Path:           []string{"runner", "enroll"},
+		Path: []string{"runner", "enroll"},
+		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_RunnerEnroll},
 		WebUIDispatch:  WebUIDispatch{Fn: "runnerEnroll"},
 		SurfaceNotes:   map[Surface][]string{WebUI: {"enroll a runner's public key so a runner holding it may register"}, TUI: {"enroll a runner's public key so a runner holding it may register"}},
 		NoModalSurface: "an administrative verb run a handful of times per machine, like server dial-runner: the command line is the way in on every surface",
@@ -886,7 +910,8 @@ var Verbs = []VerbSpec{
 		Examples: []string{"runner enroll 3f9c01ab7e2d4c5a9b8f6e1d0c2b3a4958675a4b3c2d1e0f9a8b7c6d5e4f3a2b --label host1"},
 	},
 	{
-		Path:           []string{"runner", "keys"},
+		Path: []string{"runner", "keys"},
+		MCP:  &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_RunnerKeys},
 		WebUIDispatch:  WebUIDispatch{Fn: "runnerKeys"},
 		SurfaceNotes:   map[Surface][]string{WebUI: {"list enrolled runner keys and the runners on each"}, TUI: {"list enrolled runner keys and the runners on each"}},
 		NoModalSurface: "an administrative listing, like conns: the command line is the way in on every surface",
@@ -906,7 +931,8 @@ var Verbs = []VerbSpec{
 		Examples: []string{"runner keys", "runner keys --json"},
 	},
 	{
-		Path:           []string{"runner", "unenroll"},
+		Path: []string{"runner", "unenroll"},
+		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_RunnerUnenroll},
 		WebUIDispatch:  WebUIDispatch{Fn: "runnerUnenroll"},
 		SurfaceNotes:   map[Surface][]string{WebUI: {"remove an enrolled runner key; --force if runners use it"}, TUI: {"remove an enrolled runner key; --force if runners use it"}},
 		NoModalSurface: "an administrative verb, like server dial-runner: the command line is the way in on every surface",
@@ -929,7 +955,8 @@ var Verbs = []VerbSpec{
 
 	// --- dial records and kick (2026-11-04-persistent-reverse-dial-and-runner-kick-design.md) ---
 	{
-		Path:           []string{"runner", "dial", "add"},
+		Path: []string{"runner", "dial", "add"},
+		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_RunnerDialAdd},
 		WebUIDispatch:  WebUIDispatch{Fn: "runnerDialAdd"},
 		SurfaceNotes:   map[Surface][]string{WebUI: {"have the server keep dialing a listening runner, across drops and its own restarts"}, TUI: {"have the server keep dialing a listening runner, across drops and its own restarts"}},
 		NoModalSurface: "an administrative verb run a handful of times per runner, like server dial-runner: the command line is the way in on every surface",
@@ -960,7 +987,8 @@ var Verbs = []VerbSpec{
 			"runner dial add wss://agent-1.example.com/ws --key 3f9c01ab --label edge-1"},
 	},
 	{
-		Path:           []string{"runner", "dial", "ls"},
+		Path: []string{"runner", "dial", "ls"},
+		MCP:  &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_RunnerDialList},
 		WebUIDispatch:  WebUIDispatch{Fn: "runnerDialList"},
 		SurfaceNotes:   map[Surface][]string{WebUI: {"list dial records: connected, dialing, waiting (when and why), or duplicate"}, TUI: {"list dial records: connected, dialing, waiting (when and why), or duplicate"}},
 		NoModalSurface: "an administrative listing, like runner keys: the command line is the way in on every surface",
@@ -981,7 +1009,8 @@ var Verbs = []VerbSpec{
 		Examples: []string{"runner dial ls", "runner dial ls --json"},
 	},
 	{
-		Path:           []string{"runner", "dial", "rm"},
+		Path: []string{"runner", "dial", "rm"},
+		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_RunnerDialRemove},
 		WebUIDispatch:  WebUIDispatch{Fn: "runnerDialRemove"},
 		SurfaceNotes:   map[Surface][]string{WebUI: {"stop re-dialing a runner; its live connection stays"}, TUI: {"stop re-dialing a runner; its live connection stays"}},
 		NoModalSurface: "an administrative verb, like runner unenroll: the command line is the way in on every surface",
@@ -996,7 +1025,8 @@ var Verbs = []VerbSpec{
 		Examples:        []string{"runner dial rm 3fa9c012"},
 	},
 	{
-		Path:           []string{"runner", "kick"},
+		Path: []string{"runner", "kick"},
+		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_RunnerKick},
 		WebUIDispatch:  WebUIDispatch{Fn: "runnerKick"},
 		SurfaceNotes:   map[Surface][]string{WebUI: {"make one runner leave: it ends its tasks and exits"}, TUI: {"make one runner leave: it ends its tasks and exits"}},
 		NoModalSurface: "an administrative verb, like runner unenroll: the command line is the way in on every surface",
@@ -1024,6 +1054,7 @@ var Verbs = []VerbSpec{
 	// separate paths because they are separate operations wearing one name.
 	{
 		Path:           []string{"ssh-gateway"},
+		MCPNotATool:    "it blocks until something else happens; a tool that can wait forever is a hung server (it serves ssh connections until stopped)",
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"serve ssh: `ssh -p 2222 <32-hex-task-id>@127.0.0.1` attaches to that session,",
@@ -1098,7 +1129,8 @@ var Verbs = []VerbSpec{
 
 	// --- workspace ---
 	{
-		Path:           []string{"workspace", "save"},
+		Path: []string{"workspace", "save"},
+		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_ListPortForwards},
 		SurfaceNotes:   map[Surface][]string{TUI: {"pick which tasks, their resume/runner, their forwards and the grid (--all: no picker)"}},
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
@@ -1145,7 +1177,8 @@ var Verbs = []VerbSpec{
 		Examples: []string{"workspace save dev"},
 	},
 	{
-		Path:           []string{"workspace", "rm"},
+		Path: []string{"workspace", "rm"},
+		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{},
 		SurfaceNotes:   map[Surface][]string{TUI: {"delete one workspace from .harness/config"}},
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
@@ -1160,7 +1193,8 @@ var Verbs = []VerbSpec{
 		Examples: []string{"workspace rm dev"},
 	},
 	{
-		Path:         []string{"workspace", "ls"},
+		Path: []string{"workspace", "ls"},
+		MCP:  &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{},
 		SurfaceNotes: map[Surface][]string{TUI: {"list the workspaces in .harness/config"}},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/workspacepicker.go:WorkspacePickerModel"},
@@ -1174,7 +1208,8 @@ var Verbs = []VerbSpec{
 		Examples:        []string{"workspace ls"},
 	},
 	{
-		Path:           []string{"workspace", "show"},
+		Path: []string{"workspace", "show"},
+		MCP:  &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{},
 		SurfaceNotes:   map[Surface][]string{TUI: {"print one workspace"}},
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
@@ -1222,7 +1257,8 @@ var Verbs = []VerbSpec{
 	// surfaces, which is what gives the CLI a full implementation; the TUI's
 	// `w` in the forwards pane is the same edit for a forward on screen.
 	{
-		Path:         []string{"workspace", "forward", "add"},
+		Path: []string{"workspace", "forward", "add"},
+		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{},
 		SurfaceNotes: map[Surface][]string{TUI: {"also adopts the matching running forward when <name> is the installed workspace"}},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/portforward.go:ForwardsModal"},
@@ -1246,7 +1282,8 @@ var Verbs = []VerbSpec{
 		Examples: []string{"workspace forward add dev aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -L 3000"},
 	},
 	{
-		Path:         []string{"workspace", "forward", "rm"},
+		Path: []string{"workspace", "forward", "rm"},
+		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{},
 		SurfaceNotes: map[Surface][]string{TUI: {"also releases the matching running forward when <name> is the installed workspace; it keeps running"}},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/portforward.go:ForwardsModal"},
@@ -1277,6 +1314,7 @@ var Verbs = []VerbSpec{
 	// widening when unset.
 	{
 		Path: []string{"board", "topics"},
+		MCP:  &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_BoardTopics},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/board.go:BoardModal"},
 			{Surface: WebUI, At: "webui/index.html#board-topics"},
@@ -1294,6 +1332,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"board", "read"},
+		MCP:  &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_BoardRead, protocol.TaskControlKind_BoardSubscribers, protocol.TaskControlKind_BoardArchiveRead, protocol.TaskControlKind_BoardArchives},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/board.go:BoardModal"},
 			{Surface: WebUI, At: "webui/index.html#board-topics"},
@@ -1336,6 +1375,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"board", "thread"},
+		MCP:  &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_BoardTopics, protocol.TaskControlKind_BoardRead},
 		Notes: []string{
 			"print retained messages arranged by reply chain, across topics (cap: board_observe).",
 			"Roots in seq order; ORPHAN marks a reply whose parent is outside the visible set —",
@@ -1370,6 +1410,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"board", "subscribers"},
+		MCP:  &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_BoardSubscribers},
 		ModalSurfaces: []ModalSurface{
 			// s inside the board modal.
 			{Surface: TUI, At: "tui/board.go:BoardModal"},
@@ -1390,6 +1431,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"board", "retract"},
+		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_BoardRetract},
 		ModalSurfaces: []ModalSurface{
 			// w on a message inside the board modal.
 			{Surface: TUI, At: "tui/board.go:BoardModal"},
@@ -1419,6 +1461,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"board", "clear-contacts"},
+		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_BoardContactsClear},
 		ModalSurfaces: []ModalSurface{
 			// x on a task or contact line in the board modal's subscribers view.
 			{Surface: TUI, At: "tui/board.go:BoardModal"},
@@ -1440,6 +1483,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"board", "purge"},
+		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_BoardPurge, protocol.TaskControlKind_BoardArchivePurge},
 		ModalSurfaces: []ModalSurface{
 			// x on a topic / X on a message inside the board modal.
 			{Surface: TUI, At: "tui/board.go:BoardModal"},
@@ -1468,6 +1512,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"board", "retain"},
+		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_BoardRetain},
 		ModalSurfaces: []ModalSurface{
 			// t on a topic inside the board modal.
 			{Surface: TUI, At: "tui/board.go:BoardModal"},
@@ -1497,6 +1542,7 @@ var Verbs = []VerbSpec{
 	// See docs/superpowers/specs/2026-11-02-agentboard-flush-archive-design.md.
 	{
 		Path: []string{"board", "flush"},
+		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_BoardFlush},
 		ModalSurfaces: []ModalSurface{
 			// F on a retained topic inside the board modal.
 			{Surface: TUI, At: "tui/board.go:BoardModal"},
@@ -1515,6 +1561,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"board", "archive"},
+		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_BoardArchive},
 		ModalSurfaces: []ModalSurface{
 			// A on a topic inside the board modal.
 			{Surface: TUI, At: "tui/board.go:BoardModal"},
@@ -1533,6 +1580,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"board", "archives"},
+		MCP:  &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_BoardArchives},
 		ModalSurfaces: []ModalSurface{
 			// v inside the board modal.
 			{Surface: TUI, At: "tui/board.go:BoardModal"},
@@ -1581,6 +1629,7 @@ var Verbs = []VerbSpec{
 	// step wider. prune already answers this the same way.
 	{
 		Path: []string{"board", "retract-thread"},
+		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_BoardTopics, protocol.TaskControlKind_BoardRead, protocol.TaskControlKind_BoardRetract},
 		Notes: []string{
 			"withdraw every message in ONE conversation from every agent-facing path,",
 			"across all the topics it spans. They stay readable to the operator marked",
@@ -1616,6 +1665,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"board", "purge-thread"},
+		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_BoardTopics, protocol.TaskControlKind_BoardRead, protocol.TaskControlKind_BoardPurge},
 		Notes: []string{
 			"destroy every message in ONE conversation, across all the topics it spans,",
 			"operator view included (cap: board_purge). It reaches messages retract-thread",
@@ -1650,6 +1700,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"board", "send"},
+		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_BoardSend},
 		ModalSurfaces: []ModalSurface{
 			// m composes on the open topic, a replies to the selected message.
 			{Surface: TUI, At: "tui/board.go:BoardModal"},
@@ -1692,6 +1743,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"board", "wake"},
+		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_BoardWake},
 		ModalSurfaces: []ModalSurface{
 			// p on the open (or highlighted) topic.
 			{Surface: TUI, At: "tui/board.go:BoardModal"},
@@ -1714,6 +1766,7 @@ var Verbs = []VerbSpec{
 	// oneshot kind; `session new --oneshot` replaces it.
 	{
 		Path: []string{"session", "new"},
+		MCP:  &MCPTool{SideEffect: MCPWrite, Fixed: []string{"--detach"}, Omit: []string{"detach", "x11", "x11-display"}, Why: "without -d the new session takes over this process's terminal, which inside the MCP server is the JSON-RPC stream"}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_OpenInteractive},
 		// The WebUI's command line had no spawn verb from A3, which retired
 		// `submit`, until this row reached it (operator, 2026-11-15).
 		// openSession is the page's own: it routes the request the way
@@ -1762,7 +1815,8 @@ var Verbs = []VerbSpec{
 	// because they read their positionals inside resolvePayload rather than
 	// off the FlagSet.
 	{
-		Path:           []string{"session", "send"},
+		Path: []string{"session", "send"},
+		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_AttachSession},
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"inject input into a session (co-writer attach, no takeover); pair with snapshot to drive it statelessly",
@@ -1841,6 +1895,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path:           []string{"session", "exec"},
+		MCPNotATool:    "it blocks until something else happens; a tool that can wait forever is a hung server (until the command finishes or its timeout), and it ends the process with the command's exit code",
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"run one shell command line in the session's foreground shell and block until it finishes",
@@ -1866,7 +1921,8 @@ var Verbs = []VerbSpec{
 		Examples: []string{"session exec aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ls -la"},
 	},
 	{
-		Path:           []string{"session", "stream", "turn"},
+		Path: []string{"session", "stream", "turn"},
+		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_AttachSession},
 		WebUIDispatch:  WebUIDispatch{Fn: "streamTurn"},
 		SurfaceNotes:   map[Surface][]string{WebUI: {"send a user turn (id defaults to the open chat)"}, TUI: {"send one user turn to an event-stream session"}},
 		NoModalSurface: "the TUI has an action for this (Do…) but dispatch.go is its only caller, so it IS the command line running the verb — already CmdlineSurfaces",
@@ -1888,7 +1944,8 @@ var Verbs = []VerbSpec{
 		Examples: []string{"session stream turn aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa please continue"},
 	},
 	{
-		Path:         []string{"notify"},
+		Path: []string{"notify"},
+		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_Notify},
 		SurfaceNotes: map[Surface][]string{TUI: {"send a notification (shows in this feed + --notify-hook egress; keep it one line)"}},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/notify.go:NotifyModel"},
@@ -1909,6 +1966,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"progress"},
+		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_ProgressSet, protocol.TaskControlKind_ProgressClear},
 		// Writing a line is CLI-only (only a task's own connection may), but
 		// emptying another task's line is an operator action too: the TUI key
 		// and the WebUI sheet item reach that half.
@@ -1934,6 +1992,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path:           []string{"lifecycle"},
+		MCPNotATool:    "it is a hook: it reads its event JSON from stdin, which inside the MCP server is the JSON-RPC stream",
 		NoModalSurface: "written by the Claude Code, Codex, and Antigravity hooks the runner injects; an operator connection has no principal and is refused (spec 2026-10-27-task-lifecycle D12)",
 		Notes: []string{
 			"report THIS task's lifecycle state; written by hooks, not called by hand or by the agent",
@@ -1950,7 +2009,8 @@ var Verbs = []VerbSpec{
 		Examples: []string{"lifecycle waiting", "lifecycle --hook claude idle", "lifecycle --hook codex idle", "lifecycle --hook agy idle"},
 	},
 	{
-		Path:           []string{"agent", "send"},
+		Path: []string{"agent", "send"},
+		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_AgentSend},
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"publish a message. The body is the trailing words, or --data STRING, or --data - to read it from stdin.",
@@ -1971,6 +2031,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path:           []string{"agent", "dispatch"},
+		MCPNotATool:    "it blocks until something else happens; a tool that can wait forever is a hung server (it waits for the reply)",
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"send, then block for the reply to THAT message. --reply-to R declares R as the destination AND waits there;",
@@ -2023,6 +2084,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"cancel"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		MCP: &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_Cancel},
 		WebUIDispatch: WebUIDispatch{Fn: "cancel"},
 		SurfaceNotes:  map[Surface][]string{WebUI: {"cancel a task"}, TUI: {"cancel a queued/running task"}},
 		ModalSurfaces: []ModalSurface{
@@ -2039,6 +2101,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"ls"}, CmdlineSurfaces: CLI | WebUI,
+		MCP: &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_List},
 		WebUIDispatch: WebUIDispatch{Fn: "list"},
 		SurfaceNotes:  map[Surface][]string{WebUI: {"refresh the snapshot and echo task rows"}},
 		ModalSurfaces: []ModalSurface{
@@ -2075,6 +2138,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"conns"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		MCP: &MCPTool{SideEffect: MCPRead, Omit: []string{"follow", "watch"}, Why: "--follow streams connection events and --watch repeats the --trsf table until interrupted"}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_ListConns, protocol.TaskControlKind_TrsfState},
 		WebUIDispatch: WebUIDispatch{Fn: "connsView", Local: true},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/conns.go:ConnsModal"},
@@ -2143,6 +2207,7 @@ var Verbs = []VerbSpec{
 		// doing (2026-11-17-overview-design.md). Computed once in
 		// cli.BuildOverview; every surface prints it as given.
 		Path: []string{"overview"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		MCP: &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_List, protocol.TaskControlKind_ListConns, protocol.TaskControlKind_ListPortForwards, protocol.TaskControlKind_BoardTopics, protocol.TaskControlKind_BoardRead},
 		WebUIDispatch: WebUIDispatch{Fn: "overviewView", Local: true},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/overview.go:OverviewModel"},
@@ -2173,6 +2238,7 @@ var Verbs = []VerbSpec{
 		// used to be reachable from the CLI alone -- so a TUI or WebUI
 		// operator picking chips had the names and not the sentences.
 		Path: []string{"caps"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		MCP: &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{},
 		WebUIDispatch:  WebUIDispatch{Fn: "capsCatalog"},
 		SurfaceNotes:   map[Surface][]string{TUI: {"the capability catalog: every grantable capability and the sentence saying what it gates, plus the scope grammar"}},
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
@@ -2182,7 +2248,6 @@ var Verbs = []VerbSpec{
 		Action:   "CatalogAction",
 		Const:    map[string]string{"Sub": "caps"},
 		Flags:    []Flag{{Name: "json", Type: FlagBool, Default: false, Field: "JSON", Help: "output the capability catalog as JSON"}},
-		MCP:      &MCPTool{SideEffect: MCPRead},
 		Examples: []string{"caps", "caps --json"},
 	},
 	{
@@ -2196,6 +2261,7 @@ var Verbs = []VerbSpec{
 		// strings and --list is a bool: the two spellings reach the same
 		// body through two methods, not one.
 		Path: []string{"skill", "ls"}, CmdlineSurfaces: CLI,
+		MCP: &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{},
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"name every embedded skill; the same as `skill --list`",
@@ -2206,6 +2272,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"whoami"}, CmdlineSurfaces: CLI,
+		MCP: &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_Whoami},
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"show THIS connection's own principal + server-enforced caps and scope (no cap required)",
@@ -2214,7 +2281,6 @@ var Verbs = []VerbSpec{
 		Action:   "CatalogAction",
 		Const:    map[string]string{"Sub": "whoami"},
 		Flags:    []Flag{{Name: "json", Type: FlagBool, Default: false, Field: "JSON", Help: "output the identity as a JSON object"}},
-		MCP:      &MCPTool{SideEffect: MCPRead},
 		Examples: []string{"whoami"},
 	},
 	// Three verbs the migration dispatched and never declared -- found by the
@@ -2222,6 +2288,7 @@ var Verbs = []VerbSpec{
 	// not know them, so every completeness check passed over them.
 	{
 		Path: []string{"skill"}, CmdlineSurfaces: CLI,
+		MCP: &MCPTool{SideEffect: MCPRead, WriteFlags: []string{"extract", "force"}}, Sends: []protocol.TaskControlKind{},
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"print the embedded agent skill (default: harness-cli)",
@@ -2254,6 +2321,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"watch"}, CmdlineSurfaces: CLI,
+		MCPNotATool:    "it streams until interrupted; a tool is one request and one reply",
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"stream task and runner status events",
@@ -2264,6 +2332,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"notify-watch"}, CmdlineSurfaces: CLI,
+		MCPNotATool:    "it streams until interrupted; a tool is one request and one reply",
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"stream notifications (backlog + live); one human-readable line each",
@@ -2274,6 +2343,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"version"}, CmdlineSurfaces: CLI,
+		MCP: &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{},
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"the commit this binary \u2014 and the skills embedded in it \u2014 was built from",
@@ -2282,7 +2352,6 @@ var Verbs = []VerbSpec{
 		Action:   "CatalogAction",
 		Const:    map[string]string{"Sub": "version"},
 		Flags:    []Flag{{Name: "json", Type: FlagBool, Default: false, Field: "JSON", Help: "output the build stamp as a JSON object"}},
-		MCP:      &MCPTool{SideEffect: MCPRead},
 		Examples: []string{"version"},
 	},
 	// The MCP consumer. It is a verb so the sandbox's single bridged binary
@@ -2311,6 +2380,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"prune-local"}, CmdlineSurfaces: CLI,
+		MCP: &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_List},
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"remove worktrees in <repo>/.harness-worktrees/",
@@ -2359,6 +2429,7 @@ var Verbs = []VerbSpec{
 		// the server has ever seen, and a sweep back would resurrect years of
 		// them. The asymmetry with prune is deliberate.
 		Path: []string{"restore"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		MCP: &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_RestoreTasks},
 		WebUIDispatch:  WebUIDispatch{Fn: "restore"},
 		SurfaceNotes:   map[Surface][]string{TUI: {"with no ids (or --list): what a prune forgot and could still be put back \u2014 the ids live only in the server's WAL. With ids: put those back (needs `prune` and the same scope; the record returns, the worktree is untouched)"}},
 		NoModalSurface: "the TUI has an action for this (Do…) but dispatch.go is its only caller, so it IS the command line running the verb — already CmdlineSurfaces",
@@ -2485,6 +2556,7 @@ var Verbs = []VerbSpec{
 	// --- caps set / set-parent ---
 	{
 		Path: []string{"caps", "set"}, CmdlineSurfaces: CLI | TUI,
+		MCP: &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_SetCaps},
 		SurfaceNotes: map[Surface][]string{TUI: {"OPERATOR: re-grant a LIVE task's authority; effective on its next request, no restart. --cascade also clamps its descendants"}},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/authoritypicker.go:AuthorityPickerModel"},
@@ -2540,6 +2612,7 @@ var Verbs = []VerbSpec{
 		// Who holds which capability, one row per bit, strongest first. The
 		// rows come from cli.CapsAudit; every surface renders the same rows.
 		Path: []string{"caps", "audit"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		MCP: &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_List},
 		WebUIDispatch: WebUIDispatch{Fn: "capsAuditText"},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/capsauditmodal.go:CapsAuditModal"},
@@ -2580,6 +2653,7 @@ var Verbs = []VerbSpec{
 		// confined caller is answered about what it can list, and a global set
 		// says so rather than naming the tasks that happen to be listed.
 		Path: []string{"caps", "reach"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		MCP: &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_List},
 		WebUIDispatch: WebUIDispatch{Fn: "capsReachText"},
 		ModalSurfaces: []ModalSurface{
 			{Surface: WebUI, At: "webui/index.html#task-tree-reach"},
@@ -2623,6 +2697,7 @@ var Verbs = []VerbSpec{
 		// request. The positional is the target of a re-grant or a reparent
 		// and the creator of a spawn, so the verb keeps one required id.
 		Path: []string{"caps", "what-if"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		MCP: &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_List},
 		WebUIDispatch: WebUIDispatch{Fn: "capsWhatIfText"},
 		ModalSurfaces: []ModalSurface{
 			{Surface: WebUI, At: "webui/index.html#task-tree-whatif"},
@@ -2794,6 +2869,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"caps", "set-parent"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		MCP: &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_SetParent},
 		WebUIDispatch: WebUIDispatch{Fn: "setParent"},
 		SurfaceNotes:  map[Surface][]string{WebUI: {"re-point the task's parent link (--none: to root; --swap: invert with its current parent); operator-only"}, TUI: {"OPERATOR: re-point a live task's parent, the edge subtree scopes walk; --swap inverts it with its current parent"}},
 		ModalSurfaces: []ModalSurface{
@@ -2838,6 +2914,7 @@ var Verbs = []VerbSpec{
 	// --- single-task session verbs ---
 	{
 		Path: []string{"session", "attach"}, CmdlineSurfaces: CLI | TUI,
+		MCPNotATool:  "it takes this process's terminal; inside the MCP server stdin and stdout are the JSON-RPC stream",
 		SurfaceNotes: map[Surface][]string{TUI: {"reattach to a session"}},
 		ModalSurfaces: []ModalSurface{
 			// r / R take a live session over; v attaches view-only.
@@ -2872,6 +2949,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"session", "ls"}, CmdlineSurfaces: CLI | TUI,
+		MCP: &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_List},
 		SurfaceNotes:   map[Surface][]string{TUI: {"list detachable sessions"}},
 		NoModalSurface: "DoSessionList has no caller but dispatch.go, so it is the command line running the verb. The grid was considered and is NOT this: it tiles live sessions selected from the TASK list (gridLiveTasks over []TaskInfo), where this verb enumerates the server's session registry",
 		Notes: []string{
@@ -2880,7 +2958,6 @@ var Verbs = []VerbSpec{
 		},
 		Action: "SessionAction",
 		Const:  map[string]string{"Sub": "ls"},
-		MCP:    &MCPTool{SideEffect: MCPRead},
 		// This listing has no text form -- it has emitted JSON Lines since it
 		// was added, and scripts read it. --json is accepted so that a hand
 		// which types it on `ls`, `conns`, `exec ls` and `forward ls` is not
@@ -2898,6 +2975,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"session", "kill"}, CmdlineSurfaces: CLI | TUI,
+		MCP: &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_Cancel},
 		SurfaceNotes:   map[Surface][]string{TUI: {"terminate a session"}},
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
@@ -2910,6 +2988,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"session", "rename"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		MCP: &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_TaskRename},
 		WebUIDispatch:  WebUIDispatch{Fn: "taskRename"},
 		NoModalSurface: "looked for: a name is one typed value; every surface's command line runs the verb, and the WebUI task sheet's rename item only prompts for the name and calls the same bridge function",
 		Notes: []string{
@@ -2917,13 +2996,13 @@ var Verbs = []VerbSpec{
 			"the operator may rename any task; from inside a task you may rename only your own descendants within your resume scope, never yourself (a self-rename would let a task pose as another on the board)",
 		},
 		Action: "SessionRenameAction",
-		MCP:    &MCPTool{SideEffect: MCPWrite},
 		Args: []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"},
 			{Name: "name", Type: ArgString, Field: "Name"}},
 		Examples: []string{"session rename aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa nightly-ci"},
 	},
 	{
 		Path: []string{"session", "await-idle"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		MCPNotATool:   "it blocks until something else happens; a tool that can wait forever is a hung server (until the session goes idle)",
 		WebUIDispatch: WebUIDispatch{Fn: "awaitIdle"},
 		SurfaceNotes:  map[Surface][]string{WebUI: {"fire when the session's output goes idle (default: prints here on fire; --notify: notification feed + hook)"}, TUI: {"fire when the session's output goes idle (default: result line here; --notify: operator notification)"}},
 		ModalSurfaces: []ModalSurface{
@@ -2952,7 +3031,8 @@ var Verbs = []VerbSpec{
 		Examples: []string{"session await-idle aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "session await-idle --signal any aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 	},
 	{
-		Path:          []string{"session", "await-idle", "ls"},
+		Path: []string{"session", "await-idle", "ls"},
+		MCP:  &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_AwaitList},
 		WebUIDispatch: WebUIDispatch{Fn: "awaitIdleList"},
 		SurfaceNotes: map[Surface][]string{
 			TUI:   {"list the armed await-idle watchers (I opens the list; x kills a row)"},
@@ -2978,7 +3058,8 @@ var Verbs = []VerbSpec{
 		Examples: []string{"session await-idle ls", "session await-idle ls --json"},
 	},
 	{
-		Path:          []string{"session", "await-idle", "kill"},
+		Path: []string{"session", "await-idle", "kill"},
+		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_AwaitKill},
 		WebUIDispatch: WebUIDispatch{Fn: "awaitIdleKill"},
 		SurfaceNotes:  map[Surface][]string{TUI: {"disarm one watcher"}},
 		ModalSurfaces: []ModalSurface{
@@ -2999,6 +3080,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"await-progress"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		MCPNotATool:   "it blocks until something else happens; a tool that can wait forever is a hung server (until the task reports progress)",
 		WebUIDispatch: WebUIDispatch{Fn: "awaitProgress"},
 		SurfaceNotes: map[Surface][]string{
 			WebUI: {"fire when the task writes its next progress line (default: prints here on fire; --notify: notification feed + hook)"},
@@ -3025,7 +3107,8 @@ var Verbs = []VerbSpec{
 		Examples: []string{"await-progress aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "await-progress --since 1760000000000000000 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 	},
 	{
-		Path:          []string{"await-progress", "ls"},
+		Path: []string{"await-progress", "ls"},
+		MCP:  &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_AwaitList},
 		WebUIDispatch: WebUIDispatch{Fn: "awaitIdleList"},
 		SurfaceNotes: map[Surface][]string{
 			TUI:   {"list the armed await-progress watchers (I opens the watcher list; x kills a row)"},
@@ -3051,7 +3134,8 @@ var Verbs = []VerbSpec{
 		Examples: []string{"await-progress ls", "await-progress ls --json"},
 	},
 	{
-		Path:          []string{"await-progress", "kill"},
+		Path: []string{"await-progress", "kill"},
+		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_AwaitKill},
 		WebUIDispatch: WebUIDispatch{Fn: "awaitIdleKill"},
 		SurfaceNotes:  map[Surface][]string{TUI: {"disarm one watcher"}},
 		ModalSurfaces: []ModalSurface{
@@ -3070,6 +3154,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"session", "resize"}, CmdlineSurfaces: CLI,
+		MCP: &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_AttachSession},
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"set a live session's PTY size; the server echoing the new size back IS the acknowledgement",
@@ -3090,6 +3175,7 @@ var Verbs = []VerbSpec{
 		// run modes. Gated on cancel over the task: either direction changes
 		// how the run ends.
 		Path: []string{"session", "mode"}, CmdlineSurfaces: CLI | TUI,
+		MCP: &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_SessionMode},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/actions.go:onRunMode"},
 			{Surface: TUI, At: "tui/bgform.go:BgFormModel"}, // the conditions for going background
@@ -3135,13 +3221,13 @@ var Verbs = []VerbSpec{
 	// deletes and switches them.
 	{
 		Path: []string{"record", "ls"}, CmdlineSurfaces: CLI | TUI,
+		MCP: &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_RecordList},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/detail.go:formatTaskDetail"},
 			{Surface: WebUI, At: "webui/static/main.js:buildTaskSheet"},
 		},
 		Notes:  []string{"list PTY records: each run's start, end, end reason, size on disk, expiry, truncation; with no task, every record you may view"},
 		Action: "RecordLsAction",
-		MCP:    &MCPTool{SideEffect: MCPRead},
 		Args:   []Arg{{Name: "task-id", Type: ArgTaskID, Variadic: true, MaxCount: 1, Field: "TaskID"}},
 		Examples: []string{
 			"record ls",
@@ -3150,6 +3236,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"record", "get"}, CmdlineSurfaces: CLI | TUI,
+		MCP: &MCPTool{SideEffect: MCPRead, WriteFlags: []string{"o"}}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_RecordGet},
 		ModalSurfaces: []ModalSurface{{Surface: WebUI, At: "webui/static/main.js:buildTaskSheet"}},
 		Notes: []string{
 			"write one run's PTY record: the raw output, as session snapshot --raw prints it, or asciicast v2 (asciinema play)",
@@ -3177,6 +3264,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"record", "rm"}, CmdlineSurfaces: CLI | TUI,
+		MCP: &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_RecordDelete},
 		ModalSurfaces: []ModalSurface{{Surface: WebUI, At: "webui/static/main.js:buildTaskSheet"}},
 		Notes:         []string{"delete a PTY record (record_delete); <task-id>#<n> for one run, or <task-id> --all-runs for every run"},
 		Action:        "RecordRmAction",
@@ -3191,6 +3279,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"record", "keep"}, CmdlineSurfaces: CLI | TUI,
+		MCP: &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_RecordKeep},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/recordkeep.go:RecordKeepForm"},
 			{Surface: WebUI, At: "webui/static/main.js:buildTaskSheet"},
@@ -3211,6 +3300,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"record", "on"}, CmdlineSurfaces: CLI | TUI,
+		MCP: &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_RecordSwitch},
 		ModalSurfaces: []ModalSurface{{Surface: WebUI, At: "webui/static/main.js:buildTaskSheet"}},
 		Notes:         []string{"start recording a live interactive session (record_persist); with no record yet the record starts from the session's replay buffer"},
 		Action:        "RecordSwitchAction",
@@ -3220,6 +3310,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"record", "off"}, CmdlineSurfaces: CLI | TUI,
+		MCP: &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_RecordSwitch},
 		ModalSurfaces: []ModalSurface{{Surface: WebUI, At: "webui/static/main.js:buildTaskSheet"}},
 		Notes:         []string{"stop recording a session (record_delete); the record stays"},
 		Action:        "RecordSwitchAction",
@@ -3231,6 +3322,7 @@ var Verbs = []VerbSpec{
 	// fetched from the task's runner on demand; nothing is kept on the server.
 	{
 		Path: []string{"transcript", "ls"}, CmdlineSurfaces: CLI | TUI,
+		MCP: &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_TranscriptList},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/detail.go:formatTranscriptsBlock"},
 			{Surface: WebUI, At: "webui/static/main.js:buildTaskSheet"},
@@ -3241,7 +3333,6 @@ var Verbs = []VerbSpec{
 			"a shared session (a --no-worktree task's repo) is listed only with exec_run on the task as well",
 		},
 		Action: "TranscriptLsAction",
-		MCP:    &MCPTool{SideEffect: MCPRead},
 		Args: []Arg{
 			{Name: "task-id", Type: ArgTaskID, Field: "TaskID"},
 			{Name: "session", Type: ArgString, Variadic: true, MaxCount: 1, Field: "Session"},
@@ -3253,6 +3344,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"transcript", "get"}, CmdlineSurfaces: CLI | TUI,
+		MCP: &MCPTool{SideEffect: MCPRead, WriteFlags: []string{"o"}}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_TranscriptGet},
 		ModalSurfaces: []ModalSurface{{Surface: WebUI, At: "webui/static/main.js:buildTaskSheet"}},
 		Notes: []string{
 			"write one file of an agent session as the agent stored it, or with no file the whole session as a tar (transcript_read)",
@@ -3279,6 +3371,7 @@ var Verbs = []VerbSpec{
 	// ModalSurfaces rows.
 	{
 		Path: []string{"schedule", "new"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		MCP: &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_ScheduleCreate},
 		WebUIDispatch: WebUIDispatch{Fn: "scheduleCreate"},
 		ModalSurfaces: []ModalSurface{{Surface: WebUI, At: "webui/index.html#compose-cron"}},
 		Notes: []string{
@@ -3305,6 +3398,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"schedule", "edit"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		MCP: &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_ScheduleEdit},
 		WebUIDispatch:  WebUIDispatch{Fn: "scheduleEdit"},
 		NoModalSurface: "looked for: the TUI Schedules table and the WebUI dialog show, run and delete a schedule; editing is by the command line on both (spec, Surfaces)",
 		Notes: []string{
@@ -3336,6 +3430,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"schedule", "run"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		MCP: &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_ScheduleRun},
 		WebUIDispatch: WebUIDispatch{Fn: "scheduleRun"},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/schedules.go:SchedulesModel"},
@@ -3351,6 +3446,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"schedule", "rm"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		MCP: &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_ScheduleDelete},
 		WebUIDispatch: WebUIDispatch{Fn: "scheduleDelete"},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/schedules.go:SchedulesModel"},
@@ -3366,6 +3462,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"schedule", "ls"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		MCP: &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_ScheduleList},
 		WebUIDispatch: WebUIDispatch{Fn: "scheduleList"},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/schedules.go:SchedulesModel"},
@@ -3382,6 +3479,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"schedule", "show"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		MCP: &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_ScheduleShow},
 		WebUIDispatch: WebUIDispatch{Fn: "scheduleShow"},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/schedules.go:SchedulesModel"},
@@ -3406,6 +3504,7 @@ var Verbs = []VerbSpec{
 	// (credentialAuthorityFlags), not copies.
 	{
 		Path: []string{"credential", "keygen"}, CmdlineSurfaces: CLI,
+		MCP: &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{},
 		NoModalSurface: "looked for: keygen writes a private key file on the host that will use it; TUI and WebUI run elsewhere, so it stays CLI only",
 		Notes: []string{
 			"on the host that will use the credential: generate an Ed25519 key pair, write the seed to --out (mode 0600, never overwritten) and print the public key (64 hex) for `credential new --pubkey`; the seed never leaves this host",
@@ -3420,6 +3519,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"credential", "bind"}, CmdlineSurfaces: CLI,
+		MCP: &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{},
 		NoModalSurface: "looked for: bind rewrites the seed file `credential keygen` wrote, on the host that will use it; TUI and WebUI run elsewhere, so it stays CLI only",
 		Notes: []string{
 			"on the host that will use the credential, after `credential new --pubkey` / `credential rekey --pubkey` printed the task id: turn the seed file `credential keygen` wrote into the credential file `<task-id>:<seed>` (mode 0600, replaced atomically; the seed is never printed)",
@@ -3443,6 +3543,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"credential", "new"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		MCP: &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_CredentialIssue},
 		WebUIDispatch: WebUIDispatch{Fn: "credentialNew"},
 		// The TUI issues from its command line (N in the credentials table
 		// prefills it), so the table is not this verb's surface there.
@@ -3467,6 +3568,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"credential", "rekey"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		MCP: &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_CredentialRekey},
 		WebUIDispatch: WebUIDispatch{Fn: "credentialRekey"},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/credentials.go:CredentialsModel"},
@@ -3489,6 +3591,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"credential", "ls"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		MCP: &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_List},
 		WebUIDispatch: WebUIDispatch{Fn: "credentialList"},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/credentials.go:CredentialsModel"},
@@ -3505,6 +3608,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"credential", "revoke"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		MCP: &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_List, protocol.TaskControlKind_Cancel},
 		WebUIDispatch: WebUIDispatch{Fn: "credentialRevoke"},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/credentials.go:CredentialsModel"},
@@ -3525,6 +3629,7 @@ var Verbs = []VerbSpec{
 		// three, it was reachable on one, and the TUI's help was made to
 		// advertise a line its cmdline refuses.
 		Path: []string{"session", "snapshot"}, CmdlineSurfaces: CLI,
+		MCP: &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_AttachSession},
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"print the session's current PTY screen as text (view attach; non-intrusive, works without a TTY)",
@@ -3567,6 +3672,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"session", "stream", "attach"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		MCPNotATool:   "it streams until interrupted; a tool is one request and one reply",
 		WebUIDispatch: WebUIDispatch{Fn: "openChatFor", Local: true},
 		SurfaceNotes:  map[Surface][]string{TUI: {"follow an event-stream session's events (the counterpart of attaching to a PTY)"}},
 		ModalSurfaces: []ModalSurface{
@@ -3583,6 +3689,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"session", "stream", "interrupt"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		MCP: &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_AttachSession},
 		WebUIDispatch: WebUIDispatch{Fn: "streamInterrupt"},
 		SurfaceNotes:  map[Surface][]string{TUI: {"abandon the running turn; the agent survives to take the next one"}},
 		ModalSurfaces: []ModalSurface{
@@ -3599,6 +3706,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"session", "stream", "finish"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		MCP: &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_AttachSession},
 		WebUIDispatch: WebUIDispatch{Fn: "streamFinish"},
 		SurfaceNotes:  map[Surface][]string{TUI: {"close the agent's stdin so it ends the turn in flight and exits cleanly"}},
 		ModalSurfaces: []ModalSurface{
@@ -3615,6 +3723,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"session", "stream", "approve"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		MCP: &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_AttachSession},
 		WebUIDispatch: WebUIDispatch{Fn: "streamApprove"},
 		SurfaceNotes:  map[Surface][]string{TUI: {"answer a tool-approval request the agent is blocked on"}},
 		ModalSurfaces: []ModalSurface{
@@ -3655,6 +3764,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"session", "stream", "answer"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		MCP: &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_AttachSession},
 		WebUIDispatch: WebUIDispatch{Fn: "streamAnswer"},
 		SurfaceNotes:  map[Surface][]string{TUI: {"answer a question the agent is blocked on (the chat answers it with keys)"}},
 		ModalSurfaces: []ModalSurface{
@@ -3690,13 +3800,13 @@ var Verbs = []VerbSpec{
 	// and read HARNESS_* env, which no operator surface has.
 	{
 		Path: []string{"agent", "inbox"}, CmdlineSurfaces: CLI,
+		MCP: &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_AgentInbox, protocol.TaskControlKind_AgentInboxAdvance},
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"idempotent dump of subscribed topics; --since 0 (default) = the whole ring",
 		},
 		Action: "AgentAction",
 		Const:  map[string]string{"Sub": "inbox"},
-		MCP:    &MCPTool{SideEffect: MCPRead},
 		Flags: append(agentCommonFlags(),
 			Flag{Name: "since", Type: FlagUint64, Default: uint64(0), Field: "Since", Help: "start from this seq (0 = whole ring)"},
 			agentJSONEitherWay(),
@@ -3708,6 +3818,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"agent", "wait"}, CmdlineSurfaces: CLI,
+		MCPNotATool:    "it blocks until something else happens; a tool that can wait forever is a hung server (until a message arrives or its timeout)",
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"take everything after --since, blocking only if there is nothing;",
@@ -3728,6 +3839,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"agent", "subscribe"}, CmdlineSurfaces: CLI,
+		MCP: &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_AgentSubscribe},
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"register a subscription",
@@ -3742,6 +3854,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"agent", "unsubscribe"}, CmdlineSurfaces: CLI,
+		MCP: &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_AgentUnsubscribe},
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"remove a subscription",
@@ -3756,6 +3869,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"agent", "topics"}, CmdlineSurfaces: CLI,
+		MCP: &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_BoardTopics},
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"list every topic on the board (JSON Lines) (cap: board_observe)",
@@ -3767,6 +3881,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"agent", "archives"}, CmdlineSurfaces: CLI,
+		MCP: &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_AgentArchives},
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the operator's board archives is the modal path",
 		Notes: []string{
 			"list the archives of one topic this task may read (JSON Lines; no cap). Read one with agent read --archive <id>.",
@@ -3781,6 +3896,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"agent", "subscriptions"}, CmdlineSurfaces: CLI,
+		MCP: &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_AgentListSubscriptions},
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"list this agent's registered patterns (JSON Lines)",
@@ -3792,6 +3908,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"agent", "contacts"}, CmdlineSurfaces: CLI,
+		MCP: &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_AgentListContacts},
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in (the operator reads the same list on board subscribers)",
 		Notes: []string{
 			"list this agent's contacts, newest first (JSON Lines): reply routes it may publish to without board_peer because someone addressed it from there; at most 64, forgotten on server restart (no cap)",
@@ -3803,6 +3920,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"agent", "retained"}, CmdlineSurfaces: CLI,
+		MCP: &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_AgentListRetained},
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"list a topic's retained ring as metadata only, no payload (no cap)",
@@ -3817,6 +3935,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"agent", "thread"}, CmdlineSurfaces: CLI,
+		MCP: &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_AgentListRetained, protocol.TaskControlKind_AgentListSubscriptions, protocol.TaskControlKind_AgentReadSeq},
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"print the calling task's side of the reply chain, across its subscribed topics (no cap).",
@@ -3842,6 +3961,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"agent", "purge"}, CmdlineSurfaces: CLI,
+		MCP: &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_BoardPurge, protocol.TaskControlKind_BoardArchivePurge},
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"drop a topic's retained buffer, or one message by seq (cap: board_purge)",
@@ -3861,6 +3981,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"agent", "read"}, CmdlineSurfaces: CLI,
+		MCP: &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_AgentReadSeq, protocol.TaskControlKind_AgentReadPage, protocol.TaskControlKind_AgentArchiveRead},
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"fetch one retained message, whole; the hooks name it when they decline to inline a large body.",
@@ -3894,6 +4015,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"agent", "retract"}, CmdlineSurfaces: CLI,
+		MCP: &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_AgentRetract},
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"withdraw a message YOU sent: gone from every agent path, still visible to the operator as retracted",
@@ -4077,7 +4199,8 @@ func init() {
 // differ only in the operation and its notes.
 func membershipVerb(sub string, notes ...string) VerbSpec {
 	return VerbSpec{
-		Path:            []string{"board", sub},
+		Path: []string{"board", sub},
+		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_BoardMembership},
 		Notes:           notes,
 		CmdlineSurfaces: CLI,
 		Action:          "BoardAction",

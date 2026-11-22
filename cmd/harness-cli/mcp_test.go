@@ -67,12 +67,15 @@ func TestMCPNeverExposesItself(t *testing.T) {
 	}
 }
 
-// TestMCPExcludesInteractiveVerbs: the streaming verbs are excluded by
-// declaration (D10), so this asserts the declaration did not grow into them.
+// TestMCPExcludesInteractiveVerbs: the verbs that stream, block or own the
+// terminal are excluded by declaration (spec §6), so this asserts the
+// declaration did not grow into them.
 func TestMCPExcludesInteractiveVerbs(t *testing.T) {
 	excluded := []string{
-		"session attach", "session await-idle", "grid", "ssh-gateway",
-		"exec tap", "forward", "forward tap", "board wake", "agent wait",
+		"watch", "notify-watch", "exec tap", "forward tap", "session stream attach",
+		"forward", "ssh-gateway", "agent wait", "agent dispatch", "session await-idle",
+		"await-progress", "session exec", "session attach", "file edit", "file new",
+		"exec", "lifecycle", "mcp",
 	}
 	for _, name := range excluded {
 		spec, ok := verb.Lookup(strings.Fields(name)...)

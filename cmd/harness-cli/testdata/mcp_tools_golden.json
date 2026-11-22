@@ -1,6 +1,1841 @@
 [
   {
     "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "ask the server to forget tasks",
+    "inputSchema": {
+      "properties": {
+        "before": {
+          "default": "168h0m0s",
+          "type": "string"
+        },
+        "task-id": {
+          "items": {
+            "pattern": "^[0-9a-f]{32}$",
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "task-id"
+      ],
+      "type": "object"
+    },
+    "name": "prune"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "copy a local file (or directory tree with -r) into the worktree",
+    "inputSchema": {
+      "properties": {
+        "force": {
+          "default": false,
+          "type": "boolean"
+        },
+        "local-src": {
+          "type": "string"
+        },
+        "parents": {
+          "default": false,
+          "type": "boolean"
+        },
+        "recursive": {
+          "default": false,
+          "type": "boolean"
+        },
+        "route": {
+          "default": "splice",
+          "type": "string"
+        },
+        "task-id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        },
+        "worktree-rel-dst": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "task-id",
+        "local-src",
+        "worktree-rel-dst"
+      ],
+      "type": "object"
+    },
+    "name": "file_push"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "copy a worktree file (or directory tree with -r) to a local path",
+    "inputSchema": {
+      "properties": {
+        "force": {
+          "default": false,
+          "type": "boolean"
+        },
+        "length": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "local-dst": {
+          "type": "string"
+        },
+        "offset": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "recursive": {
+          "default": false,
+          "type": "boolean"
+        },
+        "route": {
+          "default": "splice",
+          "type": "string"
+        },
+        "task-id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        },
+        "worktree-rel-src": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "task-id",
+        "worktree-rel-src",
+        "local-dst"
+      ],
+      "type": "object"
+    },
+    "name": "file_pull"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "description": "list a single directory under the worktree (default: worktree root)",
+    "inputSchema": {
+      "properties": {
+        "route": {
+          "default": "splice",
+          "type": "string"
+        },
+        "task-id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        },
+        "worktree-rel-dir": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "task-id",
+        "worktree-rel-dir"
+      ],
+      "type": "object"
+    },
+    "name": "file_ls"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "create a directory in the worktree",
+    "inputSchema": {
+      "properties": {
+        "parents": {
+          "default": false,
+          "type": "boolean"
+        },
+        "route": {
+          "default": "splice",
+          "type": "string"
+        },
+        "task-id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        },
+        "worktree-rel-dir": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "task-id",
+        "worktree-rel-dir"
+      ],
+      "type": "object"
+    },
+    "name": "file_mkdir"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "remove a file; -r a directory (dir_delete), -r -f a non-empty directory (RemoveAll); without -r a directory is refused",
+    "inputSchema": {
+      "properties": {
+        "force": {
+          "default": false,
+          "type": "boolean"
+        },
+        "recursive": {
+          "default": false,
+          "type": "boolean"
+        },
+        "route": {
+          "default": "splice",
+          "type": "string"
+        },
+        "task-id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        },
+        "worktree-rel-path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "task-id",
+        "worktree-rel-path"
+      ],
+      "type": "object"
+    },
+    "name": "file_delete"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "description": "the task's commits",
+    "inputSchema": {
+      "properties": {
+        "max": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pathspec": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "revision": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "subrepo": {
+          "default": "",
+          "type": "string"
+        },
+        "task-id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task-id",
+        "revision"
+      ],
+      "type": "object"
+    },
+    "name": "git_log"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "description": "counts revisions the way git does: none = unstaged, one = that revision",
+    "inputSchema": {
+      "properties": {
+        "base": {
+          "type": "string"
+        },
+        "max-bytes": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pathspec": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "staged": {
+          "default": false,
+          "type": "boolean"
+        },
+        "submodule": {
+          "default": false,
+          "type": "boolean"
+        },
+        "subrepo": {
+          "default": "",
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "task-id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task-id"
+      ],
+      "type": "object"
+    },
+    "name": "git_diff"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "description": "one commit and its diff",
+    "inputSchema": {
+      "properties": {
+        "max-bytes": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pathspec": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "revision": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "submodule": {
+          "default": false,
+          "type": "boolean"
+        },
+        "subrepo": {
+          "default": "",
+          "type": "string"
+        },
+        "task-id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task-id",
+        "revision"
+      ],
+      "type": "object"
+    },
+    "name": "git_show"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "description": "uncommitted and untracked paths (untracked appear in no diff)",
+    "inputSchema": {
+      "properties": {
+        "pathspec": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "subrepo": {
+          "default": "",
+          "type": "string"
+        },
+        "task-id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task-id"
+      ],
+      "type": "object"
+    },
+    "name": "git_status"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "description": "list the nested repositories under the worktree",
+    "inputSchema": {
+      "properties": {
+        "pathspec": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "subrepo": {
+          "default": "",
+          "type": "string"
+        },
+        "task-id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task-id"
+      ],
+      "type": "object"
+    },
+    "name": "git_subrepos"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "description": "one file's whole content",
+    "inputSchema": {
+      "properties": {
+        "max-bytes": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "path": {
+          "type": "string"
+        },
+        "pathspec": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "rev": {
+          "default": "",
+          "type": "string"
+        },
+        "staged": {
+          "default": false,
+          "type": "boolean"
+        },
+        "subrepo": {
+          "default": "",
+          "type": "string"
+        },
+        "task-id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task-id"
+      ],
+      "type": "object"
+    },
+    "name": "git_file"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "description": "list running execs; --task filters, --json emits JSON lines",
+    "inputSchema": {
+      "properties": {
+        "json": {
+          "default": false,
+          "type": "boolean"
+        },
+        "task": {
+          "default": "",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "exec_ls"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "stop one or more running execs by id (from `exec ls`)",
+    "inputSchema": {
+      "properties": {
+        "exec-id": {
+          "items": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "exec-id"
+      ],
+      "type": "object"
+    },
+    "name": "exec_kill"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "description": "list registered port forwards; --task filters, --json emits JSON lines",
+    "inputSchema": {
+      "properties": {
+        "drops": {
+          "default": false,
+          "type": "boolean"
+        },
+        "json": {
+          "default": false,
+          "type": "boolean"
+        },
+        "task": {
+          "default": "",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "forward_ls"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "kill one or more registered forwards by id (from `forward ls`)",
+    "inputSchema": {
+      "properties": {
+        "forward-id": {
+          "items": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "forward-id"
+      ],
+      "type": "object"
+    },
+    "name": "forward_kill"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "ask the server to reverse-dial RUNNER_CID",
+    "inputSchema": {
+      "properties": {
+        "runner-cid": {
+          "type": "string"
+        },
+        "via": {
+          "default": "",
+          "type": "string"
+        }
+      },
+      "required": [
+        "runner-cid"
+      ],
+      "type": "object"
+    },
+    "name": "server_dial-runner"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "enroll a runner's public key: a runner signing with it may register",
+    "inputSchema": {
+      "properties": {
+        "label": {
+          "default": "",
+          "type": "string"
+        },
+        "pubkey": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "pubkey"
+      ],
+      "type": "object"
+    },
+    "name": "runner_enroll"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "description": "list enrolled runner keys: label, when and by whom each was enrolled,",
+    "inputSchema": {
+      "properties": {
+        "json": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "name": "runner_keys"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "remove an enrolled key, named by a unique prefix of at least 8 hex",
+    "inputSchema": {
+      "properties": {
+        "force": {
+          "default": false,
+          "type": "boolean"
+        },
+        "key-prefix": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "key-prefix"
+      ],
+      "type": "object"
+    },
+    "name": "runner_unenroll"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "store a dial record: the server dials the runner (agent-runner --listen)",
+    "inputSchema": {
+      "properties": {
+        "candidates": {
+          "type": "string"
+        },
+        "key": {
+          "default": "",
+          "type": "string"
+        },
+        "label": {
+          "default": "",
+          "type": "string"
+        }
+      },
+      "required": [
+        "candidates"
+      ],
+      "type": "object"
+    },
+    "name": "runner_dial_add"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "description": "list dial records: state, the runner connected through each, the",
+    "inputSchema": {
+      "properties": {
+        "json": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "name": "runner_dial_ls"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "remove a dial record by its id (8 hex, from runner dial ls)",
+    "inputSchema": {
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "name": "runner_dial_rm"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "make one runner leave, named by 8-32 hex of its identity (the id= column):",
+    "inputSchema": {
+      "properties": {
+        "force": {
+          "default": false,
+          "type": "boolean"
+        },
+        "runner-id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "runner-id"
+      ],
+      "type": "object"
+    },
+    "name": "runner_kick"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "records every task the registry reports a forward for; --task narrows it to one.",
+    "inputSchema": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "repo": {
+          "default": "",
+          "type": "string"
+        },
+        "resume": {
+          "default": "continue",
+          "type": "string"
+        },
+        "runner": {
+          "default": "assigned",
+          "type": "string"
+        },
+        "task": {
+          "default": "",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "name": "workspace_save"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "delete one workspace from .harness/config (other workspaces and comments kept)",
+    "inputSchema": {
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "name": "workspace_rm"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "description": "list the workspaces in .harness/config",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    },
+    "name": "workspace_ls"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "description": "print one workspace, or all of them when no name is given",
+    "inputSchema": {
+      "properties": {
+        "name": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "name": "workspace_show"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "declare a forward for a task in .harness/config; starts nothing",
+    "inputSchema": {
+      "properties": {
+        "L": {
+          "type": "string"
+        },
+        "R": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "task-id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "task-id"
+      ],
+      "type": "object"
+    },
+    "name": "workspace_forward_add"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "drop a forward's declaration from .harness/config; stops nothing (the task block stays)",
+    "inputSchema": {
+      "properties": {
+        "L": {
+          "type": "string"
+        },
+        "R": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "task-id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "task-id"
+      ],
+      "type": "object"
+    },
+    "name": "workspace_forward_rm"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "description": "list every topic on the board with metadata (cap: board_observe)",
+    "inputSchema": {
+      "properties": {
+        "json": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "name": "board_topics"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "description": "print retained messages for \u003ctopic\u003e (text: header + pretty payload;",
+    "inputSchema": {
+      "properties": {
+        "archive": {
+          "default": "",
+          "type": "string"
+        },
+        "before": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "in-reply-to": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "json": {
+          "default": false,
+          "type": "boolean"
+        },
+        "limit": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "raw": {
+          "default": false,
+          "type": "boolean"
+        },
+        "topic": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "board_read"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "description": "print retained messages arranged by reply chain, across topics (cap: board_observe).",
+    "inputSchema": {
+      "properties": {
+        "conversation": {
+          "default": "",
+          "type": "string"
+        },
+        "headers-only": {
+          "default": false,
+          "type": "boolean"
+        },
+        "json": {
+          "default": false,
+          "type": "boolean"
+        },
+        "raw": {
+          "default": false,
+          "type": "boolean"
+        },
+        "seq": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "task": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "board_thread"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "description": "list each task's subscriptions; with \u003ctopic\u003e, only the tasks a publish there reaches (cap: board_observe)",
+    "inputSchema": {
+      "properties": {
+        "json": {
+          "default": false,
+          "type": "boolean"
+        },
+        "topic": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "topic"
+      ],
+      "type": "object"
+    },
+    "name": "board_subscribers"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "withdraw one message: gone from every agent path, still readable here until the topic ages out (cap: board_purge)",
+    "inputSchema": {
+      "properties": {
+        "seq": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "topic": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "topic"
+      ],
+      "type": "object"
+    },
+    "name": "board_retract"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "forget one contact of a task (--topic), or all of them; a forgotten route needs board_peer again until the task is addressed from it (cap: board_purge, scoped)",
+    "inputSchema": {
+      "properties": {
+        "json": {
+          "default": false,
+          "type": "boolean"
+        },
+        "task": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        },
+        "topic": {
+          "default": "",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task"
+      ],
+      "type": "object"
+    },
+    "name": "board_clear-contacts"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "drop the whole topic ring (seq=0) or one message by seq.",
+    "inputSchema": {
+      "properties": {
+        "archive": {
+          "default": "",
+          "type": "string"
+        },
+        "seq": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "topic": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "board_purge"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "keep \u003ctopic\u003e past the board TTL and a server restart, on disk: --ttl \u003cduration\u003e counts from its last publish, --ttl forever never expires;",
+    "inputSchema": {
+      "properties": {
+        "clear": {
+          "default": false,
+          "type": "boolean"
+        },
+        "topic": {
+          "type": "string"
+        },
+        "ttl": {
+          "default": "",
+          "type": "string"
+        }
+      },
+      "required": [
+        "topic"
+      ],
+      "type": "object"
+    },
+    "name": "board_retain"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "empty a retained topic's in-memory ring; its disk log keeps every message and a restart does not load them back.",
+    "inputSchema": {
+      "properties": {
+        "topic": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "topic"
+      ],
+      "type": "object"
+    },
+    "name": "board_flush"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "freeze \u003ctopic\u003e's history up to now into an archive nothing appends to, kept until purged:",
+    "inputSchema": {
+      "properties": {
+        "topic": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "topic"
+      ],
+      "type": "object"
+    },
+    "name": "board_archive"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "description": "list archives: id, source topic, the seq it runs through, messages, who made it, bytes on disk (cap: board_observe).",
+    "inputSchema": {
+      "properties": {
+        "json": {
+          "default": false,
+          "type": "boolean"
+        },
+        "topic": {
+          "default": "",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "board_archives"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "subscribe \u003ctask\u003e to \u003ctopic\u003e, as its own agent subscribe would: only a topic the task could read itself; grants nothing (cap: board_member, scoped)",
+    "inputSchema": {
+      "properties": {
+        "task": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        },
+        "topic": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "task",
+        "topic"
+      ],
+      "type": "object"
+    },
+    "name": "board_subscribe"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "drop \u003ctask\u003e's subscription to \u003ctopic\u003e; on a member it is leave (cap: board_member, scoped)",
+    "inputSchema": {
+      "properties": {
+        "task": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        },
+        "topic": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "task",
+        "topic"
+      ],
+      "type": "object"
+    },
+    "name": "board_unsubscribe"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "make \u003ctask\u003e a member of \u003ctopic\u003e: subscribed, may publish there, and its posts are answered on the topic unless it names --reply-to.",
+    "inputSchema": {
+      "properties": {
+        "task": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        },
+        "topic": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "task",
+        "topic"
+      ],
+      "type": "object"
+    },
+    "name": "board_join"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "end \u003ctask\u003e's membership of \u003ctopic\u003e and its subscription (cap: board_member, scoped)",
+    "inputSchema": {
+      "properties": {
+        "task": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        },
+        "topic": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "task",
+        "topic"
+      ],
+      "type": "object"
+    },
+    "name": "board_leave"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "withdraw every message in ONE conversation from every agent-facing path,",
+    "inputSchema": {
+      "properties": {
+        "conversation": {
+          "default": "",
+          "type": "string"
+        },
+        "json": {
+          "default": false,
+          "type": "boolean"
+        },
+        "seq": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "task": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "board_retract-thread"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "destroy every message in ONE conversation, across all the topics it spans,",
+    "inputSchema": {
+      "properties": {
+        "conversation": {
+          "default": "",
+          "type": "string"
+        },
+        "json": {
+          "default": false,
+          "type": "boolean"
+        },
+        "seq": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "task": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "board_purge-thread"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "publish in the OPERATOR's name: the message is stamped sender=operator (cap: board_send).",
+    "inputSchema": {
+      "properties": {
+        "data": {
+          "default": "-",
+          "type": "string"
+        },
+        "exclude-self": {
+          "default": false,
+          "type": "boolean"
+        },
+        "in-reply-to": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "no-retire-on-reply": {
+          "default": false,
+          "type": "boolean"
+        },
+        "no-wake": {
+          "default": false,
+          "type": "boolean"
+        },
+        "reply-to": {
+          "default": "",
+          "type": "string"
+        },
+        "topic": {
+          "default": "",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "board_send"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "wake every task subscribed to \u003ctopic\u003e, exactly as a publish there would; publishes nothing (cap: board_send).",
+    "inputSchema": {
+      "properties": {
+        "topic": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "topic"
+      ],
+      "type": "object"
+    },
+    "name": "board_wake"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "open a detachable interactive PTY session (--repo: HARNESS_REPO_PATH)",
+    "inputSchema": {
+      "properties": {
+        "agent": {
+          "default": "",
+          "type": "string"
+        },
+        "agent-arg": {
+          "type": "string"
+        },
+        "background": {
+          "default": false,
+          "type": "boolean"
+        },
+        "blocked": {
+          "default": "0s",
+          "type": "string"
+        },
+        "caps": {
+          "default": "",
+          "type": "string"
+        },
+        "cols": {
+          "default": 120,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "deadline": {
+          "default": "0s",
+          "type": "string"
+        },
+        "delegate-caps": {
+          "default": "",
+          "type": "string"
+        },
+        "delegate-scope": {
+          "default": "",
+          "type": "string"
+        },
+        "detach": {
+          "default": false,
+          "type": "boolean"
+        },
+        "exact": {
+          "default": false,
+          "type": "boolean"
+        },
+        "foreground": {
+          "default": false,
+          "type": "boolean"
+        },
+        "host": {
+          "default": "",
+          "type": "string"
+        },
+        "ip": {
+          "default": "",
+          "type": "string"
+        },
+        "max-descendants": {
+          "default": "",
+          "type": "string"
+        },
+        "no-pty": {
+          "default": false,
+          "type": "boolean"
+        },
+        "no-record": {
+          "default": false,
+          "type": "boolean"
+        },
+        "oneshot": {
+          "default": false,
+          "type": "boolean"
+        },
+        "prompt": {
+          "default": "",
+          "type": "string"
+        },
+        "pty": {
+          "default": false,
+          "type": "boolean"
+        },
+        "queue-timeout": {
+          "default": "0s",
+          "type": "string"
+        },
+        "quiet": {
+          "default": "0s",
+          "type": "string"
+        },
+        "record": {
+          "default": false,
+          "type": "boolean"
+        },
+        "repo": {
+          "default": "",
+          "type": "string"
+        },
+        "resume": {
+          "default": "",
+          "type": "string"
+        },
+        "resume-conversation": {
+          "default": false,
+          "type": "boolean"
+        },
+        "rows": {
+          "default": 40,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "runner": {
+          "default": "",
+          "type": "string"
+        },
+        "scope": {
+          "default": "",
+          "type": "string"
+        },
+        "scope-for": {
+          "type": "string"
+        },
+        "spawn-depth": {
+          "default": "",
+          "type": "string"
+        },
+        "stream": {
+          "default": false,
+          "type": "boolean"
+        },
+        "turn-end": {
+          "default": "",
+          "type": "string"
+        },
+        "x11": {
+          "default": false,
+          "type": "boolean"
+        },
+        "x11-display": {
+          "default": 10,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "name": "session_new"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "inject input into a session (co-writer attach, no takeover); pair with snapshot to drive it statelessly",
+    "inputSchema": {
+      "properties": {
+        "ansi": {
+          "default": false,
+          "type": "boolean"
+        },
+        "color": {
+          "default": false,
+          "type": "boolean"
+        },
+        "cols": {
+          "default": 120,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "detect": {
+          "default": false,
+          "type": "boolean"
+        },
+        "detect-agent": {
+          "default": "claude",
+          "type": "string"
+        },
+        "e": {
+          "default": false,
+          "type": "boolean"
+        },
+        "enter": {
+          "default": false,
+          "type": "boolean"
+        },
+        "flush-ms": {
+          "default": 400,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "json": {
+          "default": false,
+          "type": "boolean"
+        },
+        "quiet": {
+          "default": false,
+          "type": "boolean"
+        },
+        "resize": {
+          "default": "",
+          "type": "string"
+        },
+        "rows": {
+          "default": 40,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "settle-ms": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "snapshot": {
+          "default": false,
+          "type": "boolean"
+        },
+        "style": {
+          "default": false,
+          "type": "boolean"
+        },
+        "task-id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        },
+        "without-synth": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "task-id"
+      ],
+      "type": "object"
+    },
+    "name": "session_send"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "send one user turn to an event-stream session",
+    "inputSchema": {
+      "properties": {
+        "flush-ms": {
+          "default": 400,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "task-id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task-id"
+      ],
+      "type": "object"
+    },
+    "name": "session_stream_turn"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "send a notification (one short line)",
+    "inputSchema": {
+      "properties": {
+        "level": {
+          "default": "info",
+          "enum": [
+            "info",
+            "warn",
+            "error"
+          ],
+          "type": "string"
+        },
+        "title": {
+          "default": "",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "notify"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "set THIS task's self-reported progress line (which task, which stage): one line, at most 256 bytes, no control characters",
+    "inputSchema": {
+      "properties": {
+        "clear": {
+          "default": false,
+          "type": "boolean"
+        },
+        "task": {
+          "default": "",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "progress"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "publish a message. The body is the trailing words, or --data STRING, or --data - to read it from stdin.",
+    "inputSchema": {
+      "properties": {
+        "data": {
+          "default": "-",
+          "type": "string"
+        },
+        "exclude-self": {
+          "default": false,
+          "type": "boolean"
+        },
+        "in-reply-to": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "no-contact": {
+          "default": false,
+          "type": "boolean"
+        },
+        "no-retire-on-reply": {
+          "default": false,
+          "type": "boolean"
+        },
+        "reply-to": {
+          "default": "",
+          "type": "string"
+        },
+        "server-cid": {
+          "default": "",
+          "type": "string"
+        },
+        "topic": {
+          "default": "",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "agent_send"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "cancel a queued/running task",
+    "inputSchema": {
+      "properties": {
+        "task-id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task-id"
+      ],
+      "type": "object"
+    },
+    "name": "cancel"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "description": "list runners and tasks: every task that has not ended, plus the 100 newest finished ones; --json emits one {runners,tasks} object",
+    "inputSchema": {
+      "properties": {
+        "json": {
+          "default": false,
+          "type": "boolean"
+        },
+        "order": {
+          "default": "",
+          "type": "string"
+        },
+        "tree": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "name": "ls"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "description": "snapshot live connections; -f streams live events; --json emits JSON lines",
+    "inputSchema": {
+      "properties": {
+        "client": {
+          "default": "",
+          "type": "string"
+        },
+        "follow": {
+          "default": false,
+          "type": "boolean"
+        },
+        "json": {
+          "default": false,
+          "type": "boolean"
+        },
+        "runner": {
+          "default": "",
+          "type": "string"
+        },
+        "trsf": {
+          "default": false,
+          "type": "boolean"
+        },
+        "watch": {
+          "default": "",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "conns"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "description": "sections: needs you, tasks, hosts, forwards, board -- each its count and at most three rows",
+    "inputSchema": {
+      "properties": {
+        "json": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "name": "overview"
+  },
+  {
+    "annotations": {
       "destructiveHint": false,
       "readOnlyHint": true
     },
@@ -15,6 +1850,18 @@
       "type": "object"
     },
     "name": "caps"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "description": "name every embedded skill; the same as `skill --list`",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    },
+    "name": "skill_ls"
   },
   {
     "annotations": {
@@ -38,6 +1885,41 @@
       "destructiveHint": false,
       "readOnlyHint": true
     },
+    "description": "print the embedded agent skill (default: harness-cli)",
+    "inputSchema": {
+      "properties": {
+        "extract": {
+          "default": "",
+          "type": "string"
+        },
+        "file": {
+          "type": "string"
+        },
+        "files": {
+          "default": false,
+          "type": "boolean"
+        },
+        "force": {
+          "default": false,
+          "type": "boolean"
+        },
+        "list": {
+          "default": false,
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "skill"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
     "description": "the commit this binary — and the skills embedded in it — was built from",
     "inputSchema": {
       "properties": {
@@ -49,6 +1931,283 @@
       "type": "object"
     },
     "name": "version"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "remove worktrees in \u003crepo\u003e/.harness-worktrees/",
+    "inputSchema": {
+      "properties": {
+        "before": {
+          "default": "168h0m0s",
+          "type": "string"
+        },
+        "force": {
+          "default": false,
+          "type": "boolean"
+        },
+        "repo": {
+          "default": ".",
+          "type": "string"
+        },
+        "task-id": {
+          "items": {
+            "pattern": "^[0-9a-f]{32}$",
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "task-id"
+      ],
+      "type": "object"
+    },
+    "name": "prune-local"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "with no ids (or --list): list what a prune forgot and could still be put back — ids, when they were pruned, and the repo/prompt that identify them. The ids live only in the server's WAL, so this is the only way to learn them",
+    "inputSchema": {
+      "properties": {
+        "list": {
+          "default": false,
+          "type": "boolean"
+        },
+        "task-id": {
+          "items": {
+            "pattern": "^[0-9a-f]{32}$",
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "task-id"
+      ],
+      "type": "object"
+    },
+    "name": "restore"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "re-grant a LIVE task's caps and/or scope; effective on its next request, no restart. The operator may rewrite any task; from inside a task, only your own descendants within your resume scope, bounded as a resume with the same flags would be",
+    "inputSchema": {
+      "properties": {
+        "caps": {
+          "default": "",
+          "type": "string"
+        },
+        "cascade": {
+          "default": false,
+          "type": "boolean"
+        },
+        "delegate-caps": {
+          "default": "",
+          "type": "string"
+        },
+        "delegate-scope": {
+          "default": "",
+          "type": "string"
+        },
+        "keep-conns": {
+          "default": false,
+          "type": "boolean"
+        },
+        "max-descendants": {
+          "default": "",
+          "type": "string"
+        },
+        "scope": {
+          "default": "",
+          "type": "string"
+        },
+        "scope-for": {
+          "type": "string"
+        },
+        "spawn-depth": {
+          "default": "",
+          "type": "string"
+        },
+        "task-id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task-id"
+      ],
+      "type": "object"
+    },
+    "name": "caps_set"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "description": "list, per capability, the tasks holding it and the scope it reaches; --cap NAME adds the command that would revoke it",
+    "inputSchema": {
+      "properties": {
+        "all": {
+          "default": false,
+          "type": "boolean"
+        },
+        "cap": {
+          "default": "",
+          "type": "string"
+        },
+        "empty": {
+          "default": false,
+          "type": "boolean"
+        },
+        "json": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "name": "caps_audit"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "description": "what a task reaches per capability, sees, and may hand down; whether it is wider than its parent",
+    "inputSchema": {
+      "properties": {
+        "cap": {
+          "default": "",
+          "type": "string"
+        },
+        "json": {
+          "default": false,
+          "type": "boolean"
+        },
+        "task-id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        },
+        "tree": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "task-id"
+      ],
+      "type": "object"
+    },
+    "name": "caps_reach"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "description": "what a caps set (--cascade too), a spawn by the task (--spawn) or a set-parent (--parent / --parent-none) would change, and the command that does it; nothing is sent",
+    "inputSchema": {
+      "properties": {
+        "caps": {
+          "default": "",
+          "type": "string"
+        },
+        "cascade": {
+          "default": false,
+          "type": "boolean"
+        },
+        "delegate-caps": {
+          "default": "",
+          "type": "string"
+        },
+        "delegate-scope": {
+          "default": "",
+          "type": "string"
+        },
+        "json": {
+          "default": false,
+          "type": "boolean"
+        },
+        "max-descendants": {
+          "default": "",
+          "type": "string"
+        },
+        "parent": {
+          "default": "",
+          "type": "string"
+        },
+        "parent-none": {
+          "default": false,
+          "type": "boolean"
+        },
+        "scope": {
+          "default": "",
+          "type": "string"
+        },
+        "scope-for": {
+          "type": "string"
+        },
+        "spawn": {
+          "default": false,
+          "type": "boolean"
+        },
+        "spawn-depth": {
+          "default": "",
+          "type": "string"
+        },
+        "task-id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task-id"
+      ],
+      "type": "object"
+    },
+    "name": "caps_what-if"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "OPERATOR ONLY: re-point a LIVE task's parent link — the edge subtree scopes walk. --none detaches it to the operator root; --swap inverts it with its current parent. Caps and scope are untouched",
+    "inputSchema": {
+      "properties": {
+        "none": {
+          "default": false,
+          "type": "boolean"
+        },
+        "parent": {
+          "default": "",
+          "type": "string"
+        },
+        "swap": {
+          "default": false,
+          "type": "boolean"
+        },
+        "task-id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task-id"
+      ],
+      "type": "object"
+    },
+    "name": "caps_set-parent"
   },
   {
     "annotations": {
@@ -66,6 +2225,26 @@
       "type": "object"
     },
     "name": "session_ls"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "cancel a session (alias of cancel)",
+    "inputSchema": {
+      "properties": {
+        "task-id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task-id"
+      ],
+      "type": "object"
+    },
+    "name": "session_kill"
   },
   {
     "annotations": {
@@ -96,6 +2275,167 @@
       "destructiveHint": false,
       "readOnlyHint": true
     },
+    "description": "list armed watchers: an agent sees the ones it armed, the operator every one; --task filters, --json emits JSON lines",
+    "inputSchema": {
+      "properties": {
+        "json": {
+          "default": false,
+          "type": "boolean"
+        },
+        "task": {
+          "default": "",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "session_await-idle_ls"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "disarm one or more watchers by id (from `session await-idle ls`, or the `watcher_id` an arm printed); nothing is delivered for a killed watcher, except `cancelled` to a caller still blocked on it",
+    "inputSchema": {
+      "properties": {
+        "watcher-id": {
+          "items": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "watcher-id"
+      ],
+      "type": "object"
+    },
+    "name": "session_await-idle_kill"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "description": "list armed progress watchers: an agent sees the ones it armed, the operator every one; --task filters, --json emits JSON lines",
+    "inputSchema": {
+      "properties": {
+        "json": {
+          "default": false,
+          "type": "boolean"
+        },
+        "task": {
+          "default": "",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "await-progress_ls"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "disarm one or more watchers by id (from `await-progress ls`, or the `watcher_id` an arm printed); the registry is shared with await-idle, so either kill takes either id",
+    "inputSchema": {
+      "properties": {
+        "watcher-id": {
+          "items": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "watcher-id"
+      ],
+      "type": "object"
+    },
+    "name": "await-progress_kill"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "set a live session's PTY size; the server echoing the new size back IS the acknowledgement",
+    "inputSchema": {
+      "properties": {
+        "quiet": {
+          "default": false,
+          "type": "boolean"
+        },
+        "size": {
+          "default": "",
+          "type": "string"
+        },
+        "task-id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        },
+        "wait-ms": {
+          "default": 2000,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "task-id"
+      ],
+      "type": "object"
+    },
+    "name": "session_resize"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "switch a running session between foreground and background; background needs --deadline (the run's deadline counts from the switch)",
+    "inputSchema": {
+      "properties": {
+        "blocked": {
+          "default": "0s",
+          "type": "string"
+        },
+        "deadline": {
+          "default": "0s",
+          "type": "string"
+        },
+        "mode": {
+          "type": "string"
+        },
+        "quiet": {
+          "default": "0s",
+          "type": "string"
+        },
+        "task-id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        },
+        "turn-end": {
+          "default": "",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task-id",
+        "mode"
+      ],
+      "type": "object"
+    },
+    "name": "session_mode"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
     "description": "list PTY records: each run's start, end, end reason, size on disk, expiry, truncation; with no task, every record you may view",
     "inputSchema": {
       "properties": {
@@ -113,6 +2453,127 @@
       "type": "object"
     },
     "name": "record_ls"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "description": "write one run's PTY record: the raw output, as session snapshot --raw prints it, or asciicast v2 (asciinema play)",
+    "inputSchema": {
+      "properties": {
+        "format": {
+          "default": "raw",
+          "type": "string"
+        },
+        "o": {
+          "default": "",
+          "type": "string"
+        },
+        "record": {
+          "type": "string"
+        },
+        "without-synth": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "record"
+      ],
+      "type": "object"
+    },
+    "name": "record_get"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "delete a PTY record (record_delete); \u003ctask-id\u003e#\u003cn\u003e for one run, or \u003ctask-id\u003e --all-runs for every run",
+    "inputSchema": {
+      "properties": {
+        "all-runs": {
+          "default": false,
+          "type": "boolean"
+        },
+        "record": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "record"
+      ],
+      "type": "object"
+    },
+    "name": "record_rm"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "change how long a record is kept after its run ends: longer needs record_persist, shorter record_delete",
+    "inputSchema": {
+      "properties": {
+        "for": {
+          "default": "0s",
+          "type": "string"
+        },
+        "forever": {
+          "default": false,
+          "type": "boolean"
+        },
+        "record": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "record"
+      ],
+      "type": "object"
+    },
+    "name": "record_keep"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "start recording a live interactive session (record_persist); with no record yet the record starts from the session's replay buffer",
+    "inputSchema": {
+      "properties": {
+        "task-id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task-id"
+      ],
+      "type": "object"
+    },
+    "name": "record_on"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "stop recording a session (record_delete); the record stays",
+    "inputSchema": {
+      "properties": {
+        "task-id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task-id"
+      ],
+      "type": "object"
+    },
+    "name": "record_off"
   },
   {
     "annotations": {
@@ -140,6 +2601,799 @@
       "type": "object"
     },
     "name": "transcript_ls"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "description": "write one file of an agent session as the agent stored it, or with no file the whole session as a tar (transcript_read)",
+    "inputSchema": {
+      "properties": {
+        "file": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "o": {
+          "default": "",
+          "type": "string"
+        },
+        "session": {
+          "type": "string"
+        },
+        "task-id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task-id",
+        "session",
+        "file"
+      ],
+      "type": "object"
+    },
+    "name": "transcript_get"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "create a server-kept cron schedule: each firing resumes the schedule's background task (the first firing creates it, or --task binds one now)",
+    "inputSchema": {
+      "properties": {
+        "agent": {
+          "default": "",
+          "type": "string"
+        },
+        "agent-arg": {
+          "type": "string"
+        },
+        "blocked": {
+          "default": "0s",
+          "type": "string"
+        },
+        "caps": {
+          "default": "",
+          "type": "string"
+        },
+        "cols": {
+          "default": 120,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "cron": {
+          "default": "",
+          "type": "string"
+        },
+        "deadline": {
+          "default": "0s",
+          "type": "string"
+        },
+        "delegate-caps": {
+          "default": "",
+          "type": "string"
+        },
+        "delegate-scope": {
+          "default": "",
+          "type": "string"
+        },
+        "host": {
+          "default": "",
+          "type": "string"
+        },
+        "ip": {
+          "default": "",
+          "type": "string"
+        },
+        "max-descendants": {
+          "default": "",
+          "type": "string"
+        },
+        "no-pty": {
+          "default": false,
+          "type": "boolean"
+        },
+        "no-record": {
+          "default": false,
+          "type": "boolean"
+        },
+        "oneshot": {
+          "default": false,
+          "type": "boolean"
+        },
+        "prompt": {
+          "default": "",
+          "type": "string"
+        },
+        "pty": {
+          "default": false,
+          "type": "boolean"
+        },
+        "queue-timeout": {
+          "default": "0s",
+          "type": "string"
+        },
+        "quiet": {
+          "default": "0s",
+          "type": "string"
+        },
+        "record": {
+          "default": false,
+          "type": "boolean"
+        },
+        "repo": {
+          "default": "",
+          "type": "string"
+        },
+        "resume-conversation": {
+          "default": false,
+          "type": "boolean"
+        },
+        "rows": {
+          "default": 40,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "runner": {
+          "default": "",
+          "type": "string"
+        },
+        "scope": {
+          "default": "",
+          "type": "string"
+        },
+        "scope-for": {
+          "type": "string"
+        },
+        "spawn-depth": {
+          "default": "",
+          "type": "string"
+        },
+        "stream": {
+          "default": false,
+          "type": "boolean"
+        },
+        "task": {
+          "default": "",
+          "type": "string"
+        },
+        "turn-end": {
+          "default": "",
+          "type": "string"
+        },
+        "tz": {
+          "default": "",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "schedule_new"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "change a schedule's future firings: only the flags named are changed (--cron or --tz recomputes the next firing; --task binds a task to a schedule with none)",
+    "inputSchema": {
+      "properties": {
+        "agent": {
+          "default": "",
+          "type": "string"
+        },
+        "agent-arg": {
+          "type": "string"
+        },
+        "blocked": {
+          "default": "0s",
+          "type": "string"
+        },
+        "caps": {
+          "default": "",
+          "type": "string"
+        },
+        "cols": {
+          "default": 120,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "cron": {
+          "default": "",
+          "type": "string"
+        },
+        "deadline": {
+          "default": "0s",
+          "type": "string"
+        },
+        "delegate-caps": {
+          "default": "",
+          "type": "string"
+        },
+        "delegate-scope": {
+          "default": "",
+          "type": "string"
+        },
+        "host": {
+          "default": "",
+          "type": "string"
+        },
+        "ip": {
+          "default": "",
+          "type": "string"
+        },
+        "max-descendants": {
+          "default": "",
+          "type": "string"
+        },
+        "no-agent-args": {
+          "default": false,
+          "type": "boolean"
+        },
+        "no-pty": {
+          "default": false,
+          "type": "boolean"
+        },
+        "no-record": {
+          "default": false,
+          "type": "boolean"
+        },
+        "oneshot": {
+          "default": false,
+          "type": "boolean"
+        },
+        "prompt": {
+          "default": "",
+          "type": "string"
+        },
+        "pty": {
+          "default": false,
+          "type": "boolean"
+        },
+        "queue-timeout": {
+          "default": "0s",
+          "type": "string"
+        },
+        "quiet": {
+          "default": "0s",
+          "type": "string"
+        },
+        "record": {
+          "default": false,
+          "type": "boolean"
+        },
+        "repo": {
+          "default": "",
+          "type": "string"
+        },
+        "resume-conversation": {
+          "default": false,
+          "type": "boolean"
+        },
+        "rows": {
+          "default": 40,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "runner": {
+          "default": "",
+          "type": "string"
+        },
+        "schedule-id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        },
+        "scope": {
+          "default": "",
+          "type": "string"
+        },
+        "scope-for": {
+          "type": "string"
+        },
+        "spawn-depth": {
+          "default": "",
+          "type": "string"
+        },
+        "stream": {
+          "default": false,
+          "type": "boolean"
+        },
+        "task": {
+          "default": "",
+          "type": "string"
+        },
+        "turn-end": {
+          "default": "",
+          "type": "string"
+        },
+        "tz": {
+          "default": "",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schedule-id"
+      ],
+      "type": "object"
+    },
+    "name": "schedule_edit"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "fire a schedule now, outside its times (recorded run_now); its next firing is unchanged. Needs the schedule_run capability and reach to the schedule's task, plus spawn before its task is created or resume or resume_exact over its bound task",
+    "inputSchema": {
+      "properties": {
+        "schedule-id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schedule-id"
+      ],
+      "type": "object"
+    },
+    "name": "schedule_run"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "delete a schedule; its task stays as an ordinary background task and a run in progress is not cancelled (cancel it to stop it)",
+    "inputSchema": {
+      "properties": {
+        "schedule-id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schedule-id"
+      ],
+      "type": "object"
+    },
+    "name": "schedule_rm"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "description": "one row per schedule you can reach: id, cron + zone, next firing (in its zone), last outcome and age, task, agent, repo, prompt head. Needs no capability",
+    "inputSchema": {
+      "properties": {
+        "json": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "name": "schedule_ls"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "description": "a schedule's definition, stored authority, history (last 50 firings) and the wait statistics over its runs. Needs no capability",
+    "inputSchema": {
+      "properties": {
+        "json": {
+          "default": false,
+          "type": "boolean"
+        },
+        "schedule-id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schedule-id"
+      ],
+      "type": "object"
+    },
+    "name": "schedule_show"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "on the host that will use the credential: generate an Ed25519 key pair, write the seed to --out (mode 0600, never overwritten) and print the public key (64 hex) for `credential new --pubkey`; the seed never leaves this host",
+    "inputSchema": {
+      "properties": {
+        "out": {
+          "default": "",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "credential_keygen"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "on the host that will use the credential, after `credential new --pubkey` / `credential rekey --pubkey` printed the task id: turn the seed file `credential keygen` wrote into the credential file `\u003ctask-id\u003e:\u003cseed\u003e` (mode 0600, replaced atomically; the seed is never printed)",
+    "inputSchema": {
+      "properties": {
+        "credential-id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        },
+        "file": {
+          "default": "",
+          "type": "string"
+        }
+      },
+      "required": [
+        "credential-id"
+      ],
+      "type": "object"
+    },
+    "name": "credential_bind"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "issue a credential task: an expiring identity for a script outside the harness, holding at most your own caps within your scope (needs credential_issue). It never holds credential_issue or schedule_edit",
+    "inputSchema": {
+      "properties": {
+        "caps": {
+          "default": "",
+          "type": "string"
+        },
+        "delegate-caps": {
+          "default": "",
+          "type": "string"
+        },
+        "delegate-scope": {
+          "default": "",
+          "type": "string"
+        },
+        "max-descendants": {
+          "default": "",
+          "type": "string"
+        },
+        "name": {
+          "default": "",
+          "type": "string"
+        },
+        "out": {
+          "default": "",
+          "type": "string"
+        },
+        "pubkey": {
+          "default": "",
+          "type": "string"
+        },
+        "scope": {
+          "default": "",
+          "type": "string"
+        },
+        "scope-for": {
+          "type": "string"
+        },
+        "spawn-depth": {
+          "default": "",
+          "type": "string"
+        },
+        "ttl": {
+          "default": "",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "credential_new"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "give a credential a new key and a new expiry under the same id; the old key stops at once. Works on a live, revoked or expired one. Needs credential_issue, and the credential must be your own descendant (the operator: any)",
+    "inputSchema": {
+      "properties": {
+        "caps": {
+          "default": "",
+          "type": "string"
+        },
+        "credential-id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        },
+        "delegate-caps": {
+          "default": "",
+          "type": "string"
+        },
+        "delegate-scope": {
+          "default": "",
+          "type": "string"
+        },
+        "max-descendants": {
+          "default": "",
+          "type": "string"
+        },
+        "out": {
+          "default": "",
+          "type": "string"
+        },
+        "pubkey": {
+          "default": "",
+          "type": "string"
+        },
+        "scope": {
+          "default": "",
+          "type": "string"
+        },
+        "scope-for": {
+          "type": "string"
+        },
+        "spawn-depth": {
+          "default": "",
+          "type": "string"
+        },
+        "ttl": {
+          "default": "",
+          "type": "string"
+        }
+      },
+      "required": [
+        "credential-id"
+      ],
+      "type": "object"
+    },
+    "name": "credential_rekey"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "description": "one row per credential task you can reach: id, status, name, expiry, last use (unknown after a server restart), caps and scope. Needs no capability",
+    "inputSchema": {
+      "properties": {
+        "json": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "name": "credential_ls"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "end a credential now (the existing cancel, refused for a task that is not a credential): its connections close and its next handshake is refused `revoked`. Needs cancel over it; `credential rekey` brings the id back with a new key",
+    "inputSchema": {
+      "properties": {
+        "credential-id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "credential-id"
+      ],
+      "type": "object"
+    },
+    "name": "credential_revoke"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "description": "print the session's current PTY screen as text (view attach; non-intrusive, works without a TTY)",
+    "inputSchema": {
+      "properties": {
+        "ansi": {
+          "default": false,
+          "type": "boolean"
+        },
+        "color": {
+          "default": false,
+          "type": "boolean"
+        },
+        "cols": {
+          "default": 120,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "detect": {
+          "default": false,
+          "type": "boolean"
+        },
+        "detect-agent": {
+          "default": "claude",
+          "type": "string"
+        },
+        "json": {
+          "default": false,
+          "type": "boolean"
+        },
+        "raw": {
+          "default": false,
+          "type": "boolean"
+        },
+        "rows": {
+          "default": 40,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "settle-ms": {
+          "default": 1500,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "style": {
+          "default": false,
+          "type": "boolean"
+        },
+        "task-id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        },
+        "without-synth": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "task-id"
+      ],
+      "type": "object"
+    },
+    "name": "session_snapshot"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "abandon the running TURN; the agent survives to take the next one",
+    "inputSchema": {
+      "properties": {
+        "flush-ms": {
+          "default": 400,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "task-id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task-id"
+      ],
+      "type": "object"
+    },
+    "name": "session_stream_interrupt"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "close the agent's stdin so it completes the turn in flight and exits 0",
+    "inputSchema": {
+      "properties": {
+        "flush-ms": {
+          "default": 400,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "task-id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task-id"
+      ],
+      "type": "object"
+    },
+    "name": "session_stream_finish"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "answer one pending tool request. The request id is the staleness guard: an answer aimed at a request that has gone is REFUSED, not applied to whatever is pending now",
+    "inputSchema": {
+      "properties": {
+        "allow": {
+          "default": false,
+          "type": "boolean"
+        },
+        "deny": {
+          "default": false,
+          "type": "boolean"
+        },
+        "flush-ms": {
+          "default": 400,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "message": {
+          "default": "",
+          "type": "string"
+        },
+        "request-id": {
+          "type": "string"
+        },
+        "suggestion": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "task-id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task-id",
+        "request-id"
+      ],
+      "type": "object"
+    },
+    "name": "session_stream_approve"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "answer a QUESTION request (claude's AskUserQuestion) the agent is blocked on. A tool approval is `approve`; answers sent to one are refused",
+    "inputSchema": {
+      "properties": {
+        "answer": {
+          "type": "string"
+        },
+        "flush-ms": {
+          "default": 400,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "reply": {
+          "default": "",
+          "type": "string"
+        },
+        "request-id": {
+          "type": "string"
+        },
+        "task-id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task-id",
+        "request-id"
+      ],
+      "type": "object"
+    },
+    "name": "session_stream_answer"
   },
   {
     "annotations": {
@@ -175,5 +3429,314 @@
       "type": "object"
     },
     "name": "agent_inbox"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "register a subscription",
+    "inputSchema": {
+      "properties": {
+        "self": {
+          "default": false,
+          "type": "boolean"
+        },
+        "server-cid": {
+          "default": "",
+          "type": "string"
+        },
+        "topic": {
+          "default": "",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "agent_subscribe"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "remove a subscription",
+    "inputSchema": {
+      "properties": {
+        "self": {
+          "default": false,
+          "type": "boolean"
+        },
+        "server-cid": {
+          "default": "",
+          "type": "string"
+        },
+        "topic": {
+          "default": "",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "agent_unsubscribe"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "description": "list every topic on the board (JSON Lines) (cap: board_observe)",
+    "inputSchema": {
+      "properties": {
+        "json": {
+          "default": false,
+          "type": "boolean"
+        },
+        "server-cid": {
+          "default": "",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "agent_topics"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "description": "list the archives of one topic this task may read (JSON Lines; no cap). Read one with agent read --archive \u003cid\u003e.",
+    "inputSchema": {
+      "properties": {
+        "json": {
+          "default": false,
+          "type": "boolean"
+        },
+        "server-cid": {
+          "default": "",
+          "type": "string"
+        },
+        "topic": {
+          "default": "",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "agent_archives"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "description": "list this agent's registered patterns (JSON Lines)",
+    "inputSchema": {
+      "properties": {
+        "json": {
+          "default": false,
+          "type": "boolean"
+        },
+        "server-cid": {
+          "default": "",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "agent_subscriptions"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "description": "list this agent's contacts, newest first (JSON Lines): reply routes it may publish to without board_peer because someone addressed it from there; at most 64, forgotten on server restart (no cap)",
+    "inputSchema": {
+      "properties": {
+        "json": {
+          "default": false,
+          "type": "boolean"
+        },
+        "server-cid": {
+          "default": "",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "agent_contacts"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "description": "list a topic's retained ring as metadata only, no payload (no cap)",
+    "inputSchema": {
+      "properties": {
+        "json": {
+          "default": false,
+          "type": "boolean"
+        },
+        "self": {
+          "default": false,
+          "type": "boolean"
+        },
+        "server-cid": {
+          "default": "",
+          "type": "string"
+        },
+        "topic": {
+          "default": "",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "agent_retained"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "description": "print the calling task's side of the reply chain, across its subscribed topics (no cap).",
+    "inputSchema": {
+      "properties": {
+        "headers-only": {
+          "default": false,
+          "type": "boolean"
+        },
+        "json": {
+          "default": false,
+          "type": "boolean"
+        },
+        "raw": {
+          "default": false,
+          "type": "boolean"
+        },
+        "seq": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "server-cid": {
+          "default": "",
+          "type": "string"
+        },
+        "task": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "agent_thread"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "drop a topic's retained buffer, or one message by seq (cap: board_purge)",
+    "inputSchema": {
+      "properties": {
+        "archive": {
+          "default": "",
+          "type": "string"
+        },
+        "self": {
+          "default": false,
+          "type": "boolean"
+        },
+        "seq": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "server-cid": {
+          "default": "",
+          "type": "string"
+        },
+        "topic": {
+          "default": "",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "agent_purge"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "description": "fetch one retained message, whole; the hooks name it when they decline to inline a large body.",
+    "inputSchema": {
+      "properties": {
+        "archive": {
+          "default": "",
+          "type": "string"
+        },
+        "before": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "json": {
+          "default": false,
+          "type": "boolean"
+        },
+        "limit": {
+          "default": 20,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "self": {
+          "default": false,
+          "type": "boolean"
+        },
+        "seq": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "server-cid": {
+          "default": "",
+          "type": "string"
+        },
+        "topic": {
+          "default": "",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "agent_read"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "withdraw a message YOU sent: gone from every agent path, still visible to the operator as retracted",
+    "inputSchema": {
+      "properties": {
+        "seq": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "server-cid": {
+          "default": "",
+          "type": "string"
+        }
+      },
+      "required": [
+        "seq"
+      ],
+      "type": "object"
+    },
+    "name": "agent_retract"
   }
 ]
