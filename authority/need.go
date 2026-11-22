@@ -306,7 +306,7 @@ func RequestNeed(req *protocol.TaskControlRequest) Need {
 			n.Clauses = append(n.Clauses, same(AttachModeCap(protocol.AttachMode_Control)))
 		}
 		// Refused with RecordNotPermitted, not PermissionDenied.
-		if ext := oi.Ext(); oi.ExtPresent() && ext != nil && ext.RecordSet() && ext.Record() {
+		if OpenAsksRecord(oi) {
 			n.Clauses = append(n.Clauses, Clause{AnyOf: RecordOnCap})
 		}
 		if oi.ResumeTaskId.Id != ([16]byte{}) {
@@ -333,13 +333,13 @@ func RequestNeed(req *protocol.TaskControlRequest) Need {
 		n.Later = append(n.Later, Later{What: "record retention", Possible: both})
 	case protocol.TaskControlKind_ScheduleCreate:
 		s := bodyOf(req.ScheduleCreate()).Spec
-		n.Clauses = append(n.Clauses, SchedulePower(true, false, specBinds(&s))...)
-		if s.RecordSet() && s.Record() {
+		n.Clauses = append(n.Clauses, SchedulePower(true, false, SpecBinds(&s))...)
+		if SpecAsksRecord(&s) {
 			n.Clauses = append(n.Clauses, Clause{AnyOf: RecordOnCap})
 		}
 	case protocol.TaskControlKind_ScheduleEdit:
 		s := bodyOf(req.ScheduleEdit()).Spec
-		if s.RecordSet() && s.Record() {
+		if SpecAsksRecord(&s) {
 			n.Clauses = append(n.Clauses, Clause{AnyOf: RecordOnCap})
 		}
 		n.Later = append(n.Later, scheduleState(protocol.Capability_Spawn|protocol.Capability_Resume))
@@ -388,7 +388,20 @@ func awaitNeed(n Need, sink protocol.AwaitSink) Need {
 	return n
 }
 
-func specBinds(s *protocol.ScheduleSpec) bool { return s.TaskPresent() && s.TaskId() != nil }
+// OpenAsksRecord reports whether an open says "record this session" (the
+// --record on of A-D22), which needs RecordOnCap. Off and saying nothing need
+// nothing.
+func OpenAsksRecord(oi *protocol.OpenInteractiveRequest) bool {
+	ext := oi.Ext()
+	return oi.ExtPresent() && ext != nil && ext.RecordSet() && ext.Record()
+}
+
+// SpecBinds reports whether a schedule spec binds a task (--task).
+func SpecBinds(s *protocol.ScheduleSpec) bool { return s.TaskPresent() && s.TaskId() != nil }
+
+// SpecAsksRecord reports whether a schedule spec says "record its sessions",
+// which needs RecordOnCap as an open saying it does.
+func SpecAsksRecord(s *protocol.ScheduleSpec) bool { return s.RecordSet() && s.Record() }
 
 // bodyOf reads an absent body as the zero one.
 func bodyOf[T any](p *T) *T {
@@ -399,40 +412,49 @@ func bodyOf[T any](p *T) *T {
 }
 
 // ScopeBit is which bit's scope binds this request's target, given what the
-// caller holds. It differs from the clauses where the server scopes by
-// something other than the bit it checked: ListFiles is satisfied by either
-// file bit and scoped by the one held (file_read first); an attach is
-// satisfied by AttachModeCap(mode) and scoped by AttachModeScopeCap(mode). A
-// SET of bits is returned where the server walks several bits' scopes (a
-// resume: each resume bit held; RecordKeep: persist and delete). Otherwise it
-// is the central bit, which is the bit those kinds scope by.
-func ScopeBit(req *protocol.TaskControlRequest, held protocol.Capability) protocol.Capability {
+// caller holds -- for the kinds whose REQUEST decides it, and ok=false for every
+// other kind rather than a guess. It differs from the clauses where the server
+// scopes by something other than the bit it checked: ListFiles is satisfied by
+// either file bit and scoped by the one held (file_read first); an attach is
+// satisfied by AttachModeCap(mode) and scoped by AttachModeScopeCap(mode); a
+// restore's listing needs no bit and is still scoped by prune. A SET of bits is
+// returned where the server walks several bits' scopes (a resume: each resume
+// bit held; RecordKeep: persist and delete).
+//
+// Not answered here: a central kind that names a target is scoped by its
+// CentralCap; an await is bounded by visibility, not a bit; a schedule that
+// binds a task passes two scopes (schedule_edit's reach and resume's); a
+// forward or exec kill is scoped through a bit its registry lookup decides; a
+// fresh spawn names no target.
+func ScopeBit(req *protocol.TaskControlRequest, held protocol.Capability) (protocol.Capability, bool) {
 	switch req.Header.Kind {
 	case protocol.TaskControlKind_ListFiles:
 		if held&protocol.Capability_FileRead != 0 {
-			return protocol.Capability_FileRead
+			return protocol.Capability_FileRead, true
 		}
-		return protocol.Capability_FileWrite
+		return protocol.Capability_FileWrite, true
 	case protocol.TaskControlKind_AttachSession:
-		return AttachModeScopeCap(bodyOf(req.Attach()).Mode)
+		return AttachModeScopeCap(bodyOf(req.Attach()).Mode), true
+	case protocol.TaskControlKind_OpenFileTransfer:
+		return FileTransferCap(bodyOf(req.OpenFileTransfer()).Direction), true
+	case protocol.TaskControlKind_OpenPortForward:
+		return ForwardCap(protocol.PortForwardDirection_Local), true
+	case protocol.TaskControlKind_RegisterPortForward:
+		return ForwardCap(bodyOf(req.RegisterPortForward()).Direction), true
+	case protocol.TaskControlKind_RecordSwitch:
+		return RecordSwitchCap(bodyOf(req.RecordSwitch()).On()), true
+	case protocol.TaskControlKind_RestoreTasks:
+		return RestoreCap(0), true
+	case protocol.TaskControlKind_RecordKeep:
+		return protocol.Capability_RecordPersist | protocol.Capability_RecordDelete, true
 	case protocol.TaskControlKind_OpenInteractive:
 		oi := bodyOf(req.OpenInteractive())
 		if oi.ResumeTaskId.Id == ([16]byte{}) {
-			return 0
+			return 0, false
 		}
-		return ResumeCap(oi.ResumeTaskId, oi.ResumeExact())
-	case protocol.TaskControlKind_RecordKeep:
-		return protocol.Capability_RecordPersist | protocol.Capability_RecordDelete
-	case protocol.TaskControlKind_RestoreTasks:
-		// Listing needs no bit and is still filtered by prune's scope: both
-		// halves reach the same target set.
-		return RestoreCap(0)
+		return ResumeCap(oi.ResumeTaskId, oi.ResumeExact()), true
 	}
-	n := RequestNeed(req)
-	if len(n.Clauses) == 0 {
-		return 0
-	}
-	return n.Clauses[0].AnyOf
+	return 0, false
 }
 
 // Possible is, per KIND, every bit some request of that kind could need: the

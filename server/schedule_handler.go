@@ -580,7 +580,7 @@ func (h *TaskHandler) applySpec(cid string, base Schedule, spec *protocol.Schedu
 		sc.Run.Record = spec.Record()
 		// Saying on needs record_persist, within the bit's scope over a bound
 		// task (the open's rule); off, and saying nothing, need nothing.
-		if sc.Run.Record {
+		if authority.SpecAsksRecord(spec) {
 			if !hasCap(callerCaps, authority.RecordOnCap) {
 				return refuse(protocol.ScheduleStatus_RecordNotPermitted, "recording a session needs record_persist")
 			}
@@ -674,7 +674,7 @@ func (h *TaskHandler) applySpec(cid string, base Schedule, spec *protocol.Schedu
 
 // scheduleSpecTask is the task a spec binds, "" when it names none.
 func scheduleSpecTask(spec *protocol.ScheduleSpec) string {
-	if spec.TaskPresent() && spec.TaskId() != nil {
+	if authority.SpecBinds(spec) {
 		return hex.EncodeToString(spec.TaskId().Id[:])
 	}
 	return ""

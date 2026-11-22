@@ -22,14 +22,13 @@ type RecordSettings struct {
 // reports false in ok. Saying nothing or off needs nothing. A stream session
 // is never recorded (A-D21), whatever was asked.
 func (h *TaskHandler) recordForOpen(req *protocol.OpenInteractiveRequest, callerCaps protocol.Capability) (record, ok bool) {
-	if ext := req.Ext(); req.ExtPresent() && ext != nil && ext.RecordSet() {
-		if !ext.Record() {
-			return false, true
-		}
+	if ext := req.Ext(); authority.OpenAsksRecord(req) {
 		if !hasCap(callerCaps, authority.RecordOnCap) {
 			return false, false
 		}
 		record = true
+	} else if req.ExtPresent() && ext != nil && ext.RecordSet() {
+		return false, true // said off
 	} else {
 		record = h.RecordDefault
 	}

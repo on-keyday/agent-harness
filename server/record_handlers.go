@@ -179,7 +179,8 @@ func (h *TaskHandler) handleRecord(cid string, conn ConnHandle, req *protocol.Ta
 		// record is looked at — otherwise which denial comes back tells an
 		// out-of-scope caller whether a record exists and how long it is kept.
 		reach := false
-		eachBit(authority.ScopeBit(req, caps), func(b protocol.Capability) {
+		keepScopes, _ := authority.ScopeBit(req, caps) // RecordKeep: always answered
+		eachBit(keepScopes, func(b protocol.Capability) {
 			if hasCap(caps, b) && h.inScope(cid, b, task) {
 				reach = true
 			}

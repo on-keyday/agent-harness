@@ -742,7 +742,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			h.denyTaskControl(conn, req.Header.Kind, req.Header.RequestId, c.Report)
 			return
 		}
-		lfNeed := authority.ScopeBit(&req, caps)
+		lfNeed, _ := authority.ScopeBit(&req, caps) // ListFiles: always answered
 		lresp := protocol.ListFilesResponse{Status: protocol.ListFilesStatus_NoSuchTask}
 		if h.inScope(cid, lfNeed, hex.EncodeToString(lf.TaskId.Id[:])) {
 			lresp = h.handleListFiles(conn, lf)

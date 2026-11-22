@@ -124,7 +124,7 @@ func (h *TaskHandler) handleRestoreTasks(conn ConnHandle, requestID uint32, cid 
 
 // requiredRestoreScope is the bit whose scope bounds both halves of a restore
 // -- the listing needs no bit and is still filtered by it.
-var requiredRestoreScope = authority.ScopeBit(&protocol.TaskControlRequest{
+var requiredRestoreScope, _ = authority.ScopeBit(&protocol.TaskControlRequest{
 	Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_RestoreTasks}}, 0)
 
 // restoreScope is the caller's target set for a restore: the prune scope,

@@ -203,37 +203,43 @@ func TestPossibleCoversEveryBranch(t *testing.T) {
 	}
 }
 
+// ScopeBit answers only where the REQUEST decides which bit's scope binds the
+// target. Elsewhere it says so (ok=false) instead of guessing: a central
+// kind's scope is its central bit where it names a target at all, an await is
+// bounded by visibility, a schedule bind passes two scopes.
 func TestScopeBit(t *testing.T) {
+	check := func(name string, r *protocol.TaskControlRequest, held, want protocol.Capability, wantOK bool) {
+		t.Helper()
+		if got, ok := ScopeBit(r, held); got != want || ok != wantOK {
+			t.Errorf("%s: ScopeBit = (%v, %t), want (%v, %t)", name, got, ok, want, wantOK)
+		}
+	}
 	lf := reqOf(protocol.TaskControlKind_ListFiles)
-	if got := ScopeBit(lf, cWrite); got != cWrite {
-		t.Errorf("ListFiles held file_write: scope %v, want file_write", got)
-	}
-	if got := ScopeBit(lf, cRead|cWrite); got != cRead {
-		t.Errorf("ListFiles held both: scope %v, want file_read", got)
-	}
-	cow := req(protocol.TaskControlKind_AttachSession, func(r *protocol.TaskControlRequest) {
+	check("list files, file_write held", lf, cWrite, cWrite, true)
+	check("list files, both held", lf, cRead|cWrite, cRead, true)
+	check("attach cowrite", req(protocol.TaskControlKind_AttachSession, func(r *protocol.TaskControlRequest) {
 		r.SetAttach(protocol.AttachSessionRequest{Mode: protocol.AttachMode_Cowrite})
-	})
-	if got := ScopeBit(cow, protocol.Capability_All); got != cCowrite {
-		t.Errorf("attach cowrite: scope %v, want exec_cowrite", got)
-	}
-	pull := req(protocol.TaskControlKind_OpenFileTransfer, func(r *protocol.TaskControlRequest) {
+	}), protocol.Capability_All, cCowrite, true)
+	check("file pull", req(protocol.TaskControlKind_OpenFileTransfer, func(r *protocol.TaskControlRequest) {
 		r.SetOpenFileTransfer(protocol.OpenFileTransferRequest{Direction: protocol.FileTransferDirection_Pull})
-	})
-	if got := ScopeBit(pull, protocol.Capability_All); got != cRead {
-		t.Errorf("file pull: scope %v, want file_read", got)
-	}
-	if got := ScopeBit(reqOf(protocol.TaskControlKind_Cancel), protocol.Capability_All); got != protocol.Capability_Cancel {
-		t.Errorf("cancel: scope %v, want cancel", got)
-	}
+	}), protocol.Capability_All, cRead, true)
 	// Listing what could be restored needs no bit, and is still filtered by
 	// prune's scope: the halves share one target set.
-	listOnly := req(protocol.TaskControlKind_RestoreTasks, func(r *protocol.TaskControlRequest) {
+	check("restore list-only", req(protocol.TaskControlKind_RestoreTasks, func(r *protocol.TaskControlRequest) {
 		r.SetRestoreTasks(protocol.RestoreTasksRequest{ListOnly: 1})
-	})
-	if got := ScopeBit(listOnly, 0); got != protocol.Capability_Prune {
-		t.Errorf("restore list-only: scope %v, want prune", got)
-	}
+	}), 0, protocol.Capability_Prune, true)
+	check("record keep", reqOf(protocol.TaskControlKind_RecordKeep), 0, cPersist|cDelete, true)
+	check("exact resume", open(protocol.TaskID{Id: [16]byte{7}}, true, true, false), 0, cResume|cExact, true)
+
+	check("cancel (central)", reqOf(protocol.TaskControlKind_Cancel), protocol.Capability_All, 0, false)
+	check("fresh spawn (no target)", open(protocol.TaskID{}, false, true, false), protocol.Capability_All, 0, false)
+	check("await notify (visibility)", req(protocol.TaskControlKind_AwaitIdle, func(r *protocol.TaskControlRequest) {
+		r.SetAwaitIdle(protocol.AwaitIdleRequest{Sink: protocol.AwaitSink_Notify})
+	}), protocol.Capability_All, 0, false)
+	check("schedule bind (two scopes)", req(protocol.TaskControlKind_ScheduleCreate, func(r *protocol.TaskControlRequest) {
+		r.SetScheduleCreate(protocol.ScheduleCreateRequest{Spec: spec(true, false)})
+	}), protocol.Capability_All, 0, false)
+	check("kill forward (lookup)", reqOf(protocol.TaskControlKind_KillPortForward), protocol.Capability_All, 0, false)
 }
 
 // KindNeed serves a handler that holds only the decoded body. It is the need
@@ -272,6 +278,20 @@ func TestLookupHelpers(t *testing.T) {
 		if got := RecordKeepCap(c.forever, c.ttl, c.curForever, c.curTTL); got != c.want {
 			t.Errorf("RecordKeepCap %s = %v, want %v", c.name, got, c.want)
 		}
+	}
+	// The request facts RequestNeed reads, which the server reads through the
+	// same functions (recordForOpen, applySpec, scheduleSpecTask).
+	if oi := open(protocol.TaskID{}, false, true, true).OpenInteractive(); !OpenAsksRecord(oi) {
+		t.Error("OpenAsksRecord: an open with record on did not ask")
+	}
+	if oi := open(protocol.TaskID{}, false, true, false).OpenInteractive(); OpenAsksRecord(oi) {
+		t.Error("OpenAsksRecord: an open saying nothing asked")
+	}
+	if s := spec(true, true); !SpecBinds(&s) || !SpecAsksRecord(&s) {
+		t.Error("a spec binding a task and recording: SpecBinds / SpecAsksRecord false")
+	}
+	if s := spec(false, false); SpecBinds(&s) || SpecAsksRecord(&s) {
+		t.Error("an empty spec: SpecBinds / SpecAsksRecord true")
 	}
 	if RestoreCap(1) != 0 || RestoreCap(0) != protocol.Capability_Prune {
 		t.Errorf("RestoreCap: list_only %v, restore %v", RestoreCap(1), RestoreCap(0))
