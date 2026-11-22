@@ -245,29 +245,25 @@ var classOnly = map[protocol.TaskControlKind]NeedClass{
 	protocol.TaskControlKind_TaskRename: NeedIdentity,
 }
 
-// requestKinds are the kinds outside the central map whose bits the request
-// or a lookup decides. Filled in by kindBranches.
-var requestKinds = map[protocol.TaskControlKind]bool{
-	protocol.TaskControlKind_AttachSession:       true,
-	protocol.TaskControlKind_OpenFileTransfer:    true,
-	protocol.TaskControlKind_ListFiles:           true,
-	protocol.TaskControlKind_OpenPortForward:     true,
-	protocol.TaskControlKind_RegisterPortForward: true,
-	protocol.TaskControlKind_RecordSwitch:        true,
-	protocol.TaskControlKind_RestoreTasks:        true,
-	protocol.TaskControlKind_OpenInteractive:     true,
-	protocol.TaskControlKind_AwaitIdle:           true,
-	protocol.TaskControlKind_AwaitProgress:       true,
-	protocol.TaskControlKind_KillPortForward:     true,
-	protocol.TaskControlKind_ExecRunKill:         true,
-	protocol.TaskControlKind_RecordKeep:          true,
-	protocol.TaskControlKind_AgentSend:           true,
-	protocol.TaskControlKind_AgentSubscribe:      true,
-	protocol.TaskControlKind_AgentWait:           true,
-}
+func same(c protocol.Capability) Clause { return Clause{AnyOf: c, Report: c} }
+
+// The later requirements more than one kind shares.
+var (
+	scheduleBinding = Later{What: "schedule binding", Possible: UnbindCap, Report: UnbindCap}
+	scheduleState   = func(possible protocol.Capability) Later {
+		return Later{What: "schedule state", Possible: possible}
+	}
+	// Board reach is agentboard's (readableFor / publishableFor), and a
+	// refusal on it is reported as the bit that most often opens it -- even for
+	// a tree.<X> topic that no bit opens (spec §3.4, recorded, not fixed).
+	boardReach = func(reported protocol.Capability) Later {
+		return Later{What: "board reach", Possible: reported, Report: reported}
+	}
+)
 
 // RequestNeed is the single answer to "what does this request need". The
 // clauses come in the order the server checks them, the central clause first.
+// A request whose body is absent is read as the zero body.
 func RequestNeed(req *protocol.TaskControlRequest) Need {
 	k := req.Header.Kind
 	if c, ok := classOnly[k]; ok {
@@ -276,10 +272,280 @@ func RequestNeed(req *protocol.TaskControlRequest) Need {
 	n := Need{Class: NeedBits}
 	bit, central := centralCap[k]
 	if central {
-		n.Clauses = append(n.Clauses, Clause{AnyOf: bit, Report: bit})
+		n.Clauses = append(n.Clauses, same(bit))
 	}
-	if !central && !requestKinds[k] {
-		return Need{}
+	switch k {
+	case protocol.TaskControlKind_AttachSession:
+		n.Clauses = append(n.Clauses, same(AttachModeCap(bodyOf(req.Attach()).Mode)))
+	case protocol.TaskControlKind_OpenFileTransfer:
+		n.Clauses = append(n.Clauses, same(FileTransferCap(bodyOf(req.OpenFileTransfer()).Direction)))
+	case protocol.TaskControlKind_ListFiles:
+		// Either bit lists a directory; a refusal has always named file_read.
+		n.Clauses = append(n.Clauses, Clause{
+			AnyOf:  protocol.Capability_FileRead | protocol.Capability_FileWrite,
+			Report: protocol.Capability_FileRead,
+		})
+	case protocol.TaskControlKind_OpenPortForward:
+		n.Clauses = append(n.Clauses, same(protocol.Capability_ForwardLocal))
+	case protocol.TaskControlKind_RegisterPortForward:
+		n.Clauses = append(n.Clauses, same(ForwardCap(bodyOf(req.RegisterPortForward()).Direction)))
+	case protocol.TaskControlKind_RecordSwitch:
+		rs := bodyOf(req.RecordSwitch())
+		n.Clauses = append(n.Clauses, same(RecordSwitchCap(rs.On())))
+	case protocol.TaskControlKind_RestoreTasks:
+		// Listing what could be restored stays open: the ids of forgotten
+		// tasks live only in the WAL. Putting them back is prune's.
+		if bodyOf(req.RestoreTasks()).ListOnly != 0 {
+			return Need{Class: NeedNone}
+		}
+		n.Clauses = append(n.Clauses, same(protocol.Capability_Prune))
+	case protocol.TaskControlKind_OpenInteractive:
+		oi := bodyOf(req.OpenInteractive())
+		n.Clauses = append(n.Clauses, same(ResumeCap(oi.ResumeTaskId, oi.ResumeExact())))
+		// An attached open hands the opener the control seat.
+		if !oi.Detached() {
+			n.Clauses = append(n.Clauses, same(AttachModeCap(protocol.AttachMode_Control)))
+		}
+		// Refused with RecordNotPermitted, not PermissionDenied.
+		if ext := oi.Ext(); oi.ExtPresent() && ext != nil && ext.RecordSet() && ext.Record() {
+			n.Clauses = append(n.Clauses, Clause{AnyOf: RecordOnCap})
+		}
+		if oi.ResumeTaskId.Id != ([16]byte{}) {
+			n.Later = append(n.Later, scheduleBinding)
+		}
+	case protocol.TaskControlKind_AwaitIdle:
+		return awaitNeed(n, bodyOf(req.AwaitIdle()).Sink)
+	case protocol.TaskControlKind_AwaitProgress:
+		return awaitNeed(n, bodyOf(req.AwaitProgress()).Sink)
+	case protocol.TaskControlKind_SessionMode:
+		n.Later = append(n.Later, scheduleBinding)
+	case protocol.TaskControlKind_KillPortForward:
+		// The bit is ForwardCap of the forward's direction, known after the
+		// registry lookup; the refusal names that bit.
+		n.Later = append(n.Later, Later{What: "forward direction", Possible: protocol.Capability_ForwardLocal |
+			protocol.Capability_ForwardRemote | protocol.Capability_ForwardLink})
+	case protocol.TaskControlKind_ExecRunKill:
+		// Never PermissionDenied: a missing bit answers NotFound, so a refusal
+		// cannot confirm that an exec the caller may not see exists.
+		n.Clauses = append(n.Clauses, Clause{AnyOf: protocol.Capability_ExecRun})
+	case protocol.TaskControlKind_RecordKeep:
+		both := protocol.Capability_RecordPersist | protocol.Capability_RecordDelete
+		n.Clauses = append(n.Clauses, Clause{AnyOf: both, Report: protocol.Capability_RecordPersist})
+		n.Later = append(n.Later, Later{What: "record retention", Possible: both})
+	case protocol.TaskControlKind_ScheduleCreate:
+		s := bodyOf(req.ScheduleCreate()).Spec
+		n.Clauses = append(n.Clauses, SchedulePower(true, false, specBinds(&s))...)
+		if s.RecordSet() && s.Record() {
+			n.Clauses = append(n.Clauses, Clause{AnyOf: RecordOnCap})
+		}
+	case protocol.TaskControlKind_ScheduleEdit:
+		s := bodyOf(req.ScheduleEdit()).Spec
+		if s.RecordSet() && s.Record() {
+			n.Clauses = append(n.Clauses, Clause{AnyOf: RecordOnCap})
+		}
+		n.Later = append(n.Later, scheduleState(protocol.Capability_Spawn|protocol.Capability_Resume))
+	case protocol.TaskControlKind_ScheduleRun:
+		n.Later = append(n.Later, scheduleState(protocol.Capability_Spawn|protocol.Capability_Resume|protocol.Capability_ResumeExact))
+	case protocol.TaskControlKind_BoardRetain, protocol.TaskControlKind_BoardFlush, protocol.TaskControlKind_BoardArchive:
+		// A task caller may persist only a topic it may publish to; refused
+		// with NotPublishable, and no bit opens a topic that reach closes.
+		n.Later = append(n.Later, Later{What: "board reach"})
+	case protocol.TaskControlKind_BoardMembership:
+		n.Later = append(n.Later, Later{What: "grant reach"})
+	case protocol.TaskControlKind_AgentSend:
+		n.Later = append(n.Later, boardReach(protocol.Capability_BoardPeer))
+	case protocol.TaskControlKind_AgentSubscribe, protocol.TaskControlKind_AgentWait:
+		n.Later = append(n.Later, boardReach(protocol.Capability_BoardObserve))
+	default:
+		if !central {
+			return Need{}
+		}
 	}
 	return n
+}
+
+// awaitNeed is AwaitIdle's and AwaitProgress's: a reply needs nothing, a
+// notification needs notify, a board publish needs the board's reach.
+func awaitNeed(n Need, sink protocol.AwaitSink) Need {
+	switch sink {
+	case protocol.AwaitSink_Notify:
+		n.Clauses = append(n.Clauses, same(protocol.Capability_Notify))
+	case protocol.AwaitSink_Board:
+		n.Later = append(n.Later, boardReach(protocol.Capability_BoardPeer))
+	default:
+		return Need{Class: NeedNone}
+	}
+	return n
+}
+
+func specBinds(s *protocol.ScheduleSpec) bool { return s.TaskPresent() && s.TaskId() != nil }
+
+// bodyOf reads an absent body as the zero one.
+func bodyOf[T any](p *T) *T {
+	if p == nil {
+		return new(T)
+	}
+	return p
+}
+
+// ScopeBit is which bit's scope binds this request's target, given what the
+// caller holds. It differs from the clauses where the server scopes by
+// something other than the bit it checked: ListFiles is satisfied by either
+// file bit and scoped by the one held (file_read first); an attach is
+// satisfied by AttachModeCap(mode) and scoped by AttachModeScopeCap(mode). A
+// SET of bits is returned where the server walks several bits' scopes (a
+// resume: each resume bit held; RecordKeep: persist and delete). Otherwise it
+// is the central bit, which is the bit those kinds scope by.
+func ScopeBit(req *protocol.TaskControlRequest, held protocol.Capability) protocol.Capability {
+	switch req.Header.Kind {
+	case protocol.TaskControlKind_ListFiles:
+		if held&protocol.Capability_FileRead != 0 {
+			return protocol.Capability_FileRead
+		}
+		return protocol.Capability_FileWrite
+	case protocol.TaskControlKind_AttachSession:
+		return AttachModeScopeCap(bodyOf(req.Attach()).Mode)
+	case protocol.TaskControlKind_OpenInteractive:
+		oi := bodyOf(req.OpenInteractive())
+		if oi.ResumeTaskId.Id == ([16]byte{}) {
+			return 0
+		}
+		return ResumeCap(oi.ResumeTaskId, oi.ResumeExact())
+	case protocol.TaskControlKind_RecordKeep:
+		return protocol.Capability_RecordPersist | protocol.Capability_RecordDelete
+	}
+	n := RequestNeed(req)
+	if len(n.Clauses) == 0 {
+		return 0
+	}
+	return n.Clauses[0].AnyOf
+}
+
+// Possible is, per KIND, every bit some request of that kind could need: the
+// union over every request-determined branch and every later requirement. It
+// is what a consumer with no request in hand (a tool list) reads. A zero-
+// bodied request is not a substitute -- it selects one branch: a zero
+// FileTransferDirection is Push, so it would answer file_write alone and hide
+// `file pull` from a file_read holder.
+//
+// It is computed by running RequestNeed over variants(k), so a branch cannot
+// be added to RequestNeed and missed here as long as the field it reads is
+// enumerated by variants.
+func Possible(kind protocol.TaskControlKind) protocol.Capability {
+	var out protocol.Capability
+	for _, r := range variants(kind) {
+		n := RequestNeed(r)
+		for _, c := range n.Clauses {
+			out |= c.AnyOf
+		}
+		for _, l := range n.Later {
+			out |= l.Possible
+		}
+	}
+	return out
+}
+
+// variants are requests of kind k covering every value of every field
+// RequestNeed reads for it: the whole u8 domain of each enum field, so a new
+// enum value is covered without an edit here, and both values of each flag.
+func variants(k protocol.TaskControlKind) []*protocol.TaskControlRequest {
+	mk := func(set func(*protocol.TaskControlRequest)) *protocol.TaskControlRequest {
+		r := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: k}}
+		set(r)
+		return r
+	}
+	var out []*protocol.TaskControlRequest
+	switch k {
+	case protocol.TaskControlKind_AttachSession:
+		for v := 0; v < 256; v++ {
+			out = append(out, mk(func(r *protocol.TaskControlRequest) {
+				r.SetAttach(protocol.AttachSessionRequest{Mode: protocol.AttachMode(v)})
+			}))
+		}
+	case protocol.TaskControlKind_OpenFileTransfer:
+		for v := 0; v < 256; v++ {
+			out = append(out, mk(func(r *protocol.TaskControlRequest) {
+				r.SetOpenFileTransfer(protocol.OpenFileTransferRequest{Direction: protocol.FileTransferDirection(v)})
+			}))
+		}
+	case protocol.TaskControlKind_RegisterPortForward:
+		for v := 0; v < 256; v++ {
+			out = append(out, mk(func(r *protocol.TaskControlRequest) {
+				r.SetRegisterPortForward(protocol.RegisterPortForwardRequest{Direction: protocol.PortForwardDirection(v)})
+			}))
+		}
+	case protocol.TaskControlKind_RecordSwitch:
+		for _, on := range []bool{false, true} {
+			out = append(out, mk(func(r *protocol.TaskControlRequest) {
+				var rs protocol.RecordSwitchRequest
+				rs.SetOn(on)
+				r.SetRecordSwitch(rs)
+			}))
+		}
+	case protocol.TaskControlKind_RestoreTasks:
+		for v := 0; v < 256; v++ {
+			out = append(out, mk(func(r *protocol.TaskControlRequest) {
+				r.SetRestoreTasks(protocol.RestoreTasksRequest{ListOnly: uint8(v)})
+			}))
+		}
+	case protocol.TaskControlKind_AwaitIdle:
+		for v := 0; v < 256; v++ {
+			out = append(out, mk(func(r *protocol.TaskControlRequest) {
+				r.SetAwaitIdle(protocol.AwaitIdleRequest{Sink: protocol.AwaitSink(v)})
+			}))
+		}
+	case protocol.TaskControlKind_AwaitProgress:
+		for v := 0; v < 256; v++ {
+			out = append(out, mk(func(r *protocol.TaskControlRequest) {
+				r.SetAwaitProgress(protocol.AwaitProgressRequest{Sink: protocol.AwaitSink(v)})
+			}))
+		}
+	case protocol.TaskControlKind_OpenInteractive:
+		for _, id := range []protocol.TaskID{{}, {Id: [16]byte{1}}} {
+			for _, exact := range []bool{false, true} {
+				for _, detached := range []bool{false, true} {
+					for _, record := range []bool{false, true} {
+						out = append(out, mk(func(r *protocol.TaskControlRequest) {
+							var oi protocol.OpenInteractiveRequest
+							oi.ResumeTaskId = id
+							oi.SetResumeExact(exact)
+							oi.SetDetached(detached)
+							if record {
+								var ext protocol.OpenInteractiveExt
+								ext.SetRecordSet(true)
+								ext.SetRecord(true)
+								oi.SetExtPresent(true)
+								oi.SetExt(ext)
+							}
+							r.SetOpenInteractive(oi)
+						}))
+					}
+				}
+			}
+		}
+	case protocol.TaskControlKind_ScheduleCreate, protocol.TaskControlKind_ScheduleEdit:
+		for _, binds := range []bool{false, true} {
+			for _, record := range []bool{false, true} {
+				var s protocol.ScheduleSpec
+				if binds {
+					s.SetTaskPresent(true)
+					s.SetTaskId(protocol.TaskID{Id: [16]byte{1}})
+				}
+				if record {
+					s.SetRecordSet(true)
+					s.SetRecord(true)
+				}
+				out = append(out, mk(func(r *protocol.TaskControlRequest) {
+					if k == protocol.TaskControlKind_ScheduleCreate {
+						r.SetScheduleCreate(protocol.ScheduleCreateRequest{Spec: s})
+					} else {
+						r.SetScheduleEdit(protocol.ScheduleEditRequest{Spec: s})
+					}
+				}))
+			}
+		}
+	default:
+		out = append(out, mk(func(*protocol.TaskControlRequest) {}))
+	}
+	return out
 }
