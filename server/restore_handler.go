@@ -77,7 +77,7 @@ func (h *TaskHandler) handleRestoreTasks(conn ConnHandle, requestID uint32, cid 
 	}
 
 	// The mutating half needs the CAP, not only the scope. Both halves arrive
-	// as the same kind and are told apart by list_only, which requiredCap
+	// as the same kind and are told apart by list_only, which authority.CentralCap
 	// cannot see -- the same reason AttachSession's gate is inline. Listing
 	// stays open deliberately: the ids of forgotten tasks live only in the WAL,
 	// so gating it too would leave the verb usable only by someone who had

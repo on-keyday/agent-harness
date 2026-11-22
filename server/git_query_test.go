@@ -90,9 +90,9 @@ func TestGitQueryDoesNotGateOnTaskStatus(t *testing.T) {
 }
 
 func TestGitQueryRequiresFileRead(t *testing.T) {
-	got, gated := requiredCap[protocol.TaskControlKind_GitQuery]
+	got, gated := authority.CentralCap(protocol.TaskControlKind_GitQuery)
 	if !gated {
-		t.Fatal("git_query is not in requiredCap; it would dispatch ungated")
+		t.Fatal("git_query is not in authority.CentralCap; it would dispatch ungated")
 	}
 	if got != protocol.Capability_FileRead {
 		t.Fatalf("git_query requires %v, want file_read", got)

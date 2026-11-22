@@ -87,7 +87,7 @@ func (h *TaskHandler) handleProgressSet(conn ConnHandle, req *protocol.TaskContr
 
 // handleProgressClear empties ANOTHER task's line, as that task's own --clear
 // would: a fresh stamp, the task_progress event, and its armed watchers fire.
-// The cancel bit was checked by the generic gate (requiredCap); the target
+// The cancel bit was checked by the generic gate (authority.CentralCap); the target
 // must be inside cancel's scope, and one outside it is reported as absent, as
 // cancel itself reports it.
 func (h *TaskHandler) handleProgressClear(conn ConnHandle, req *protocol.TaskControlRequest) {

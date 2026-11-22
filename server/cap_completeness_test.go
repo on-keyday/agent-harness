@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -14,7 +15,7 @@ import (
 // second question -- "and what capability does it need?" -- so restore_tasks
 // shipped with its scope filter and no cap check, and a caller whose prune had
 // been revoked could still put records back. Scope says WHICH tasks; only the
-// cap says WHETHER. The absences from requiredCap were documented in prose
+// cap says WHETHER. The absences from authority.CentralCap were documented in prose
 // above the map, and prose does not go red.
 //
 // Add a kind and this test fails until it is classified, which forces the
@@ -22,10 +23,10 @@ import (
 type capClass int
 
 const (
-	// capInMap: the generic gate in Handle, from requiredCap.
+	// capInMap: the generic gate in Handle, from authority.CentralCap.
 	capInMap capClass = iota
 	// capInHandler: gated inside the case or the handler, because the required
-	// bit depends on something requiredCap cannot see -- a direction, an attach
+	// bit depends on something authority.CentralCap cannot see -- a direction, an attach
 	// mode, a list_only flag, a registry lookup, or operator identity.
 	capInHandler
 	// capNone: needs no capability. Bounded by task VISIBILITY instead, or it
@@ -77,7 +78,7 @@ var kindCapClass = map[protocol.TaskControlKind]capClass{
 	protocol.TaskControlKind_RegisterPortForward: capInHandler,
 	protocol.TaskControlKind_KillPortForward:     capInHandler,
 	// Create needs spawn and resume needs the resume rank: the bit depends on
-	// resume_task_id and resume_exact. resumeRequestCap.
+	// resume_task_id and resume_exact. authority.ResumeCap.
 	protocol.TaskControlKind_Submit:          capInHandler,
 	protocol.TaskControlKind_OpenInteractive: capInHandler,
 	// The bit depends on the requested AttachMode: authority.AttachModeCap.
@@ -88,7 +89,7 @@ var kindCapClass = map[protocol.TaskControlKind]capClass{
 	protocol.TaskControlKind_SetCaps:   capInHandler,
 	protocol.TaskControlKind_SetParent: capInHandler,
 	// prune, but only on the half that mutates: both halves arrive as this one
-	// kind and are told apart by list_only, which requiredCap cannot see. The
+	// kind and are told apart by list_only, which authority.CentralCap cannot see. The
 	// listing half stays open because the ids of forgotten tasks live only in
 	// the WAL.
 	protocol.TaskControlKind_RestoreTasks: capInHandler,
@@ -194,7 +195,7 @@ func TestEveryTaskControlKindHasACapVerdict(t *testing.T) {
 		if _, ok := kindCapClass[k]; !ok {
 			t.Errorf("TaskControlKind %v has no capability verdict.\n"+
 				"Add it to kindCapClass. If it needs a bit that does not depend on the "+
-				"request's contents, put it in requiredCap; if it does depend on them, gate "+
+				"request's contents, put it in authority.CentralCap; if it does depend on them, gate "+
 				"it in the handler and say so here. An unclassified kind dispatches with "+
 				"whatever gate its neighbours happen to have -- which is how restore_tasks "+
 				"shipped able to mutate the task list with the cap revoked.", k)
@@ -206,21 +207,24 @@ func TestEveryTaskControlKindHasACapVerdict(t *testing.T) {
 // second place the answer is written down rather than a check on the first.
 func TestCapClassAgreesWithRequiredCap(t *testing.T) {
 	for k, class := range kindCapClass {
-		_, inMap := requiredCap[k]
+		_, inMap := authority.CentralCap(k)
 		switch class {
 		case capInMap:
 			if !inMap {
-				t.Errorf("%v is classified capInMap but is absent from requiredCap: it dispatches ungated", k)
+				t.Errorf("%v is classified capInMap but is absent from authority.CentralCap: it dispatches ungated", k)
 			}
 		case capInHandler, capNone:
 			if inMap {
-				t.Errorf("%v is classified %d but IS in requiredCap; reclassify it as capInMap", k, class)
+				t.Errorf("%v is classified %d but IS in authority.CentralCap; reclassify it as capInMap", k, class)
 			}
 		}
 	}
-	for k := range requiredCap {
+	for k := protocol.TaskControlKind(0); k <= protocol.TaskControlKind_TaskRename; k++ {
+		if _, central := authority.CentralCap(k); !central {
+			continue
+		}
 		if c, ok := kindCapClass[k]; !ok || c != capInMap {
-			t.Errorf("%v is in requiredCap but not classified capInMap", k)
+			t.Errorf("%v is in authority.CentralCap but not classified capInMap", k)
 		}
 	}
 }

@@ -126,7 +126,7 @@ func TestRunnerDialAddRefusesTransportWithoutLeg(t *testing.T) {
 func TestRunnerDialCapabilities(t *testing.T) {
 	for _, k := range []protocol.TaskControlKind{protocol.TaskControlKind_RunnerDialAdd,
 		protocol.TaskControlKind_RunnerDialList, protocol.TaskControlKind_RunnerDialRemove} {
-		if got := requiredCap[k]; got != protocol.Capability_RunnerAdmin {
+		if got := requiredCapOf(k); got != protocol.Capability_RunnerAdmin {
 			t.Errorf("%v gated on %v, want runner_admin", k, got)
 		}
 	}

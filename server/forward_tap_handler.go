@@ -19,7 +19,7 @@ func (h *TaskHandler) forwardVisibleTo(connID string, pf *portForward) bool {
 //
 // Three gates, and they are not interchangeable:
 //
-//  1. Holding forward_tap at all — checked before dispatch, off requiredCap,
+//  1. Holding forward_tap at all — checked before dispatch, off authority.CentralCap,
 //     answered with a PermissionDenied response rather than a status here.
 //  2. Visibility — an id the caller cannot see answers no_such_forward, the
 //     same answer an unknown id gets. Forward ids come from a dense next++

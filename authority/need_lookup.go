@@ -27,7 +27,8 @@ func ResumeCap(resumeID protocol.TaskID, exact bool) protocol.Capability {
 }
 
 // ForwardCap is the bit a port forward of direction d needs: -L local, -R
-// remote, --ip link. An unknown direction is local.
+// remote, --ip link. An unknown direction is local. It is the bit to create
+// and to kill alike -- one function so the two gates cannot disagree.
 func ForwardCap(d protocol.PortForwardDirection) protocol.Capability {
 	switch d {
 	case protocol.PortForwardDirection_Remote:

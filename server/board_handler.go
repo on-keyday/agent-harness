@@ -14,7 +14,7 @@ import (
 )
 
 // handleBoardTopics returns the agentboard topic overview (metadata only).
-// Cap (board_observe) is enforced centrally via requiredCap before dispatch.
+// Cap (board_observe) is enforced centrally via authority.CentralCap before dispatch.
 func (h *TaskHandler) handleBoardTopics(conn ConnHandle, requestID uint32) {
 	var rows []protocol.BoardTopicRow
 	var retained []protocol.BoardTopicRetention
@@ -69,7 +69,7 @@ func (h *TaskHandler) handleBoardTopics(conn ConnHandle, requestID uint32) {
 
 // handleBoardSubscribers reports each task's agentboard subscription set,
 // optionally narrowed to the tasks a publish to one topic would reach. Cap
-// (board_observe) is enforced centrally via requiredCap before dispatch, matching
+// (board_observe) is enforced centrally via authority.CentralCap before dispatch, matching
 // its board_topics / board_read siblings: this is a sweep across every task on
 // the board.
 //
@@ -110,7 +110,7 @@ func (h *TaskHandler) handleBoardSubscribers(conn ConnHandle, requestID uint32, 
 
 // handleBoardRead returns every retained message in a topic, bodies included,
 // as a BoardReadBody on a stream — or, with limit > 0, one page of them newest
-// first. Cap (board_observe) is enforced centrally via requiredCap before
+// first. Cap (board_observe) is enforced centrally via authority.CentralCap before
 // dispatch. An unknown topic answers not_found with no stream.
 func (h *TaskHandler) handleBoardRead(conn ConnHandle, requestID uint32, topic string, beforeSeq uint64, limit uint16) {
 	respond := func(status protocol.BoardStatus) func(streamID uint64) {
@@ -361,7 +361,7 @@ func (h *TaskHandler) handleBoardWake(conn ConnHandle, requestID uint32, topic s
 }
 
 // handleBoardRetain sets or clears a topic's retention. The board_persist bit
-// is checked centrally (requiredCap); a task caller (by non-zero) may also
+// is checked centrally (authority.CentralCap); a task caller (by non-zero) may also
 // retain only a topic it may publish to, so the bit cannot reach into a
 // conversation the task is not part of. An operator retains any topic.
 func (h *TaskHandler) handleBoardRetain(conn ConnHandle, requestID uint32, r *protocol.BoardRetainRequest, by protocol.TaskID) {

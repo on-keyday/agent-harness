@@ -14,7 +14,7 @@ import (
 )
 
 // The three runner key verbs (runner enroll / keys / unenroll). Each is gated
-// on runner_enroll by requiredCap before it reaches here.
+// on runner_enroll by authority.CentralCap before it reaches here.
 
 // enrolledBy names who enrolled a key: the caller's principal task, or the
 // operator for a connection that has none.

@@ -48,9 +48,9 @@ func registerTapTestExec(t *testing.T, h *TaskHandler, taskHex string) *execRun 
 }
 
 func TestOpenExecTapNeedsExecTapCap(t *testing.T) {
-	want, gated := requiredCap[protocol.TaskControlKind_OpenExecTap]
+	want, gated := authority.CentralCap(protocol.TaskControlKind_OpenExecTap)
 	if !gated {
-		t.Fatal("open_exec_tap is not in requiredCap: reading an exec's payload would be ungated")
+		t.Fatal("open_exec_tap is not in authority.CentralCap: reading an exec's payload would be ungated")
 	}
 	if want != protocol.Capability_ExecTap {
 		t.Fatalf("gated on %v, want exec_tap", want)

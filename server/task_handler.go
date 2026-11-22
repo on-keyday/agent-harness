@@ -522,7 +522,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 	}
 
 	cid := conn.ConnectionID().String()
-	if want, gated := requiredCap[req.Header.Kind]; gated {
+	if want, gated := authority.CentralCap(req.Header.Kind); gated {
 		if !hasCap(h.callerCaps(cid), want) {
 			h.denyTaskControl(conn, req.Header.Kind, req.Header.RequestId, want)
 			// A refused request's body would otherwise sit in the receive
@@ -629,9 +629,9 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			}
 			h.denyTaskControl(conn, req.Header.Kind, req.Header.RequestId, want)
 		}
-		// The request-dependent gate (resumeRequestCap): spawn for a fresh
+		// The request-dependent gate (authority.ResumeCap): spawn for a fresh
 		// task, resume / resume_exact for a resume.
-		if want := resumeRequestCap(oi.ResumeTaskId, oi.ResumeExact()); !hasAnyCap(h.callerCaps(cid), want) {
+		if want := authority.ResumeCap(oi.ResumeTaskId, oi.ResumeExact()); !hasAnyCap(h.callerCaps(cid), want) {
 			deny(want)
 			return
 		}
@@ -762,7 +762,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		conn.SendMessage(out) //nolint:errcheck
 
 	case protocol.TaskControlKind_GitQuery:
-		// FileRead is enforced centrally via requiredCap before dispatch.
+		// FileRead is enforced centrally via authority.CentralCap before dispatch.
 		gq := req.GitQuery()
 		if gq == nil {
 			slog.Error("TaskHandler: GitQuery variant is nil")
@@ -778,7 +778,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		conn.SendMessage(out) //nolint:errcheck
 
 	case protocol.TaskControlKind_OpenExecRun:
-		// ExecRun is enforced centrally via requiredCap before dispatch; the
+		// ExecRun is enforced centrally via authority.CentralCap before dispatch; the
 		// TARGET is gated here, as GitQuery's is.
 		er := req.OpenExecRun()
 		if er == nil {
@@ -879,7 +879,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		// Hoisted out of the block it used to live in: the scope now resolves
 		// through the same bit the capability check used, so the two cannot
 		// disagree about which direction is being authorised.
-		need := forwardCapFor(rf.Direction)
+		need := authority.ForwardCap(rf.Direction)
 		if !hasCap(h.callerCaps(cid), need) {
 			h.denyTaskControl(conn, req.Header.Kind, req.Header.RequestId, need)
 			return
@@ -914,7 +914,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		// enumeration oracle the no_such_forward rule exists to close.
 		if pf, ok := h.pforwards().get(kr.ForwardId); ok {
 			if all, allowed := h.visibleToCaller(cid); all || allowed[pf.taskIDHex] {
-				need := forwardCapFor(pf.direction)
+				need := authority.ForwardCap(pf.direction)
 				// authorize, not hasCap: a forward VISIBLE through the caller's
 				// visibility rank may still belong to a task outside its ACTION
 				// scope, and the two are deliberately different sets.
@@ -957,7 +957,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("TaskHandler: AttachSession variant nil")
 			return
 		}
-		// Mode-dependent gate: the requiredCap map is keyed on the kind alone
+		// Mode-dependent gate: the authority.CentralCap map is keyed on the kind alone
 		// and cannot see AttachMode, and the three modes are three different
 		// powers. Denied BEFORE the scope check so a caller that may not attach
 		// this way at all gets permission_denied rather than a scope answer
@@ -1184,7 +1184,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		}
 		h.handleTrsfState(conn, req.Header.RequestId, cid, ts)
 
-	// The agentboard's agent face. None of these appears in requiredCap: each
+	// The agentboard's agent face. None of these appears in authority.CentralCap: each
 	// is keyed to the caller's own subscriptions or authorship, which is the
 	// line drawn in TaskControlKind's own comment. board_topics and
 	// board_purge, the two that ARE gated, are ordinary entries above.
@@ -1300,7 +1300,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 
 	case protocol.TaskControlKind_RestoreTasks:
 		// Operator-identity gate, like SetCaps below; deliberately NOT in
-		// requiredCap, for the same self-amplification reason.
+		// authority.CentralCap, for the same self-amplification reason.
 		rt := req.RestoreTasks()
 		if rt == nil {
 			slog.Error("TaskHandler: RestoreTasks variant is nil")
@@ -1310,7 +1310,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 
 	case protocol.TaskControlKind_TaskRename:
 		// Gated in the handler like set_caps: operator, or R1 (resume over a
-		// strict descendant), which requiredCap cannot express.
+		// strict descendant), which authority.CentralCap cannot express.
 		tr := req.TaskRename()
 		if tr == nil {
 			slog.Error("TaskHandler: TaskRename variant is nil")
@@ -1318,7 +1318,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		}
 		h.handleTaskRename(conn, req.Header.RequestId, cid, tr)
 	case protocol.TaskControlKind_SetCaps:
-		// Deliberately NOT in requiredCap: the operator path has no bit at all,
+		// Deliberately NOT in authority.CentralCap: the operator path has no bit at all,
 		// and a task's path is R1 + grantFor, checked in the handler.
 		sc := req.SetCaps()
 		if sc == nil {
@@ -1329,7 +1329,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 
 	case protocol.TaskControlKind_SetParent:
 		// Same operator-identity gate as SetCaps; deliberately NOT in
-		// requiredCap for the same reason.
+		// authority.CentralCap for the same reason.
 		sp := req.SetParent()
 		if sp == nil {
 			slog.Error("TaskHandler: SetParent variant is nil")

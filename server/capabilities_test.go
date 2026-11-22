@@ -141,7 +141,7 @@ func TestSpawnAttenuation(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Task 4: Capability gate via requiredCap + denyTaskControl
+// Task 4: Capability gate via authority.CentralCap + denyTaskControl
 // ---------------------------------------------------------------------------
 
 // lastTaskControlResponse decodes the last message sent on conn as a
@@ -429,7 +429,7 @@ func TestDirectionGate(t *testing.T) {
 	// Case 8: kill a Local forward the caller CAN see (it is the caller's own
 	// task), without ForwardLocal → denied (RequiredCap=ForwardLocal).
 	// KillPortForward's request carries only a forward_id, not a direction, so
-	// the gate cannot live in requiredCap like every other kind's: the dispatch
+	// the gate cannot live in authority.CentralCap like every other kind's: the dispatch
 	// case looks the id up in the registry FIRST to learn its direction, resolves
 	// visibility, and only THEN gates on the direction cap — visibility must be
 	// checked before the capability, or a missing-cap denial for an out-of-subtree
@@ -1169,9 +1169,9 @@ func TestResumeCapsOverride(t *testing.T) {
 }
 
 func TestRequiredCap_BoardSubscribers(t *testing.T) {
-	got, ok := requiredCap[protocol.TaskControlKind_BoardSubscribers]
+	got, ok := authority.CentralCap(protocol.TaskControlKind_BoardSubscribers)
 	if !ok {
-		t.Fatal("board_subscribers missing from requiredCap; an ungated kind is reachable by any helloed agent")
+		t.Fatal("board_subscribers missing from authority.CentralCap; an ungated kind is reachable by any helloed agent")
 	}
 	if got != protocol.Capability_BoardObserve {
 		t.Errorf("cap = %v, want board_observe (matching board_topics / board_read)", got)

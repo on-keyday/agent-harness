@@ -11,7 +11,7 @@ import (
 
 // handleSessionMode switches a running session task between foreground and
 // background (pillar A spec, A-D19). The cancel bit is checked centrally
-// (requiredCap); the target is gated here, as the cancel handler gates it: an
+// (authority.CentralCap); the target is gated here, as the cancel handler gates it: an
 // out-of-scope task answers not_found. A task may not switch its own run mode
 // (below).
 func (h *TaskHandler) handleSessionMode(cid string, conn ConnHandle, req *protocol.TaskControlRequest) {

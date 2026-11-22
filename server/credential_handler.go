@@ -15,7 +15,7 @@ import (
 // The credential verbs (docs/superpowers/specs/2026-11-21-credential-tasks-design.md):
 // issue creates a credential task from a public key (D13), re-key registers a
 // new key and expiry on one (D18). Both need credential_issue, checked
-// centrally (requiredCap); the attenuation and the target gates are here.
+// centrally (authority.CentralCap); the attenuation and the target gates are here.
 
 func (h *TaskHandler) handleCredentialIssue(conn ConnHandle, requestID uint32, cid string, req *protocol.CredentialIssueRequest) {
 	h.sendCredential(conn, protocol.TaskControlKind_CredentialIssue, requestID, h.credentialIssue(cid, req, time.Now()))

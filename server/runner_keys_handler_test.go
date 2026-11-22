@@ -90,7 +90,7 @@ func TestRunnerVerbsNeedRunnerEnroll(t *testing.T) {
 	}
 	f.h.principals[confined.ConnectionID().String()] = hexToTaskID(t, tid)
 	for _, kind := range []protocol.TaskControlKind{protocol.TaskControlKind_RunnerEnroll, protocol.TaskControlKind_RunnerUnenroll, protocol.TaskControlKind_RunnerKeys} {
-		if got := requiredCap[kind]; got != protocol.Capability_RunnerEnroll {
+		if got := requiredCapOf(kind); got != protocol.Capability_RunnerEnroll {
 			t.Errorf("%v gated on %v, want runner_enroll", kind, got)
 		}
 	}

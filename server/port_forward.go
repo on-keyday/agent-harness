@@ -330,18 +330,6 @@ func validForwardShape(p protocol.ForwardProtocol, d protocol.PortForwardDirecti
 	return false
 }
 
-// forwardCapFor is the capability a forward of this direction needs, to
-// create and to kill alike. One function so the two gates cannot disagree.
-func forwardCapFor(d protocol.PortForwardDirection) protocol.Capability {
-	switch d {
-	case protocol.PortForwardDirection_Remote:
-		return protocol.Capability_ForwardRemote
-	case protocol.PortForwardDirection_Link:
-		return protocol.Capability_ForwardLink
-	}
-	return protocol.Capability_ForwardLocal
-}
-
 // sendClosePortForward best-effort tells a runner to stop a remote-forward listener.
 func sendClosePortForward(rc ConnHandle, forwardID uint64) {
 	if rc == nil {

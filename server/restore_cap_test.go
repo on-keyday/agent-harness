@@ -79,7 +79,7 @@ func TestRestoreDeniedWithoutPruneCap(t *testing.T) {
 // The list half must stay open: the ids of forgotten tasks live only in the
 // WAL, so gating it too would leave the verb usable only by someone who had
 // written the id down before the accident. Both halves arrive as the same kind,
-// which is why the gate is inline rather than in requiredCap -- putting it
+// which is why the gate is inline rather than in authority.CentralCap -- putting it
 // there would take this away.
 func TestRestoreListStaysOpenWithoutPruneCap(t *testing.T) {
 	h := newTestHandler(t)

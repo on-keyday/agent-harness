@@ -96,7 +96,7 @@ func (r *recvStreamConn) GetReceiveStream(trsf.StreamID) trsf.ReceiveStream { re
 
 // TestReadAgentPayloadStream_StopsAtMaxPayload pins the memory bound on the
 // one server-side path an agent reaches with NO capability at all: agent send
-// is absent from requiredCap, so `caps: none` ("data-plane only") reaches it.
+// is absent from authority.CentralCap, so `caps: none` ("data-plane only") reaches it.
 // The read must abandon an over-long body instead of buffering it to EOF and
 // judging the length afterwards, and it must cancel the receive stream so the
 // sender stops rather than being drained.

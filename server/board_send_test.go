@@ -90,7 +90,7 @@ func TestHandleBoardWake_ReportsWoken(t *testing.T) {
 
 func TestBoardSendAndWakeNeedBoardSend(t *testing.T) {
 	for _, k := range []protocol.TaskControlKind{protocol.TaskControlKind_BoardSend, protocol.TaskControlKind_BoardWake} {
-		if got := requiredCap[k]; got != protocol.Capability_BoardSend {
+		if got := requiredCapOf(k); got != protocol.Capability_BoardSend {
 			t.Errorf("%v required cap = %v, want board_send", k, got)
 		}
 	}

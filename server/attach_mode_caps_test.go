@@ -92,7 +92,7 @@ func TestWatchingDoesNotGrantEviction(t *testing.T) {
 
 // The unit tests above prove authority.AttachModeCap's table. This one proves it is
 // actually WIRED: the gate lives inline in the AttachSession dispatch case
-// (the requiredCap map cannot see AttachMode), so the table being right says
+// (the authority.CentralCap map cannot see AttachMode), so the table being right says
 // nothing about the dispatch reading it. A caller holding only exec_view must
 // pass the gate for mode=view and be denied for the two stronger modes.
 func TestAttachSessionGateIsWiredPerMode(t *testing.T) {

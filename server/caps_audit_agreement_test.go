@@ -26,7 +26,7 @@ func TestAuditImpliedByAgreesWithGates(t *testing.T) {
 	mask := map[protocol.Capability]protocol.Capability{
 		protocol.Capability_ExecView:    authority.AttachModeCap(protocol.AttachMode_View),
 		protocol.Capability_ExecCowrite: authority.AttachModeCap(protocol.AttachMode_Cowrite),
-		protocol.Capability_ResumeExact: resumeRequestCap(someID, true),
+		protocol.Capability_ResumeExact: authority.ResumeCap(someID, true),
 	}
 	for bit, m := range mask {
 		impliers := verb.CapImpliedBy(bit)

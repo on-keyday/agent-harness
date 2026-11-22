@@ -127,7 +127,7 @@ func TestKickStatuses(t *testing.T) {
 }
 
 func TestKickNeedsRunnerEnroll(t *testing.T) {
-	if got := requiredCap[protocol.TaskControlKind_RunnerKick]; got != protocol.Capability_RunnerEnroll {
+	if got := requiredCapOf(protocol.TaskControlKind_RunnerKick); got != protocol.Capability_RunnerEnroll {
 		t.Fatalf("runner_kick gated on %v, want runner_enroll", got)
 	}
 	f := newKickFixture(t)

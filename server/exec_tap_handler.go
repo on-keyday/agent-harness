@@ -12,7 +12,7 @@ import (
 // The three gates of handleOpenForwardTap, in the same order and for the same
 // reasons:
 //
-//  1. Holding exec_tap — checked before dispatch off requiredCap, answered with
+//  1. Holding exec_tap — checked before dispatch off authority.CentralCap, answered with
 //     PermissionDenied rather than a status here.
 //  2. Visibility — an id the caller cannot see answers no_such_exec, the same
 //     answer an unknown id gets. Exec ids come from a dense next++ counter, so a

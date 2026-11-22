@@ -9,7 +9,7 @@ import (
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
-// runner dial add / ls / rm — gated on runner_admin by requiredCap
+// runner dial add / ls / rm — gated on runner_admin by authority.CentralCap
 // (docs/superpowers/specs/2026-11-04-persistent-reverse-dial-and-runner-kick-design.md).
 
 const (

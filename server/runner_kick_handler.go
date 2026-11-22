@@ -10,7 +10,7 @@ import (
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
-// runner kick — gated on runner_enroll by requiredCap
+// runner kick — gated on runner_enroll by authority.CentralCap
 // (docs/superpowers/specs/2026-11-04-persistent-reverse-dial-and-runner-kick-design.md §2).
 // The runner is asked to leave and exits; the server keeps no ban list (D8).
 

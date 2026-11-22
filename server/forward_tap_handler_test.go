@@ -112,9 +112,9 @@ func TestOpenForwardTapAttachesAndIsCountedOnTheListing(t *testing.T) {
 }
 
 func TestOpenForwardTapNeedsForwardTapCap(t *testing.T) {
-	want, gated := requiredCap[protocol.TaskControlKind_OpenForwardTap]
+	want, gated := authority.CentralCap(protocol.TaskControlKind_OpenForwardTap)
 	if !gated {
-		t.Fatal("open_forward_tap is not in requiredCap: reading a forward's payload would be ungated")
+		t.Fatal("open_forward_tap is not in authority.CentralCap: reading a forward's payload would be ungated")
 	}
 	if want != protocol.Capability_ForwardTap {
 		t.Fatalf("gated on %v, want forward_tap", want)

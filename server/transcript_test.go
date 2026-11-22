@@ -89,7 +89,7 @@ func (f *transcriptFixture) sentTranscriptRequests(t *testing.T) []protocol.Runn
 
 func TestTranscriptKindsRequireTranscriptRead(t *testing.T) {
 	for _, k := range []protocol.TaskControlKind{protocol.TaskControlKind_TranscriptList, protocol.TaskControlKind_TranscriptGet} {
-		if got, ok := requiredCap[k]; !ok || got != protocol.Capability_TranscriptRead {
+		if got, ok := authority.CentralCap(k); !ok || got != protocol.Capability_TranscriptRead {
 			t.Fatalf("%v requires %v (gated %v), want transcript_read", k, got, ok)
 		}
 	}

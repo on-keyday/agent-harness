@@ -11,7 +11,7 @@ import (
 // handleTranscript answers transcript_list and transcript_get (pillar B,
 // docs/superpowers/specs/2026-11-14-pillar-b-transcripts-design.md).
 //
-// The bit (transcript_read) is enforced centrally via requiredCap; the TARGET
+// The bit (transcript_read) is enforced centrally via authority.CentralCap; the TARGET
 // is gated here against the bit's own scope, so a task out of scope answers
 // no_such_task, as git_query does. Whether the caller may also read sessions
 // recorded in a shared directory (a --no-worktree task's repo) is exec_run's

@@ -107,11 +107,11 @@ func scheduleIDFromHex(idHex string) protocol.ScheduleID {
 // handleSchedule dispatches the six kinds. create and edit read their prompt
 // from the payload stream the spec names (off the receive loop, as an open's
 // is: the stream's frames arrive on the loop this runs on); the bit was
-// checked centrally (requiredCap).
+// checked centrally (authority.CentralCap).
 func (h *TaskHandler) handleSchedule(cid string, conn ConnHandle, req *protocol.TaskControlRequest) {
 	kind := req.Header.Kind
 	// deny answers a missing bit as the task-control permission denial (S-D17a),
-	// the shape requiredCap's own denial has.
+	// the shape authority.CentralCap's own denial has.
 	deny := func(c protocol.Capability) {
 		h.denyTaskControl(conn, kind, req.Header.RequestId, c)
 	}
@@ -741,7 +741,7 @@ func (h *TaskHandler) scheduleRunPower(cid string, sc *Schedule) (protocol.Capab
 			return protocol.Capability_Spawn, nil
 		}
 	case protocol.ScheduleTaskState_Bound:
-		if need := resumeRequestCap(taskIDFromHex(sc.TaskID), true); !hasAnyCap(callerCaps, need) {
+		if need := authority.ResumeCap(taskIDFromHex(sc.TaskID), true); !hasAnyCap(callerCaps, need) {
 			return need, nil
 		}
 		if !h.resumeTargetAllowed(cid, true, sc.TaskID) {
