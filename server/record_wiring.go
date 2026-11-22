@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -25,7 +26,7 @@ func (h *TaskHandler) recordForOpen(req *protocol.OpenInteractiveRequest, caller
 		if !ext.Record() {
 			return false, true
 		}
-		if !hasCap(callerCaps, protocol.Capability_RecordPersist) {
+		if !hasCap(callerCaps, authority.RecordOnCap) {
 			return false, false
 		}
 		record = true

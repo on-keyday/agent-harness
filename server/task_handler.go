@@ -641,8 +641,8 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		// (handleOpenInteractive answers resume_not_found otherwise): the bit's
 		// absence must not say whether an unreachable task is bound.
 		if t, unbinds := h.openUnbinds(oi); unbinds && h.resumeTargetAllowed(cid, oi.ResumeExact(), t) &&
-			!hasCap(h.callerCaps(cid), protocol.Capability_ScheduleEdit) {
-			deny(protocol.Capability_ScheduleEdit)
+			!hasCap(h.callerCaps(cid), authority.UnbindCap) {
+			deny(authority.UnbindCap)
 			return
 		}
 		// An attached open hands the opener the control seat, so it needs what
@@ -712,11 +712,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("TaskHandler: OpenFileTransfer variant is nil")
 			return
 		}
-		need := protocol.Capability_FileWrite // Push / Delete / DirPush / DirDelete
-		switch oft.Direction {
-		case protocol.FileTransferDirection_Pull, protocol.FileTransferDirection_DirPull:
-			need = protocol.Capability_FileRead
-		}
+		need := authority.FileTransferCap(oft.Direction)
 		if !hasCap(h.callerCaps(cid), need) {
 			h.denyTaskControl(conn, req.Header.Kind, req.Header.RequestId, need)
 			return
@@ -740,18 +736,13 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		// the one the caller actually holds -- the two may carry different
 		// overrides, and resolving through a fixed representative would apply
 		// file_read's target set to a caller that only holds file_write.
-		lfNeed := protocol.Capability_FileRead
-		{
-			caps := h.callerCaps(cid)
-			if !hasCap(caps, protocol.Capability_FileRead) && !hasCap(caps, protocol.Capability_FileWrite) {
-				// report FileRead as the representative requirement in the denial
-				h.denyTaskControl(conn, req.Header.Kind, req.Header.RequestId, protocol.Capability_FileRead)
-				return
-			}
-			if !hasCap(caps, protocol.Capability_FileRead) {
-				lfNeed = protocol.Capability_FileWrite
-			}
+		caps := h.callerCaps(cid)
+		if c := authority.RequestNeed(&req).Clauses[0]; !hasAnyCap(caps, c.AnyOf) {
+			// c.Report is file_read, the representative the denial has always named.
+			h.denyTaskControl(conn, req.Header.Kind, req.Header.RequestId, c.Report)
+			return
 		}
+		lfNeed := authority.ScopeBit(&req, caps)
 		lresp := protocol.ListFilesResponse{Status: protocol.ListFilesStatus_NoSuchTask}
 		if h.inScope(cid, lfNeed, hex.EncodeToString(lf.TaskId.Id[:])) {
 			lresp = h.handleListFiles(conn, lf)
@@ -857,12 +848,14 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("TaskHandler: OpenPortForward variant is nil")
 			return
 		}
-		if !hasCap(h.callerCaps(cid), protocol.Capability_ForwardLocal) {
-			h.denyTaskControl(conn, req.Header.Kind, req.Header.RequestId, protocol.Capability_ForwardLocal)
+		// An open is always -L: RegisterPortForward carries -R and --ip.
+		openNeed := authority.ForwardCap(protocol.PortForwardDirection_Local)
+		if !hasCap(h.callerCaps(cid), openNeed) {
+			h.denyTaskControl(conn, req.Header.Kind, req.Header.RequestId, openNeed)
 			return
 		}
 		presp := protocol.OpenPortForwardResponse{Status: protocol.OpenPortForwardStatus_NoSuchTask}
-		if h.inScope(cid, protocol.Capability_ForwardLocal, hex.EncodeToString(pf.TaskId.Id[:])) {
+		if h.inScope(cid, openNeed, hex.EncodeToString(pf.TaskId.Id[:])) {
 			presp = h.handleOpenPortForward(conn, pf)
 		}
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_OpenPortForward, RequestId: req.Header.RequestId}
@@ -1299,8 +1292,9 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		h.handleAgentRetract(conn, req.Header.RequestId, art)
 
 	case protocol.TaskControlKind_RestoreTasks:
-		// Operator-identity gate, like SetCaps below; deliberately NOT in
-		// authority.CentralCap, for the same self-amplification reason.
+		// Gated on prune in handleRestoreTasks, on the restoring half only:
+		// listing (list_only) needs no bit. Not in authority.CentralCap because
+		// the two halves are one kind and only the request tells them apart.
 		rt := req.RestoreTasks()
 		if rt == nil {
 			slog.Error("TaskHandler: RestoreTasks variant is nil")
@@ -1783,7 +1777,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 				resp.SetErrorMsg([]byte("a schedule's own task cannot unbind itself"))
 				return resp, body
 			}
-			if !hasCap(creatorCaps, protocol.Capability_ScheduleEdit) {
+			if !hasCap(creatorCaps, authority.UnbindCap) {
 				// The dispatch checked the bit against the binding it saw; this
 				// gate reads the binding again, so it checks the bit itself.
 				resp, body := errResp(protocol.OpenInteractiveStatus_ScopeNotPermitted)
@@ -1832,7 +1826,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 	// The record switch (A-D22): saying on needs record_persist, within the
 	// bit's scope when the open resumes a task.
 	record, recordOK := h.recordForOpen(req, creatorCaps)
-	if recordOK && record && existingTaskIDHex != "" && !h.inScope(cid, protocol.Capability_RecordPersist, existingTaskIDHex) {
+	if recordOK && record && existingTaskIDHex != "" && !h.inScope(cid, authority.RecordOnCap, existingTaskIDHex) {
 		recordOK = false
 	}
 	if !recordOK {
