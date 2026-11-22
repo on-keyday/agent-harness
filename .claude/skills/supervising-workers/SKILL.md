@@ -255,6 +255,7 @@ against `ls` before acting on it.
 ```bash
 harness-cli session ls            # JSON Lines: detachable interactive sessions only. Each row shares the `ls --json` task vocabulary (id, status, kind, repo, from, agent, caps, created_by, prompt, exit_code, created_at/started_at/ended_at, last_output_at, output_idle_ms, progress, progress_at, progress_age_ms, live_terminal, title, authority_source, authority_actor, authority_actor_hidden, authority_at, authority_age_ms, delegate_caps, delegate_scope) plus session-only is_attached + ring_buffer_bytes; it differs from `ls --json` ONLY by the interactive filter
 harness-cli session kill <id>     # terminate one (alias of `cancel`)
+harness-cli session rename <id> <name>  # set its display name (`name=` in ls, the board sender label); your own workers only, never yourself; "" clears
 harness-cli session snapshot <id> # PRINT the current screen as text (non-TTY; safe for you)
 harness-cli session send -enter <id> "…" # inject input + Enter (non-TTY co-write); flags BEFORE the id
 harness-cli session exec <id> <cmd>...  # RUN one shell cmd, wait, return combined output + exit code (POSIX-shell foreground)
@@ -594,12 +595,24 @@ and the scope forms (`--json` for the machine-readable form).
   `created_by` ARE real. One hop only: your grandparent is not listed, and a
   verb aimed at your parent (`session snapshot`, `transcript ls`, …) still
   answers not-found unless your scope names it.
-- **The operator can change your caps or scope while you run.** `harness-cli
-  caps set <id>` is operator-only and takes effect on your very next request,
-  with nothing restarted. If a call that worked a minute ago starts answering
-  *no such task* or *permission denied*, re-run `whoami` before assuming a bug —
-  and if the change narrowed you, your open attaches and transfers were closed
-  with it.
+- **Your caps or scope can change while you run.** The operator may rewrite
+  any task with `harness-cli caps set <id>`, and a task above you may re-grant
+  you within its own bound (next item); either takes effect on your very next
+  request, with nothing restarted. If a call that worked a minute ago starts
+  answering *no such task* or *permission denied*, re-run `whoami` before
+  assuming a bug — and if the change narrowed you, your open attaches and
+  transfers were closed with it.
+- **Re-grant your own workers live: `harness-cli caps set <worker-id> --caps …`.**
+  It works on a strict descendant inside your `resume` scope — never yourself,
+  your parent or a sibling (those answer *no such task*) — and computes exactly
+  what a resume with `--caps` / `--scope` / `--delegate-*` would, without
+  stopping the worker: caps are `yours ∩ your delegate ∩ requested` (a bit you
+  may not delegate is dropped), the scope is bounded by your reach, and an id
+  outside it is refused with the reason (`… is outside what you may
+  delegate`). `--cascade` narrows the worker's own workers with it, and a
+  narrowing closes the worker's open attaches and transfers, as the operator's
+  does. Preview it first with `harness-cli caps what-if <worker-id> --caps …`,
+  which applies the same rule. Your own bound stays the operator's to widen.
 - **Check your own caps with `harness-cli whoami`.** It prints THIS connection's
   own principal task id and the exact capability set and scope the server
   enforces for you, and your delegation bound (`delegate=… delegate-scope=…`)
@@ -625,12 +638,14 @@ and the scope forms (`--json` for the machine-readable form).
   `(over your listing only)` for you, since your listing has gaps.
 - **See what you handed out with `harness-cli caps audit`.** One line per
   capability, strongest first, listing the tasks your `ls` shows that hold it
-  and the scope it reaches; `--cap spawn` lists just that bit's holders. Report
-  a grant that outlived its reason to the operator — `caps set` is theirs.
+  and the scope it reaches; `--cap spawn` lists just that bit's holders. Narrow
+  a grant of your own worker's that outlived its reason with `caps set`; report
+  anyone else's to the operator.
 - **`granter=` says who last granted a task's authority.** Every `ls` row ends
   its authority with `granter=<source>@<actor> (<age>)` — `spawn@<creator>` for
   one a task created, `operator_caps_set@operator` for an operator grant,
-  `cascade`, `resume`, or `unknown` for a task older than the field. A worker
+  `task_caps_set@<task>` for a task's live re-grant of its worker, `cascade`,
+  `resume`, or `unknown` for a task older than the field. A worker
   holding more than you gave it is usually `operator_caps_set`: the operator
   widened it, which is legitimate. `@hidden` is an actor you cannot see.
 

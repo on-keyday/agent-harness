@@ -4560,3 +4560,30 @@ omitted: 8 (n/a really: the bridge re-parses the argument line, nothing
 missed:  15 (the `cancel` catalog description, found by this walk, not by an
          operator), 36 (`from-a-tool` skill had no credential path until this
          commit)
+
+### 2026-11-22 (pre-landing) — delegated re-grant (`caps set` from a task) and `session rename`
+
+Spec `2026-11-22-delegated-regrant-and-rename-design.md` (R1–R10). Native
+execution; walk over the items the diff touches. S1–S6 `n/a` (no agent preset,
+argv or launch env changed).
+done:    1 (`session rename` row, CLI|TUI|WebUI, `WebUIDispatch{taskRename}`;
+         `caps set` row unchanged — the gate moved server-side), 2 (name rules
+         and the R1 gate are server-side, one place each: `taskNameProblem`,
+         `regrantReaches`), 4/5 (no new key: the TUI reaches rename through its
+         cmdline, ledgered ruling), 6 (WebUI task sheet "✎ 名前を変える" →
+         prompt → bridge), 7 (dispatch + `TestEveryWebUIVerbDeclaresDispatch`),
+         10/29/30 (result line `session rename <id8>: name=<n>` on every
+         surface, into the result pane), 11/12 (`name=` already in `ls` rows and
+         JSON since credential D21), 13 (whoami unchanged: a re-grant changes
+         the target, not the caller), 15 (no new bit), 17 (detail popup already
+         shows `name:`), 20/23 (snapshot `name` already present), 35 (README
+         `caps set` paragraph, `task_caps_set` granter source, verb example),
+         36 (`supervising-workers`: live re-grant bullet, rename line,
+         `task_caps_set@<task>`; source + both mirrors byte-identical), 37 (spec
+         status), live checks: CLI on a dummy (credential as task caller:
+         re-grant clamped to delegate, rename ok, self → not_found), TUI cmdline
+         in tmux (`name=tui-named`), WebUI task sheet in Playwright
+         (`name=web-named`)
+omitted: 9/26 (no session default involved), 14 (`session ls` unaffected),
+         18/18a/19/21/22/31–34a (no new field, column or form), 38 (no screen)
+missed:  none found by this walk

@@ -2,6 +2,10 @@
 
 Date: 2026-11-22. Line references are to `main` at `b758943a`.
 
+Status: implemented (plan `docs/superpowers/plans/2026-11-22-delegated-regrant-and-rename.md`).
+As shipped, the TUI reaches `session rename` through its command line only;
+the detail-popup prefill key in the plan was not added.
+
 ## Why
 
 `caps set` is operator-only (`server/set_caps_handler.go:42`), so every live

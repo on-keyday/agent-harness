@@ -1584,12 +1584,22 @@ bin/harness-cli caps                       # capability names + scope forms
 bin/harness-cli session new -d --repo /abs/repo --prompt "..." --caps none
 bin/harness-cli session new --repo /abs/repo --caps cancel --scope ids:<sibling>
 bin/harness-cli caps set <task-id> --caps all,-spawn --scope subtree \
-    [--cascade] [--keep-conns]             # operator-only LIVE re-grant
+    [--cascade] [--keep-conns]             # LIVE re-grant
+bin/harness-cli session rename <task-id> nightly-ci   # display name ("" clears)
 ```
 
 `caps set` rewrites a live task's authority with no restart — effective
-on its next request; `--delegate-caps` / `--delegate-scope` rewrite its
-delegation bound (see **Delegation bound**); `--cascade` clamps its descendants too, and a
+on its next request. The operator may rewrite any task as given. A task may
+re-grant only a strict descendant inside its `resume` scope — never itself,
+an ancestor or a sibling, which answer *no such task* — and the result is
+what a resume with the same flags would grant: bounded by the task's own caps,
+reach and delegation bound, with an id outside them refused with the reason
+(docs/superpowers/specs/2026-11-22-delegated-regrant-and-rename-design.md).
+`caps what-if` from inside a task previews under the same rule.
+`session rename` sets a task's display name (`name=` in `ls`, the board sender
+label; at most 64 bytes, no control characters) under the same rule, except
+that no task may rename itself. On `caps set`, `--delegate-caps` /
+`--delegate-scope` rewrite the target's delegation bound (see **Delegation bound**); `--cascade` clamps its descendants too, and a
 narrowing drops the affected tasks' open connections unless
 `--keep-conns`. The TUI task list binds this to `a` (a selection
 picker; `A`/`N` = all/none quick-set) and the WebUI task sheet to
@@ -1601,7 +1611,8 @@ or scope — and when. `ls` shows it as
 `granter=operator_caps_set@operator (5m ago)`; `ls --json` / `session ls` carry
 `authority_source`, `authority_actor`, `authority_actor_hidden`,
 `authority_at` and `authority_age_ms`. The sources are `spawn` (created by
-another task), `operator_spawn`, `operator_caps_set`, `cascade` (clamped by a
+another task), `operator_spawn`, `operator_caps_set`, `task_caps_set` (a task
+re-granted its descendant live; the actor is that task), `cascade` (clamped by a
 `caps set --cascade` on the actor), `resume` (a resume that re-granted), and
 `unknown` for a task recorded before this field existed. `caps set-parent` /
 `--swap` grant nothing — caps and scope are untouched — so they leave the
