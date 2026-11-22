@@ -16,6 +16,12 @@ func (c *Client) TaskRename(ctx context.Context, taskID, name string) error {
 }
 
 func taskRenameOn(ctx context.Context, c taskControlClient, taskID, name string) error {
+	// The server refuses past 64 bytes; checked here too because the wire
+	// length is a u8 and SetName silently sends an EMPTY name past 255 —
+	// which the server reads as "clear" and answers ok.
+	if len(name) > 64 {
+		return fmt.Errorf("session rename: a name is at most 64 bytes, this one is %d", len(name))
+	}
 	tid, err := parseTaskIDHex(taskID)
 	if err != nil {
 		return fmt.Errorf("session rename: %w", err)

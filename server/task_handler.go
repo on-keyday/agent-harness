@@ -1492,6 +1492,13 @@ func (h *TaskHandler) grantFor(g *authority.Granter, r grantRequest, idHex strin
 	if !fresh && g != nil {
 		if rec, ok := h.Tasks.Get(idHex); ok {
 			u.To.MaxDescendants = authority.MinLimit(r.MaxDescendants, rec.MaxDescendants)
+			// The depth only tightens too. ChildSpawnDepth is "granter − 1",
+			// right for a CHILD but not for a target further down: widening a
+			// grandchild's depth to the granter's − 1 would let the granter's
+			// subtree grow past the granter's own limit (a task lifting its
+			// own bound through a descendant). Found in the delegated-regrant
+			// final review; it applied to a re-granting resume as well.
+			u.To.SpawnDepth = authority.MinLimit(u.To.SpawnDepth, rec.SpawnDepth)
 		}
 	}
 	if fresh {

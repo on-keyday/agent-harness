@@ -2464,7 +2464,7 @@ var Verbs = []VerbSpec{
 			{Surface: WebUI, At: "webui/index.html#regrant-apply"},
 		},
 		Notes: []string{
-			"OPERATOR ONLY: re-grant a LIVE task's caps and/or scope; effective on its next request, no restart",
+			"re-grant a LIVE task's caps and/or scope; effective on its next request, no restart. The operator may rewrite any task; from inside a task, only your own descendants within your resume scope, bounded as a resume with the same flags would be",
 		},
 		Action: "SetCapsAction",
 		Args:   []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},

@@ -43,3 +43,12 @@ func TestWhatIfChangeAsSetsActor(t *testing.T) {
 		t.Fatalf("operator change has actor %q", r.Actor)
 	}
 }
+
+// Final review #1: a name the wire cannot carry (u8 length) must not reach the
+// server as an empty name, which would CLEAR the task's name and report ok.
+func TestTaskRenameRefusesAnOverlongNameBeforeSending(t *testing.T) {
+	err := taskRenameOn(t.Context(), nil, strings.Repeat("a", 32), strings.Repeat("n", 300))
+	if err == nil || !strings.Contains(err.Error(), "64 bytes") {
+		t.Fatalf("err = %v, want a refusal naming the 64-byte limit", err)
+	}
+}

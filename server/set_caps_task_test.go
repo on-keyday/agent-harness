@@ -164,3 +164,26 @@ func TestTaskSetCapsCascadeAndTeardown(t *testing.T) {
 		t.Fatalf("dropped = %v, want c and g", dropped)
 	}
 }
+
+// Final review #2: a re-grant (live or resume) only ever TIGHTENS a target's
+// spawn depth, so an ancestor cannot lift its own depth limit by widening a
+// grandchild's.
+func TestTaskSetCapsCannotWidenSpawnDepth(t *testing.T) {
+	h, p, c, g, _ := scopeFixture(t)
+	if _, ok := h.Tasks.SetCaps(p, GrantUpdate{SpawnDepth: true, To: authority.Grant{SpawnDepth: authority.LimitOf(2)}}, AuthorityWrite{}); !ok {
+		t.Fatal("limit p")
+	}
+	if _, ok := h.Tasks.SetCaps(g, GrantUpdate{SpawnDepth: true, To: authority.Grant{SpawnDepth: authority.LimitOf(0)}}, AuthorityWrite{}); !ok {
+		t.Fatal("limit g")
+	}
+	_ = c
+	conn := taskCaller(t, h, p, protocol.Capability_All)
+	req := protocol.SetCapsRequest{TaskId: hexToTaskID(t, g), SpawnDepth: authority.LimitOf(1)}
+	req.SetSpawnDepthPresent(true)
+	if got := sendSetCaps(t, h, conn, req); got.Status != protocol.SetCapsStatus_Ok {
+		t.Fatalf("status = %v", got.Status)
+	}
+	if e, _ := h.Tasks.Get(g); !e.SpawnDepth.Limited() || e.SpawnDepth.Value() != 0 {
+		t.Fatalf("g spawn depth = %+v, want still 0 (a re-grant only tightens it)", e.SpawnDepth)
+	}
+}
