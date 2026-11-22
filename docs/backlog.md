@@ -437,6 +437,47 @@ not `land.py`'s hint, for any change under `cli/`.
 
 ---
 
+## The MCP body-hygiene guard stops at `cmd/harness-cli`
+
+**What.** One `harness-cli mcp` process serves many tool calls, with stdin and
+stdout carrying the JSON-RPC stream, so no tool body may end the process
+(`os.Exit`, `die`), read fd 0 or write fd 1
+(`2026-11-22-harness-cli-mcp-surface-design.md` D16).
+`TestToolBodiesDoNotTouchProcessStreams`
+(`cmd/harness-cli/body_hygiene_test.go`) enforces that, but only over the
+functions of `cmd/harness-cli`. A helper in `cli/`, `cli/agent` or
+`runner/agentskills` that a body calls is not scanned: if one of them writes
+`os.Stdout` or exits, the server's stream is corrupted or the server ends, and
+no test goes red.
+
+**Evidence** (2026-11-23, at `c4fdf963`):
+
+```
+$ grep -rnE 'os\.(Exit|Stdin|Stdout)\b|fmt\.Print(f|ln)?\(' cli runner/agentskills --include=*.go \
+    | grep -v _test.go | grep -v cli/verb/gen/
+cli/cmd_board.go:762     (a comment)
+cli/forward_stdio.go:87  spliceStdio(ctx, rc, os.Stdin, os.Stdout)   -- forward, not a tool
+```
+
+So nothing outside the package does it today. The guard has already missed one
+case in its own package: it found `os.Exit` by name, `die` (which calls it) was
+allowlisted as the process exit, and `spawnOpts` called `die` from the
+`session_new` tool body. A bad `--runner` ended the server
+(found by review, fixed in `c4fdf963`, and the guard now refuses calls to
+`die` as well).
+
+**Shape.** Scan the packages a tool body can reach the same way, with the
+not-a-tool callers (`forward`'s `spliceStdio`) allowlisted by name and reason.
+Following calls across packages by hand is the cheap form; the exact form is
+the call graph from the `cliVerbs` methods (`golang.org/x/tools/go/callgraph`),
+which is a new dependency.
+
+**Why deferred.** Found while landing the MCP third pass; nothing reachable
+from a tool does it today, and choosing between a package list and a call
+graph is a decision of its own (operator, 2026-11-23).
+
+---
+
 ## `OpenInteractiveRequest` says the task kind with a bool
 
 **What.** `session new` carries the event-stream choice as the bit
