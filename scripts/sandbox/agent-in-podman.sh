@@ -110,6 +110,13 @@ HOME_DIR="${HOME:-/home/$(id -un)}"
 #                       SANDBOX_PROXY_ALLOW in the runner's env. Grants nothing
 #                       --no-firewall would not, and is ignored (with a warning)
 #                       there. A value that is not a host name exits 2.
+#   --toolchain=NAME[,NAME...]  mount a named toolchain from
+#                       scripts/sandbox/toolchains.json (override with
+#                       HARNESS_SANDBOX_TOOLCHAINS in the runner's env): host
+#                       mounts, env and a PATH prefix, so the container can
+#                       build and test. Repeatable and comma-separated. A name
+#                       the config does not define exits 2; the config's own
+#                       allow_domains join the allowlist. See "Toolchains" below.
 #   --no-default-domains  drop the hosts every task gets (GitHub, npm, PyPI)
 #                       from the allowlist in both firewall modes, leaving only
 #                       the agent's own and --allow-domain's. Under injection
@@ -122,6 +129,10 @@ HOME_DIR="${HOME:-/home/$(id -un)}"
 #                       they cannot (see "User namespaces" below), which also
 #                       stops a sandbox an agent brings along (bubblewrap) from
 #                       starting.
+#
+# Container memory is bounded with --memory/--memory-swap (default 3g) so a
+# runaway build cannot push the host into global OOM. Override the limit with
+# HARNESS_SANDBOX_MEMORY in the runner's env; "none" removes the bound.
 # Agent selection comes from ARGV[0], not from a flag, and that is load-bearing.
 # The runner builds a fresh interactive launch as bin + args with NO argv
 # template at all (runner/agent_command.go buildInteractiveArgs returns `extra`
@@ -157,6 +168,9 @@ proxy_log=""
 no_proxy_log=0
 declare -a ARGS=() allow_domains=()
 want_agent=0
+toolchain_names=""
+sandbox_dir=$(dirname "$(readlink -f "$0")")
+toolchain_config="${HARNESS_SANDBOX_TOOLCHAINS:-$sandbox_dir/toolchains.json}"
 for a in "$@"; do
   if [ "$want_agent" = 1 ]; then AGENT="$a"; want_agent=0; continue; fi
   case "$a" in
@@ -183,6 +197,8 @@ for a in "$@"; do
     --no-default-domains) no_default_domains=1 ;;
     --allow-domain=?*)  IFS=, read -r -a _d <<<"${a#*=}"; allow_domains+=( "${_d[@]}" ) ;;
     --allow-domain|--allow-domain=) echo "[agent-in-podman] --allow-domain needs a value: --allow-domain=example.com" >&2; exit 2 ;;
+    --toolchain=?*)     toolchain_names="${toolchain_names:+$toolchain_names,}${a#*=}" ;;
+    --toolchain|--toolchain=) echo "[agent-in-podman] --toolchain needs a value: --toolchain=go" >&2; exit 2 ;;
     *)                  ARGS+=( "$a" ) ;;
   esac
 done
@@ -239,6 +255,17 @@ if [ -n "$proxy_log" ] && [ "$fw_mode" != proxy ]; then
 fi
 if [ "$fw_mode" = proxy ] && [ "$no_proxy_log" != 1 ] && [ -z "$proxy_log" ]; then
   proxy_log="$default_proxy_log"
+fi
+# Toolchain domains (--toolchain) join the allowlist BEFORE the host-name loop,
+# so they are validated and cleared exactly like --allow-domain's. The resolver
+# validates them too; this call only reads JSON and runs no probe.
+if [ -n "$toolchain_names" ]; then
+  tc_domains=$(python3 "$sandbox_dir/toolchain.py" --config "$toolchain_config" \
+    --name "$toolchain_names" --domains) || exit 2
+  if [ -n "$tc_domains" ]; then
+    IFS=, read -r -a _tc <<<"$tc_domains"
+    allow_domains+=( "${_tc[@]}" )
+  fi
 fi
 # Host names only: the list lands in an env var both firewall scripts split on
 # commas and whitespace, and in dig's argv.
@@ -997,7 +1024,8 @@ if [ "$bridge_cli" = 1 ]; then
   [ -n "$hcli" ] && CLI+=( -v "$(readlink -f "$hcli"):/usr/local/bin/harness-cli:ro" )
   while IFS='=' read -r name _; do
     case "$name" in
-      HARNESS_MEMORY_DIR) ;; # a host path is not a container memory mount
+      # Host paths are not container mounts: the container has no such path.
+      HARNESS_MEMORY_DIR|HARNESS_SANDBOX_MEMORY_ROOTS|HARNESS_SANDBOX_TOOLCHAINS) ;;
       HARNESS_*) CLI+=( --env "$name" ) ;;
     esac
   done < <(env)
@@ -1145,8 +1173,39 @@ if [ "$allow_userns" != 1 ]; then
   userns_mode=deny
 fi
 
+# Toolchain mounts/env/PATH (--toolchain). Resolved last, so a refusal happens
+# before the container starts; the helper prints NUL-separated podman argv
+# tokens. The base PATH comes from the image so the toolchain's prefix lands in
+# front of the PATH the image already sets.
+declare -a TC=()
+if [ -n "$toolchain_names" ]; then
+  tc_base_path=$(podman image inspect "$IMAGE" \
+    --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null | sed -n 's/^PATH=//p' | head -1) || true
+  [ -n "$tc_base_path" ] || tc_base_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+  tc_file=$(mktemp "${TMPDIR:-/tmp}/sandbox-toolchain.XXXXXX") || exit 2
+  if ! python3 "$sandbox_dir/toolchain.py" --config "$toolchain_config" \
+      --name "$toolchain_names" --container-path "$tc_base_path" >"$tc_file"; then
+    rm -f "$tc_file"
+    exit 2
+  fi
+  mapfile -d '' -t TC < "$tc_file"
+  rm -f "$tc_file"
+fi
+
+# Container memory bound. Without one the container may consume host memory
+# until the host OOM killer fires, and the kernel picks the runner's own process
+# (measured 2026-11-22, oom_score_adj=200) rather than the compiler. A measured
+# cold `go build ./...` peaks near 0.9 GB and the agent itself ~0.6 GB, so 3g
+# leaves headroom while still bounding the blast radius. HARNESS_SANDBOX_MEMORY
+# overrides; "none" removes the bound.
+mem_limit="${HARNESS_SANDBOX_MEMORY:-3g}"
+declare -a MEMLIMIT=()
+if [ -n "$mem_limit" ] && [ "$mem_limit" != none ]; then
+  MEMLIMIT=( --memory "$mem_limit" --memory-swap "$mem_limit" )
+fi
+
 # One-line summary of the chosen modes → the runner log (token VALUE never shown).
-echo "[agent-in-podman] agent=$AGENT auth=$auth_mode firewall=$fw_mode harness-cli=$([ "$bridge_cli" = 1 ] && echo on || echo off) bin=$agent_src image=$IMAGE history=$history_mode memory=$memory_mode userns=$userns_mode$([ "$no_default_domains" = 1 ] && echo " default-domains=off")${allow_extra:+ allow+=$allow_extra}${proxy_log:+ proxy-log=$proxy_log}" >&2
+echo "[agent-in-podman] agent=$AGENT auth=$auth_mode firewall=$fw_mode harness-cli=$([ "$bridge_cli" = 1 ] && echo on || echo off) bin=$agent_src image=$IMAGE history=$history_mode memory=$memory_mode userns=$userns_mode mem=${mem_limit:-none}$([ "$no_default_domains" = 1 ] && echo " default-domains=off")${toolchain_names:+ toolchain=$toolchain_names}${allow_extra:+ allow+=$allow_extra}${proxy_log:+ proxy-log=$proxy_log}" >&2
 
 # Container lifecycle. We MUST `exec` podman so it stays the foreground owner of
 # the TTY — otherwise interactive keystrokes never reach claude. But with exec,
@@ -1284,6 +1343,8 @@ exec podman run --rm -i "${TTY[@]}" \
   "${FW[@]}" \
   "${HOSTBIN[@]}" \
   "${MOUNTS[@]}" \
+  "${TC[@]}" \
+  "${MEMLIMIT[@]}" \
   "${MEMORY[@]}" \
   "$IMAGE" \
   /usr/local/bin/sandbox-agent-launch.sh "$@"

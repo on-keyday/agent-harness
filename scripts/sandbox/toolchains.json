@@ -1,0 +1,20 @@
+{
+  "go": {
+    "description": "Go toolchain bridged from the host",
+    "probe": { "command": "go", "args": ["env", "-json", "GOROOT", "GOMODCACHE"] },
+    "mounts": [
+      { "path": "{GOROOT}", "mode": "ro" },
+      { "path": "{GOMODCACHE}", "mode": "ro" },
+      { "path": "{HOME}/.cache/harness-sandbox/go-build", "mode": "rw", "create": true }
+    ],
+    "env": {
+      "GOROOT": "{GOROOT}",
+      "GOMODCACHE": "{GOMODCACHE}",
+      "GOCACHE": "{HOME}/.cache/harness-sandbox/go-build",
+      "GOTOOLCHAIN": "local",
+      "GOFLAGS": "-mod=readonly"
+    },
+    "path_prepend": ["{GOROOT}/bin"],
+    "require": ["GOROOT", "GOMODCACHE"]
+  }
+}

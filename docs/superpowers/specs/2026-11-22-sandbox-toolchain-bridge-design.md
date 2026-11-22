@@ -28,8 +28,8 @@ Java, C, etc. — and it must not weaken the network containment.
 | GOROOT | under GOMODCACHE (`…/pkg/mod/golang.org/toolchain@go1.27.3…`) |
 | cgo | repo has **0** `import "C"` → gcc not needed for this repo |
 | Bridge + seccomp | `podman run` with GOROOT/GOMODCACHE ro, GOCACHE rw, offline → `go build ./...` **OK** |
-| Cold-cache `go test` | **OOM-killed** — host had 15 GB total / ~0 available; the compiler was killed |
-| Warm-cache `go test` | `go test ./cli/verb` **OK** (one package) |
+| Cold-cache build | **OOM-killed** — host had 15 GB total / ~0.8 GB available; the kernel killed the runner's own `pi` process (`oom_score_adj=200`), not the compiler |
+| Warm-cache build | `go build ./...` **OK** in 6.7s; `go test ./cli/verb` **OK** in 9.5s |
 | `make` | absent from the image; host `make` is dynamic (libguile/gc) → cannot bridge |
 | `make` is not redundant | `make test` = `js-test` + `scripts-test` + `go test ./...`; `make scripts-test` runs the python/bash suites. In-sandbox `go test ./...` replaces the first part; the script suites need `make` |
 
@@ -286,9 +286,15 @@ propagates under `set -euo pipefail`.
   `mkdir`s a sibling of a mountpoint under `{HOME}/.cache` gets `EACCES`
   (`agent-in-podman.sh:754-758`, measured for opencode 2026-08-19). Host-side
   `create: true` fixes only the host source directory; this stays.
-- **Residual: host memory.** A cold cache under memory pressure OOM-kills the
-  compiler (measured). The persistent cache is the mitigation; the host's
-  memory is the real limit.
+- **Residual: host memory.** A cold cache under memory pressure used to trigger
+  a global OOM. Measured 2026-11-22: with ~0.8 GB free, a cold `go build ./...`
+  got the runner's own `pi` process killed (the kernel picks it first,
+  `oom_score_adj=200`), not the compiler — so the failure mode was a lost agent,
+  not a failed build. The container is now bounded with `--memory`/`--memory-swap`
+  (D9), so the failure happens inside the container; measured peaks are ~0.9 GB
+  for a cold build and ~0.6 GB for the agent. The persistent cache remains the
+  mitigation for repeat builds; on a memory-tight host also bound the build
+  (`GOMAXPROCS=2 go build -p 2 ./...`).
 - **Allowlist semantics differ by mode.** In proxy mode `permitted()`
   (`cmd/sandbox-connect-proxy/main.go:108`) does label-boundary suffix matching;
   in `--firewall` mode the ipset allows every host sharing a resolved A record,
@@ -308,6 +314,7 @@ propagates under `set -euo pipefail`.
 | V7 | a synthetic toolchain entry (e.g. a fake `foo` with a `cat` probe) resolves without wrapper changes |
 | V8 | `allow_domains` from a synthetic entry appear in the allowlist and the start summary; a bad host name is refused; under `--inject-auth` the domains are added and logged (D5); under `--no-firewall` they are ignored with the warning |
 | V9 | with `HARNESS_SANDBOX_TOOLCHAINS` and `HARNESS_SANDBOX_MEMORY_ROOTS` set in the runner env, neither appears in the container's environment; every other `HARNESS_*` still does |
+| V10 | the container starts with `--memory`/`--memory-swap` at the default 3g; `HARNESS_SANDBOX_MEMORY=2g` changes it; `HARNESS_SANDBOX_MEMORY=none` omits both; the summary line names the limit (`mem=3g`) |
 
 V7 is the pluggability gate: it proves the mechanism is generic.
 
@@ -327,6 +334,7 @@ look.
 | D6 | The resolver emits domains in a separate `--domains` mode and the wrapper appends them to `allow_domains` before the host-name loop, so the existing validation, `--no-firewall` clear, `allow_extra` summary and `A_DOMAINS` merge all apply. No new env var and no image change: both firewall modes already read `A_DOMAINS` | this spec |
 | D7 | The shipped `go` entry declares no `allow_domains`. Dependency installation inside the sandbox is deferred; when wanted it is a config change (a dedicated writable `GOMODCACHE` plus domains), never the host's own cache | operator, 2026-11-22 |
 | D8 | Host-path variables are not forwarded into the container. `HARNESS_SANDBOX_TOOLCHAINS` is excluded, and `HARNESS_SANDBOX_MEMORY_ROOTS` is excluded in the same change because it is the same class of value and leaks today; nothing inside the container reads either (`git grep` shows only the host-side wrapper and its tests) | this spec |
+| D9 | The container is memory-bounded with `--memory`/`--memory-swap` (default 3g, override `HARNESS_SANDBOX_MEMORY`, `none` disables). Without a bound a runaway build can push the host into global OOM and the kernel kills the runner's own process (measured 2026-11-22); measured peaks are ~0.9 GB cold build + ~0.6 GB agent, so 3g leaves headroom | operator, 2026-11-22 |
 
 ## 7. Left to the builder
 

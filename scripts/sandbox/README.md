@@ -545,6 +545,64 @@ Use `harness-cli skill memory-maintenance` for the verification/organization
 workflow, and `python3 examples/memory-viewer/memviewer.py --memory-dir DIR
 --check` (from this repository) to inspect entry paths and duplicate candidates.
 
+### Toolchains (`--toolchain=NAME`, opt-in)
+
+The image has no compiler. Pass `--agent-arg --toolchain=go` to mount a host
+toolchain into the container, so the agent can build and test instead of only
+suggesting edits. The flag is consumed by the wrapper and never reaches the
+agent binary. Absent the flag the container is byte-identical to today's.
+
+A toolchain is a named entry in `scripts/sandbox/toolchains.json`: host mounts
+(a path, `ro` or `rw`, optionally created if missing), env, an optional host
+`probe` whose JSON output fills `{PLACEHOLDER}`s, and an optional
+`allow_domains`. Override the file for a slot with
+`HARNESS_SANDBOX_TOOLCHAINS=/path/to/toolchains.json` in the runner's
+environment. The config is trusted input: its probe runs on the host as the
+host user, so treat it like the wrapper itself.
+
+The shipped `go` entry bridges the host's Go (`GOROOT` and `GOMODCACHE`
+read-only) and keeps a **persistent** build cache at
+`~/.cache/harness-sandbox/go-build` (read-write, created on first use). It sets
+`GOTOOLCHAIN=local` and `GOFLAGS=-mod=readonly`, so the sandbox never downloads
+a toolchain or a module. `go build ./...` and `go test ./cli/verb/` were
+measured inside the container under the usual seccomp and firewall (6.7s and
+9.5s with a warm cache).
+
+What it does not do: install dependencies. `GOMODCACHE` is read-only, so
+`go get`/`go mod download` fail with `EROFS`. Adding a writable module cache is
+a config change (a dedicated cache directory, not the host's real one), not a
+code change. `make` and `gcc` are not bridged: the host's `make` is dynamic and
+cannot run against the image's glibc, and this repository needs no cgo. Build
+with `go` directly; `make`-only targets (`make scripts-test`) stay unavailable
+in the sandbox.
+
+Refusals exit 2 before the container starts: an unknown name, a missing or
+malformed config, a mount that does not exist (and is not `create`), a mount
+path with a colon or newline, a `create` mount declared `ro`, an unknown
+placeholder, or a duplicate mount requested with conflicting modes. The
+wrapper's summary line names the toolchain (`toolchain=go`).
+
+**Egress.** Naming a toolchain adds no domain on its own. An entry may declare
+`allow_domains`, which joins the allowlist exactly like `--allow-domain`
+(validated as host names, shown as `allow+=…` in the summary, ignored with a
+warning under `--no-firewall`). The shipped `go` entry declares none: with a
+read-only module cache there is nothing for it to reach.
+
+**Costs and residuals.** The build cache is shared by every sandboxed task on
+the host (D3 of the design), so a compromised task could poison a cache another
+task compiles from; it is a dedicated directory, never the host's own
+`~/.cache/go-build`. The host's module cache is exposed read-only, so its
+contents are visible to the container. A cold cache under host memory pressure
+used to push the host into global OOM: measured 2026-11-22, a cold
+`go build ./...` with ~800 MB free killed the agent's own process (the kernel
+picked the runner's `pi`, `oom_score_adj=200`) rather than the compiler. The
+container is now bounded with `--memory`/`--memory-swap` (default 3g, override
+with `HARNESS_SANDBOX_MEMORY`, `none` to disable), so a runaway build fails
+inside the container instead of taking a host process with it. Measured peaks:
+a cold `go build ./...` ≈ 0.9 GB and the agent itself ≈ 0.6 GB, so 3g leaves
+headroom. The persistent cache is still the mitigation for repeat builds; on a
+memory-tight host also bound the build itself (`GOMAXPROCS=2 go build -p 2 ./...`).
+
 ### History window (`--history-window`, claude / pi / codex, opt-in)
 
 Mount auth puts the agent's whole config directory in the container: every
