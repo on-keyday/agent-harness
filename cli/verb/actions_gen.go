@@ -3886,6 +3886,26 @@ func init() {
 			}
 			return a, nil
 		},
+		"session rename\x00tui": func(b Bound) (Action, error) {
+			a := SessionRenameAction{}
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.Name = b.Args[1]
+			}
+			return a, nil
+		},
+		"session rename\x00webui": func(b Bound) (Action, error) {
+			a := SessionRenameAction{}
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.Name = b.Args[1]
+			}
+			return a, nil
+		},
 		"session await-idle\x00cli": func(b Bound) (Action, error) {
 			a := SessionAction{}
 			a.Sub = "await-idle"
@@ -11587,6 +11607,8 @@ type TUIDispatch[R any] interface {
 	SessionLs(SessionAction) R
 	// session kill
 	SessionKill(SessionAction) R
+	// session rename
+	SessionRename(SessionRenameAction) R
 	// session await-idle
 	SessionAwaitIdle(SessionAction) R
 	// session await-idle ls
@@ -12072,6 +12094,12 @@ func DispatchTUI[R any](h TUIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.SessionKill(a), true, nil
+	case CmdSessionRename:
+		a, perr := ParseCmdSessionRename(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.SessionRename(a), true, nil
 	case CmdSessionAwaitIdle:
 		a, perr := ParseCmdSessionAwaitIdle(TUI, args, ctx)
 		if perr != nil {
@@ -12454,6 +12482,8 @@ func DispatchTUIAction[R any](h TUIDispatch[R], act Action) (r R, handled bool) 
 		return h.CapsSetDefaults(a), true
 	case SetParentAction:
 		return h.CapsSetParent(a), true
+	case SessionRenameAction:
+		return h.SessionRename(a), true
 	case AwaitProgressAction:
 		switch a.Sub {
 		case "arm":
@@ -12943,6 +12973,12 @@ func ParseTUICommand(tokens []string, ctx map[string]string) (act Action, handle
 			return a, true, nil
 		case CmdSessionKill:
 			a, perr := ParseCmdSessionKill(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdSessionRename:
+			a, perr := ParseCmdSessionRename(TUI, tokens[n:], ctx)
 			if perr != nil {
 				return nil, true, perr
 			}

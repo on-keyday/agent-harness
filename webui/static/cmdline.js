@@ -738,6 +738,13 @@ async function runVerbCommandDispatch(tokens, ctx) {
         out = await runSessionNew(tokens, ctx);
         break;
       }
+      if (tokens[1] === "rename") {
+        // Parsed by the shared declaration; the bridge renames over the
+        // long-lived client (delegated-regrant R3).
+        const b = parseOrHelp(ctx, tokens, {});
+        out = await ctx.harness.taskRename(b.args[0], b.args[1] ?? "");
+        break;
+      }
       // `session await-idle` is the canonical path on every surface; the
       // WebUI's old top-level `await-idle` spelling is gone (D16).
       if (tokens[1] === "await-idle") {

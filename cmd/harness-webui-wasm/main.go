@@ -139,6 +139,7 @@ func main() {
 		"credentialRekey":    js.FuncOf(harnessCredentialRekey),
 		"credentialList":     js.FuncOf(harnessCredentialList),
 		"credentialRevoke":   js.FuncOf(harnessCredentialRevoke),
+		"taskRename":         js.FuncOf(harnessTaskRename),
 		"sendInteractive":    js.FuncOf(harnessSendInteractive),
 		"resizeInteractive":  js.FuncOf(harnessResizeInteractive),
 		"detachInteractive":  js.FuncOf(harnessDetachInteractive),

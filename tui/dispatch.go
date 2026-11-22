@@ -594,6 +594,18 @@ func (h tuiVerbs) SessionMode(v verb.SessionAction) tea.Cmd {
 	return DoSessionMode(h.a.client, full, background, cond)
 }
 
+// SessionRename runs on the long-lived client (pitfall 3); the result line
+// names the target and the new name.
+func (h tuiVerbs) SessionRename(v verb.SessionRenameAction) tea.Cmd {
+	if h.a.client == nil {
+		h.a.cmdresult.Append(ErrorStyle.Render("session rename: not connected to server"))
+		return nil
+	}
+	return DoRecord(h.a.client, "session rename", func(ctx context.Context, c *cli.Client, out io.Writer) error {
+		return cli.TaskRenameWith(ctx, c, v.TaskID, v.Name, out)
+	})
+}
+
 func (h tuiVerbs) SessionKill(v verb.SessionAction) tea.Cmd {
 	full, ok := h.sessionTask(v)
 	if !ok {

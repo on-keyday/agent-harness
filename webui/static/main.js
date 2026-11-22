@@ -5568,6 +5568,18 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     return `set-parent ${t8}: parent=${s8(r.oldParent)} → ${s8(r.newParent)}`;
   };
 
+  // renameTask is session rename from the task sheet: it prompts for the name
+  // (empty clears it) and reports through the result pane like the command.
+  async function renameTask(t) {
+    const name = window.prompt(`name for ${t.id.slice(0, 8)} (empty clears it)`, t.name || "");
+    if (name === null) return;
+    try {
+      appendCmdOutput(await window.harness.taskRename(t.id, name), true);
+    } catch (e) {
+      appendCmdOutput(`session rename ${t.id.slice(0, 8)}: ${e.message}`, true);
+    }
+  }
+
   function openParentDialog(t) {
     if (!parentModal || typeof window.harness.setParent !== "function") return;
     parentTaskId = t.id;
@@ -7341,6 +7353,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       addItem("🔮 caps set / spawn をプレビュー", "", () => openRegrantDialog(t, { whatIf: true }));
       addItem("🔑 caps/scope 再付与", "", () => openRegrantDialog(t));
       addItem("⇄ 親タスク変更", "", () => openParentDialog(t));
+      addItem("✎ 名前を変える", "", () => renameTask(t));
     };
 
     // A credential task has no process: no session, worktree, PTY record or

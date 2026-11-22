@@ -2881,8 +2881,9 @@ var Verbs = []VerbSpec{
 		Examples: []string{"session kill aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 	},
 	{
-		Path: []string{"session", "rename"}, CmdlineSurfaces: CLI,
-		NoModalSurface: "TUI and WebUI are added with their handlers in the surfaces task of docs/superpowers/plans/2026-11-22-delegated-regrant-and-rename.md",
+		Path: []string{"session", "rename"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		WebUIDispatch:  WebUIDispatch{Fn: "taskRename"},
+		NoModalSurface: "looked for: a name is one typed value; every surface's command line runs the verb, and the WebUI task sheet's rename item only prompts for the name and calls the same bridge function",
 		Notes: []string{
 			"set a task's display name (shown as name= in ls and as the board sender label); an empty name clears it; at most 64 bytes of UTF-8 with no control characters",
 			"the operator may rename any task; from inside a task you may rename only your own descendants within your resume scope, never yourself (a self-rename would let a task pose as another on the board)",
