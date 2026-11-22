@@ -207,13 +207,31 @@ func CentralCap(kind protocol.TaskControlKind) (protocol.Capability, bool) {
 }
 
 // classOnly are the kinds whose whole answer is their class: no bit at all.
+// Each says why it needs none -- an unclassified kind dispatches with whatever
+// gate its neighbours happen to have, which is how restore_tasks once shipped
+// able to put pruned tasks back with prune revoked.
 var classOnly = map[protocol.TaskControlKind]NeedClass{
-	protocol.TaskControlKind_List:                   NeedNone,
-	protocol.TaskControlKind_ListConns:              NeedNone,
-	protocol.TaskControlKind_Whoami:                 NeedNone,
-	protocol.TaskControlKind_ListPortForwards:       NeedNone,
-	protocol.TaskControlKind_ExecRunList:            NeedNone,
-	protocol.TaskControlKind_TrsfState:              NeedNone, // a global visibility rank, not a bit
+	// Bounded by task VISIBILITY, not by a bit.
+	protocol.TaskControlKind_List:             NeedNone,
+	protocol.TaskControlKind_ListConns:        NeedNone,
+	protocol.TaskControlKind_ListPortForwards: NeedNone,
+	// exec_run_list: gating a fact `ls` already hands out would make the
+	// direct path cost more authority than polling for it.
+	protocol.TaskControlKind_ExecRunList: NeedNone,
+	// The caller's own identity.
+	protocol.TaskControlKind_Whoami: NeedNone,
+	// trsf_state is bounded by visibility, and its runner branch by the global
+	// visibility RANK -- not runner_admin, which also carries the power to make
+	// the server dial a new runner and has no business on a read-only
+	// diagnostic.
+	protocol.TaskControlKind_TrsfState: NeedNone,
+	// The agentboard's agent face. Each is keyed to the caller's OWN board
+	// state -- its subscriptions (inbox, read, list_retained), its contacts --
+	// or, for agent_retract, to its AUTHORSHIP: Board.RetractSeq matches the
+	// stored message's sender against the caller's authenticated id, which is
+	// why board_retract (the same act without that check) takes board_purge.
+	// A board verb that reaches topics the caller need not subscribe to is a
+	// board_* kind and does take a bit.
 	protocol.TaskControlKind_AgentUnsubscribe:       NeedNone,
 	protocol.TaskControlKind_AgentListSubscriptions: NeedNone,
 	protocol.TaskControlKind_AgentInbox:             NeedNone,
@@ -221,20 +239,31 @@ var classOnly = map[protocol.TaskControlKind]NeedClass{
 	protocol.TaskControlKind_AgentListRetained:      NeedNone,
 	protocol.TaskControlKind_AgentReadSeq:           NeedNone,
 	protocol.TaskControlKind_AgentRetract:           NeedNone,
-	protocol.TaskControlKind_AwaitList:              NeedNone,
-	protocol.TaskControlKind_AwaitKill:              NeedNone,
 	protocol.TaskControlKind_AgentListContacts:      NeedNone,
-	protocol.TaskControlKind_ProgressSet:            NeedNone,
-	protocol.TaskControlKind_LifecycleSet:           NeedNone,
 	protocol.TaskControlKind_AgentReadPage:          NeedNone,
-	protocol.TaskControlKind_AgentArchives:          NeedNone,
-	protocol.TaskControlKind_AgentArchiveRead:       NeedNone,
-	protocol.TaskControlKind_ScheduleList:           NeedNone,
-	protocol.TaskControlKind_ScheduleShow:           NeedNone,
+	// Keyed by a topic or an archive the caller names, refused unless the
+	// caller may read the topic: agent_read_page's reasoning, with reach in
+	// place of the subscription.
+	protocol.TaskControlKind_AgentArchives:    NeedNone,
+	protocol.TaskControlKind_AgentArchiveRead: NeedNone,
+	// await_idle_list / _kill reveal and end only what the caller armed (the
+	// operator: everything), and arming needed no bit either.
+	protocol.TaskControlKind_AwaitList: NeedNone,
+	protocol.TaskControlKind_AwaitKill: NeedNone,
+	// progress_set / lifecycle_set write only the caller's OWN row, resolved
+	// from its principal -- whoami's self-introspection reasoning.
+	protocol.TaskControlKind_ProgressSet:  NeedNone,
+	protocol.TaskControlKind_LifecycleSet: NeedNone,
+	// Schedules are listed and shown by reach alone (S-D17).
+	protocol.TaskControlKind_ScheduleList: NeedNone,
+	protocol.TaskControlKind_ScheduleShow: NeedNone,
 
+	// Retired in A3: submit is answered with an error naming its replacement,
+	// get_task_log with "no log" for every id. Both reveal nothing.
 	protocol.TaskControlKind_Submit:     NeedRetired,
 	protocol.TaskControlKind_GetTaskLog: NeedRetired,
 
+	// The handshake, and a RESPONSE kind that never arrives as a request.
 	protocol.TaskControlKind_ClientHello:      NeedNotRequest,
 	protocol.TaskControlKind_PermissionDenied: NeedNotRequest,
 

@@ -229,7 +229,7 @@ func TestTaskRenameIsStillTheLastKind(t *testing.T) {
 	next := protocol.TaskControlKind(int(protocol.TaskControlKind_TaskRename) + 1)
 	if next.String() != fmt.Sprintf("TaskControlKind(%d)", int(next)) {
 		t.Fatalf("a kind was appended after task_rename (%v) — raise the loop bound in "+
-			"TestEveryTaskControlKindIsClassified and in TestEveryTaskControlKindHasACapVerdict, "+
-			"which otherwise stop before it", next)
+			"TestEveryTaskControlKindIsClassified, which otherwise stops before it (authority's "+
+			"TestEveryKindIsClassified guards its own bound, lastKind)", next)
 	}
 }
