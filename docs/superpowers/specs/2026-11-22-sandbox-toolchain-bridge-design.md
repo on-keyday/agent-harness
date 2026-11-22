@@ -95,10 +95,15 @@ Placeholders are `{NAME}` where NAME is a key of the probe's JSON, plus
 `{HOME}` (the host home). Unknown placeholders are a refusal, never an empty
 string.
 
-`create: true` creates the full path as the host user. Podman creates a missing
-mount parent root-owned and the agent's first sibling `mkdir` then aborts
-(`agent-in-podman.sh:754-758`, measured for opencode 2026-08-19), so the wrapper
-must create it first; `create: true` with `mode: "ro"` is a refusal.
+`create: true` creates the full host path as the host user **before** `podman
+run`, so the mount source exists and is host-user-owned. That is what it fixes:
+podman creating a missing source directory itself (root-owned, unusable by the
+agent). It does **not** fix the separate container-side issue — podman still
+synthesises a missing mountpoint parent in the container's overlay as container
+root (`agent-in-podman.sh:754-758`, measured for opencode 2026-08-19), so a tool
+that `mkdir`s a sibling of the mountpoint under `{HOME}/.cache` still gets
+`EACCES`. That residual stays (§4); `create: true` with `mode: "ro"` is a
+refusal.
 
 `HARNESS_SANDBOX_TOOLCHAINS` is a host path with no meaning inside the
 container: the config is read on the host by the wrapper, and the container
@@ -117,7 +122,7 @@ change, so the rule holds for every host-path variable.
 `scripts/sandbox/toolchain.py` — same shape as `seccomp_profile.py` and
 `history_window.py`: a python helper the bash wrapper calls.
 
-    python3 toolchain.py --config FILE --name go[,NAME...] [--domains]
+    python3 toolchain.py --config FILE --name go[,NAME...] [--domains] [--container-path PATH]
 
 It runs each probe, resolves placeholders, validates, and prints **podman argv
 tokens, NUL-separated**, to stdout. `--domains` prints the merged, validated
@@ -146,8 +151,10 @@ Refusals:
 - a mount path containing `:` or a newline (breaks `podman -v src:dst:mode`;
   same rule as `--memory-seed`, `agent-in-podman.sh:199`)
 - `create: true` with `mode: "ro"`
-- a duplicate mount with conflicting modes; a child mount whose mode differs
-  from an enclosing mount's
+- mount overlap: same `realpath` and same mode → dedupe to one mount; same
+  `realpath` and different mode → refuse; parent/child overlap with the same
+  mode → allow and emit both (`go` needs this: `GOROOT` sits inside
+  `GOMODCACHE`, both `ro`); parent/child overlap with different modes → refuse
 - `env` key defined by two named toolchains with different values
 - `allow_domains` value that is not a host name
 - missing, unreadable, or malformed config file (including the
@@ -155,7 +162,8 @@ Refusals:
 
 Paths are `realpath`'d before comparison, but the mount path is **not** rewritten
 after resolution: `GOROOT` sits inside `GOMODCACHE` and `env.GOROOT` must keep
-matching the mounted path. Overlap is therefore detected, not silently deduped.
+matching the mounted path. Dedupe therefore only collapses identical
+source+mode pairs; it never rewrites a path.
 
 ### 3.3 The wrapper flag
 
@@ -175,8 +183,10 @@ an entry that declares `allow_domains` widens the allowlist (§3.6).
 deduped, into a **single** `--env PATH=<tc1>:<tc2>:<base>` token. Emitting one
 `--env PATH=` per toolchain would let the second overwrite the first and drop
 `go`'s `GOROOT/bin`. `<base>` is the image's own PATH, read from
-`podman image inspect` once. If that call fails (unpulled image, no
-`Config.Env`), the wrapper falls back to the Debian default
+`podman image inspect` once and passed to the resolver as `--container-path`;
+the resolver merges it with the toolchains' `path_prepend` lists and emits the
+single token. If the inspect call fails (unpulled image, no `Config.Env`), the
+wrapper falls back to the Debian default
 `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin` and continues
 rather than aborting under `set -e`. `agent-launch.sh` prepends the agent bin
 afterwards, so ordering is preserved.
@@ -193,16 +203,20 @@ refuses.
 ### 3.6 Toolchain egress (`allow_domains`, opt-in per entry)
 
 A toolchain may declare `allow_domains`. They are **additive**, exactly like
-`--allow-domain`: the wrapper appends them to the agent's own `A_DOMAINS`
-before the firewall env is built. The allowlist mechanism is unchanged — the
-firewall and the proxy still default-deny; a toolchain merely adds another
-declarer to the same list.
+`--allow-domain`: the wrapper appends them to `allow_domains` **before** the
+host-name loop that already exists (`agent-in-podman.sh:245-252`), so they flow
+through the same path as a flag-given domain — the host-name check, the
+`--no-firewall` clear, `allow_extra`, the start summary and the `A_DOMAINS`
+merge. The allowlist mechanism is unchanged — the firewall and the proxy still
+default-deny; a toolchain merely adds another declarer to the same list.
 
 Rules, mirroring `--allow-domain`:
 
 - Each value is validated as a host name; a bad value is a refusal, not a
-  silent skip.
-- Under `--no-firewall` they are ignored with a warning (nothing to add).
+  silent skip. The resolver validates in **both** modes, so a run without
+  `--domains` still refuses a bad name.
+- Under `--no-firewall` they are ignored with the existing warning (nothing to
+  add).
 - Under injection the agent's base `A_DOMAINS` is empty; the toolchain's
   domains are then added to the shared defaults. That is an explicit widening of
   the "injection = no agent egress" property, so it is **logged in the start
@@ -211,17 +225,30 @@ Rules, mirroring `--allow-domain`:
   `GOFLAGS=-mod=readonly`, so `go mod download` fails with `EROFS` whatever the
   allowlist says; widening egress for an operation that cannot succeed is a
   change with no upside. The field stays in the schema so an operator can turn
-  dependency installation on later: set `GOMODCACHE`'s mount to `rw` (or a
-  writable copy) and add the domains in their own config file. That is the
-  configurable path, not a code change.
+  dependency installation on later, as a config change: mount a **dedicated**
+  writable `GOMODCACHE` (`{HOME}/.cache/harness-sandbox/go-mod`, `rw`,
+  `create: true`), never the host's own `{GOMODCACHE}`, add the domains, and
+  drop `-mod=readonly` in that entry. Making the host's real module cache `rw`
+  would break §4's "caches stay off the host's own": a container could
+  trojanise a module the host's own `go build` later compiles.
 
-Mechanism: the resolver's `--domains` mode prints the validated list, and the
-wrapper merges it into `A_DOMAINS` after the injection/`--allow-domain` merge
-(`agent-in-podman.sh:1013-1018`) and before the firewall env is built
-(`agent-in-podman.sh:1058`). No new env var, no change to `init-firewall.sh`,
-`init-firewall-proxy.sh`, `sandbox-connect-proxy`, or the image — both firewall
-modes read the same `A_DOMAINS`, so one merge covers both. The start summary and
-the `--no-firewall` warning are the existing ones.
+Mechanism: the resolver's `--domains` mode prints the validated list and runs
+no probes, so the wrapper can call it early and append the result to
+`allow_domains` before the host-name loop:
+
+    tc_domains=$(python3 toolchain.py --config … --name … --domains) || exit 2
+
+Everything downstream then applies without a second seam: the `--no-firewall`
+clear (`:249-252`), `allow_extra` (`:1014-1018`), the start summary's `allow+=…`
+(`:1149`) and `FW+=( --env SANDBOX_AGENT_DOMAINS=… )` (`:1058`). No new env var,
+no change to `init-firewall.sh`, `init-firewall-proxy.sh`,
+`sandbox-connect-proxy`, or the image: both firewall modes read the same
+`A_DOMAINS`, so one merge covers both.
+
+The later argv call (NUL-separated, temp file) is separate and still runs
+probes; the `--domains` call reads JSON and validates only. Reading its output
+with `$(...)` is safe because it prints one line with no NULs, so exit 2
+propagates under `set -euo pipefail`.
 
 ## 4. Security
 
@@ -254,6 +281,11 @@ the `--no-firewall` warning are the existing ones.
   shows the container every cached host module, including private repositories'
   modules. Read-only, but it is a confidentiality surface the sandbox did not
   have.
+- **Residual: container-side mountpoint parents.** Podman synthesises a missing
+  mountpoint parent in the container's overlay as container root, so a tool that
+  `mkdir`s a sibling of a mountpoint under `{HOME}/.cache` gets `EACCES`
+  (`agent-in-podman.sh:754-758`, measured for opencode 2026-08-19). Host-side
+  `create: true` fixes only the host source directory; this stays.
 - **Residual: host memory.** A cold cache under memory pressure OOM-kills the
   compiler (measured). The persistent cache is the mitigation; the host's
   memory is the real limit.
@@ -268,13 +300,13 @@ the `--no-firewall` warning are the existing ones.
 | Gate | Expectation |
 |---|---|
 | V1 | no flag → argv/mounts/env identical to today |
-| V2 | `--toolchain=go` → `go build ./...` and `go test ./cli/verb` pass offline, under seccomp (the measured set; `go test ./...` is not asserted until measured) |
+| V2 | `--toolchain=go` → `go build ./...` and `go test ./cli/verb` pass without adding egress domains, under seccomp (the measured set; `go test ./...` is not asserted until measured) |
 | V3 | GOMODCACHE ro: a write attempt from inside fails |
 | V4 | unknown name, failed probe, empty `require`, missing mount, `create`+`ro`, malformed config → **`agent-in-podman.sh` exits 2 and no container starts** (not just the helper called directly) |
-| V5 | `--toolchain=go,rust` resolves both; duplicate mounts refuse; both `path_prepend` entries appear in the container's single `PATH` |
+| V5 | `--toolchain=go,rust` resolves both; same-path same-mode dedupes, same-path different-mode refuses, parent/child same-mode is allowed; both `path_prepend` entries appear in the container's single `PATH` |
 | V6 | the flag alone adds no egress; an entry with `allow_domains` adds exactly those and no others |
 | V7 | a synthetic toolchain entry (e.g. a fake `foo` with a `cat` probe) resolves without wrapper changes |
-| V8 | `allow_domains` from a synthetic entry appear in the allowlist and the start summary; a bad host name is refused |
+| V8 | `allow_domains` from a synthetic entry appear in the allowlist and the start summary; a bad host name is refused; under `--inject-auth` the domains are added and logged (D5); under `--no-firewall` they are ignored with the warning |
 | V9 | with `HARNESS_SANDBOX_TOOLCHAINS` and `HARNESS_SANDBOX_MEMORY_ROOTS` set in the runner env, neither appears in the container's environment; every other `HARNESS_*` still does |
 
 V7 is the pluggability gate: it proves the mechanism is generic.
@@ -292,9 +324,9 @@ look.
 | D3 | `GOCACHE` is a persistent per-host-user directory (`~/.cache/harness-sandbox/go-build`), not per-task. A cold cache under host memory pressure OOM-killed the compiler in measurement; the warm cache is the mitigation. The trade-off is cross-task cache poisoning (§4); per-task scoping is the alternative if the threat model widens | this spec |
 | D4 | v1 ships only `go`. `rust`/`c` entries are examples the mechanism admits, not shipped entries: each needs its own measurement of what bridges and what does not | this spec |
 | D5 | Toolchain `allow_domains` apply under injection too. The widening is explicit and logged; refusing them under injection would make the same toolchain work in one mode and not another for no stated reason | operator, 2026-11-22 |
-| D6 | The resolver emits domains in a separate `--domains` mode and the wrapper merges them into `A_DOMAINS` before the firewall env is built. No new env var and no image change: both firewall modes already read `A_DOMAINS` | this spec |
-| D7 | The shipped `go` entry declares no `allow_domains`. Dependency installation inside the sandbox is deferred; when wanted it is a config change (writable `GOMODCACHE` plus domains), not a code change | operator, 2026-11-22 |
-| D8 | Host-path variables are not forwarded into the container. `HARNESS_SANDBOX_TOOLCHAINS` is excluded, and `HARNESS_SANDBOX_MEMORY_ROOTS` is excluded in the same change because it is the same class of value and leaks today | this spec |
+| D6 | The resolver emits domains in a separate `--domains` mode and the wrapper appends them to `allow_domains` before the host-name loop, so the existing validation, `--no-firewall` clear, `allow_extra` summary and `A_DOMAINS` merge all apply. No new env var and no image change: both firewall modes already read `A_DOMAINS` | this spec |
+| D7 | The shipped `go` entry declares no `allow_domains`. Dependency installation inside the sandbox is deferred; when wanted it is a config change (a dedicated writable `GOMODCACHE` plus domains), never the host's own cache | operator, 2026-11-22 |
+| D8 | Host-path variables are not forwarded into the container. `HARNESS_SANDBOX_TOOLCHAINS` is excluded, and `HARNESS_SANDBOX_MEMORY_ROOTS` is excluded in the same change because it is the same class of value and leaks today; nothing inside the container reads either (`git grep` shows only the host-side wrapper and its tests) | this spec |
 
 ## 7. Left to the builder
 
