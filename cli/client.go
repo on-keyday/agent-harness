@@ -39,6 +39,10 @@ type Client struct {
 	// it report `Tui` for a connection the server lists as `agent`.
 	kind protocol.ClientKind
 
+	// expect is the running verb's declared kinds, from the context this
+	// client was dialed with (WithExpectedKinds); nil checks nothing.
+	expect *expectedKinds
+
 	mu      sync.Mutex
 	nextReq uint32
 	pending map[uint32]chan taskControlResult
@@ -162,6 +166,7 @@ func dialOn(ctx context.Context, pc *peer.Conn, kind protocol.ClientKind, server
 	c := &Client{
 		conn:    pc,
 		kind:    announced,
+		expect:  expectedKindsFrom(ctx),
 		pending: map[uint32]chan taskControlResult{},
 	}
 
@@ -308,7 +313,7 @@ func (c *Client) Peer() *peer.Conn { return c.conn }
 // callers are correlated independently — no implicit serialization beyond the
 // objproto.Connection's send mutex.
 func (c *Client) RoundTripTaskControl(ctx context.Context, req *protocol.TaskControlRequest) (*protocol.TaskControlResponse, error) {
-	if err := checkExpectedKind(req.Header.Kind); err != nil {
+	if err := c.expect.check(req.Header.Kind); err != nil {
 		return nil, err
 	}
 	c.mu.Lock()
@@ -397,7 +402,7 @@ func sendChecked(transport string, budget int, data []byte, send func([]byte) er
 // caller that stops waiting leaks nothing. On a send failure the pending entry
 // is reclaimed here and no channel is returned at all.
 func (c *Client) BeginTaskControl(req *protocol.TaskControlRequest) (<-chan TaskControlResult, error) {
-	if err := checkExpectedKind(req.Header.Kind); err != nil {
+	if err := c.expect.check(req.Header.Kind); err != nil {
 		return nil, err
 	}
 	c.mu.Lock()

@@ -318,7 +318,9 @@ func TestMCPToolResultShape(t *testing.T) {
 	if isErr || len(text) > maxToolResult+200 || !strings.Contains(text, "truncated") {
 		t.Errorf("oversized output: %d bytes, isError=%t, want it cut at %d with a notice", len(text), isErr, maxToolResult)
 	}
-	if text, isErr := toolResultText([]byte("partial"), exitCodeError{code: 1}); text != "partial" || !isErr {
+	// The code is the only place session exec reports its command's status
+	// without --json, so a bare exit code is named (spec §7).
+	if text, isErr := toolResultText([]byte("partial"), exitCodeError{code: 1}); text != "partial\nexit status 1" || !isErr {
 		t.Errorf("exit-code error with printed output: %q %t", text, isErr)
 	}
 	if text, isErr := toolResultText(nil, exitCodeError{code: 3, msg: "ambiguous"}); text != "ambiguous" || !isErr {

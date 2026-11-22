@@ -10,10 +10,11 @@ import (
 	"testing"
 )
 
-// One harness-cli process serves many MCP tool calls, with stdin and stdout
-// carrying the JSON-RPC stream (spec §7, D16). So a tool's body may not end the
-// process, read fd 0 or write fd 1: it returns an exit-code error, reads
-// h.stdin() and writes h.stdout(). This scans every function in the package;
+// One harness-cli process serves many MCP tool calls at once, with stdin and
+// stdout carrying the JSON-RPC stream (spec §7, D16, D18). So a tool's body may
+// not end the process, read fd 0, write fd 1 or run outside the call's context:
+// it returns an exit-code error, reads h.stdin(), writes h.stdout() and dials
+// with h.ctx. This scans every function in the package;
 // the ones allowed to touch the process's streams are named below with the
 // reason -- the process entry points, and the bodies of verbs that are NOT
 // tools (VerbSpec.MCPNotATool), which own the terminal by design.
@@ -29,13 +30,11 @@ var processStreamAllowed = map[string]string{
 	"Forward":                    "forward is not a tool: it blocks holding forwards open",
 	"readFlagBody":               "forward's --http-body @- reads stdin",
 	"runSessionStreamAttachWith": "session stream attach is not a tool: it streams",
-	"runSessionExecWith":         "session exec is not a tool: it exits with the command's code",
-	"runSessionAwaitIdleWith":    "session await-idle is not a tool: it blocks",
-	"AwaitProgress":              "await-progress is not a tool: it blocks",
 	"Lifecycle":                  "lifecycle is not a tool: it is a hook reading stdin",
 	"serveMCP":                   "the MCP server itself owns stdin and stdout",
 	"stdout":                     "cliVerbs' nil-safe default: a cliVerbs built with no sink is the command line's",
 	"stdin":                      "cliVerbs' nil-safe default: a cliVerbs built with no reader is the command line's",
+	"baseCtx":                    "cliVerbs' nil-safe default: a cliVerbs built with no context (a test) runs under Background",
 }
 
 func TestToolBodiesDoNotTouchProcessStreams(t *testing.T) {
@@ -80,8 +79,11 @@ func TestToolBodiesDoNotTouchProcessStreams(t *testing.T) {
 				if !ok {
 					return true
 				}
+				// A context of the body's own making escapes the call's: MCP's
+				// cancellation and the verb's declared Sends (spec §7, §8.2).
 				bad := (x.Name == "os" && (sel.Sel.Name == "Exit" || sel.Sel.Name == "Stdin" || sel.Sel.Name == "Stdout")) ||
-					(x.Name == "fmt" && (sel.Sel.Name == "Print" || sel.Sel.Name == "Printf" || sel.Sel.Name == "Println"))
+					(x.Name == "fmt" && (sel.Sel.Name == "Print" || sel.Sel.Name == "Printf" || sel.Sel.Name == "Println")) ||
+					(x.Name == "context" && (sel.Sel.Name == "Background" || sel.Sel.Name == "TODO"))
 				if !bad {
 					return true
 				}
@@ -96,7 +98,7 @@ func TestToolBodiesDoNotTouchProcessStreams(t *testing.T) {
 	}
 	sort.Strings(found)
 	for _, f := range found {
-		t.Errorf("process stream outside the allowed bodies: %s -- write h.stdout(), read h.stdin(), return an exit-code error", f)
+		t.Errorf("process stream outside the allowed bodies: %s -- write h.stdout(), read h.stdin(), return an exit-code error, use h.ctx", f)
 	}
 	for fn := range processStreamAllowed {
 		if !seen[fn] {

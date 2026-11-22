@@ -67,14 +67,13 @@ func TestMCPNeverExposesItself(t *testing.T) {
 	}
 }
 
-// TestMCPExcludesInteractiveVerbs: the verbs that stream, block or own the
-// terminal are excluded by declaration (spec §6), so this asserts the
-// declaration did not grow into them.
+// TestMCPExcludesInteractiveVerbs: the verbs that stream, serve until
+// interrupted or own the terminal are excluded by declaration (spec §6), so
+// this asserts the declaration did not grow into them.
 func TestMCPExcludesInteractiveVerbs(t *testing.T) {
 	excluded := []string{
 		"watch", "notify-watch", "exec tap", "forward tap", "session stream attach",
-		"forward", "ssh-gateway", "agent wait", "agent dispatch", "session await-idle",
-		"await-progress", "session exec", "session attach", "file edit", "file new",
+		"forward", "ssh-gateway", "session attach", "file edit", "file new",
 		"exec", "lifecycle", "mcp",
 	}
 	for _, name := range excluded {
@@ -84,6 +83,39 @@ func TestMCPExcludesInteractiveVerbs(t *testing.T) {
 		}
 		if spec.MCP != nil {
 			t.Errorf("%s is declared as an MCP tool but is interactive/streaming", name)
+		}
+	}
+}
+
+// TestMCPWaitingVerbsAreTools: a verb that waits and then answers once is a
+// tool since calls overlap and can be cancelled (spec D18, D19). The long
+// polls are read tools whose durable sinks are write flags (D17).
+func TestMCPWaitingVerbsAreTools(t *testing.T) {
+	cases := []struct {
+		verb       string
+		effect     verb.MCPEffect
+		writeFlags []string
+	}{
+		{"session exec", verb.MCPWrite, nil},
+		{"agent dispatch", verb.MCPWrite, nil},
+		{"agent wait", verb.MCPRead, nil},
+		{"session await-idle", verb.MCPRead, []string{"notify", "topic"}},
+		{"await-progress", verb.MCPRead, []string{"notify", "topic"}},
+	}
+	for _, c := range cases {
+		spec, ok := verb.Lookup(strings.Fields(c.verb)...)
+		if !ok {
+			t.Fatalf("%s: no such verb", c.verb)
+		}
+		if spec.MCP == nil {
+			t.Errorf("%s is not a tool (MCPNotATool %q)", c.verb, spec.MCPNotATool)
+			continue
+		}
+		if spec.MCP.SideEffect != c.effect {
+			t.Errorf("%s: side effect %q, want %q", c.verb, spec.MCP.SideEffect, c.effect)
+		}
+		if strings.Join(spec.MCP.WriteFlags, ",") != strings.Join(c.writeFlags, ",") {
+			t.Errorf("%s: write flags %v, want %v", c.verb, spec.MCP.WriteFlags, c.writeFlags)
 		}
 	}
 }
@@ -195,30 +227,44 @@ func TestMCPStdioSession(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// initialize, tools/list, tools/call version, tools/call nope, parse error, ping
+	// initialize, tools/list, tools/call version, tools/call nope, parse error,
+	// ping. Calls run concurrently (spec D18), so responses are matched by id;
+	// the parse error has none.
 	if len(responses) != 6 {
 		t.Fatalf("got %d responses, want 6: %v", len(responses), responses)
 	}
-	if _, ok := responses[0]["result"].(map[string]any); !ok {
-		t.Errorf("initialize result missing: %v", responses[0])
+	byID := map[float64]map[string]any{}
+	var noID []map[string]any
+	for _, r := range responses {
+		if id, ok := r["id"].(float64); ok {
+			byID[id] = r
+		} else {
+			noID = append(noID, r)
+		}
 	}
-	if _, ok := responses[1]["result"].(map[string]any); !ok {
-		t.Errorf("tools/list result missing: %v", responses[1])
+	if _, ok := byID[1]["result"].(map[string]any); !ok {
+		t.Errorf("initialize result missing: %v", byID[1])
 	}
-	if res, ok := responses[2]["result"].(map[string]any); !ok {
-		t.Errorf("tools/call result missing: %v", responses[2])
+	if _, ok := byID[2]["result"].(map[string]any); !ok {
+		t.Errorf("tools/list result missing: %v", byID[2])
+	}
+	if res, ok := byID[3]["result"].(map[string]any); !ok {
+		t.Errorf("tools/call result missing: %v", byID[3])
 	} else if res["isError"] == true {
 		t.Errorf("tools/call version failed: %v", res)
 	}
 	// An unknown tool is a JSON-RPC error, not a tool result (spec D15).
-	if _, ok := responses[3]["error"].(map[string]any); !ok {
-		t.Errorf("unknown tool did not come back as a JSON-RPC error: %v", responses[3])
+	if _, ok := byID[4]["error"].(map[string]any); !ok {
+		t.Errorf("unknown tool did not come back as a JSON-RPC error: %v", byID[4])
 	}
-	if _, ok := responses[4]["error"].(map[string]any); !ok {
-		t.Errorf("malformed frame did not produce a JSON-RPC error: %v", responses[4])
+	if len(noID) != 1 {
+		t.Fatalf("want exactly one id-less response (the parse error), got %v", noID)
 	}
-	if _, ok := responses[5]["result"].(map[string]any); !ok {
-		t.Errorf("ping result missing: %v", responses[5])
+	if _, ok := noID[0]["error"].(map[string]any); !ok {
+		t.Errorf("malformed frame did not produce a JSON-RPC error: %v", noID[0])
+	}
+	if _, ok := byID[5]["result"].(map[string]any); !ok {
+		t.Errorf("ping result missing: %v", byID[5])
 	}
 }
 
@@ -226,8 +272,7 @@ func TestMCPStdioSession(t *testing.T) {
 // as a JSON-RPC error, and the body does not run (D12, D15).
 func TestMCPReadOnlyRefusesWriteTool(t *testing.T) {
 	srv := &mcpServer{h: cliVerbs{}, readOnly: true}
-	srv.listed, srv.hasListed = srv.filter(), true
-	_, _, rpcErr := srv.callTool("session_rename", json.RawMessage(`{"task-id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","name":"x"}`))
+	_, rpcErr := resolveTool(srv.filter(), "session_rename")
 	if rpcErr == nil || !strings.Contains(rpcErr.Message, "read-only") {
 		t.Fatalf("--read-only: %v, want a JSON-RPC error naming --read-only", rpcErr)
 	}

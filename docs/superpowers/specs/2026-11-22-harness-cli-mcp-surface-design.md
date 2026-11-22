@@ -34,6 +34,15 @@ dispatch) and `cmd/harness-cli/dispatch.go` (`cliVerbs`).
 > also writes down what a survey of the bodies found that the second pass did
 > not: bodies that `os.Exit`, read `os.Stdin` or take the terminal (§6, §7), and
 > corrections to §6's exclusion list.
+>
+> **Revision note (2026-11-23, fourth pass).** The third pass served tool calls
+> one after another, so a call that waits held up every call behind it, and §6
+> excluded every verb that waits for that reason. MCP does not require that
+> order: requests may overlap, and a client may cancel one
+> (`notifications/cancelled`). This pass serves calls concurrently and cancels
+> them on request (D18), which removes the reason the waiting verbs were
+> excluded; they become tools (D19). The `Sends` guard, which was process-wide
+> on the assumption of one verb at a time, moves onto the call's context (§8.2).
 
 ---
 
@@ -128,6 +137,8 @@ evidence.
 | 15 | A `tools/call` naming an unknown tool, or one the server's own filters (`--read-only`, `--caps`, the caller's caps) withheld, is a JSON-RPC error (`-32602`), not a tool result: from the client's view that tool does not exist | author |
 | 16 | A tool body neither ends the process nor reads its stdin: `os.Exit` in a body becomes a returned exit code, and the body's stdin is injected like its stdout (§7) | author |
 | 17 | A verb that writes only when a flag is given declares that flag in `MCPTool.WriteFlags` and stays `read`: a `--read-only` server lists it with the flag omitted (and refuses it as unknown), any other server lists it whole with `readOnlyHint: false`. `record get -o`, `transcript get -o`, `skill --extract`/`--force` | **operator** (2026-11-23) |
+| 18 | `tools/call` requests run concurrently, each under its own context; `notifications/cancelled` cancels that context and the cancelled request gets no response. `initialize`, `ping` and `tools/list` are answered in arrival order by the reading loop, so a waiting call never delays them. No bound on concurrent calls: a bound would queue a fast call behind waiting ones, and the client is the agent's own child with the agent's own authority | **operator** (2026-11-23) |
+| 19 | A verb that waits for something else and then answers once is a tool: `session exec`, `session await-idle`, `await-progress`, `agent wait`, `agent dispatch`. A waiting call occupies only itself (D18), and the client's own timeout ends it through cancellation. Streaming and terminal-owning verbs stay excluded | **operator** (2026-11-23) |
 
 ## 5. Interface
 
@@ -264,8 +275,8 @@ CLI line is. The result is whatever the body wrote to the injected sink (§7).
   whole exclusion set, and it is structural, not policy:
   - it streams until interrupted — `watch`, `notify-watch`, `exec tap`,
     `forward tap`, `session stream attach`;
-  - it blocks — `forward`, `ssh-gateway`, `agent wait`, `agent dispatch`,
-    `session await-idle`, `await-progress`, `session exec`;
+  - it serves until interrupted — `forward`, `ssh-gateway` (each holds a
+    listener open; there is no single answer to return);
   - it owns this process's terminal, editor or stdin — `session attach`,
     `file edit`, `file new` (both run `$EDITOR` on the process's terminal),
     `exec` (splices stdin/stdout to the command and ends the process with its
@@ -278,6 +289,18 @@ CLI line is. The result is whatever the body wrote to the injected sink (§7).
   turn` does not stream — it writes one user turn and returns after
   `--flush-ms` (`cli/stream_write.go` `StreamTurn`), so it is a tool; `file new`,
   `exec` and `lifecycle` were missing.
+
+  Not excluded since the fourth pass (D19): a verb that WAITS and then answers
+  once — `session exec` (bounded by `--timeout`, 30s by default), `agent wait`
+  and `agent dispatch` (`--timeout`, 5m), `session await-idle` and
+  `await-progress` (unbounded long poll; the client's timeout cancels it). A
+  cancelled long poll closes its connection, and the server drops a reply-sink
+  watcher whose connection is gone (`DropIdleWatchersForConn`), so cancelling
+  leaves nothing armed. A cancelled `session exec` cannot take back what it
+  typed: the command keeps running in the session's shell. `session
+  await-idle` and `await-progress` are `read` with `notify`/`topic` as
+  `WriteFlags` (D17): the long poll's watcher lives only as long as the call,
+  while a notify or board watcher outlives it.
 - A verb with a **flag** that makes it stream, block or take the terminal is a
   tool whose schema omits that flag (`MCPTool.Omit`/`Fixed`, with `Why`):
   - `conns`: `--follow` streams connection events, `--watch` repeats the
@@ -331,7 +354,9 @@ that prints to fd 1 fails the "stdout is JSON-RPC only" assertion.
   MCP server that ends the server. These return an exit-code error instead: the
   CLI's `die()` exits with that code and prints the error's text (empty for the
   ones that already printed), so the command line behaves exactly as before;
-  `tools/call` returns the captured output with `isError`.
+  `tools/call` returns the captured output with `isError`, followed by the
+  error's text or, when it has none, `exit status N` — the code is the only
+  place `session exec` reports its command's status without `--json`.
 - **`os.Stdin` in a body.** `board send`, `agent send` read the body from stdin
   when neither text nor `--data` gives one. In the MCP server stdin is the
   JSON-RPC stream, so `cliVerbs` gains `in io.Reader` beside `out`, read through
@@ -342,8 +367,15 @@ A body's stderr lines (`session send`'s summary, `session mode`'s confirmation)
 stay on the MCP server's stderr, which is the client's log, not the tool
 result. The result is what the body wrote to its sink (§5.3).
 
+**A third, since calls overlap (D18): the body's context.** Each call runs
+under its own context, carried in `cliVerbs.ctx`, and a body MUST dial and
+wait with that context, not `context.Background()`. It is what cancellation
+reaches, and what carries the call's `Sends` (§8.2); a body that makes its own
+context escapes both. The go/ast guard (§11 2b) refuses `context.Background`
+and `context.TODO` in tool bodies for that reason.
+
 Rejected alternative: swapping the `os.Stdout` package variable around the call.
-It reaches the var-reading bodies, but it is process-global — racy if two MCP
+It reaches the var-reading bodies, but it is process-global — racy now that MCP
 requests overlap — and it silently misses anything that writes fd 1 directly.
 A field is explicit and has no such edge.
 
@@ -388,13 +420,19 @@ the shown side.
 ### 8.2 Keeping `Sends` honest
 
 `Sends` is a declaration beside the body it describes, so it is enforced where
-the body acts: the dispatch of a verb that declares `Sends` installs that set
-on its client, and a body that sends a kind outside it gets an error naming the
-verb and the kind instead of a request on the wire (D14). That is so on the
-command line as well as in the MCP server — a forgotten kind shows up the first
-time anyone runs the verb, not as a quietly wrong tool list. The TUI and WebUI,
-which share `cli.Client` but not this dispatch, install nothing and are not
-checked.
+the body acts: the dispatch of a verb that declares `Sends` puts that set on
+the context the body runs under (`cli.WithExpectedKinds`), every client the
+body dials from that context records it, and a body that sends a kind outside
+it gets an error naming the verb and the kind instead of a request on the wire
+(D14). That is so on the command line as well as in the MCP server — a
+forgotten kind shows up the first time anyone runs the verb, not as a quietly
+wrong tool list. The TUI and WebUI, which share `cli.Client` but not this
+dispatch, put nothing on their contexts and are not checked.
+
+The set travels on the context, not in a process-wide variable, because MCP
+calls overlap (D18): two verbs run at once, each with its own declaration. A
+body that dials from a context of its own making loses the set and is not
+checked, which is one of the two reasons §7 forbids it.
 
 ### 8.3 Automatic and explicit
 
@@ -426,6 +464,8 @@ that produced it.
 | V8 | With a caller that cannot satisfy a tool, is the tool absent from `tools/list` — and is a tool the caller CAN use under some request never absent (agent send without board_peer, file ls with only file_write)? | §8.1, §8.3 |
 | V9 | Does a body that sends a kind outside its verb's `Sends` fail before the request leaves, on the CLI and in a tool call? | D14 |
 | V10 | Does no tool body end the MCP server or read its stdin (`os.Exit`, `os.Stdin` in a tool's body)? | D16 |
+| V11 | While one `tools/call` waits, is a second `tools/call` and a `ping` answered? Does `notifications/cancelled` end the waiting call with no response, and does a cancelled `session await-idle` leave no watcher armed? | D18 |
+| V12 | With two calls of different verbs in flight, does each see only its own `Sends`? | §8.2 |
 
 ## 10. Security notes
 
@@ -461,10 +501,15 @@ that produced it.
 2a. **`Sends` is enforced.** A client carrying a verb's `Sends` refuses an
    undeclared kind before sending (V9); every tool declares `Sends` (a test
    refuses a tool with a nil `Sends`).
-2b. **No body ends or reads the process.** A go/ast scan of
-   `cmd/harness-cli` refuses `os.Exit`, `os.Stdin`, `os.Stdout` and `fmt.Print*`
-   inside the bodies of tool verbs, with an allowlist naming the not-a-tool
-   bodies (V10, §7).
+2b. **No body ends or reads the process, or leaves the call's context.** A
+   go/ast scan of `cmd/harness-cli` refuses `os.Exit`, `os.Stdin`, `os.Stdout`,
+   `fmt.Print*`, `context.Background` and `context.TODO` inside the bodies of
+   tool verbs, with an allowlist naming the not-a-tool bodies (V10, §7).
+2c. **Overlap and cancellation.** The serve loop with an injected call runner:
+   a call that blocks until its context ends does not delay a second call or a
+   `ping`; `notifications/cancelled` naming it ends it and no response is
+   written for it; end of input cancels what is in flight. The `Sends` set of
+   one context is not seen by a client dialed from another (V11, V12).
 3. **Schema golden.** `tools/list` for the whole table, diffed against a
    committed golden, so a table change that moves the tool surface is visible.
 4. **Round-trip.** For each tool, generate an `arguments` object from its

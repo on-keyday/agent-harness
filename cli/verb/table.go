@@ -663,7 +663,7 @@ var Verbs = []VerbSpec{
 		// come FIRST -- the inverse of what ParsePermuted guarantees
 		// everywhere else. Declaring it removes that constraint.
 		Path:        []string{"forward"},
-		MCPNotATool: "it blocks until something else happens; a tool that can wait forever is a hung server (it holds the forwards open until they are killed)",
+		MCPNotATool: "it serves until interrupted: it holds the forwards open until they are killed, so there is no single answer to return",
 		ModalSurfaces: []ModalSurface{
 			// The counterpart of -W, not of -L/-R: RawConnectModal is the raw
 			// stdio endpoint with a pane for the peer's output, and it builds
@@ -1054,7 +1054,7 @@ var Verbs = []VerbSpec{
 	// separate paths because they are separate operations wearing one name.
 	{
 		Path:           []string{"ssh-gateway"},
-		MCPNotATool:    "it blocks until something else happens; a tool that can wait forever is a hung server (it serves ssh connections until stopped)",
+		MCPNotATool:    "it serves until interrupted: it serves ssh connections until stopped, so there is no single answer to return",
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"serve ssh: `ssh -p 2222 <32-hex-task-id>@127.0.0.1` attaches to that session,",
@@ -1894,8 +1894,8 @@ var Verbs = []VerbSpec{
 		},
 	},
 	{
-		Path:           []string{"session", "exec"},
-		MCPNotATool:    "it blocks until something else happens; a tool that can wait forever is a hung server (until the command finishes or its timeout), and it ends the process with the command's exit code",
+		Path: []string{"session", "exec"},
+		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_AttachSession},
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"run one shell command line in the session's foreground shell and block until it finishes",
@@ -2030,8 +2030,8 @@ var Verbs = []VerbSpec{
 		Examples: []string{"agent send --topic chat.abcd1234 hello there"},
 	},
 	{
-		Path:           []string{"agent", "dispatch"},
-		MCPNotATool:    "it blocks until something else happens; a tool that can wait forever is a hung server (it waits for the reply)",
+		Path: []string{"agent", "dispatch"},
+		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_AgentSend, protocol.TaskControlKind_AgentWait},
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"send, then block for the reply to THAT message. --reply-to R declares R as the destination AND waits there;",
@@ -3002,7 +3002,9 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"session", "await-idle"}, CmdlineSurfaces: CLI | TUI | WebUI,
-		MCPNotATool:   "it blocks until something else happens; a tool that can wait forever is a hung server (until the session goes idle)",
+		// The long poll's watcher lives as long as the call; a notify or board
+		// watcher outlives it, so those two flags are what make it write.
+		MCP: &MCPTool{SideEffect: MCPRead, WriteFlags: []string{"notify", "topic"}}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_AwaitIdle},
 		WebUIDispatch: WebUIDispatch{Fn: "awaitIdle"},
 		SurfaceNotes:  map[Surface][]string{WebUI: {"fire when the session's output goes idle (default: prints here on fire; --notify: notification feed + hook)"}, TUI: {"fire when the session's output goes idle (default: result line here; --notify: operator notification)"}},
 		ModalSurfaces: []ModalSurface{
@@ -3080,7 +3082,8 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"await-progress"}, CmdlineSurfaces: CLI | TUI | WebUI,
-		MCPNotATool:   "it blocks until something else happens; a tool that can wait forever is a hung server (until the task reports progress)",
+		// As session await-idle: only the durable sinks write.
+		MCP: &MCPTool{SideEffect: MCPRead, WriteFlags: []string{"notify", "topic"}}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_AwaitProgress},
 		WebUIDispatch: WebUIDispatch{Fn: "awaitProgress"},
 		SurfaceNotes: map[Surface][]string{
 			WebUI: {"fire when the task writes its next progress line (default: prints here on fire; --notify: notification feed + hook)"},
@@ -3818,7 +3821,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"agent", "wait"}, CmdlineSurfaces: CLI,
-		MCPNotATool:    "it blocks until something else happens; a tool that can wait forever is a hung server (until a message arrives or its timeout)",
+		MCP: &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_AgentWait},
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"take everything after --since, blocking only if there is nothing;",

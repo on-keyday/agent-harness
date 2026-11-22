@@ -67,11 +67,10 @@ func exitOnAmbiguous(err error) error {
 
 // runSessionStreamTurnWith is runSessionStreamTurn for a caller that
 // already has the parsed action -- the generated CLI dispatch.
-func runSessionStreamTurnWith(cid objproto.ConnectionID, a verb.SessionAction) error {
+func runSessionStreamTurnWith(ctx context.Context, cid objproto.ConnectionID, a verb.SessionAction) error {
 	taskIDHex, text := a.TaskID, a.Text
 	flushMs := &a.FlushMs
 
-	ctx := context.Background()
 	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)
 	if err != nil {
 		return err
@@ -82,7 +81,7 @@ func runSessionStreamTurnWith(cid objproto.ConnectionID, a verb.SessionAction) e
 
 // runSessionStreamApproveWith is runSessionStreamApprove for a caller that already has the parsed action --
 // the generated CLI dispatch.
-func runSessionStreamApproveWith(cid objproto.ConnectionID, a verb.SessionAction) error {
+func runSessionStreamApproveWith(ctx context.Context, cid objproto.ConnectionID, a verb.SessionAction) error {
 	resp := streamagent.Response{ID: a.RequestID}
 	if a.Allow {
 		resp.Behavior = streamagent.BehaviorAllow
@@ -98,7 +97,6 @@ func runSessionStreamApproveWith(cid objproto.ConnectionID, a verb.SessionAction
 		n := int(a.Suggestion)
 		resp.AcceptSuggestion = &n
 	}
-	ctx := context.Background()
 	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)
 	if err != nil {
 		return err
@@ -110,11 +108,10 @@ func runSessionStreamApproveWith(cid objproto.ConnectionID, a verb.SessionAction
 // runSessionStreamSimpleWith is runSessionStreamSimple for a caller that
 // already has the parsed action. interrupt and finish differ only in the
 // Sub the declaration fixed, which the body reads off the action.
-func runSessionStreamSimpleWith(cid objproto.ConnectionID, a verb.SessionAction) error {
+func runSessionStreamSimpleWith(ctx context.Context, cid objproto.ConnectionID, a verb.SessionAction) error {
 	flush := time.Duration(a.FlushMs) * time.Millisecond
 	pos := []string{a.TaskID}
 
-	ctx := context.Background()
 	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)
 	if err != nil {
 		return err
@@ -130,9 +127,8 @@ func runSessionStreamSimpleWith(cid objproto.ConnectionID, a verb.SessionAction)
 
 // runSessionStreamAttachWith is runSessionStreamAttach for a caller that already has the parsed action --
 // the generated CLI dispatch.
-func runSessionStreamAttachWith(cid objproto.ConnectionID, a verb.SessionAction) error {
+func runSessionStreamAttachWith(ctx context.Context, cid objproto.ConnectionID, a verb.SessionAction) error {
 	taskIDHex := a.TaskID
-	ctx := context.Background()
 	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)
 	if err != nil {
 		return err
@@ -150,13 +146,12 @@ const defaultSendSettleMs = 1500
 
 // runSessionSnapshotWith is runSessionSnapshot for a caller that already has the parsed action --
 // the generated CLI dispatch.
-func runSessionSnapshotWith(cid objproto.ConnectionID, a verb.SessionAction, out io.Writer) error {
+func runSessionSnapshotWith(ctx context.Context, cid objproto.ConnectionID, a verb.SessionAction, out io.Writer) error {
 	taskIDHex := a.TaskID
 	rows, cols, settleMs := &a.Rows, &a.Cols, &a.SettleMs
 	style, colorOut, withoutSynth := &a.Style, &a.Color, &a.WithoutSynth
 	raw, asJSON, ansi := &a.Raw, &a.JSON, &a.ANSI
 	detect, detectAgent := &a.Detect, &a.DetectAgent
-	ctx := context.Background()
 	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)
 	if err != nil {
 		return err
@@ -378,7 +373,7 @@ func formatSpanReport(s *cli.ScreenSnapshot) string {
 
 // runSessionNewWith is runSessionNew for a caller that already has the
 // parsed action -- the generated CLI dispatch.
-func runSessionNewWith(cid objproto.ConnectionID, a verb.SpawnAction, out io.Writer) error {
+func runSessionNewWith(ctx context.Context, cid objproto.ConnectionID, a verb.SpawnAction, out io.Writer) error {
 	repoVal := a.Repo
 	sopts, err := spawnOpts(a)
 	if err != nil {
@@ -399,7 +394,6 @@ func runSessionNewWith(cid objproto.ConnectionID, a verb.SpawnAction, out io.Wri
 	// --background implies --detach (and so does a resume carrying conditions).
 	detach, x11, x11Display := a.Detach || sopts.Detached, a.X11, int(a.X11Display)
 
-	ctx := context.Background()
 	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)
 	if err != nil {
 		return err
@@ -450,14 +444,13 @@ func runSessionNewWith(cid objproto.ConnectionID, a verb.SpawnAction, out io.Wri
 
 // runSessionAttachWith is runSessionAttach for a caller that already has the parsed action --
 // the generated CLI dispatch.
-func runSessionAttachWith(cid objproto.ConnectionID, a verb.SessionAction) error {
+func runSessionAttachWith(ctx context.Context, cid objproto.ConnectionID, a verb.SessionAction) error {
 	taskIDHex := a.TaskID
 	// --view attaches without taking the seat: output only, input discarded.
 	mode := protocol.AttachMode_Control
 	if a.View {
 		mode = protocol.AttachMode_View
 	}
-	ctx := context.Background()
 	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)
 	if err != nil {
 		return err
@@ -472,7 +465,7 @@ func runSessionAttachWith(cid objproto.ConnectionID, a verb.SessionAction) error
 
 // runSessionSendWith is runSessionSend for a caller that already has the parsed action --
 // the generated CLI dispatch.
-func runSessionSendWith(cid objproto.ConnectionID, a verb.SendAction, out io.Writer) error {
+func runSessionSendWith(ctx context.Context, cid objproto.ConnectionID, a verb.SendAction, out io.Writer) error {
 	taskIDHex := a.TaskID
 	enter, interp, quiet := &a.Enter, &a.Interp, &a.Quiet
 	flushMs := &a.FlushMs
@@ -501,7 +494,6 @@ func runSessionSendWith(cid objproto.ConnectionID, a verb.SendAction, out io.Wri
 		data = append(data, '\r')
 	}
 
-	ctx := context.Background()
 	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)
 	if err != nil {
 		return err
@@ -600,12 +592,12 @@ func runSessionSendWith(cid objproto.ConnectionID, a verb.SendAction, out io.Wri
 }
 
 // runSessionExecWith is runSessionExec for a caller that already has the parsed action --
-// the generated CLI dispatch.
-func runSessionExecWith(cid objproto.ConnectionID, a verb.SessionExecAction) error {
+// the generated CLI dispatch. The command's exit code comes back as an
+// exitCodeError, which the command line exits with and a tool call reports.
+func runSessionExecWith(ctx context.Context, cid objproto.ConnectionID, a verb.SessionExecAction, out io.Writer) error {
 	taskIDHex, cmd := a.TaskID, a.Cmd
 	timeout, jsonOut, exitOnly, raw := &a.Timeout, &a.JSON, &a.ExitOnly, &a.Raw
 
-	ctx := context.Background()
 	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)
 	if err != nil {
 		return err
@@ -613,8 +605,7 @@ func runSessionExecWith(cid objproto.ConnectionID, a verb.SessionExecAction) err
 	res, execErr := c.SessionExec(ctx, taskIDHex, cmd, cli.ExecOptions{Timeout: *timeout, Raw: *raw})
 	c.Close()
 	if execErr != nil {
-		fmt.Fprintln(os.Stderr, "session exec:", execErr)
-		os.Exit(125)
+		return exitCodeError{code: 125, msg: "session exec: " + execErr.Error()}
 	}
 
 	if *jsonOut {
@@ -627,24 +618,26 @@ func runSessionExecWith(cid objproto.ConnectionID, a verb.SessionExecAction) err
 		if !*exitOnly {
 			obj["output"] = string(res.Output)
 		}
-		_ = json.NewEncoder(os.Stdout).Encode(obj)
+		_ = json.NewEncoder(out).Encode(obj)
 	} else if !*exitOnly {
-		_, _ = os.Stdout.Write(res.Output)
+		_, _ = out.Write(res.Output)
 	}
 
-	code := res.ExitCode
+	code, msg := res.ExitCode, ""
 	switch {
 	case res.ShellExited:
-		fmt.Fprintln(os.Stderr, "session exec: the session's foreground shell exited before the command finished — did the command run `exit`/`exec` (or otherwise terminate the shell)? the session is likely now terminal (dead). This is NOT a timeout. Note: exec types into the LIVE foreground shell, so `exit N` kills it; to test an exit code use `bash -c '...'` or a subshell `(exit N)` instead.")
+		msg = "session exec: the session's foreground shell exited before the command finished — did the command run `exit`/`exec` (or otherwise terminate the shell)? the session is likely now terminal (dead). This is NOT a timeout. Note: exec types into the LIVE foreground shell, so `exit N` kills it; to test an exit code use `bash -c '...'` or a subshell `(exit N)` instead."
 		code = 126
 	case res.TimedOut:
-		fmt.Fprintf(os.Stderr, "session exec: no completion within %s; the command is still running, or the session foreground is not a POSIX shell (exec needs bash/zsh/sh) — use session send/snapshot instead\n", *timeout)
+		msg = fmt.Sprintf("session exec: no completion within %s; the command is still running, or the session foreground is not a POSIX shell (exec needs bash/zsh/sh) — use session send/snapshot instead", *timeout)
 		code = 124
 	case code < 0:
 		code = 125
 	}
-	os.Exit(code)
-	return nil // unreachable
+	if code == 0 {
+		return nil
+	}
+	return exitCodeError{code: code, msg: msg}
 }
 
 // unescapeInput expands a small set of backslash escapes for sending control
@@ -690,7 +683,7 @@ func unescapeInput(s string) ([]byte, error) {
 
 // runSessionAwaitIdleWith is runSessionAwaitIdle for a caller that already has the parsed action --
 // the generated CLI dispatch.
-func runSessionAwaitIdleWith(cid objproto.ConnectionID, a verb.SessionAction) error {
+func runSessionAwaitIdleWith(ctx context.Context, cid objproto.ConnectionID, a verb.SessionAction, out io.Writer) error {
 	taskIDHex := a.TaskID
 	thresholdMs, topic := &a.ThresholdMs, &a.Topic
 	// The sink is where the fire lands: an operator notification, an
@@ -706,7 +699,6 @@ func runSessionAwaitIdleWith(cid objproto.ConnectionID, a verb.SessionAction) er
 	if err != nil {
 		return err
 	}
-	ctx := context.Background()
 	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)
 	if err != nil {
 		return err
@@ -719,7 +711,7 @@ func runSessionAwaitIdleWith(cid objproto.ConnectionID, a verb.SessionAction) er
 	}
 	// fired_by names the leg that fired; the three readings are what the
 	// session showed at decision time, whatever the signal.
-	_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
+	_ = json.NewEncoder(out).Encode(map[string]any{
 		"status":         cli.AwaitIdleStatusString(resp.Status),
 		"last_output_at": resp.LastOutputAt,
 		"watcher_id":     resp.WatcherId,
@@ -732,12 +724,11 @@ func runSessionAwaitIdleWith(cid objproto.ConnectionID, a verb.SessionAction) er
 	case protocol.AwaitIdleStatus_Fired, protocol.AwaitIdleStatus_Armed:
 		return nil
 	case protocol.AwaitIdleStatus_SessionStopped:
-		os.Exit(3) // distinct from fired so scripts can branch
+		return exitCodeError{code: 3} // distinct from fired so scripts can branch
 	case protocol.AwaitIdleStatus_Cancelled:
-		os.Exit(4) // killed via `session await-idle kill`; distinct from fired and session_stopped
+		return exitCodeError{code: 4} // killed via `session await-idle kill`; distinct from fired and session_stopped
 	}
-	os.Exit(1) // not_found / bad_request
-	return nil
+	return exitCodeError{code: 1} // not_found / bad_request
 }
 
 // parseResizeSpec parses "ROWSxCOLS" (e.g. "40x150"). One flag rather than a
@@ -758,14 +749,13 @@ func parseResizeSpec(spec string) (rows, cols uint16, err error) {
 
 // runSessionResizeWith is runSessionResize for a caller that already has the parsed action --
 // the generated CLI dispatch.
-func runSessionResizeWith(cid objproto.ConnectionID, a verb.SessionAction) error {
+func runSessionResizeWith(ctx context.Context, cid objproto.ConnectionID, a verb.SessionAction) error {
 	taskIDHex := a.TaskID
 	waitMs, quiet := &a.WaitMs, &a.Quiet
 	rows, cols, perr := parseResizeSpec(a.Size)
 	if perr != nil {
 		return perr
 	}
-	ctx := context.Background()
 	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)
 	if err != nil {
 		return err
@@ -787,7 +777,7 @@ func runSessionResizeWith(cid objproto.ConnectionID, a verb.SessionAction) error
 
 // runSessionModeWith switches a running session between foreground and
 // background (pillar A spec, A-D19).
-func runSessionModeWith(cid objproto.ConnectionID, a verb.SessionAction) error {
+func runSessionModeWith(ctx context.Context, cid objproto.ConnectionID, a verb.SessionAction) error {
 	background, err := verb.ParseRunModeWord(a.Mode)
 	if err != nil {
 		return err
@@ -800,7 +790,6 @@ func runSessionModeWith(cid objproto.ConnectionID, a verb.SessionAction) error {
 		}
 		cond = cli.RunModeFlags{Deadline: a.Deadline, Quiet: a.QuietFor, Blocked: a.BlockedFor, TurnEnd: turnEnd}.Conditions()
 	}
-	ctx := context.Background()
 	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)
 	if err != nil {
 		return err

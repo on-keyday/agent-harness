@@ -80,6 +80,16 @@ func (h cliVerbs) stdin() io.Reader {
 	return os.Stdin
 }
 
+// baseCtx is the context a body's calls derive from, falling back to
+// context.Background() as stdout falls back to os.Stdout. Bodies use h.ctx
+// itself; this is for the MCP server, which derives one context per call.
+func (h cliVerbs) baseCtx() context.Context {
+	if h.ctx != nil {
+		return h.ctx
+	}
+	return context.Background()
+}
+
 // exitCodeError ends the command line with code, printing msg to stderr when
 // it is not empty. It replaces os.Exit in a verb's body: one harness-cli
 // process serves many MCP tool calls, and a body that exited would end them
@@ -910,19 +920,19 @@ func (h cliVerbs) SessionNew(a verb.SpawnAction) error {
 	if err := requireRepo("session new", a); err != nil {
 		return err
 	}
-	return runSessionNewWith(h.cid(), a, h.stdout())
+	return runSessionNewWith(h.ctx, h.cid(), a, h.stdout())
 }
 func (h cliVerbs) SessionAttach(a verb.SessionAction) error {
-	return runSessionAttachWith(h.cid(), a)
+	return runSessionAttachWith(h.ctx, h.cid(), a)
 }
 func (h cliVerbs) SessionSnapshot(a verb.SessionAction) error {
-	return runSessionSnapshotWith(h.cid(), a, h.stdout())
+	return runSessionSnapshotWith(h.ctx, h.cid(), a, h.stdout())
 }
 func (h cliVerbs) SessionSend(a verb.SendAction) error {
-	return runSessionSendWith(h.cid(), a, h.stdout())
+	return runSessionSendWith(h.ctx, h.cid(), a, h.stdout())
 }
 func (h cliVerbs) SessionExec(a verb.SessionExecAction) error {
-	return runSessionExecWith(h.cid(), a)
+	return runSessionExecWith(h.ctx, h.cid(), a, h.stdout())
 }
 func (h cliVerbs) SessionLs(a verb.SessionAction) error {
 	return cli.SessionListJSON(h.ctx, h.cid(), h.stdout())
@@ -934,7 +944,7 @@ func (h cliVerbs) SessionRename(a verb.SessionRenameAction) error {
 	return cli.TaskRenameOut(h.ctx, h.cid(), a.TaskID, a.Name, h.stdout())
 }
 func (h cliVerbs) SessionAwaitIdle(a verb.SessionAction) error {
-	return runSessionAwaitIdleWith(h.cid(), a)
+	return runSessionAwaitIdleWith(h.ctx, h.cid(), a, h.stdout())
 }
 func (h cliVerbs) SessionAwaitIdleLs(a verb.SessionAction) error {
 	return printWatchers(h, a.TaskFilter, a.JSON, protocol.AwaitCondition_Idle)
@@ -1054,12 +1064,11 @@ func (h cliVerbs) AwaitProgress(a verb.AwaitProgressAction) error {
 	case protocol.AwaitProgressStatus_Fired, protocol.AwaitProgressStatus_Armed:
 		return nil
 	case protocol.AwaitProgressStatus_TaskEnded:
-		os.Exit(3)
+		return exitCodeError{code: 3}
 	case protocol.AwaitProgressStatus_Cancelled:
-		os.Exit(4)
+		return exitCodeError{code: 4}
 	}
-	os.Exit(1)
-	return nil
+	return exitCodeError{code: 1}
 }
 
 func (h cliVerbs) AwaitProgressLs(a verb.AwaitProgressAction) error {
@@ -1073,19 +1082,19 @@ func (h cliVerbs) AwaitProgressKill(a verb.AwaitProgressAction) error {
 }
 
 func (h cliVerbs) SessionResize(a verb.SessionAction) error {
-	return runSessionResizeWith(h.cid(), a)
+	return runSessionResizeWith(h.ctx, h.cid(), a)
 }
 func (h cliVerbs) SessionMode(a verb.SessionAction) error {
-	return runSessionModeWith(h.cid(), a)
+	return runSessionModeWith(h.ctx, h.cid(), a)
 }
 func (h cliVerbs) SessionStreamAttach(a verb.SessionAction) error {
-	return runSessionStreamAttachWith(h.cid(), a)
+	return runSessionStreamAttachWith(h.ctx, h.cid(), a)
 }
 func (h cliVerbs) SessionStreamTurn(a verb.SessionAction) error {
-	return runSessionStreamTurnWith(h.cid(), a)
+	return runSessionStreamTurnWith(h.ctx, h.cid(), a)
 }
 func (h cliVerbs) SessionStreamApprove(a verb.SessionAction) error {
-	return runSessionStreamApproveWith(h.cid(), a)
+	return runSessionStreamApproveWith(h.ctx, h.cid(), a)
 }
 
 func (h cliVerbs) SessionStreamAnswer(a verb.SessionAction) error {
@@ -1093,7 +1102,7 @@ func (h cliVerbs) SessionStreamAnswer(a verb.SessionAction) error {
 	if err != nil {
 		return err
 	}
-	ctx := context.Background()
+	ctx := h.ctx
 	c, err := cli.Dial(ctx, h.cid(), protocol.ClientKind_Cli)
 	if err != nil {
 		return err
@@ -1102,10 +1111,10 @@ func (h cliVerbs) SessionStreamAnswer(a verb.SessionAction) error {
 	return c.StreamAnswer(ctx, a.TaskID, a.RequestID, answers, a.Reply, time.Duration(a.FlushMs)*time.Millisecond)
 }
 func (h cliVerbs) SessionStreamInterrupt(a verb.SessionAction) error {
-	return runSessionStreamSimpleWith(h.cid(), a)
+	return runSessionStreamSimpleWith(h.ctx, h.cid(), a)
 }
 func (h cliVerbs) SessionStreamFinish(a verb.SessionAction) error {
-	return runSessionStreamSimpleWith(h.cid(), a)
+	return runSessionStreamSimpleWith(h.ctx, h.cid(), a)
 }
 
 // Forward is the OPEN form -- `forward <task-id> -L ... -R ... -W ...`. It

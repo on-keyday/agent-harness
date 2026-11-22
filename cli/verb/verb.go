@@ -466,16 +466,18 @@ type VerbSpec struct {
 	// MCPNotATool is the other answer, for the reason NoModalSurface exists:
 	// "we looked, and it cannot be one" is a result worth keeping. Non-empty
 	// means the verb is NOT a tool and says why. The admissible reasons are
-	// structural -- it streams until interrupted, it blocks, it owns this
-	// process's terminal or stdin, or it is the MCP server -- never policy.
+	// structural -- it streams or serves until interrupted, it owns this
+	// process's terminal or stdin, or it is the MCP server -- never policy. A
+	// verb that waits and then answers once IS a tool: calls overlap and can
+	// be cancelled.
 	MCPNotATool string
 
 	// Sends lists the TaskControl kinds this verb's body may send, whatever its
 	// flags; empty for a verb that sends none. It is the one edge between a
 	// verb and the server's capability knowledge that the table owns: which
-	// bits each kind needs is authority's. The command-line dispatch installs
-	// it on the client (cli.ExpectKinds), and a body that sends a kind not
-	// listed is refused before the request leaves.
+	// bits each kind needs is authority's. The command-line dispatch and each
+	// MCP call put it on the body's context (cli.WithExpectedKinds), and a body
+	// that sends a kind not listed is refused before the request leaves.
 	Sends []protocol.TaskControlKind
 
 	Args     []Arg

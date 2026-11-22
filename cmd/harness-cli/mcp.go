@@ -29,6 +29,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	"github.com/on-keyday/agent-harness/authority"
@@ -84,9 +85,14 @@ type mcpServer struct {
 	held func() (protocol.Capability, error)
 
 	// listed is the filter the last tools/list applied; tools/call refuses a
-	// tool it would not have listed (spec D15).
+	// tool it would not have listed (spec D15). Only the reading loop touches
+	// it.
 	listed    toolFilter
 	hasListed bool
+
+	// run executes one admitted tools/call under its own context; nil is
+	// runTool. A test injects one to hold a call open.
+	run func(ctx context.Context, f toolFilter, spec verb.VerbSpec, args json.RawMessage) (text string, isErr bool)
 }
 
 // serveMCP is the verb body. It reads requests from the process's stdin and
@@ -94,7 +100,7 @@ type mcpServer struct {
 func serveMCP(h cliVerbs, readOnly bool, caps *protocol.Capability) error {
 	h = pinCID(h)
 	srv := &mcpServer{h: h, readOnly: readOnly, caps: caps, held: func() (protocol.Capability, error) {
-		resp, err := cli.WhoAmI(context.Background(), h.cid())
+		resp, err := cli.WhoAmI(h.ctx, h.cid())
 		if err != nil {
 			return 0, err
 		}
@@ -148,17 +154,45 @@ func (s *mcpServer) filter() toolFilter {
 
 // serve is the loop with its streams injected, so a test drives it without a
 // subprocess.
+//
+// The loop reads, and answers in arrival order, everything but a tool's body:
+// initialize, ping, tools/list, and the admission of a tools/call (unknown or
+// withheld → JSON-RPC error). An admitted call runs on its own goroutine under
+// its own context, so a call that waits holds up nothing else (spec D18);
+// notifications/cancelled cancels that context and its response is dropped.
+// End of input is the client going away: what is in flight is cancelled and
+// waited for, so nothing writes after serve returns.
 func (s *mcpServer) serve(in io.Reader, out io.Writer) error {
 	enc := json.NewEncoder(out)
 	enc.SetEscapeHTML(false)
 
+	var wmu sync.Mutex // one response per line, from any goroutine
 	write := func(resp mcpResponse) {
 		resp.JSONRPC = "2.0"
+		wmu.Lock()
 		_ = enc.Encode(resp) // the stream is the only report channel
+		wmu.Unlock()
 	}
 	writeErr := func(id json.RawMessage, code int, msg string) {
 		write(mcpResponse{ID: id, Error: &mcpError{Code: code, Message: msg}})
 	}
+
+	run := s.run
+	if run == nil {
+		run = s.runTool
+	}
+	base, stop := context.WithCancel(s.h.baseCtx())
+	type flight struct {
+		cancel    context.CancelFunc
+		cancelled bool // by the client: its response is dropped
+	}
+	var fmu sync.Mutex
+	inFlight := map[string]*flight{}
+	var calls sync.WaitGroup
+	defer func() {
+		stop() // end of input: cancel what is in flight, then wait for it
+		calls.Wait()
+	}()
 
 	sc := bufio.NewScanner(in)
 	// Tool arguments are small; a request line is bounded at 4 MiB so a
@@ -198,8 +232,22 @@ func (s *mcpServer) serve(in io.Reader, out io.Writer) error {
 				},
 			}})
 
-		case "notifications/initialized", "notifications/cancelled":
+		case "notifications/initialized":
 			// One-way by definition.
+
+		case "notifications/cancelled":
+			var p struct {
+				RequestID json.RawMessage `json:"requestId"`
+			}
+			if json.Unmarshal(req.Params, &p) != nil {
+				continue
+			}
+			fmu.Lock()
+			if f := inFlight[idKey(p.RequestID)]; f != nil {
+				f.cancelled = true
+				f.cancel()
+			}
+			fmu.Unlock()
 
 		case "ping":
 			write(mcpResponse{ID: req.ID, Result: map[string]any{}})
@@ -223,16 +271,36 @@ func (s *mcpServer) serve(in io.Reader, out io.Writer) error {
 			if !s.hasListed {
 				s.listed, s.hasListed = s.filter(), true
 			}
-			text, isErr, rpcErr := s.callTool(p.Name, p.Arguments)
+			spec, rpcErr := resolveTool(s.listed, p.Name)
 			if rpcErr != nil {
 				writeErr(req.ID, rpcErr.Code, rpcErr.Message)
 				continue
 			}
-			res := map[string]any{"content": []map[string]any{{"type": "text", "text": text}}}
-			if isErr {
-				res["isError"] = true
-			}
-			write(mcpResponse{ID: req.ID, Result: res})
+			ctx, cancel := context.WithCancel(base)
+			key, f := idKey(req.ID), &flight{cancel: cancel}
+			fmu.Lock()
+			inFlight[key] = f
+			fmu.Unlock()
+			calls.Add(1)
+			go func(id json.RawMessage, filter toolFilter, args json.RawMessage) {
+				defer calls.Done()
+				text, isErr := run(ctx, filter, spec, args)
+				fmu.Lock()
+				dropped := f.cancelled
+				if inFlight[key] == f {
+					delete(inFlight, key)
+				}
+				fmu.Unlock()
+				cancel()
+				if dropped {
+					return // the client withdrew the request (MCP cancellation)
+				}
+				res := map[string]any{"content": []map[string]any{{"type": "text", "text": text}}}
+				if isErr {
+					res["isError"] = true
+				}
+				write(mcpResponse{ID: id, Result: res})
+			}(req.ID, s.listed, p.Arguments)
 
 		default:
 			if notification {
@@ -245,6 +313,12 @@ func (s *mcpServer) serve(in io.Reader, out io.Writer) error {
 		return fmt.Errorf("mcp: read stdin: %w", err)
 	}
 	return nil
+}
+
+// idKey is a request id as a map key. A cancellation names the id it cancels
+// with the same JSON value the request carried.
+func idKey(id json.RawMessage) string {
+	return string(bytes.TrimSpace(id))
 }
 
 // toolFilter is what tools/list hides. readOnly drops write tools and the
@@ -458,29 +532,35 @@ func (noStdin) Read([]byte) (int, error) {
 	return 0, errors.New("a tool call has no stdin: give the body as text or with --data")
 }
 
-// callTool runs one tool. A tool this server would not list is a JSON-RPC
-// error (rpcErr); a refusal by the verb or by the server is a tool result with
-// isError, which is what a client shows the model.
-func (s *mcpServer) callTool(name string, rawArgs json.RawMessage) (text string, isErr bool, rpcErr *mcpError) {
+// resolveTool admits a tools/call: a tool this server would not list is a
+// JSON-RPC error (spec D15), decided before anything runs.
+func resolveTool(f toolFilter, name string) (verb.VerbSpec, *mcpError) {
 	spec, ok := lookupTool(name)
 	if !ok {
-		return "", false, &mcpError{Code: rpcInvalidParams, Message: "unknown tool: " + name}
+		return verb.VerbSpec{}, &mcpError{Code: rpcInvalidParams, Message: "unknown tool: " + name}
 	}
-	if why := s.listed.withheld(spec); why != "" {
-		return "", false, &mcpError{Code: rpcInvalidParams, Message: name + ": " + why}
+	if why := f.withheld(spec); why != "" {
+		return verb.VerbSpec{}, &mcpError{Code: rpcInvalidParams, Message: name + ": " + why}
 	}
+	return spec, nil
+}
 
+// runTool runs one admitted tool under ctx. A refusal by the verb or by the
+// server is a tool result with isError, which is what a client shows the
+// model.
+func (s *mcpServer) runTool(ctx context.Context, f toolFilter, spec verb.VerbSpec, rawArgs json.RawMessage) (text string, isErr bool) {
+	name := toolName(spec)
 	args := map[string]any{}
 	if len(rawArgs) > 0 && string(rawArgs) != "null" {
 		dec := json.NewDecoder(bytes.NewReader(rawArgs))
 		dec.UseNumber()
 		if err := dec.Decode(&args); err != nil {
-			return name + ": arguments: " + err.Error(), true, nil
+			return name + ": arguments: " + err.Error(), true
 		}
 	}
-	argv, err := buildArgv(spec, args, s.listed.readOnly)
+	argv, err := buildArgv(spec, args, f.readOnly)
 	if err != nil {
-		return name + ": " + err.Error(), true, nil
+		return name + ": " + err.Error(), true
 	}
 
 	// The SAME path a typed command takes: Parse validates (check + Validate),
@@ -491,27 +571,26 @@ func (s *mcpServer) callTool(name string, rawArgs json.RawMessage) (text string,
 	fs.SetOutput(io.Discard)
 	b, err := sp.Parse(fs, argv)
 	if err != nil {
-		return name + ": " + err.Error(), true, nil
+		return name + ": " + err.Error(), true
 	}
 	act, err := sp.BuildFunc()(b)
 	if err != nil {
-		return name + ": " + err.Error(), true, nil
+		return name + ": " + err.Error(), true
 	}
 
-	// A COPY with its own sink and no stdin: the handler must not touch the
-	// JSON-RPC stream. The verb may send only the kinds it declares (D14).
+	// A COPY with its own sink, no stdin and this call's context: the handler
+	// must not touch the JSON-RPC stream, and cancelling the call reaches every
+	// client it dials. The verb may send only the kinds it declares (D14).
 	sub := s.h
 	var buf bytes.Buffer
 	sub.out = &buf
 	sub.in = noStdin{}
-	restore := cli.ExpectKinds(spec.FlagSetName(), spec.Sends)
+	sub.ctx = cli.WithExpectedKinds(ctx, spec.FlagSetName(), spec.Sends)
 	r, handled := verb.DispatchCLIAction[error](sub, act)
-	restore()
 	if !handled {
-		return name + ": no handler for this verb", true, nil
+		return name + ": no handler for this verb", true
 	}
-	text, isErr = toolResultText(buf.Bytes(), r)
-	return text, isErr, nil
+	return toolResultText(buf.Bytes(), r)
 }
 
 // maxToolResult bounds what one tool call hands the model: a record or a
@@ -519,8 +598,9 @@ func (s *mcpServer) callTool(name string, rawArgs json.RawMessage) (text string,
 const maxToolResult = 1 << 20
 
 // toolResultText shapes what a body printed, and its error, into a tool
-// result: the output, then why it failed (a refusal with nothing printed reads
-// byte-for-byte as the typed command's). Output that is not UTF-8 -- a
+// result: the output, then why it failed -- the error's text, or for an exit
+// code with none, "exit status N" (session exec's only report of its
+// command's status without --json). Output that is not UTF-8 -- a
 // transcript tar, a raw record -- is refused rather than sent, since JSON
 // would replace its bytes with U+FFFD; and output past maxToolResult is cut
 // with a notice.
@@ -541,7 +621,7 @@ func toolResultText(out []byte, err error) (string, bool) {
 	}
 	msg := err.Error()
 	var ec exitCodeError
-	if errors.As(err, &ec) {
+	if errors.As(err, &ec) && ec.msg != "" {
 		msg = ec.msg
 	}
 	if text != "" && msg != "" && !strings.HasSuffix(text, "\n") {
