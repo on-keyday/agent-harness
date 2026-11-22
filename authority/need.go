@@ -510,6 +510,32 @@ func Possible(kind protocol.TaskControlKind) protocol.Capability {
 	return out
 }
 
+// MaySatisfy reports whether SOME request of kind could pass with the bits in
+// held: a request whose every clause has a bit in held. A later requirement
+// counts as satisfiable (the lookup it waits on may answer either way), and a
+// kind that needs no bit, or is decided by identity, always may. It is the tool
+// list's rule, so every imprecision in it shows too much rather than hiding a
+// tool the caller could use -- a model does not call what it was not shown.
+func MaySatisfy(kind protocol.TaskControlKind, held protocol.Capability) bool {
+	for _, r := range variants(kind) {
+		n := RequestNeed(r)
+		if n.Class != NeedBits {
+			return true
+		}
+		ok := true
+		for _, c := range n.Clauses {
+			if c.AnyOf&held == 0 {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return true
+		}
+	}
+	return false
+}
+
 // variants are requests of kind k covering every value of every field
 // RequestNeed reads for it: the whole u8 domain of each enum field, so a new
 // enum value is covered without an edit here, and both values of each flag.
