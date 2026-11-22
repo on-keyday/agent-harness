@@ -19,9 +19,6 @@
           "type": "array"
         }
       },
-      "required": [
-        "task-id"
-      ],
       "type": "object"
     },
     "name": "prune"
@@ -144,8 +141,7 @@
         }
       },
       "required": [
-        "task-id",
-        "worktree-rel-dir"
+        "task-id"
       ],
       "type": "object"
     },
@@ -254,8 +250,7 @@
         }
       },
       "required": [
-        "task-id",
-        "revision"
+        "task-id"
       ],
       "type": "object"
     },
@@ -349,8 +344,7 @@
         }
       },
       "required": [
-        "task-id",
-        "revision"
+        "task-id"
       ],
       "type": "object"
     },
@@ -499,9 +493,6 @@
           "type": "array"
         }
       },
-      "required": [
-        "exec-id"
-      ],
       "type": "object"
     },
     "name": "exec_kill"
@@ -547,9 +538,6 @@
           "type": "array"
         }
       },
-      "required": [
-        "forward-id"
-      ],
       "type": "object"
     },
     "name": "forward_kill"
@@ -807,9 +795,6 @@
           "type": "array"
         }
       },
-      "required": [
-        "name"
-      ],
       "type": "object"
     },
     "name": "workspace_show"
@@ -823,10 +808,16 @@
     "inputSchema": {
       "properties": {
         "L": {
-          "type": "string"
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "R": {
-          "type": "string"
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "name": {
           "type": "string"
@@ -853,10 +844,16 @@
     "inputSchema": {
       "properties": {
         "L": {
-          "type": "string"
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "R": {
-          "type": "string"
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "name": {
           "type": "string"
@@ -964,7 +961,10 @@
           "type": "integer"
         },
         "task": {
-          "type": "string"
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         }
       },
       "type": "object"
@@ -990,9 +990,6 @@
           "type": "array"
         }
       },
-      "required": [
-        "topic"
-      ],
       "type": "object"
     },
     "name": "board_subscribers"
@@ -1278,7 +1275,10 @@
           "type": "integer"
         },
         "task": {
-          "type": "string"
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         }
       },
       "type": "object"
@@ -1307,7 +1307,10 @@
           "type": "integer"
         },
         "task": {
-          "type": "string"
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         }
       },
       "type": "object"
@@ -1345,6 +1348,9 @@
         },
         "reply-to": {
           "default": "",
+          "type": "string"
+        },
+        "text": {
           "type": "string"
         },
         "topic": {
@@ -1388,7 +1394,10 @@
           "type": "string"
         },
         "agent-arg": {
-          "type": "string"
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "background": {
           "default": false,
@@ -1418,10 +1427,6 @@
         "delegate-scope": {
           "default": "",
           "type": "string"
-        },
-        "detach": {
-          "default": false,
-          "type": "boolean"
         },
         "exact": {
           "default": false,
@@ -1501,7 +1506,10 @@
           "type": "string"
         },
         "scope-for": {
-          "type": "string"
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "spawn-depth": {
           "default": "",
@@ -1514,15 +1522,6 @@
         "turn-end": {
           "default": "",
           "type": "string"
-        },
-        "x11": {
-          "default": false,
-          "type": "boolean"
-        },
-        "x11-display": {
-          "default": 10,
-          "minimum": 0,
-          "type": "integer"
         }
       },
       "type": "object"
@@ -1605,6 +1604,9 @@
           "pattern": "^[0-9a-f]{32}$",
           "type": "string"
         },
+        "text": {
+          "type": "string"
+        },
         "without-synth": {
           "default": false,
           "type": "boolean"
@@ -1633,10 +1635,14 @@
         "task-id": {
           "pattern": "^[0-9a-f]{32}$",
           "type": "string"
+        },
+        "text": {
+          "type": "string"
         }
       },
       "required": [
-        "task-id"
+        "task-id",
+        "text"
       ],
       "type": "object"
     },
@@ -1659,11 +1665,17 @@
           ],
           "type": "string"
         },
+        "text": {
+          "type": "string"
+        },
         "title": {
           "default": "",
           "type": "string"
         }
       },
+      "required": [
+        "text"
+      ],
       "type": "object"
     },
     "name": "notify"
@@ -1682,6 +1694,9 @@
         },
         "task": {
           "default": "",
+          "type": "string"
+        },
+        "text": {
           "type": "string"
         }
       },
@@ -1724,6 +1739,9 @@
         },
         "server-cid": {
           "default": "",
+          "type": "string"
+        },
+        "text": {
           "type": "string"
         },
         "topic": {
@@ -1792,10 +1810,6 @@
           "default": "",
           "type": "string"
         },
-        "follow": {
-          "default": false,
-          "type": "boolean"
-        },
         "json": {
           "default": false,
           "type": "boolean"
@@ -1807,10 +1821,6 @@
         "trsf": {
           "default": false,
           "type": "boolean"
-        },
-        "watch": {
-          "default": "",
-          "type": "string"
         }
       },
       "type": "object"
@@ -1882,8 +1892,8 @@
   },
   {
     "annotations": {
-      "destructiveHint": false,
-      "readOnlyHint": true
+      "destructiveHint": true,
+      "readOnlyHint": false
     },
     "description": "print the embedded agent skill (default: harness-cli)",
     "inputSchema": {
@@ -1960,9 +1970,6 @@
           "type": "array"
         }
       },
-      "required": [
-        "task-id"
-      ],
       "type": "object"
     },
     "name": "prune-local"
@@ -1987,9 +1994,6 @@
           "type": "array"
         }
       },
-      "required": [
-        "task-id"
-      ],
       "type": "object"
     },
     "name": "restore"
@@ -2031,7 +2035,10 @@
           "type": "string"
         },
         "scope-for": {
-          "type": "string"
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "spawn-depth": {
           "default": "",
@@ -2155,7 +2162,10 @@
           "type": "string"
         },
         "scope-for": {
-          "type": "string"
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "spawn": {
           "default": false,
@@ -2307,9 +2317,6 @@
           "type": "array"
         }
       },
-      "required": [
-        "watcher-id"
-      ],
       "type": "object"
     },
     "name": "session_await-idle_kill"
@@ -2351,9 +2358,6 @@
           "type": "array"
         }
       },
-      "required": [
-        "watcher-id"
-      ],
       "type": "object"
     },
     "name": "await-progress_kill"
@@ -2447,17 +2451,14 @@
           "type": "array"
         }
       },
-      "required": [
-        "task-id"
-      ],
       "type": "object"
     },
     "name": "record_ls"
   },
   {
     "annotations": {
-      "destructiveHint": false,
-      "readOnlyHint": true
+      "destructiveHint": true,
+      "readOnlyHint": false
     },
     "description": "write one run's PTY record: the raw output, as session snapshot --raw prints it, or asciicast v2 (asciinema play)",
     "inputSchema": {
@@ -2595,8 +2596,7 @@
         }
       },
       "required": [
-        "task-id",
-        "session"
+        "task-id"
       ],
       "type": "object"
     },
@@ -2604,8 +2604,8 @@
   },
   {
     "annotations": {
-      "destructiveHint": false,
-      "readOnlyHint": true
+      "destructiveHint": true,
+      "readOnlyHint": false
     },
     "description": "write one file of an agent session as the agent stored it, or with no file the whole session as a tar (transcript_read)",
     "inputSchema": {
@@ -2630,8 +2630,7 @@
       },
       "required": [
         "task-id",
-        "session",
-        "file"
+        "session"
       ],
       "type": "object"
     },
@@ -2650,7 +2649,10 @@
           "type": "string"
         },
         "agent-arg": {
-          "type": "string"
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "blocked": {
           "default": "0s",
@@ -2747,7 +2749,10 @@
           "type": "string"
         },
         "scope-for": {
-          "type": "string"
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "spawn-depth": {
           "default": "",
@@ -2787,7 +2792,10 @@
           "type": "string"
         },
         "agent-arg": {
-          "type": "string"
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "blocked": {
           "default": "0s",
@@ -2892,7 +2900,10 @@
           "type": "string"
         },
         "scope-for": {
-          "type": "string"
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "spawn-depth": {
           "default": "",
@@ -3085,7 +3096,10 @@
           "type": "string"
         },
         "scope-for": {
-          "type": "string"
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "spawn-depth": {
           "default": "",
@@ -3141,7 +3155,10 @@
           "type": "string"
         },
         "scope-for": {
-          "type": "string"
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "spawn-depth": {
           "default": "",
@@ -3368,7 +3385,10 @@
     "inputSchema": {
       "properties": {
         "answer": {
-          "type": "string"
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "flush-ms": {
           "default": 400,
@@ -3627,7 +3647,10 @@
           "type": "string"
         },
         "task": {
-          "type": "string"
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         }
       },
       "type": "object"

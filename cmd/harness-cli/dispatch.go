@@ -1412,5 +1412,5 @@ func (h cliVerbs) ScheduleShow(a verb.ScheduleShowAction) error {
 // MCP serves the declared tools on stdio. It blocks in the foreground, the
 // same shape as ssh-gateway: the verb IS the server while it runs.
 func (h cliVerbs) Mcp(a verb.MCPAction) error {
-	return serveMCP(h, a.ReadOnly)
+	return serveMCP(h, a.ReadOnly, a.Caps)
 }

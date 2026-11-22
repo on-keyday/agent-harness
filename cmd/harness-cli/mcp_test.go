@@ -129,7 +129,7 @@ func TestMCPArgvRoundTrip(t *testing.T) {
 		if !ok {
 			t.Fatalf("%s: not a tool", c.tool)
 		}
-		gotArgv, err := buildArgv(spec, c.args)
+		gotArgv, err := buildArgv(spec, c.args, false)
 		if err != nil {
 			t.Fatalf("%s: buildArgv: %v", c.tool, err)
 		}
@@ -170,9 +170,9 @@ func TestMCPStdioSession(t *testing.T) {
 	}, "\n") + "\n"
 
 	var out bytes.Buffer
-	h := cliVerbs{out: &out}
-	if err := serveMCPIO(h, false, strings.NewReader(in), &out); err != nil {
-		t.Fatalf("serveMCPIO: %v", err)
+	srv := &mcpServer{h: cliVerbs{}}
+	if err := srv.serve(strings.NewReader(in), &out); err != nil {
+		t.Fatalf("serve: %v", err)
 	}
 
 	sc := bufio.NewScanner(bytes.NewReader(out.Bytes()))
@@ -210,8 +210,9 @@ func TestMCPStdioSession(t *testing.T) {
 	} else if res["isError"] == true {
 		t.Errorf("tools/call version failed: %v", res)
 	}
-	if res, ok := responses[3]["result"].(map[string]any); !ok || res["isError"] != true {
-		t.Errorf("unknown tool did not come back as a tool error: %v", responses[3])
+	// An unknown tool is a JSON-RPC error, not a tool result (spec D15).
+	if _, ok := responses[3]["error"].(map[string]any); !ok {
+		t.Errorf("unknown tool did not come back as a JSON-RPC error: %v", responses[3])
 	}
 	if _, ok := responses[4]["error"].(map[string]any); !ok {
 		t.Errorf("malformed frame did not produce a JSON-RPC error: %v", responses[4])
@@ -221,23 +222,21 @@ func TestMCPStdioSession(t *testing.T) {
 	}
 }
 
-// TestMCPReadOnlyRefusesWriteTool: the filter is enforced at call time too.
+// TestMCPReadOnlyRefusesWriteTool: the filter is enforced at call time too,
+// as a JSON-RPC error, and the body does not run (D12, D15).
 func TestMCPReadOnlyRefusesWriteTool(t *testing.T) {
-	var out bytes.Buffer
-	h := cliVerbs{out: &out}
-	text, isErr := callTool(h, "session_rename", json.RawMessage(`{"task-id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","name":"x"}`), true)
-	if !isErr {
-		t.Fatalf("--read-only ran a write tool: %q", text)
-	}
-	if !strings.Contains(text, "read-only") {
-		t.Errorf("refusal does not mention --read-only: %q", text)
+	srv := &mcpServer{h: cliVerbs{}, readOnly: true}
+	srv.listed, srv.hasListed = srv.filter(), true
+	_, _, rpcErr := srv.callTool("session_rename", json.RawMessage(`{"task-id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","name":"x"}`))
+	if rpcErr == nil || !strings.Contains(rpcErr.Message, "read-only") {
+		t.Fatalf("--read-only: %v, want a JSON-RPC error naming --read-only", rpcErr)
 	}
 }
 
 // TestMCPUnknownArgumentIsRefused: a typo must not silently become a default.
 func TestMCPUnknownArgumentIsRefused(t *testing.T) {
 	spec, _ := lookupTool("version")
-	if _, err := buildArgv(spec, map[string]any{"jason": true}); err == nil {
+	if _, err := buildArgv(spec, map[string]any{"jason": true}, false); err == nil {
 		t.Fatal("unknown argument was accepted")
 	}
 }

@@ -3,21 +3,24 @@
 package main
 
 // The MCP consumer: `harness-cli mcp` serves the control plane as Model
-// Context Protocol tools over stdio.
+// Context Protocol tools over stdio (docs/superpowers/specs/
+// 2026-11-22-harness-cli-mcp-surface-design.md).
 //
 // It is a CONSUMER of the declaration in cli/verb/table.go, not a second
 // implementation. tools/list is generated from the same VerbSpec rows the
 // command line uses; tools/call synthesizes argv and runs the SAME parser and
-// the SAME handler the command line runs. The only thing this file owns is the
-// wire: JSON-RPC framing, the tool schema, and the argv reconstruction.
+// the SAME handler the command line runs. The only things this file owns are
+// the wire (JSON-RPC framing), the tool schema, the argv reconstruction and the
+// list filters.
 //
 // Authority is unchanged. A tool runs as the connection that started this
 // process, so the server's caps are the boundary, exactly as they are for a
-// typed command. The surface is typed, not privileged.
+// typed command. The filters change what is LISTED, never what is allowed.
 
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -27,8 +30,11 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/buildinfo"
+	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/cli/verb"
+	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 // mcpProtocolVersion is the revision this server speaks. initialize echoes the
@@ -39,10 +45,8 @@ const mcpProtocolVersion = "2025-06-18"
 // JSON-RPC error codes (the ones this server can produce).
 const (
 	rpcParseError     = -32700
-	rpcInvalidRequest = -32600
 	rpcMethodNotFound = -32601
 	rpcInvalidParams  = -32602
-	rpcInternalError  = -32603
 )
 
 // mcpRequest is one JSON-RPC message. ID is raw so a notification (no id) is
@@ -66,30 +70,85 @@ type mcpResponse struct {
 	Error   *mcpError       `json:"error,omitempty"`
 }
 
-// serveMCP is the verb body. It reads requests from stdin and writes responses
-// to the handler's sink (os.Stdout on the command line).
-func serveMCP(h cliVerbs, readOnly bool) error {
-	return serveMCPIO(h, readOnly, os.Stdin, h.stdout())
+// mcpServer is one `harness-cli mcp` process: the handler the command line
+// uses, and the filters the operator asked for.
+type mcpServer struct {
+	h        cliVerbs
+	readOnly bool
+	// caps is --caps: nil when not given.
+	caps *protocol.Capability
+	// held answers which capabilities this connection holds (whoami). Nil
+	// skips the caller-caps half of the filter.
+	held func() (protocol.Capability, error)
+
+	// listed is the filter the last tools/list applied; tools/call refuses a
+	// tool it would not have listed (spec D15).
+	listed    toolFilter
+	hasListed bool
 }
 
-// serveMCPIO is the loop with its streams injected, so a test drives it
-// without a subprocess.
-func serveMCPIO(h cliVerbs, readOnly bool, in io.Reader, out io.Writer) error {
+// serveMCP is the verb body. It reads requests from the process's stdin and
+// writes responses to its stdout, which is the JSON-RPC channel (D11).
+func serveMCP(h cliVerbs, readOnly bool, caps *protocol.Capability) error {
+	srv := &mcpServer{h: h, readOnly: readOnly, caps: caps, held: func() (protocol.Capability, error) {
+		resp, err := cli.WhoAmI(context.Background(), h.cid())
+		if err != nil {
+			return 0, err
+		}
+		if resp.PrincipalTaskId.Id == ([16]byte{}) {
+			return protocol.Capability_All, nil // the operator holds every bit
+		}
+		return resp.Capabilities, nil
+	}}
+	return srv.serve(os.Stdin, os.Stdout)
+}
+
+// heldFor is what a filter may assume the caller can satisfy: its own caps,
+// narrowed by --caps when given. --caps never widens past the caller.
+func heldFor(caller protocol.Capability, caps *protocol.Capability) protocol.Capability {
+	if caps != nil {
+		return caller & *caps
+	}
+	return caller
+}
+
+// filter is what tools/list applies now. A whoami that fails leaves the
+// caller-caps half off (logged to stderr): the filter saves context and
+// authorizes nothing, so an unfiltered list is the safe side.
+func (s *mcpServer) filter() toolFilter {
+	f := toolFilter{readOnly: s.readOnly}
+	caller, known := protocol.Capability_All, false
+	if s.held != nil {
+		if c, err := s.held(); err != nil {
+			fmt.Fprintf(os.Stderr, "harness-cli mcp: whoami failed (%v); listing without the caller-caps filter\n", err)
+		} else {
+			caller, known = c, true
+		}
+	}
+	if known || s.caps != nil {
+		f.checkHeld = true
+		f.held = heldFor(caller, s.caps)
+	}
+	return f
+}
+
+// serve is the loop with its streams injected, so a test drives it without a
+// subprocess.
+func (s *mcpServer) serve(in io.Reader, out io.Writer) error {
 	enc := json.NewEncoder(out)
 	enc.SetEscapeHTML(false)
 
 	write := func(resp mcpResponse) {
 		resp.JSONRPC = "2.0"
-		_ = enc.Encode(resp) // the stream is the only report channel; a failed write ends the loop
+		_ = enc.Encode(resp) // the stream is the only report channel
 	}
 	writeErr := func(id json.RawMessage, code int, msg string) {
 		write(mcpResponse{ID: id, Error: &mcpError{Code: code, Message: msg}})
 	}
 
 	sc := bufio.NewScanner(in)
-	// Tool arguments and results are small; a request line is not. 4 MiB is
-	// generous for a request and still bounded, so a runaway client cannot
-	// make the server allocate without limit.
+	// Tool arguments are small; a request line is bounded at 4 MiB so a
+	// runaway client cannot make the server allocate without limit.
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 
 	for sc.Scan() {
@@ -126,13 +185,14 @@ func serveMCPIO(h cliVerbs, readOnly bool, in io.Reader, out io.Writer) error {
 			}})
 
 		case "notifications/initialized", "notifications/cancelled":
-			// No answer: these are one-way by definition.
+			// One-way by definition.
 
 		case "ping":
 			write(mcpResponse{ID: req.ID, Result: map[string]any{}})
 
 		case "tools/list":
-			write(mcpResponse{ID: req.ID, Result: map[string]any{"tools": listTools(readOnly)}})
+			s.listed, s.hasListed = s.filter(), true
+			write(mcpResponse{ID: req.ID, Result: map[string]any{"tools": listToolsWith(s.listed)}})
 
 		case "tools/call":
 			if notification {
@@ -146,10 +206,15 @@ func serveMCPIO(h cliVerbs, readOnly bool, in io.Reader, out io.Writer) error {
 				writeErr(req.ID, rpcInvalidParams, "tools/call params: "+err.Error())
 				continue
 			}
-			text, isErr := callTool(h, p.Name, p.Arguments, readOnly)
-			res := map[string]any{
-				"content": []map[string]any{{"type": "text", "text": text}},
+			if !s.hasListed {
+				s.listed, s.hasListed = s.filter(), true
 			}
+			text, isErr, rpcErr := s.callTool(p.Name, p.Arguments)
+			if rpcErr != nil {
+				writeErr(req.ID, rpcErr.Code, rpcErr.Message)
+				continue
+			}
+			res := map[string]any{"content": []map[string]any{{"type": "text", "text": text}}}
 			if isErr {
 				res["isError"] = true
 			}
@@ -168,47 +233,123 @@ func serveMCPIO(h cliVerbs, readOnly bool, in io.Reader, out io.Writer) error {
 	return nil
 }
 
-// listTools renders tools/list from the table. Order follows the table, so the
-// golden is stable.
-func listTools(readOnly bool) []map[string]any {
-	tools := make([]map[string]any, 0, 16)
-	for _, spec := range verb.Verbs {
-		if spec.MCP == nil {
-			continue
-		}
-		// A tool named after the server itself would be the server invoking
-		// itself. The declaration already omits it; this keeps a later edit
-		// from making that mistake silently.
-		if spec.Path[0] == "mcp" {
-			continue
-		}
-		if readOnly && spec.MCP.SideEffect == verb.MCPWrite {
-			continue
-		}
-		tools = append(tools, toolFromSpec(spec))
+// toolFilter is what tools/list hides. readOnly drops write tools and the
+// flags that make a read tool write; checkHeld hides a tool no call of which
+// held can satisfy (spec §8).
+type toolFilter struct {
+	readOnly  bool
+	checkHeld bool
+	held      protocol.Capability
+}
+
+// withheld says why f hides spec, or "" when it does not.
+func (f toolFilter) withheld(spec verb.VerbSpec) string {
+	if f.readOnly && spec.MCP.SideEffect == verb.MCPWrite {
+		return "refused by --read-only: it writes"
 	}
-	return tools
+	if f.checkHeld && !toolSatisfiable(spec, f.held) {
+		return "withheld by --caps and this connection's capabilities: no call of it could pass with " + verb.CapsLabel(f.held)
+	}
+	return ""
+}
+
+// toolSatisfiable is spec §8.1's rule: a tool sending no kind always is; one
+// sending kinds is when ANY of them has a request held can satisfy. Generous on
+// purpose -- a hidden tool the caller could use fails silently.
+func toolSatisfiable(spec verb.VerbSpec, held protocol.Capability) bool {
+	if len(spec.Sends) == 0 {
+		return true
+	}
+	for _, k := range spec.Sends {
+		if authority.MaySatisfy(k, held) {
+			return true
+		}
+	}
+	return false
+}
+
+// tools are the verbs that are tools, in table order.
+func tools() []verb.VerbSpec {
+	var out []verb.VerbSpec
+	for _, spec := range verb.Verbs {
+		if spec.MCP != nil && spec.CmdlineSurfaces.Has(verb.CLI) {
+			out = append(out, spec)
+		}
+	}
+	return out
+}
+
+// listTools is the whole surface with only --read-only applied: what the
+// golden pins.
+func listTools(readOnly bool) []map[string]any {
+	return listToolsWith(toolFilter{readOnly: readOnly})
+}
+
+func listToolsWith(f toolFilter) []map[string]any {
+	out := make([]map[string]any, 0, 128)
+	for _, spec := range tools() {
+		if f.withheld(spec) != "" {
+			continue
+		}
+		out = append(out, toolFromSpec(spec, f.readOnly))
+	}
+	return out
+}
+
+// schemaFlags are the flags a tool's schema carries: not the omitted ones,
+// and not the write flags of a read-only server.
+func schemaFlags(spec verb.VerbSpec, readOnly bool) []verb.Flag {
+	drop := map[string]bool{}
+	for _, n := range spec.MCP.Omit {
+		drop[n] = true
+	}
+	if readOnly {
+		for _, n := range spec.MCP.WriteFlags {
+			drop[n] = true
+		}
+	}
+	var out []verb.Flag
+	for _, f := range spec.For(verb.CLI).Flags {
+		if !drop[f.Name] {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// listTrailing reports whether a verb's trailing words are a word list (an
+// argv) rather than one joined text.
+func listTrailing(t *verb.Trailing) bool {
+	return t.Field == "" && t.FieldArgs != ""
 }
 
 // toolFromSpec is the pure function declaration → tool object.
-func toolFromSpec(spec verb.VerbSpec) map[string]any {
-	cli := spec.For(verb.CLI)
+func toolFromSpec(spec verb.VerbSpec, readOnly bool) map[string]any {
+	c := spec.For(verb.CLI)
 	props := map[string]any{}
 	var required []string
 
-	for _, a := range cli.Args {
+	for _, a := range c.Args {
 		props[a.Name] = argSchema(a)
-		if !a.Optional {
+		if !a.Optional && !a.Variadic {
 			required = append(required, a.Name)
 		}
 	}
-	for _, f := range cli.Flags {
+	for _, f := range schemaFlags(spec, readOnly) {
 		props[f.Name] = flagSchema(f)
 	}
-	if cli.Pathspec {
-		props["pathspec"] = map[string]any{
-			"type": "array", "items": map[string]any{"type": "string"},
+	if c.Trailing != nil {
+		if listTrailing(c.Trailing) {
+			props[c.Trailing.Name] = map[string]any{"type": "array", "items": map[string]any{"type": "string"}}
+		} else {
+			props[c.Trailing.Name] = map[string]any{"type": "string"}
 		}
+		if c.Trailing.Required && c.Trailing.UnlessFlag == "" {
+			required = append(required, c.Trailing.Name)
+		}
+	}
+	if c.Pathspec {
+		props["pathspec"] = map[string]any{"type": "array", "items": map[string]any{"type": "string"}}
 	}
 
 	schema := map[string]any{"type": "object", "properties": props}
@@ -216,16 +357,12 @@ func toolFromSpec(spec verb.VerbSpec) map[string]any {
 		schema["required"] = required
 	}
 
-	annotations := map[string]any{
-		"readOnlyHint":    spec.MCP.SideEffect == verb.MCPRead,
-		"destructiveHint": spec.MCP.SideEffect == verb.MCPWrite,
-	}
-
+	writes := spec.MCP.SideEffect == verb.MCPWrite || (len(spec.MCP.WriteFlags) > 0 && !readOnly)
 	return map[string]any{
 		"name":        toolName(spec),
 		"description": toolDescription(spec),
 		"inputSchema": schema,
-		"annotations": annotations,
+		"annotations": map[string]any{"readOnlyHint": !writes, "destructiveHint": writes},
 	}
 }
 
@@ -265,20 +402,22 @@ func argSchema(a verb.Arg) map[string]any {
 
 func flagSchema(f verb.Flag) map[string]any {
 	var s map[string]any
-	switch f.Type {
-	case verb.FlagBool:
+	switch {
+	case f.Custom != nil:
+		// The custom flags are repeatable (--agent-arg, --scope-for): one
+		// value per occurrence.
+		s = map[string]any{"type": "array", "items": map[string]any{"type": "string"}}
+	case f.Type == verb.FlagBool:
 		s = map[string]any{"type": "boolean"}
-	case verb.FlagUint, verb.FlagUint64:
+	case f.Type == verb.FlagUint, f.Type == verb.FlagUint64:
 		s = map[string]any{"type": "integer", "minimum": 0}
-	case verb.FlagDuration:
-		s = map[string]any{"type": "string"}
 	default:
 		s = map[string]any{"type": "string"}
 	}
 	if len(f.OneOf) > 0 {
 		s["enum"] = f.OneOf
 	}
-	if d := jsonDefault(f); d != nil {
+	if d := jsonDefault(f); d != nil && f.Custom == nil {
 		s["default"] = d
 	}
 	return s
@@ -298,16 +437,23 @@ func jsonDefault(f verb.Flag) any {
 	return f.Default
 }
 
-// callTool runs one tool and returns its text. It never returns an error to the
-// wire: a refusal is a tool result with isError, which is what a client shows
-// to the model.
-func callTool(h cliVerbs, name string, rawArgs json.RawMessage, readOnly bool) (string, bool) {
+// noStdin is a tool call's stdin: the process's own is the JSON-RPC stream.
+type noStdin struct{}
+
+func (noStdin) Read([]byte) (int, error) {
+	return 0, errors.New("a tool call has no stdin: give the body as text or with --data")
+}
+
+// callTool runs one tool. A tool this server would not list is a JSON-RPC
+// error (rpcErr); a refusal by the verb or by the server is a tool result with
+// isError, which is what a client shows the model.
+func (s *mcpServer) callTool(name string, rawArgs json.RawMessage) (text string, isErr bool, rpcErr *mcpError) {
 	spec, ok := lookupTool(name)
 	if !ok {
-		return "unknown tool: " + name, true
+		return "", false, &mcpError{Code: rpcInvalidParams, Message: "unknown tool: " + name}
 	}
-	if readOnly && spec.MCP.SideEffect == verb.MCPWrite {
-		return name + ": refused by --read-only (declared " + string(spec.MCP.SideEffect) + ")", true
+	if why := s.listed.withheld(spec); why != "" {
+		return "", false, &mcpError{Code: rpcInvalidParams, Message: name + ": " + why}
 	}
 
 	args := map[string]any{}
@@ -315,13 +461,12 @@ func callTool(h cliVerbs, name string, rawArgs json.RawMessage, readOnly bool) (
 		dec := json.NewDecoder(bytes.NewReader(rawArgs))
 		dec.UseNumber()
 		if err := dec.Decode(&args); err != nil {
-			return name + ": arguments: " + err.Error(), true
+			return name + ": arguments: " + err.Error(), true, nil
 		}
 	}
-
-	argv, err := buildArgv(spec, args)
+	argv, err := buildArgv(spec, args, s.listed.readOnly)
 	if err != nil {
-		return name + ": " + err.Error(), true
+		return name + ": " + err.Error(), true, nil
 	}
 
 	// The SAME path a typed command takes: Parse validates (check + Validate),
@@ -332,35 +477,44 @@ func callTool(h cliVerbs, name string, rawArgs json.RawMessage, readOnly bool) (
 	fs.SetOutput(io.Discard)
 	b, err := sp.Parse(fs, argv)
 	if err != nil {
-		return name + ": " + err.Error(), true
+		return name + ": " + err.Error(), true, nil
 	}
 	act, err := sp.BuildFunc()(b)
 	if err != nil {
-		return name + ": " + err.Error(), true
+		return name + ": " + err.Error(), true, nil
 	}
 
-	// A COPY with its own sink: the handler must not write into the JSON-RPC
-	// stream. cid is a function value and copies safely.
-	sub := h
+	// A COPY with its own sink and no stdin: the handler must not touch the
+	// JSON-RPC stream. The verb may send only the kinds it declares (D14).
+	sub := s.h
 	var buf bytes.Buffer
 	sub.out = &buf
+	sub.in = noStdin{}
+	restore := cli.ExpectKinds(spec.FlagSetName(), spec.Sends)
 	r, handled := verb.DispatchCLIAction[error](sub, act)
+	restore()
 	if !handled {
-		return name + ": no handler for this verb", true
+		return name + ": no handler for this verb", true, nil
 	}
-	if r != nil {
-		// No prefix: a denial reads byte-for-byte as the typed command's.
-		return r.Error(), true
+	if r == nil {
+		return buf.String(), false, nil
 	}
-	return buf.String(), false
+	// What the body printed, then why it failed. A refusal with nothing
+	// printed reads byte-for-byte as the typed command's.
+	out, msg := buf.String(), r.Error()
+	var ec exitCodeError
+	if errors.As(r, &ec) {
+		msg = ec.msg
+	}
+	if out != "" && msg != "" && !strings.HasSuffix(out, "\n") {
+		out += "\n"
+	}
+	return out + msg, true, nil
 }
 
 // lookupTool finds a declared tool by its advertised name.
 func lookupTool(name string) (verb.VerbSpec, bool) {
-	for _, spec := range verb.Verbs {
-		if spec.MCP == nil || spec.Path[0] == "mcp" {
-			continue
-		}
+	for _, spec := range tools() {
 		if toolName(spec) == name {
 			return spec, true
 		}
@@ -368,20 +522,23 @@ func lookupTool(name string) (verb.VerbSpec, bool) {
 	return verb.VerbSpec{}, false
 }
 
-// buildArgv reconstructs the command line a user would have typed. Flags come
-// first (Parse permutes, but a canonical order keeps the differential test
-// stable), then positionals in declaration order, then the pathspec.
-//
-// An unknown key is refused: a typo must not silently become a default.
-func buildArgv(spec verb.VerbSpec, args map[string]any) ([]string, error) {
-	cli := spec.For(verb.CLI)
+// buildArgv reconstructs the command line a user would have typed: the tool's
+// Fixed tokens, the flags, then positionals in declaration order, the trailing
+// text, and the pathspec. A key the schema does not carry is refused: a typo
+// must not silently become a default, and an omitted flag must stay omitted.
+func buildArgv(spec verb.VerbSpec, args map[string]any, readOnly bool) ([]string, error) {
+	c := spec.For(verb.CLI)
+	flags := schemaFlags(spec, readOnly)
 
-	allowed := map[string]bool{"pathspec": cli.Pathspec}
-	for _, a := range cli.Args {
+	allowed := map[string]bool{"pathspec": c.Pathspec}
+	for _, a := range c.Args {
 		allowed[a.Name] = true
 	}
-	for _, f := range cli.Flags {
+	for _, f := range flags {
 		allowed[f.Name] = true
+	}
+	if c.Trailing != nil {
+		allowed[c.Trailing.Name] = true
 	}
 	var unknown []string
 	for k := range args {
@@ -394,8 +551,22 @@ func buildArgv(spec verb.VerbSpec, args map[string]any) ([]string, error) {
 		return nil, errors.New("unknown argument(s): " + strings.Join(unknown, ", "))
 	}
 
-	var argv []string
-	for _, f := range cli.Flags {
+	// A mode group is one choice; more than one true is a caller error the
+	// declaration cannot express in JSON Schema, so it is refused here.
+	if c.Modes != nil {
+		chosen := 0
+		for _, m := range c.Modes.Names {
+			if b, ok := args[m].(bool); ok && b {
+				chosen++
+			}
+		}
+		if chosen > 1 {
+			return nil, fmt.Errorf("at most one of %s may be set", strings.Join(c.Modes.Names, ", "))
+		}
+	}
+
+	argv := append([]string{}, spec.MCP.Fixed...)
+	for _, f := range flags {
 		v, ok := args[f.Name]
 		if !ok {
 			continue
@@ -407,71 +578,114 @@ func buildArgv(spec verb.VerbSpec, args map[string]any) ([]string, error) {
 		argv = append(argv, tokens...)
 	}
 
-	// A mode group is one choice; more than one true is a caller error the
-	// declaration cannot express in JSON Schema, so it is refused here.
-	if cli.Modes != nil {
-		chosen := 0
-		for _, m := range cli.Modes.Names {
-			if b, ok := args[m].(bool); ok && b {
-				chosen++
-			}
-		}
-		if chosen > 1 {
-			return nil, fmt.Errorf("at most one of %s may be set", strings.Join(cli.Modes.Names, ", "))
-		}
-	}
-
-	for _, a := range cli.Args {
+	// Positionals and the trailing text, as values.
+	var values []string
+	for _, a := range c.Args {
 		v, ok := args[a.Name]
 		if !ok {
 			continue
 		}
-		if a.Variadic {
-			items, ok := v.([]any)
-			if !ok {
-				return nil, fmt.Errorf("%s: expected an array", a.Name)
-			}
-			for _, it := range items {
-				s, err := scalarString(a.Name, it)
-				if err != nil {
-					return nil, err
-				}
-				argv = append(argv, s)
-			}
-			continue
-		}
-		s, err := scalarString(a.Name, v)
+		vs, err := valueTokens(a.Name, v, a.Variadic)
 		if err != nil {
 			return nil, err
 		}
-		argv = append(argv, s)
+		values = append(values, vs...)
+	}
+	var trail []string
+	if c.Trailing != nil {
+		if v, ok := args[c.Trailing.Name]; ok {
+			vs, err := valueTokens(c.Trailing.Name, v, listTrailing(c.Trailing))
+			if err != nil {
+				return nil, err
+			}
+			trail = vs
+		}
 	}
 
-	if cli.Pathspec {
+	// A value beginning with '-' must not be read as a flag (spec §5.3).
+	dashed := false
+	for _, v := range values {
+		dashed = dashed || strings.HasPrefix(v, "-")
+	}
+	for _, v := range trail {
+		dashed = dashed || strings.HasPrefix(v, "-")
+	}
+	switch {
+	case !dashed:
+		argv = append(append(argv, values...), trail...)
+	case c.Pathspec:
+		return nil, errors.New("a value beginning with '-' cannot be passed to a verb whose '--' introduces its pathspec")
+	case c.Trailing != nil:
+		// Flags are not permuted here: one '--' ends them, and everything
+		// after it is positional.
+		argv = append(append(append(argv, "--"), values...), trail...)
+	default:
+		// The parser permutes: a '--' protects only the token after it.
+		for _, v := range values {
+			if strings.HasPrefix(v, "-") {
+				argv = append(argv, "--")
+			}
+			argv = append(argv, v)
+		}
+	}
+
+	if c.Pathspec {
 		if v, ok := args["pathspec"]; ok {
-			items, ok := v.([]any)
-			if !ok {
-				return nil, errors.New("pathspec: expected an array")
+			items, err := valueTokens("pathspec", v, true)
+			if err != nil {
+				return nil, err
 			}
 			if len(items) > 0 {
-				argv = append(argv, "--")
-				for _, it := range items {
-					s, err := scalarString("pathspec", it)
-					if err != nil {
-						return nil, err
-					}
-					argv = append(argv, s)
-				}
+				argv = append(append(argv, "--"), items...)
 			}
 		}
 	}
 	return argv, nil
 }
 
+// valueTokens renders a positional or trailing value: one token, or one per
+// element where the schema says array.
+func valueTokens(name string, v any, list bool) ([]string, error) {
+	if !list {
+		s, err := scalarString(name, v)
+		if err != nil {
+			return nil, err
+		}
+		return []string{s}, nil
+	}
+	items, ok := v.([]any)
+	if !ok {
+		return nil, fmt.Errorf("%s: expected an array", name)
+	}
+	var out []string
+	for _, it := range items {
+		s, err := scalarString(name, it)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, nil
+}
+
 // flagTokens renders one flag's JSON value as command-line tokens.
 func flagTokens(f verb.Flag, v any) ([]string, error) {
-	switch f.Type {
-	case verb.FlagBool:
+	if f.Custom != nil {
+		items, ok := v.([]any)
+		if !ok {
+			items = []any{v}
+		}
+		var out []string
+		for _, it := range items {
+			s, err := scalarString(f.Name, it)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, "--"+f.Name+"="+s)
+		}
+		return out, nil
+	}
+	if f.Type == verb.FlagBool {
 		b, ok := v.(bool)
 		if !ok {
 			return nil, fmt.Errorf("%s: expected a boolean", f.Name)
@@ -485,19 +699,12 @@ func flagTokens(f verb.Flag, v any) ([]string, error) {
 			return []string{"--" + f.Name + "=false"}, nil
 		}
 		return nil, nil
-	case verb.FlagUint, verb.FlagUint64:
-		s, err := scalarString(f.Name, v)
-		if err != nil {
-			return nil, err
-		}
-		return []string{"--" + f.Name + "=" + s}, nil
-	default:
-		s, err := scalarString(f.Name, v)
-		if err != nil {
-			return nil, err
-		}
-		return []string{"--" + f.Name + "=" + s}, nil
 	}
+	s, err := scalarString(f.Name, v)
+	if err != nil {
+		return nil, err
+	}
+	return []string{"--" + f.Name + "=" + s}, nil
 }
 
 // scalarString accepts the JSON scalars a command line can carry.
