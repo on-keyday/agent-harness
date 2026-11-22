@@ -21,7 +21,7 @@ re-grant on a live task, and a way to rename a task.
   caller as granter).
 - `session rename <task-id> <name>` sets a task's display name (`name`, D21 of
   `2026-11-21-credential-tasks-design.md`), for the operator and, under the same
-  rule, for a task.
+  rule, for a task on its descendants (never itself, R3).
 - The operator's `caps set` is unchanged.
 
 ## Non-goals
@@ -68,7 +68,7 @@ re-grant on a live task, and a way to rename a task.
 |---|---|---|
 | R1 | **Gate for a task caller: the `resume` bit with the target in its scope (`resumeTargetAllowed(cid, false, T)`) AND the target a strict descendant of the caller.** Same power as a re-granting resume today, minus the stop/restart; no new bit | operator, 2026-11-22 |
 | R2 | **Shape: `caps set` opens to task callers** (no new verb). Operator caller → today's path unchanged. Task caller → R1, then `grantFor(h.granter(cid, callerCaps), r, T)` builds the update | operator, 2026-11-22 |
-| R3 | **Rename: `session rename <task-id> <name>`**, a new TaskControl kind. Operator always; a task: itself, or a target passing R1. Name rules = issue's (`credentialNameRefusal`: ≤ 64 bytes, UTF-8, no C0/DEL/C1); empty clears it | operator, 2026-11-22 (verb, family); this spec (self allowed: a name carries no authority) |
+| R3 | **Rename: `session rename <task-id> <name>`**, a new TaskControl kind. Operator always; a task only on a target passing R1 — **never itself**. Name rules = issue's (`credentialNameRefusal`: ≤ 64 bytes, UTF-8, no C0/DEL/C1); empty clears it. **Reversal** of an earlier "a task may rename itself (a name carries no authority)": the name is the board sender label (`from_name`, credential D21), so a self-rename lets a hostile agent or a leaked credential key pose as a trusted task to readers who go by the name; a task's own state is what `progress_set` is for | operator, 2026-11-22 |
 | R4 | **Refusals for a task caller**: target not found or failing R1 → `not_found` (no existence oracle, as credential re-key); target == caller → `not_found` too (self is never a re-grant target); a half `grantFor` refuses → `invalid_scope` carrying the authority package's message (it already distinguishes "outside your reach" from "outside what you may delegate"). `not_operator` is no longer answered to a task caller | this spec |
 | R5 | **`--cascade` from a task caller** clamps the target's descendants exactly as today (`CascadeClamp` against the target after the change). It only ever narrows them, and they are the caller's descendants too | this spec |
 | R6 | **`--keep-conns`, narrowing teardown, data-plane withdrawal**: unchanged; they apply to a task caller's narrowing as to the operator's | this spec |
@@ -142,8 +142,8 @@ Run `scripts/wire-skew-check.sh`.
 - Operator path unchanged (existing set_caps tests stay green).
 - `--cascade` from a task narrows the target's descendants; narrowing closes
   the target's connections.
-- Rename: operator any task; task self; task descendant under R1; non-descendant
-  → `not_found`; bad name → `bad_name`; WAL replay keeps the name; `ls` / TUI /
+- Rename: operator any task; task descendant under R1; task self →
+  `not_found`; non-descendant → `not_found`; bad name → `bad_name`; WAL replay keeps the name; `ls` / TUI /
   WebUI show it.
 - whatif agrees with the server on a sample of re-grants.
 - Dummy-harness: an agent identity re-grants its worker live and renames it.

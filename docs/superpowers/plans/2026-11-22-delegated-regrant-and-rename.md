@@ -55,7 +55,7 @@
 
 **Interfaces:** `func (s *TaskStore) SetName(id, name string) bool` (writes `task_renamed{TaskID, Name}`, fires the task-event publication outside the store lock).
 
-- [ ] Tests: operator renames any; task renames self; task renames descendant under R1; non-descendant → `not_found`; 65 bytes / control byte → `bad_name` (RF4); empty clears; `TestRenameSurvivesReplay` (RF5); WAL JSON round-trip test still green → RED.
+- [ ] Tests: operator renames any; task renames descendant under R1; task renames self → `not_found`; non-descendant → `not_found`; 65 bytes / control byte → `bad_name` (RF4); empty clears; `TestRenameSurvivesReplay` (RF5); WAL JSON round-trip test still green → RED.
 - [ ] Implement; GREEN; `make test`; commit `server: session rename`.
 
 ### Task 4: what-if agrees (R9)
@@ -69,7 +69,7 @@
 **Files:** `cli/` set_caps client (render `message`; an agent identity no longer special-cases `not_operator`), `cli/rename.go` (three-layer: `*Client.TaskRename`, `TaskRenameWith`, `TaskRenameOut`), `cli/verb/table.go` (`session rename <task-id> <name>`, CLI|TUI|WebUI, notes, example), `cmd/harness-cli/dispatch.go`; tests `cli/rename_test.go`, verb-table suite.
 
 - [ ] Tests (parse through `DispatchCLILine`; refusal texts; `caps set` from an agent identity against the in-process server) → RED; implement; GREEN.
-- [ ] Dummy-harness once: agent identity `caps set <worker> --caps …` then `session rename <worker> name`; `ls` shows it.
+- [ ] Dummy-harness once: agent identity `caps set <worker> --caps …` then `session rename <worker> name`; `ls` shows it; `session rename <self> x` refused.
 - [ ] Commit `cli: session rename; caps set from a task`.
 
 ### Task 6: TUI + WebUI rename
