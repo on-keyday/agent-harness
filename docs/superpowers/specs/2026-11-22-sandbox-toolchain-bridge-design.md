@@ -1,6 +1,6 @@
 # Pluggable sandbox toolchains — Design
 
-Date: 2026-11-22
+Date: 2026-11-22. Line references are to `main` at `c9263b9c`.
 
 A config file declares named toolchains (mounts, env, a host probe). The
 sandbox wrapper reads it, resolves the named toolchain, and maps it into the
@@ -14,11 +14,10 @@ env can be added as a config entry, without touching the wrapper.
 
 ## 1. Problem
 
-The sandbox has no compiler: `make`, `go`, `gcc` are absent and egress is
-closed, so an agent can edit but cannot build or test. That makes it a
-suggestion engine, not a coding agent. The fix must not be Go-specific — the
-same problem exists for Rust, Java, C, etc. — and it must not weaken the
-network containment.
+The sandbox has no compiler: `make`, `go`, `gcc` are absent, so an agent can
+edit but cannot build or test. That makes it a suggestion engine, not a coding
+agent. The fix must not be Go-specific — the same problem exists for Rust,
+Java, C, etc. — and it must not weaken the network containment.
 
 ## 2. What was measured (2026-11-22, host `gmkhost`)
 
@@ -30,11 +29,19 @@ network containment.
 | cgo | repo has **0** `import "C"` → gcc not needed for this repo |
 | Bridge + seccomp | `podman run` with GOROOT/GOMODCACHE ro, GOCACHE rw, offline → `go build ./...` **OK** |
 | Cold-cache `go test` | **OOM-killed** — host had 15 GB total / ~0 available; the compiler was killed |
-| Warm-cache `go test` | `go test ./cli/verb` **OK** |
+| Warm-cache `go test` | `go test ./cli/verb` **OK** (one package) |
 | `make` | absent from the image; host `make` is dynamic (libguile/gc) → cannot bridge |
+| `make` is not redundant | `make test` = `js-test` + `scripts-test` + `go test ./...`; `make scripts-test` runs the python/bash suites. In-sandbox `go test ./...` replaces the first part; the script suites need `make` |
+
+Not measured: `go test ./...` in the sandbox. The integration/socket/subprocess
+tests it includes may fail under seccomp or memory pressure, so §5 V2 asserts
+only what was measured.
 
 Consequences: bridge the toolchain (ro), keep the build cache writable and
-**persistent** (cold caches OOM the host), and leave egress closed.
+**persistent** (cold caches OOM the host), and leave the egress allowlist as it
+is. The sandbox is not offline: the default proxy allowlist already carries
+github/npm/pypi (`scripts/sandbox/README.md:459-470`). The property to preserve
+is **default-deny plus an allowlist**, not "no egress".
 
 ## 3. Design
 
@@ -65,8 +72,7 @@ Schema: a top-level object keyed by toolchain name.
       "GOFLAGS": "-mod=readonly"
     },
     "path_prepend": ["{GOROOT}/bin"],
-    "require": ["GOROOT", "GOMODCACHE"],
-    "allow_domains": ["proxy.golang.org", "sum.golang.org"]
+    "require": ["GOROOT", "GOMODCACHE"]
   }
 }
 ```
@@ -76,10 +82,10 @@ Fields:
 | Field | Meaning |
 |---|---|
 | `description` | one line, shown in refusal messages |
-| `probe` | argv run **on the host** (no shell); its stdout is parsed as JSON and its keys become placeholders |
+| `probe` | argv run **on the host** (no shell); its stdout is parsed as JSON and its keys become placeholders. Optional when the entry uses no placeholders |
 | `mounts[].path` | host path expression; mounted at the **same path** in the container |
 | `mounts[].mode` | `ro` or `rw` |
-| `mounts[].create` | if true, a missing host dir is created (rw caches only) |
+| `mounts[].create` | if true, a missing host dir is created as the host user **before** the run (rw only) |
 | `env` | name → value expression, passed as `--env NAME=VALUE` |
 | `path_prepend` | expressions prepended to the container PATH |
 | `require` | placeholders that must be non-empty after resolution |
@@ -89,27 +95,67 @@ Placeholders are `{NAME}` where NAME is a key of the probe's JSON, plus
 `{HOME}` (the host home). Unknown placeholders are a refusal, never an empty
 string.
 
+`create: true` creates the full path as the host user. Podman creates a missing
+mount parent root-owned and the agent's first sibling `mkdir` then aborts
+(`agent-in-podman.sh:754-758`, measured for opencode 2026-08-19), so the wrapper
+must create it first; `create: true` with `mode: "ro"` is a refusal.
+
+`HARNESS_SANDBOX_TOOLCHAINS` is a host path with no meaning inside the
+container: the config is read on the host by the wrapper, and the container
+never sees the file. It is excluded from the `HARNESS_*` env forwarding beside
+`HARNESS_MEMORY_DIR` (`agent-in-podman.sh:997-1000`).
+
+The forwarding block's rule is "a host path is not a container mount", but only
+`HARNESS_MEMORY_DIR` is excluded today. `HARNESS_SANDBOX_MEMORY_ROOTS` is the
+same class of value and **is** forwarded, so a slot that sets it hands the
+container a host path that does not exist there. This design adds the exclusion
+for `HARNESS_SANDBOX_TOOLCHAINS` and corrects the memory-roots case in the same
+change, so the rule holds for every host-path variable.
+
 ### 3.2 The resolver helper
 
 `scripts/sandbox/toolchain.py` — same shape as `seccomp_profile.py` and
 `history_window.py`: a python helper the bash wrapper calls.
 
-    python3 toolchain.py --config FILE --name go[,NAME...] [--container-path PATH]
+    python3 toolchain.py --config FILE --name go[,NAME...] [--domains]
 
 It runs each probe, resolves placeholders, validates, and prints **podman argv
-tokens, NUL-separated**, to stdout. The wrapper reads them with
-`mapfile -d '' -t TC_ARGS < <(python3 …)`. The helper owns argv construction;
-the wrapper never parses JSON. Errors go to stderr with a named reason and exit
-2.
+tokens, NUL-separated**, to stdout. `--domains` prints the merged, validated
+`allow_domains` as a comma-separated line and runs **no probes** (domains need
+no placeholder values); it exists so the wrapper can log and merge the list
+without parsing argv. The helper owns argv construction; the wrapper never
+parses JSON. Errors go to stderr with a named reason and exit 2.
+
+The wrapper must not read stdout through process substitution: in bash,
+`mapfile -d '' -t A < <(cmd)` exits 0 even when `cmd` exits 2 (measured, bash
+5.3, under `set -euo pipefail`), so a refusal would be swallowed and the
+container would start without the toolchain. Capture to a temp file and check
+the status:
+
+    tmp=$(mktemp) || exit 2
+    python3 toolchain.py … >"$tmp" || { rm -f "$tmp"; exit 2; }
+    mapfile -d '' -t TC_ARGS <"$tmp"
+    rm -f "$tmp"
 
 Refusals:
 
-- unknown toolchain name
-- probe command missing or non-zero exit
-- probe output not JSON
-- a `require` placeholder empty or unresolved
+- unknown toolchain name; empty name (`--toolchain=`, `--toolchain=go,,rust`)
+- probe command missing or non-zero exit; probe output not JSON
+- a `require` placeholder empty or unresolved; unknown placeholder
 - a mount path empty, relative, or (without `create`) missing
-- a duplicate mount with conflicting modes
+- a mount path containing `:` or a newline (breaks `podman -v src:dst:mode`;
+  same rule as `--memory-seed`, `agent-in-podman.sh:199`)
+- `create: true` with `mode: "ro"`
+- a duplicate mount with conflicting modes; a child mount whose mode differs
+  from an enclosing mount's
+- `env` key defined by two named toolchains with different values
+- `allow_domains` value that is not a host name
+- missing, unreadable, or malformed config file (including the
+  `HARNESS_SANDBOX_TOOLCHAINS` override)
+
+Paths are `realpath`'d before comparison, but the mount path is **not** rewritten
+after resolution: `GOROOT` sits inside `GOMODCACHE` and `env.GOROOT` must keep
+matching the mounted path. Overlap is therefore detected, not silently deduped.
 
 ### 3.3 The wrapper flag
 
@@ -120,29 +166,37 @@ today: same argv, same mounts, same env. The flag is the only branch.
 When present the wrapper calls the resolver and splices its tokens into the
 `podman run` argv next to `"${MOUNTS[@]}"`. It logs `toolchain=go` in the
 existing one-line start summary. The flag is orthogonal to auth, firewall and
-history: it works under every combination and never touches the allowlist.
+history: it works under every combination. On its own it changes no domain; only
+an entry that declares `allow_domains` widens the allowlist (§3.6).
 
 ### 3.4 PATH
 
-`path_prepend` is emitted as one `--env PATH=<prepend>:<base>` per toolchain.
-`<base>` is the image's own PATH, read from `podman image inspect` once (falling
-back to the Debian default `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`).
-`agent-launch.sh` prepends the agent bin afterwards, so ordering is preserved.
+`path_prepend` entries from **all** named toolchains are merged, in CLI order and
+deduped, into a **single** `--env PATH=<tc1>:<tc2>:<base>` token. Emitting one
+`--env PATH=` per toolchain would let the second overwrite the first and drop
+`go`'s `GOROOT/bin`. `<base>` is the image's own PATH, read from
+`podman image inspect` once. If that call fails (unpulled image, no
+`Config.Env`), the wrapper falls back to the Debian default
+`/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin` and continues
+rather than aborting under `set -e`. `agent-launch.sh` prepends the agent bin
+afterwards, so ordering is preserved.
 
 ### 3.5 Network defaults to unchanged
 
-Absent `allow_domains`, no domain is added and no firewall mode changes.
+Absent `allow_domains`, no domain is added and no firewall mode changes: the
+default proxy allowlist and the agent's own domains are exactly as today.
 `GOTOOLCHAIN=local` and `GOFLAGS=-mod=readonly` are the toolchain's business,
 not the wrapper's; a toolchain that needs the network declares it in its own
-`env`, and it still cannot reach anything the firewall refuses.
+`env` and `allow_domains`, and it still cannot reach anything the allowlist
+refuses.
 
 ### 3.6 Toolchain egress (`allow_domains`, opt-in per entry)
 
 A toolchain may declare `allow_domains`. They are **additive**, exactly like
 `--allow-domain`: the wrapper appends them to the agent's own `A_DOMAINS`
-before the firewall is built. The allowlist mechanism is unchanged — the
-firewall still resolves A records and default-denies; a toolchain merely adds
-another declarer to the same list.
+before the firewall env is built. The allowlist mechanism is unchanged — the
+firewall and the proxy still default-deny; a toolchain merely adds another
+declarer to the same list.
 
 Rules, mirroring `--allow-domain`:
 
@@ -150,17 +204,24 @@ Rules, mirroring `--allow-domain`:
   silent skip.
 - Under `--no-firewall` they are ignored with a warning (nothing to add).
 - Under injection the agent's base `A_DOMAINS` is empty; the toolchain's
-  domains are then the only agent egress. That is an explicit widening of the
-  "injection = no agent egress" property, so it is **logged in the start
+  domains are then added to the shared defaults. That is an explicit widening of
+  the "injection = no agent egress" property, so it is **logged in the start
   summary** (`allow+=…`) and named in the README.
-- The Go entry ships with `proxy.golang.org` and `sum.golang.org` so
-  `go mod download` works; an operator who wants offline-only omits them or
-  uses `--no-firewall`-style refusal.
+- The shipped `go` entry declares **no** domains. `GOMODCACHE` is `ro` and
+  `GOFLAGS=-mod=readonly`, so `go mod download` fails with `EROFS` whatever the
+  allowlist says; widening egress for an operation that cannot succeed is a
+  change with no upside. The field stays in the schema so an operator can turn
+  dependency installation on later: set `GOMODCACHE`'s mount to `rw` (or a
+  writable copy) and add the domains in their own config file. That is the
+  configurable path, not a code change.
 
-Mechanism: the resolver emits the domains as `--env SANDBOX_TOOLCHAIN_DOMAINS=<csv>`
-(a separate variable so it cannot clobber `SANDBOX_AGENT_DOMAINS`), and the
-firewall scripts merge both sources. This keeps the resolver the single owner
-of the run parameters and leaves the allowlist code additive.
+Mechanism: the resolver's `--domains` mode prints the validated list, and the
+wrapper merges it into `A_DOMAINS` after the injection/`--allow-domain` merge
+(`agent-in-podman.sh:1013-1018`) and before the firewall env is built
+(`agent-in-podman.sh:1058`). No new env var, no change to `init-firewall.sh`,
+`init-firewall-proxy.sh`, `sandbox-connect-proxy`, or the image — both firewall
+modes read the same `A_DOMAINS`, so one merge covers both. The start summary and
+the `--no-firewall` warning are the existing ones.
 
 ## 4. Security
 
@@ -171,32 +232,50 @@ of the run parameters and leaves the allowlist code additive.
   host user; a hostile config is equivalent to a hostile wrapper. The shipped
   file is versioned; the env override is the operator's own. Document this in
   the README next to the flag.
+- **`--toolchain` is not operator-only.** It arrives as an `--agent-arg`, so a
+  spawning parent agent can pass it, the same surface as `--allow-domain`. It
+  cannot introduce a mount or domain the config does not already name, and the
+  config is trusted, so the reachable effect is "run this host probe as the host
+  user" — which `--agent-arg` already permits.
 - **Caches stay off the host's own.** `GOCACHE` is a dedicated directory
   (`~/.cache/harness-sandbox/go-build`), never the host's `~/.cache/go-build`,
   so a poisoned cache cannot reach a host build. `GOMODCACHE` is **ro** so the
   container cannot write the host's modules.
-- **Residual: egress widens when a toolchain declares domains.** `allow_domains`
-  is the same allowlist mechanism as `--allow-domain`, so it is bounded and
-  auditable — but naming a toolchain now also widens egress. It is logged in the
-  start summary and ignored under `--no-firewall`, and an entry that declares no
-  domains changes nothing. The operator chooses the toolchain, so the widening
-  is a deliberate act, not a default.
+- **Residual: cross-task `GOCACHE` poisoning.** D3 shares one writable
+  `GOCACHE` across every sandboxed task of the host user. Go's build cache
+  reuses compiled `.a` archives and test binaries keyed by action ID without
+  re-verifying artifact contents, so a compromised task can plant an artifact
+  that runs in another task's build, use the cache as a covert channel between
+  tasks of different trust, or exhaust host disk (it persists past `--rm`).
+  Accepted for v1 because the tasks are the same owner's and the threat model is
+  accidental blast radius; per-task or per-slot scoping is the fix if that
+  changes.
+- **Residual: `GOMODCACHE` read exposure.** Mounting the host's `GOMODCACHE` ro
+  shows the container every cached host module, including private repositories'
+  modules. Read-only, but it is a confidentiality surface the sandbox did not
+  have.
 - **Residual: host memory.** A cold cache under memory pressure OOM-kills the
   compiler (measured). The persistent cache is the mitigation; the host's
   memory is the real limit.
+- **Allowlist semantics differ by mode.** In proxy mode `permitted()`
+  (`cmd/sandbox-connect-proxy/main.go:108`) does label-boundary suffix matching;
+  in `--firewall` mode the ipset allows every host sharing a resolved A record,
+  so a CDN IP admits its neighbours. A toolchain domain is no different from
+  `--allow-domain` here, but the difference should be stated once.
 
 ## 5. Gates
 
 | Gate | Expectation |
 |---|---|
 | V1 | no flag → argv/mounts/env identical to today |
-| V2 | `--toolchain=go` → `go build ./...` and `go test ./...` pass offline, under seccomp |
+| V2 | `--toolchain=go` → `go build ./...` and `go test ./cli/verb` pass offline, under seccomp (the measured set; `go test ./...` is not asserted until measured) |
 | V3 | GOMODCACHE ro: a write attempt from inside fails |
-| V4 | unknown name, failed probe, empty `require`, missing mount → exit 2 with a named reason |
-| V5 | `--toolchain=go,rust` resolves both; duplicate mounts dedupe |
-| V6 | egress still refused with the flag on |
+| V4 | unknown name, failed probe, empty `require`, missing mount, `create`+`ro`, malformed config → **`agent-in-podman.sh` exits 2 and no container starts** (not just the helper called directly) |
+| V5 | `--toolchain=go,rust` resolves both; duplicate mounts refuse; both `path_prepend` entries appear in the container's single `PATH` |
+| V6 | the flag alone adds no egress; an entry with `allow_domains` adds exactly those and no others |
 | V7 | a synthetic toolchain entry (e.g. a fake `foo` with a `cat` probe) resolves without wrapper changes |
-| V8 | `allow_domains` from a toolchain appear in the allowlist and the start summary; a bad host name is refused |
+| V8 | `allow_domains` from a synthetic entry appear in the allowlist and the start summary; a bad host name is refused |
+| V9 | with `HARNESS_SANDBOX_TOOLCHAINS` and `HARNESS_SANDBOX_MEMORY_ROOTS` set in the runner env, neither appears in the container's environment; every other `HARNESS_*` still does |
 
 V7 is the pluggability gate: it proves the mechanism is generic.
 
@@ -209,26 +288,30 @@ look.
 | # | Decision | Decided by |
 |---|---|---|
 | D1 | The config ships in-repo at `scripts/sandbox/toolchains.json`, with `HARNESS_SANDBOX_TOOLCHAINS` as the operator's own override. No `--toolchain-config` flag in v1: the env override already covers the operator's file, and a flag is another surface to validate | this spec |
-| D2 | v1 ships `go` only. `make` is not baked into the image; `go build`/`go test` directly closes the compile loop. `make` moves to the deferred image-per-toolchain path (§9), where an image that carries it is selected by name | operator, 2026-11-22 |
-| D3 | `GOCACHE` is a persistent per-host-user directory (`~/.cache/harness-sandbox/go-build`), not per-task. A cold cache under host memory pressure OOM-killed the compiler in measurement; the warm cache is the mitigation | this spec |
+| D2 | v1 ships `go` only. `make` is not baked into the image; `go build`/`go test` directly closes the compile loop. `make` is wanted (`make test`, `make scripts-test`) but its host binary cannot run in the image, so it moves to the deferred image-per-toolchain path (§9), where an image that carries it is selected by name | operator, 2026-11-22 |
+| D3 | `GOCACHE` is a persistent per-host-user directory (`~/.cache/harness-sandbox/go-build`), not per-task. A cold cache under host memory pressure OOM-killed the compiler in measurement; the warm cache is the mitigation. The trade-off is cross-task cache poisoning (§4); per-task scoping is the alternative if the threat model widens | this spec |
 | D4 | v1 ships only `go`. `rust`/`c` entries are examples the mechanism admits, not shipped entries: each needs its own measurement of what bridges and what does not | this spec |
 | D5 | Toolchain `allow_domains` apply under injection too. The widening is explicit and logged; refusing them under injection would make the same toolchain work in one mode and not another for no stated reason | operator, 2026-11-22 |
-| D6 | Domains merge in the firewall scripts via a new `SANDBOX_TOOLCHAIN_DOMAINS` variable that the resolver emits as an `--env` token. The allowlist code stays additive and the wrapper stays a dumb consumer of argv | this spec |
+| D6 | The resolver emits domains in a separate `--domains` mode and the wrapper merges them into `A_DOMAINS` before the firewall env is built. No new env var and no image change: both firewall modes already read `A_DOMAINS` | this spec |
+| D7 | The shipped `go` entry declares no `allow_domains`. Dependency installation inside the sandbox is deferred; when wanted it is a config change (writable `GOMODCACHE` plus domains), not a code change | operator, 2026-11-22 |
+| D8 | Host-path variables are not forwarded into the container. `HARNESS_SANDBOX_TOOLCHAINS` is excluded, and `HARNESS_SANDBOX_MEMORY_ROOTS` is excluded in the same change because it is the same class of value and leaks today | this spec |
 
 ## 7. Left to the builder
 
-- The resolver's output protocol details (NUL-delimited argv tokens; the
-  `--domains` accessor if the wrapper needs the list separately).
-- The exact JSON field names in `toolchains.json`.
 - The `GOCACHE` directory name under `~/.cache/harness-sandbox/`.
 - The README wording for the flag and the domain widening.
 
 ## 8. Non-goals
 
-- Toolchains that need the network to install (the point is offline).
-- Bridging `make`/`gcc` for this repo (0 cgo; not needed).
 - A toolchain store/registry; the config is a file, not a service.
+- Bridging `gcc`: not needed for this repo (0 cgo).
+- Bridging `make` in v1: the host binary is dynamic and cannot run in the image
+  (§2), so `make test` and `make scripts-test` are unavailable in-sandbox. `go
+  test ./...` — what `make test` runs — is available directly; the python/bash
+  tests behind `make scripts-test` are not. `make` is deferred to §9, not dropped
+  as unnecessary.
 - Replacing the host's land/build path; landing stays a host action.
+- Installing dependencies inside the sandbox in v1 (D7).
 
 ## 9. Deferred: an image per toolchain
 
@@ -250,3 +333,39 @@ visible and should not be rediscovered.
   image per runner slot; there is no `--image` flag and no per-task switch. A
   toolchain-driven image would be the first per-task image selection and needs
   its own gate.
+
+## 10. Anti-goals
+
+Outcomes that count as failure even if the code works.
+
+- **A toolchain that only works in one firewall mode.** The mount/env bridge and
+  the domain merge must behave identically under `--firewall-proxy` and
+  `--firewall`; a mode-specific second mechanism is the failure being avoided.
+- **A silent fallback.** A resolver refusal must stop the run, not start a
+  container without the toolchain. An unknown name must not degrade to "no
+  toolchain".
+- **A widened allowlist by default.** Naming a toolchain must not add a domain
+  unless that entry declares one, and the widening must be visible in the start
+  summary.
+- **A host probe that runs without being asked.** The probe runs only when the
+  flag names the toolchain; the absent flag must not execute anything.
+- **`--toolchain` becoming a mount or domain injection primitive.** It selects
+  among entries the trusted config already defines; it cannot name a path or a
+  host the config does not.
+
+## 11. Approaches considered
+
+- **JSON config + python resolver (chosen).** Reuses the house pattern
+  (`seccomp_profile.py`, `history_window.py`), keeps the wrapper a consumer of
+  argv, and makes a new toolchain a data change. Cost: a new helper and a
+  schema to validate.
+- **Shell-only resolver in the wrapper.** No new file, but JSON parsing in bash
+  and per-toolchain branching in the wrapper — the same reason the two existing
+  helpers are python.
+- **Bake toolchains into the image.** No mounts, no host coupling, but a rebuild
+  per toolchain and a much larger image; also hides what the toolchain touches.
+  Kept as the deferred path for `make` (§9), where a dynamic host binary cannot
+  bridge.
+- **A separate broker binary for build/test verbs.** Stronger mediation, but a
+  second process, a protocol and a lifecycle to design; the mount bridge closes
+  the compile loop without them.
