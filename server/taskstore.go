@@ -1602,6 +1602,12 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 			if t, ok := s.tasks[ev.TaskID]; ok {
 				t.rekey(credentialKeyFromWAL(ev.TaskID, ev.CredentialPubKey), expiryFromWAL(ev.ExpiresAtNs))
 			}
+		case "task_renamed":
+			// session rename (delegated-regrant R10): the event carries the
+			// whole new name; an absent key is the empty name, a clear.
+			if t, ok := s.tasks[ev.TaskID]; ok {
+				t.Name = ev.Name
+			}
 		case "task_caps_changed":
 			if t, ok := s.tasks[ev.TaskID]; ok {
 				t.Capabilities = protocol.Capability(ev.Capabilities)

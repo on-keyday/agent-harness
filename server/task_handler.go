@@ -1308,9 +1308,18 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		}
 		h.handleRestoreTasks(conn, req.Header.RequestId, cid, rt)
 
+	case protocol.TaskControlKind_TaskRename:
+		// Gated in the handler like set_caps: operator, or R1 (resume over a
+		// strict descendant), which requiredCap cannot express.
+		tr := req.TaskRename()
+		if tr == nil {
+			slog.Error("TaskHandler: TaskRename variant is nil")
+			return
+		}
+		h.handleTaskRename(conn, req.Header.RequestId, cid, tr)
 	case protocol.TaskControlKind_SetCaps:
-		// Deliberately NOT in requiredCap: the gate is operator identity, and a
-		// requiredCap entry would let anyone holding that bit through.
+		// Deliberately NOT in requiredCap: the operator path has no bit at all,
+		// and a task's path is R1 + grantFor, checked in the handler.
 		sc := req.SetCaps()
 		if sc == nil {
 			slog.Error("TaskHandler: SetCaps variant is nil")

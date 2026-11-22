@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
-	"unicode/utf8"
 
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/authority"
@@ -81,20 +80,7 @@ const credentialNameMax = 64
 // here, as a progress line is (validateProgressText), not sanitized into
 // something the issuer did not write.
 func credentialNameRefusal(name []byte) *protocol.CredentialResponse {
-	why := ""
-	switch {
-	case len(name) > credentialNameMax:
-		why = fmt.Sprintf("a name is at most %d bytes, this one is %d", credentialNameMax, len(name))
-	case !utf8.Valid(name):
-		why = "a name must be UTF-8"
-	default:
-		for _, r := range string(name) {
-			if r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) {
-				why = fmt.Sprintf("a name may not hold the control character %U", r)
-				break
-			}
-		}
-	}
+	why := taskNameProblem(name)
 	if why == "" {
 		return nil
 	}
