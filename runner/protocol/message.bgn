@@ -822,6 +822,9 @@ enum TaskControlKind:
     credential_rekey        # appended: register a new public key and expiry on
                             # an existing credential task (D18, resume = re-key).
                             # Gated as issue, not as resume.
+    task_rename             # appended: set a task's display name (delegated-regrant
+                            # spec R3). The operator on any task; a task only on a
+                            # strict descendant within its resume scope, never itself.
 
 # ClientKind tags the kind of caller that opened a TaskControl session.
 # `agent` is an in-task harness-cli that proves its identity via agent_info;
@@ -1169,6 +1172,7 @@ enum AuthoritySource:
     operator_caps_set = 3, "operator_caps_set"  # caps set wrote caps or scope
     cascade           = 4, "cascade"            # clamped by caps set --cascade on the actor
     resume            = 5, "resume"             # a resume re-granted caps or scope (actor: the resumer; zero for an operator)
+    task_caps_set     = 6, "task_caps_set"      # appended: a TASK ran caps set on its descendant, bounded like a re-granting resume (actor: that task; delegated-regrant spec R7)
 
 format TaskInfo:
     id :TaskID
@@ -3354,6 +3358,7 @@ format TaskControlRequest:
         TaskControlKind.schedule_show            => schedule_show            :ScheduleIDRequest
         TaskControlKind.credential_issue         => credential_issue         :CredentialIssueRequest
         TaskControlKind.credential_rekey         => credential_rekey         :CredentialRekeyRequest
+        TaskControlKind.task_rename              => task_rename              :TaskRenameRequest
         .. => error("Unexpected task")
 
 # --- credential tasks (docs/superpowers/specs/2026-11-21-credential-tasks-design.md) ---
@@ -3424,6 +3429,25 @@ enum CredentialStatus:
 # CredentialResponse answers issue and rekey. task_id is the credential task
 # (new at issue, the same one at rekey); expires_at is unix nanos on the SERVER
 # clock. message says why, for the statuses that have more to say.
+# --- task rename (docs/superpowers/specs/2026-11-22-delegated-regrant-and-rename-design.md) ---
+# Sets TaskInfo.name, the kind-agnostic display name (credential spec D21).
+# name_len 0 clears it. The server refuses a name over 64 bytes, not UTF-8, or
+# carrying a C0/DEL/C1 control character (bad_name). not_found also answers a
+# target the caller may not rename, so it is no existence oracle (R4).
+format TaskRenameRequest:
+    task_id :TaskID
+    name_len :u8
+    name :[name_len]u8
+
+enum TaskRenameStatus:
+    :u8
+    ok        = "ok"
+    not_found
+    bad_name
+
+format TaskRenameResponse:
+    status :TaskRenameStatus
+
 format CredentialResponse:
     status :CredentialStatus
     task_id :TaskID
@@ -3542,6 +3566,7 @@ format TaskControlResponse:
         TaskControlKind.schedule_show            => schedule_show            :ScheduleResponse
         TaskControlKind.credential_issue         => credential_issue         :CredentialResponse
         TaskControlKind.credential_rekey         => credential_rekey         :CredentialResponse
+        TaskControlKind.task_rename              => task_rename              :TaskRenameResponse
 
 # --- runner enrollment (2026-10-27-runner-enrollment-design.md) --------------
 # The server lets a runner register under AuthRole.runner only when it signs
@@ -3775,6 +3800,11 @@ format SetCapsResponse:
     affected_len :u16
     affected     :[affected_len]TaskID   # target + every descendant changed
     conns_closed :u32
+    # Appended: the refusal text when a TASK's caps set is refused by the
+    # re-grant bound (delegated-regrant spec R4), e.g. "scope id … is outside
+    # what you may delegate". Empty on success and on every operator answer.
+    message_len  :u16
+    message      :[message_len]u8
 
 enum SetParentStatus:
     :u8

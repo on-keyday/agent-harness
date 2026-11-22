@@ -191,10 +191,13 @@ var kindTargetClass = map[protocol.TaskControlKind]targetClass{
 	// task's bound is the grant path); re-key names the credential task.
 	protocol.TaskControlKind_CredentialIssue: noTarget,
 	protocol.TaskControlKind_CredentialRekey: targetGated,
+	// Rename (delegated-regrant R3): names the task renamed, gated in the
+	// handler (operator, or a strict descendant within the resume scope).
+	protocol.TaskControlKind_TaskRename: targetGated,
 }
 
 func TestEveryTaskControlKindIsClassified(t *testing.T) {
-	for i := 0; i <= int(protocol.TaskControlKind_CredentialRekey); i++ {
+	for i := 0; i <= int(protocol.TaskControlKind_TaskRename); i++ {
 		k := protocol.TaskControlKind(i)
 		if k.String() == fmt.Sprintf("TaskControlKind(%d)", i) {
 			continue // gap in the enum, not a real kind
@@ -222,10 +225,10 @@ func TestEveryTaskControlKindIsClassified(t *testing.T) {
 // runner_kick; session_mode; the five record_* kinds; and transcript_list /
 // transcript_get; the six schedule_* kinds; and credential_issue /
 // credential_rekey.
-func TestCredentialRekeyIsStillTheLastKind(t *testing.T) {
-	next := protocol.TaskControlKind(int(protocol.TaskControlKind_CredentialRekey) + 1)
+func TestTaskRenameIsStillTheLastKind(t *testing.T) {
+	next := protocol.TaskControlKind(int(protocol.TaskControlKind_TaskRename) + 1)
 	if next.String() != fmt.Sprintf("TaskControlKind(%d)", int(next)) {
-		t.Fatalf("a kind was appended after credential_rekey (%v) — raise the loop bound in "+
+		t.Fatalf("a kind was appended after task_rename (%v) — raise the loop bound in "+
 			"TestEveryTaskControlKindIsClassified and in TestEveryTaskControlKindHasACapVerdict, "+
 			"which otherwise stop before it", next)
 	}

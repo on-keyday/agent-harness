@@ -180,10 +180,13 @@ var kindCapClass = map[protocol.TaskControlKind]capClass{
 	// Credential tasks (D13, D18): both need credential_issue.
 	protocol.TaskControlKind_CredentialIssue: capInMap,
 	protocol.TaskControlKind_CredentialRekey: capInMap,
+	// Rename (delegated-regrant R3): the resume bit over the target and the
+	// descendant walk are checked in the handler, as set_caps's gate is.
+	protocol.TaskControlKind_TaskRename: capInHandler,
 }
 
 func TestEveryTaskControlKindHasACapVerdict(t *testing.T) {
-	for i := 0; i <= int(protocol.TaskControlKind_CredentialRekey); i++ {
+	for i := 0; i <= int(protocol.TaskControlKind_TaskRename); i++ {
 		k := protocol.TaskControlKind(i)
 		if k.String() == fmt.Sprintf("TaskControlKind(%d)", i) {
 			continue // gap in the enum, not a real kind
