@@ -40,10 +40,14 @@ func CascadeClamp(target Task, d Grant, dHex string, boundWritten bool, children
 // Change is one operation WhatIf can apply: Regrant, Spawn or Reparent.
 type Change interface{ isChange() }
 
-// Regrant is `caps set`: each non-nil half is written as given (no
-// attenuation — the operator may grant anything), and Cascade clamps every
-// descendant through CascadeClamp.
+// Regrant is `caps set`. With no Actor (the operator) each non-nil half is
+// written as given (no attenuation — the operator may grant anything). With an
+// Actor (a task, delegated-regrant spec R1/R2) the target must be a strict
+// descendant inside the actor's resume scope, and each half is bounded by the
+// actor exactly as a re-granting resume bounds it (Granter). Cascade clamps
+// every descendant through CascadeClamp either way.
 type Regrant struct {
+	Actor         string
 	Target        string
 	Caps          *protocol.Capability
 	Scope         *Scope
@@ -122,26 +126,33 @@ func apply(before []Task, c Change) ([]Task, error) {
 			return nil, fmt.Errorf("no such task %s", short(c.Target))
 		}
 		t := after[i]
-		if c.Caps != nil {
-			t.Caps = *c.Caps
-		}
-		if c.Scope != nil {
-			if err := Validate(*c.Scope); err != nil {
-				return nil, &InvalidScopeError{Err: err}
+		if c.Actor != "" {
+			var err error
+			if t, err = taskRegrant(v, c, t); err != nil {
+				return nil, err
 			}
-			t.Scope = *c.Scope
-		}
-		if c.DelegateCaps != nil {
-			t.DelegateCaps = *c.DelegateCaps
-		}
-		if c.DelegateScope != nil {
-			if len(c.DelegateScope.Overrides) != 0 {
-				return nil, &InvalidScopeError{Err: fmt.Errorf("a delegation bound carries no per-capability overrides")}
+		} else {
+			if c.Caps != nil {
+				t.Caps = *c.Caps
 			}
-			if err := Validate(*c.DelegateScope); err != nil {
-				return nil, &InvalidScopeError{Err: err}
+			if c.Scope != nil {
+				if err := Validate(*c.Scope); err != nil {
+					return nil, &InvalidScopeError{Err: err}
+				}
+				t.Scope = *c.Scope
 			}
-			t.DelegateScope = *c.DelegateScope
+			if c.DelegateCaps != nil {
+				t.DelegateCaps = *c.DelegateCaps
+			}
+			if c.DelegateScope != nil {
+				if len(c.DelegateScope.Overrides) != 0 {
+					return nil, &InvalidScopeError{Err: fmt.Errorf("a delegation bound carries no per-capability overrides")}
+				}
+				if err := Validate(*c.DelegateScope); err != nil {
+					return nil, &InvalidScopeError{Err: err}
+				}
+				t.DelegateScope = *c.DelegateScope
+			}
 		}
 		after[i] = t
 		if c.Cascade {
@@ -204,6 +215,55 @@ func apply(before []Task, c Change) ([]Task, error) {
 		return nil, fmt.Errorf("unknown change %T", c)
 	}
 	return after, nil
+}
+
+// taskRegrant is the server's task-caller caps set (server/set_caps_handler.go
+// regrantReaches + grantFor): refused, with the not-found text, unless the
+// target is a strict descendant of the actor inside its resume scope; then
+// each present half bounded by the actor as a re-granting resume bounds it.
+func taskRegrant(v view, c Regrant, t Task) (Task, error) {
+	actor, ok := v.byID[c.Actor]
+	notFound := fmt.Errorf("no such task %s", short(c.Target))
+	if !ok || c.Target == c.Actor {
+		return Task{}, notFound
+	}
+	desc := map[string]bool{}
+	DescendantsOf(v.children, c.Actor, desc)
+	all, set, exercised := actionReach(actor, protocol.Capability_Resume, v.children)
+	if !desc[c.Target] || !exercised || !(all || set[c.Target]) {
+		return Task{}, notFound
+	}
+	g := NewGranter(actor.ID, actor.grant(), v.children)
+	if c.Caps != nil {
+		t.Caps = g.ChildCaps(*c.Caps)
+	}
+	if c.Scope != nil {
+		scope, err := g.ChildScope(*c.Scope, t.Caps)
+		if err != nil {
+			return Task{}, err
+		}
+		t.Scope = scope
+	}
+	if c.DelegateCaps != nil || c.DelegateScope != nil {
+		dcaps, dscope := t.DelegateCaps, t.DelegateScope
+		if c.DelegateCaps != nil {
+			dcaps = *c.DelegateCaps
+		}
+		if c.DelegateScope != nil {
+			dscope = *c.DelegateScope
+		}
+		bc, bs, err := g.ChildBound(dcaps, dscope, c.Target)
+		if err != nil && c.DelegateScope != nil { // as grantFor: a refusal counts only for a written half
+			return Task{}, err
+		}
+		if c.DelegateCaps != nil {
+			t.DelegateCaps = bc
+		}
+		if c.DelegateScope != nil {
+			t.DelegateScope = bs
+		}
+	}
+	return t, nil
 }
 
 // setOf lists, over the view's ids, a set given as (all, members).

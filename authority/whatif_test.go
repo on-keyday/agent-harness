@@ -170,3 +170,42 @@ func TestWhatIfSpawnNeedsSpawn(t *testing.T) {
 		t.Errorf("err = %v, want the spawn gate's denial", err)
 	}
 }
+
+// R9 of the delegated-regrant spec: a Regrant with an Actor predicts what the
+// server's task-caller caps set does — strict descendants inside the actor's
+// resume scope only, the update bounded like a re-granting resume.
+func TestWhatIfTaskRegrantMatchesServerRule(t *testing.T) {
+	p := Task{ID: "p0000000000000000000000000000000", Caps: protocol.Capability_All}
+	c := Task{ID: "c0000000000000000000000000000000", Creator: p.ID,
+		Caps:         protocol.Capability_Resume | protocol.Capability_FileRead | protocol.Capability_Cancel,
+		DelegateCaps: protocol.Capability_FileRead}
+	g := Task{ID: "90000000000000000000000000000000", Creator: c.ID, Caps: protocol.Capability_Cancel}
+	u := Task{ID: "a0000000000000000000000000000000", Caps: protocol.Capability_Cancel}
+	tasks := []Task{p, c, g, u}
+	want := protocol.Capability_FileRead | protocol.Capability_Spawn
+
+	out, err := WhatIf(tasks, Regrant{Actor: c.ID, Target: g.ID, Caps: &want})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got *TaskDiff
+	for i := range out {
+		if out[i].ID == g.ID {
+			got = &out[i]
+		}
+	}
+	if got == nil || got.After.Caps != protocol.Capability_FileRead {
+		t.Fatalf("g after = %+v, want caps file_read (spawn past the actor's delegate is clamped)", got)
+	}
+
+	for name, target := range map[string]string{"self": c.ID, "ancestor": p.ID, "unrelated": u.ID} {
+		if _, err := WhatIf(tasks, Regrant{Actor: c.ID, Target: target, Caps: &want}); err == nil {
+			t.Fatalf("%s: predicted a re-grant the server refuses", name)
+		}
+	}
+	noResume := c
+	noResume.Caps &^= protocol.Capability_Resume
+	if _, err := WhatIf([]Task{p, noResume, g, u}, Regrant{Actor: c.ID, Target: g.ID, Caps: &want}); err == nil {
+		t.Fatal("predicted a re-grant without resume over the target")
+	}
+}
