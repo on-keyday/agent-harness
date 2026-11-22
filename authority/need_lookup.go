@@ -60,6 +60,17 @@ func RecordSwitchCap(on bool) protocol.Capability {
 	return protocol.Capability_RecordDelete
 }
 
+// RestoreCap is the bit a restore_tasks request needs: none to list what could
+// be restored (the ids of forgotten tasks live only in the WAL, so gating the
+// listing would leave the verb usable only by someone who wrote the id down),
+// prune to put tasks back.
+func RestoreCap(listOnly uint8) protocol.Capability {
+	if listOnly != 0 {
+		return 0
+	}
+	return protocol.Capability_Prune
+}
+
 // RecordKeepCap is the bit changing a record's retention needs, given what it
 // is now: a later expiry keeps (record_persist), an earlier one deletes sooner
 // (record_delete). Leaving forever is always earlier. A ttl of 0 that is not

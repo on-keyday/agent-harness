@@ -9,6 +9,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/appwire"
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -52,8 +53,8 @@ func (h *TaskHandler) handleAwaitProgress(conn ConnHandle, req *protocol.TaskCon
 		// The same egress gate as await-idle's notify sink, for the same
 		// reason: without it a confined task could reach the operator's
 		// notification egress by a route `harness-cli notify` refuses it.
-		if !hasCap(h.callerCaps(connID), protocol.Capability_Notify) {
-			h.denyTaskControl(conn, protocol.TaskControlKind_AwaitProgress, requestID, protocol.Capability_Notify)
+		if c := authority.RequestNeed(req).Clauses[0]; !hasAnyCap(h.callerCaps(connID), c.AnyOf) {
+			h.denyTaskControl(conn, protocol.TaskControlKind_AwaitProgress, requestID, c.Report)
 			return
 		}
 	case protocol.AwaitSink_Board:
@@ -62,7 +63,7 @@ func (h *TaskHandler) handleAwaitProgress(conn ConnHandle, req *protocol.TaskCon
 			return
 		}
 		if h.lookupPrincipal(connID).Id != ([16]byte{}) && !h.Board.Publishable(h.boardState(conn), topic) {
-			h.denyTaskControl(conn, protocol.TaskControlKind_AwaitProgress, requestID, protocol.Capability_BoardPeer)
+			h.denyTaskControl(conn, protocol.TaskControlKind_AwaitProgress, requestID, authority.RequestNeed(req).Later[0].Report)
 			return
 		}
 	default:

@@ -228,6 +228,24 @@ func TestScopeBit(t *testing.T) {
 	}
 }
 
+// KindNeed serves a handler that holds only the decoded body. It is the need
+// of a request with no body, so it must refuse a kind whose need the body
+// decides -- that caller would read the wrong branch.
+func TestKindNeed(t *testing.T) {
+	if got := KindNeed(protocol.TaskControlKind_ExecRunKill); !reflect.DeepEqual(got, RequestNeed(reqOf(protocol.TaskControlKind_ExecRunKill))) {
+		t.Errorf("KindNeed(ExecRunKill) = %+v", got)
+	}
+	if got := KindNeed(protocol.TaskControlKind_AgentSend).Later[0].Report; got != cPeer {
+		t.Errorf("KindNeed(AgentSend) label = %v, want board_peer", got)
+	}
+	defer func() {
+		if recover() == nil {
+			t.Error("KindNeed(OpenFileTransfer) did not panic: its need depends on the direction")
+		}
+	}()
+	KindNeed(protocol.TaskControlKind_OpenFileTransfer)
+}
+
 func TestLookupHelpers(t *testing.T) {
 	keep := []struct {
 		name       string
@@ -246,6 +264,9 @@ func TestLookupHelpers(t *testing.T) {
 		if got := RecordKeepCap(c.forever, c.ttl, c.curForever, c.curTTL); got != c.want {
 			t.Errorf("RecordKeepCap %s = %v, want %v", c.name, got, c.want)
 		}
+	}
+	if RestoreCap(1) != 0 || RestoreCap(0) != protocol.Capability_Prune {
+		t.Errorf("RestoreCap: list_only %v, restore %v", RestoreCap(1), RestoreCap(0))
 	}
 	if got := ScheduleRunPower(protocol.ScheduleTaskState_Bound); !reflect.DeepEqual(got, []Clause{same(cResume | cExact)}) {
 		t.Errorf("ScheduleRunPower(bound) = %+v", got)

@@ -9,6 +9,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/appwire"
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
@@ -89,8 +90,8 @@ func (h *TaskHandler) handleAwaitIdle(conn ConnHandle, req *protocol.TaskControl
 		// an egress gate that depends on which RPC you arrive by is not a
 		// gate.) The board sink is a publish, so it takes the requester's
 		// board reach instead (below), as agent send does.
-		if !hasCap(h.callerCaps(conn.ConnectionID().String()), protocol.Capability_Notify) {
-			h.denyTaskControl(conn, protocol.TaskControlKind_AwaitIdle, requestID, protocol.Capability_Notify)
+		if c := authority.RequestNeed(req).Clauses[0]; !hasAnyCap(h.callerCaps(conn.ConnectionID().String()), c.AnyOf) {
+			h.denyTaskControl(conn, protocol.TaskControlKind_AwaitIdle, requestID, c.Report)
 			return
 		}
 	case protocol.AwaitSink_Board:
@@ -105,7 +106,7 @@ func (h *TaskHandler) handleAwaitIdle(conn ConnHandle, req *protocol.TaskControl
 		// operator face.
 		if h.lookupPrincipal(conn.ConnectionID().String()).Id != ([16]byte{}) &&
 			!h.Board.Publishable(h.boardState(conn), topic) {
-			h.denyTaskControl(conn, protocol.TaskControlKind_AwaitIdle, requestID, protocol.Capability_BoardPeer)
+			h.denyTaskControl(conn, protocol.TaskControlKind_AwaitIdle, requestID, authority.RequestNeed(req).Later[0].Report)
 			return
 		}
 	default:

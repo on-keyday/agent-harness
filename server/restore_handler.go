@@ -86,8 +86,8 @@ func (h *TaskHandler) handleRestoreTasks(conn ConnHandle, requestID uint32, cid 
 	// Without this the scope check above ran alone, and scope answers "which
 	// tasks" and never "whether": a caller whose prune had been revoked could
 	// still put records back, which is the control the revocation was for.
-	if !hasCap(h.callerCaps(cid), protocol.Capability_Prune) {
-		h.denyTaskControl(conn, protocol.TaskControlKind_RestoreTasks, requestID, protocol.Capability_Prune)
+	if need := authority.RestoreCap(req.ListOnly); !hasCap(h.callerCaps(cid), need) {
+		h.denyTaskControl(conn, protocol.TaskControlKind_RestoreTasks, requestID, need)
 		return
 	}
 

@@ -293,12 +293,11 @@ func RequestNeed(req *protocol.TaskControlRequest) Need {
 		rs := bodyOf(req.RecordSwitch())
 		n.Clauses = append(n.Clauses, same(RecordSwitchCap(rs.On())))
 	case protocol.TaskControlKind_RestoreTasks:
-		// Listing what could be restored stays open: the ids of forgotten
-		// tasks live only in the WAL. Putting them back is prune's.
-		if bodyOf(req.RestoreTasks()).ListOnly != 0 {
+		c := RestoreCap(bodyOf(req.RestoreTasks()).ListOnly)
+		if c == 0 {
 			return Need{Class: NeedNone}
 		}
-		n.Clauses = append(n.Clauses, same(protocol.Capability_Prune))
+		n.Clauses = append(n.Clauses, same(c))
 	case protocol.TaskControlKind_OpenInteractive:
 		oi := bodyOf(req.OpenInteractive())
 		n.Clauses = append(n.Clauses, same(ResumeCap(oi.ResumeTaskId, oi.ResumeExact())))
@@ -362,6 +361,17 @@ func RequestNeed(req *protocol.TaskControlRequest) Need {
 		}
 	}
 	return n
+}
+
+// KindNeed is the need of a kind whose need the request body does not decide,
+// for a handler that holds only the decoded body. It panics on a kind whose
+// body decides (one variants enumerates more than once): reading the zero body
+// there would answer one branch for all of them.
+func KindNeed(kind protocol.TaskControlKind) Need {
+	if len(variants(kind)) > 1 {
+		panic("authority.KindNeed: the body decides " + kind.String() + "'s need; use RequestNeed")
+	}
+	return RequestNeed(&protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: kind}})
 }
 
 // awaitNeed is AwaitIdle's and AwaitProgress's: a reply needs nothing, a

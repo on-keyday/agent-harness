@@ -9,6 +9,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/appwire"
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -85,7 +86,7 @@ func (h *TaskHandler) handleAgentSubscribe(conn ConnHandle, requestID uint32, pa
 		if err := h.Board.Subscribe(st, pattern); errors.Is(err, agentboard.ErrNotPermitted) {
 			// The topic carries another task's messages: the ordinary
 			// capability denial, rendered by every surface the same way.
-			h.denyTaskControl(conn, kind, requestID, protocol.Capability_BoardObserve)
+			h.denyTaskControl(conn, kind, requestID, authority.KindNeed(protocol.TaskControlKind_AgentSubscribe).Later[0].Report)
 			return
 		} else if err != nil {
 			out.Status = protocol.SubscribeStatus_BadPattern
@@ -176,7 +177,7 @@ func (h *TaskHandler) handleAgentSend(conn ConnHandle, requestID uint32, r *prot
 		// reply to a seq the sender never received resolves to a route it has
 		// no contact for (reach spec D4).
 		if !h.Board.Publishable(st, destTopic) {
-			h.denyTaskControl(conn, protocol.TaskControlKind_AgentSend, requestID, protocol.Capability_BoardPeer)
+			h.denyTaskControl(conn, protocol.TaskControlKind_AgentSend, requestID, authority.KindNeed(protocol.TaskControlKind_AgentSend).Later[0].Report)
 			return
 		}
 		// A declared reply route becomes the recipient's contact (§3), and the
@@ -186,7 +187,7 @@ func (h *TaskHandler) handleAgentSend(conn ConnHandle, requestID uint32, r *prot
 		// as a contact. This keeps a contact no wider than what its asker
 		// could reach.
 		if replyToTopic != "" && !h.Board.Publishable(st, replyToTopic) {
-			h.denyTaskControl(conn, protocol.TaskControlKind_AgentSend, requestID, protocol.Capability_BoardPeer)
+			h.denyTaskControl(conn, protocol.TaskControlKind_AgentSend, requestID, authority.KindNeed(protocol.TaskControlKind_AgentSend).Later[0].Report)
 			return
 		}
 		var sendOpts []agentboard.SendOption
@@ -297,7 +298,7 @@ func (h *TaskHandler) handleAgentWait(conn ConnHandle, requestID uint32, r *prot
 	defer cancel()
 	msgs, timedOut, err := h.Board.Wait(ctx, st, string(r.Pattern), r.Since, r.InReplyTo)
 	if errors.Is(err, agentboard.ErrNotPermitted) {
-		h.denyTaskControl(conn, protocol.TaskControlKind_AgentWait, requestID, protocol.Capability_BoardObserve)
+		h.denyTaskControl(conn, protocol.TaskControlKind_AgentWait, requestID, authority.KindNeed(protocol.TaskControlKind_AgentWait).Later[0].Report)
 		return
 	}
 

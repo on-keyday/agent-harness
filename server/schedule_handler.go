@@ -581,10 +581,10 @@ func (h *TaskHandler) applySpec(cid string, base Schedule, spec *protocol.Schedu
 		// Saying on needs record_persist, within the bit's scope over a bound
 		// task (the open's rule); off, and saying nothing, need nothing.
 		if sc.Run.Record {
-			if !hasCap(callerCaps, protocol.Capability_RecordPersist) {
+			if !hasCap(callerCaps, authority.RecordOnCap) {
 				return refuse(protocol.ScheduleStatus_RecordNotPermitted, "recording a session needs record_persist")
 			}
-			if sc.State == protocol.ScheduleTaskState_Bound && !h.inScope(cid, protocol.Capability_RecordPersist, sc.TaskID) {
+			if sc.State == protocol.ScheduleTaskState_Bound && !h.inScope(cid, authority.RecordOnCap, sc.TaskID) {
 				return refuse(protocol.ScheduleStatus_RecordNotPermitted, "recording a session needs record_persist within reach of task %s", short(sc.TaskID))
 			}
 		}
@@ -700,26 +700,26 @@ func scheduleSpecTask(spec *protocol.ScheduleSpec) string {
 func (h *TaskHandler) schedulePower(cid string, cur *Schedule, bindTask string) (protocol.Capability, *protocol.ScheduleResponse) {
 	callerCaps := h.callerCaps(cid)
 	// A bind means nothing will be created, so a bind needs no spawn even on a
-	// pending_create schedule.
-	needSpawn := bindTask == "" && (cur == nil || cur.State == protocol.ScheduleTaskState_PendingCreate)
-	if needSpawn && !hasCap(callerCaps, protocol.Capability_Spawn) {
-		return protocol.Capability_Spawn, nil
+	// pending_create schedule (authority.SchedulePower decides which).
+	pendingOrNew := cur == nil || cur.State == protocol.ScheduleTaskState_PendingCreate
+	bound := cur != nil && cur.State == protocol.ScheduleTaskState_Bound
+	for _, c := range authority.SchedulePower(pendingOrNew, bound, bindTask != "") {
+		if !hasAnyCap(callerCaps, c.AnyOf) {
+			return c.Report, nil
+		}
 	}
+	// The task bound or being bound is reached through the bit that binding
+	// needs: the one clause a bound schedule carries.
+	resumeBit := authority.SchedulePower(false, true, false)[0].AnyOf
 	var over []string
-	if cur != nil && cur.State == protocol.ScheduleTaskState_Bound {
+	if bound {
 		over = append(over, cur.TaskID)
 	}
 	if bindTask != "" {
 		over = append(over, bindTask)
 	}
-	if len(over) == 0 {
-		return 0, nil
-	}
-	if !hasCap(callerCaps, protocol.Capability_Resume) {
-		return protocol.Capability_Resume, nil
-	}
 	for _, t := range over {
-		if !h.inScope(cid, protocol.Capability_Resume, t) {
+		if !h.inScope(cid, resumeBit, t) {
 			r := scheduleRefusal(protocol.ScheduleStatus_TaskNotReachable, "no task %s within your reach", short(t))
 			return 0, &r
 		}
@@ -735,15 +735,12 @@ func (h *TaskHandler) schedulePower(cid string, cur *Schedule, bindTask string) 
 // task_not_reachable.
 func (h *TaskHandler) scheduleRunPower(cid string, sc *Schedule) (protocol.Capability, *protocol.ScheduleResponse) {
 	callerCaps := h.callerCaps(cid)
-	switch sc.State {
-	case protocol.ScheduleTaskState_PendingCreate:
-		if !hasCap(callerCaps, protocol.Capability_Spawn) {
-			return protocol.Capability_Spawn, nil
+	for _, c := range authority.ScheduleRunPower(sc.State) {
+		if !hasAnyCap(callerCaps, c.AnyOf) {
+			return c.Report, nil
 		}
-	case protocol.ScheduleTaskState_Bound:
-		if need := authority.ResumeCap(taskIDFromHex(sc.TaskID), true); !hasAnyCap(callerCaps, need) {
-			return need, nil
-		}
+	}
+	if sc.State == protocol.ScheduleTaskState_Bound {
 		if !h.resumeTargetAllowed(cid, true, sc.TaskID) {
 			r := scheduleRefusal(protocol.ScheduleStatus_TaskNotReachable, "no task %s within your reach", short(sc.TaskID))
 			return 0, &r

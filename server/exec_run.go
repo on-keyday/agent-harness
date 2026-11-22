@@ -6,6 +6,7 @@ import (
 	"log/slog"
 
 	"github.com/on-keyday/agent-harness/appwire"
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/trsf"
 )
@@ -417,7 +418,7 @@ func (h *TaskHandler) handleExecRunKill(connID string, req *protocol.ExecRunKill
 	if !ok {
 		return protocol.ExecRunKillResponse{Status: protocol.ExecRunStatus_NotFound}
 	}
-	if !h.authorize(connID, protocol.Capability_ExecRun, e.taskIDHex) {
+	if !h.authorize(connID, authority.KindNeed(protocol.TaskControlKind_ExecRunKill).Clauses[0].AnyOf, e.taskIDHex) {
 		return protocol.ExecRunKillResponse{Status: protocol.ExecRunStatus_NotFound}
 	}
 	if _, still := h.removeExec(req.ExecId, protocol.ExecEventKind_Killed, -1); !still {

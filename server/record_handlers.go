@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/appwire"
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -58,6 +59,8 @@ func (h *TaskHandler) handleRecord(cid string, conn ConnHandle, req *protocol.Ta
 		return
 	}
 
+	// list, get and delete are gated on the central bit, and scoped by it.
+	central, _ := authority.CentralCap(req.Header.Kind)
 	switch req.Header.Kind {
 	case protocol.TaskControlKind_RecordList:
 		r := req.RecordList()
@@ -68,11 +71,11 @@ func (h *TaskHandler) handleRecord(cid string, conn ConnHandle, req *protocol.Ta
 		task := ""
 		if r.TaskPresent() && r.TaskId() != nil {
 			task = hex.EncodeToString(r.TaskId().Id[:])
-			if !gate(protocol.Capability_ExecView, task) {
+			if !gate(central, task) {
 				return
 			}
 		}
-		all, allowed := h.scopeSet(cid, protocol.Capability_ExecView)
+		all, allowed := h.scopeSet(cid, central)
 		var out []protocol.RecordInfo
 		for _, info := range h.Records.List(task) {
 			id := hex.EncodeToString(info.TaskId.Id[:])
@@ -90,7 +93,7 @@ func (h *TaskHandler) handleRecord(cid string, conn ConnHandle, req *protocol.Ta
 			return
 		}
 		task := hex.EncodeToString(r.Ref.TaskId.Id[:])
-		if !gate(protocol.Capability_ExecView, task) {
+		if !gate(central, task) {
 			return
 		}
 		if _, _, ok := h.Records.Retention(task, r.Ref.Run); !ok {
@@ -124,7 +127,7 @@ func (h *TaskHandler) handleRecord(cid string, conn ConnHandle, req *protocol.Ta
 			return
 		}
 		task := hex.EncodeToString(r.Ref.TaskId.Id[:])
-		if !gate(protocol.Capability_RecordDelete, task) {
+		if !gate(central, task) {
 			return
 		}
 		run := r.Ref.Run
@@ -167,8 +170,8 @@ func (h *TaskHandler) handleRecord(cid string, conn ConnHandle, req *protocol.Ta
 		}
 		task := hex.EncodeToString(r.Ref.TaskId.Id[:])
 		caps := h.callerCaps(cid)
-		if !hasAnyCap(caps, protocol.Capability_RecordPersist|protocol.Capability_RecordDelete) {
-			h.denyTaskControl(conn, req.Header.Kind, req.Header.RequestId, protocol.Capability_RecordPersist)
+		if c := authority.RequestNeed(req).Clauses[0]; !hasAnyCap(caps, c.AnyOf) {
+			h.denyTaskControl(conn, req.Header.Kind, req.Header.RequestId, c.Report)
 			return
 		}
 		// The direction needs the record's current retention, so the caller
@@ -176,11 +179,11 @@ func (h *TaskHandler) handleRecord(cid string, conn ConnHandle, req *protocol.Ta
 		// record is looked at — otherwise which denial comes back tells an
 		// out-of-scope caller whether a record exists and how long it is kept.
 		reach := false
-		for _, b := range []protocol.Capability{protocol.Capability_RecordPersist, protocol.Capability_RecordDelete} {
+		eachBit(authority.ScopeBit(req, caps), func(b protocol.Capability) {
 			if hasCap(caps, b) && h.inScope(cid, b, task) {
 				reach = true
 			}
-		}
+		})
 		if !reach {
 			status(protocol.RecordStatus_NotFound)
 			return
@@ -193,10 +196,7 @@ func (h *TaskHandler) handleRecord(cid string, conn ConnHandle, req *protocol.Ta
 		// A later expiry keeps (record_persist); an earlier one deletes sooner
 		// (record_delete). ttl 0 and not forever expires at the run's end.
 		ttl := time.Duration(r.TtlMs) * time.Millisecond
-		recordBit := protocol.Capability_RecordPersist
-		if !r.Forever() && (curForever || ttl < curTTL) {
-			recordBit = protocol.Capability_RecordDelete
-		}
+		recordBit := authority.RecordKeepCap(r.Forever(), ttl, curForever, curTTL)
 		if !gate(recordBit, task) {
 			return
 		}
@@ -213,10 +213,7 @@ func (h *TaskHandler) handleRecord(cid string, conn ConnHandle, req *protocol.Ta
 			return
 		}
 		task := hex.EncodeToString(r.TaskId.Id[:])
-		recordBit := protocol.Capability_RecordDelete
-		if r.On() {
-			recordBit = protocol.Capability_RecordPersist
-		}
+		recordBit := authority.RecordSwitchCap(r.On())
 		if !gate(recordBit, task) {
 			return
 		}
@@ -302,5 +299,15 @@ func (h *TaskHandler) latestRecordedRun(task string) uint32 {
 func (h *TaskHandler) notifyRecording(task string) {
 	if h.OnSessionObservers != nil {
 		h.OnSessionObservers(task)
+	}
+}
+
+// eachBit calls f with each single bit set in c, lowest first: the bits whose
+// scopes a request is resolved through when any one of them may reach it.
+func eachBit(c protocol.Capability, f func(protocol.Capability)) {
+	for c != 0 {
+		low := c & -c
+		f(low)
+		c &^= low
 	}
 }
