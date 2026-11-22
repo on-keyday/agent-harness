@@ -160,8 +160,8 @@ func (s *mcpServer) filter() toolFilter {
 // withheld → JSON-RPC error). An admitted call runs on its own goroutine under
 // its own context, so a call that waits holds up nothing else (spec D18);
 // notifications/cancelled cancels that context and its response is dropped.
-// End of input is the client going away: what is in flight is cancelled and
-// waited for, so nothing writes after serve returns.
+// End of input is the client going away: what is in flight is cancelled,
+// waited for and not answered.
 func (s *mcpServer) serve(in io.Reader, out io.Writer) error {
 	enc := json.NewEncoder(out)
 	enc.SetEscapeHTML(false)
@@ -190,7 +190,16 @@ func (s *mcpServer) serve(in io.Reader, out io.Writer) error {
 	inFlight := map[string]*flight{}
 	var calls sync.WaitGroup
 	defer func() {
-		stop() // end of input: cancel what is in flight, then wait for it
+		// End of input: the client is gone, and may have closed our stdout
+		// too -- a write there would end the process by SIGPIPE before the
+		// bodies close their connections. So what is in flight is withdrawn
+		// as a cancellation withdraws it: cancelled, waited for, unanswered.
+		fmu.Lock()
+		for _, f := range inFlight {
+			f.cancelled = true
+		}
+		fmu.Unlock()
+		stop()
 		calls.Wait()
 	}()
 

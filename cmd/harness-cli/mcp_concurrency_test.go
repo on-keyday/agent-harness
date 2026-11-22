@@ -127,7 +127,10 @@ func TestMCPCallsOverlapAndCancel(t *testing.T) {
 }
 
 // End of input is the client going away (MCP's stdio shutdown): what is in
-// flight is cancelled and serve returns instead of waiting on it.
+// flight is cancelled, serve returns instead of waiting on it, and nothing is
+// answered -- the client may have closed our stdout too, and a write to it
+// would kill the process with SIGPIPE before its bodies close their
+// connections.
 func TestMCPEndOfInputCancelsInFlight(t *testing.T) {
 	srv := &mcpServer{h: cliVerbs{}, run: func(ctx context.Context, _ toolFilter, _ verb.VerbSpec, _ json.RawMessage) (string, bool) {
 		<-ctx.Done()
@@ -143,6 +146,9 @@ func TestMCPEndOfInputCancelsInFlight(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("serve did not return after end of input with a call in flight")
+	}
+	for r := range p.resps {
+		t.Errorf("a call cancelled by end of input was answered: %v", r)
 	}
 }
 

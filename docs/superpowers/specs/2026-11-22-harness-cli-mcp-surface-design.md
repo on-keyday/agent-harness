@@ -508,7 +508,10 @@ that produced it.
 2c. **Overlap and cancellation.** The serve loop with an injected call runner:
    a call that blocks until its context ends does not delay a second call or a
    `ping`; `notifications/cancelled` naming it ends it and no response is
-   written for it; end of input cancels what is in flight. The `Sends` set of
+   written for it; end of input cancels what is in flight and answers none of
+   it (the client may have closed our stdout as well, and a write to a closed
+   pipe ends the process by SIGPIPE before its bodies close their
+   connections). The `Sends` set of
    one context is not seen by a client dialed from another (V11, V12).
 3. **Schema golden.** `tools/list` for the whole table, diffed against a
    committed golden, so a table change that moves the tool surface is visible.
