@@ -308,6 +308,9 @@ func (c *Client) Peer() *peer.Conn { return c.conn }
 // callers are correlated independently — no implicit serialization beyond the
 // objproto.Connection's send mutex.
 func (c *Client) RoundTripTaskControl(ctx context.Context, req *protocol.TaskControlRequest) (*protocol.TaskControlResponse, error) {
+	if err := checkExpectedKind(req.Header.Kind); err != nil {
+		return nil, err
+	}
 	c.mu.Lock()
 	id := c.nextReq
 	c.nextReq++
@@ -394,6 +397,9 @@ func sendChecked(transport string, budget int, data []byte, send func([]byte) er
 // caller that stops waiting leaks nothing. On a send failure the pending entry
 // is reclaimed here and no channel is returned at all.
 func (c *Client) BeginTaskControl(req *protocol.TaskControlRequest) (<-chan TaskControlResult, error) {
+	if err := checkExpectedKind(req.Header.Kind); err != nil {
+		return nil, err
+	}
 	c.mu.Lock()
 	id := c.nextReq
 	c.nextReq++

@@ -122,6 +122,12 @@ func main() {
 	// and goes through the same generated entry.
 	tokens := append([]string{sub}, args...)
 	h := cliVerbs{ctx: ctx, cid: parseCID, out: os.Stdout}
+	// The verb may send only the kinds its declaration lists (spec D14): the
+	// MCP tool list is derived from that declaration, so a body that outgrows
+	// it fails here, the first time anyone runs it.
+	if sp, ok := cliSpecFor(tokens); ok {
+		cli.ExpectKinds(sp.FlagSetName(), sp.Sends)
+	}
 
 	if err, handled, perr := verb.DispatchCLILine[error](h, tokens, nil); handled {
 		if perr != nil {
@@ -140,6 +146,26 @@ func main() {
 		usage()
 	}
 	os.Exit(2)
+}
+
+// cliSpecFor is the declaration a command line dispatches to: the longest
+// declared path its leading words spell, or `git <task-id> <sub>`, whose id
+// sits inside the path.
+func cliSpecFor(tokens []string) (verb.VerbSpec, bool) {
+	for n := verb.MaxPathLen; n >= 1; n-- {
+		if len(tokens) < n {
+			continue
+		}
+		if sp, ok := verb.Lookup(tokens[:n]...); ok && sp.CmdlineSurfaces.Has(verb.CLI) {
+			return sp, true
+		}
+	}
+	if len(tokens) >= 3 && tokens[0] == "git" {
+		if sp, ok := verb.Lookup("git", tokens[2]); ok {
+			return sp, true
+		}
+	}
+	return verb.VerbSpec{}, false
 }
 
 // retiredVerbs maps a verb the table no longer declares to what replaced it.
