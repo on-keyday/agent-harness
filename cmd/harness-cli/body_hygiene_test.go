@@ -62,6 +62,16 @@ func TestToolBodiesDoNotTouchProcessStreams(t *testing.T) {
 			}
 			fn := fd.Name.Name
 			ast.Inspect(fd, func(n ast.Node) bool {
+				// A call to die ends the process as surely as os.Exit does.
+				if call, ok := n.(*ast.CallExpr); ok {
+					if id, ok := call.Fun.(*ast.Ident); ok && id.Name == "die" {
+						if _, allowed := processStreamAllowed[fn]; !allowed {
+							found = append(found, name+":"+fn+": die(...) (line "+itoaLine(fset.Position(call.Pos()).Line)+")")
+						} else {
+							seen[fn] = true
+						}
+					}
+				}
 				sel, ok := n.(*ast.SelectorExpr)
 				if !ok {
 					return true

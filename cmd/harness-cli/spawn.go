@@ -14,7 +14,7 @@ import (
 // Build, which is where that grammar lives; the pointers carry "the operator
 // said nothing" separately from "the operator said none", because both zero
 // values are meaningful.
-func spawnOpts(a verb.SpawnAction) cli.SessionOpts {
+func spawnOpts(a verb.SpawnAction) (cli.SessionOpts, error) {
 	var caps protocol.Capability
 	if a.Caps != nil {
 		caps = *a.Caps
@@ -40,7 +40,9 @@ func spawnOpts(a verb.SpawnAction) cli.SessionOpts {
 	}
 	sel, err := cli.BuildSelector(cli.SelectorOpts{Runner: a.Runner, Host: a.Host, IP: a.IP})
 	if err != nil {
-		die(err)
+		// Returned, not died on: an MCP tool call runs this in a server that
+		// must outlive one bad --runner.
+		return cli.SessionOpts{}, err
 	}
 	return cli.SessionOpts{
 		Selector: sel, ExtraArgs: a.ExtraArgs, ResumeTaskID: a.ResumeTaskID,
@@ -55,5 +57,5 @@ func spawnOpts(a verb.SpawnAction) cli.SessionOpts {
 		MaxDescendantsPresent: a.ResumeTaskID != "" && a.MaxDescendantsPresent,
 		ResumeConversation:    a.ResumeConversation, AgentProfile: a.Agent,
 		ResumeExact: a.Exact,
-	}
+	}, nil
 }

@@ -51,11 +51,11 @@ func TestCapsPresenceIsSeparateFromItsValue(t *testing.T) {
 	// And a resume is where the difference is spent: only a typed --caps
 	// re-grants, which spawnOpts reads off exactly this bit.
 	resumed := parse(t, "--resume", id, "--caps", "none")
-	if !spawnOpts(resumed).ResumeCapsOverride {
+	if o, _ := spawnOpts(resumed); !o.ResumeCapsOverride {
 		t.Error("--resume with a typed --caps must re-grant that mask")
 	}
 	kept := parse(t, "--resume", id)
-	if spawnOpts(kept).ResumeCapsOverride {
+	if o, _ := spawnOpts(kept); o.ResumeCapsOverride {
 		t.Error("--resume without --caps must keep the task's persisted caps")
 	}
 }

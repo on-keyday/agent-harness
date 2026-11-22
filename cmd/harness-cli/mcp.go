@@ -29,12 +29,14 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/buildinfo"
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/cli/verb"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // mcpProtocolVersion is the revision this server speaks. initialize echoes the
@@ -90,6 +92,7 @@ type mcpServer struct {
 // serveMCP is the verb body. It reads requests from the process's stdin and
 // writes responses to its stdout, which is the JSON-RPC channel (D11).
 func serveMCP(h cliVerbs, readOnly bool, caps *protocol.Capability) error {
+	h = pinCID(h)
 	srv := &mcpServer{h: h, readOnly: readOnly, caps: caps, held: func() (protocol.Capability, error) {
 		resp, err := cli.WhoAmI(context.Background(), h.cid())
 		if err != nil {
@@ -101,6 +104,17 @@ func serveMCP(h cliVerbs, readOnly bool, caps *protocol.Capability) error {
 		return resp.Capabilities, nil
 	}}
 	return srv.serve(os.Stdin, os.Stdout)
+}
+
+// pinCID resolves the server ConnectionID once and hands back a handler that
+// returns that value. The command line's resolver dies on a bad value or a
+// failed DNS lookup, which in one tool call would end the server and every
+// call after it; resolved here, before initialize, a bad value fails the
+// server's start instead.
+func pinCID(h cliVerbs) cliVerbs {
+	cid := h.cid()
+	h.cid = func() objproto.ConnectionID { return cid }
+	return h
 }
 
 // heldFor is what a filter may assume the caller can satisfy: its own caps,
@@ -496,20 +510,44 @@ func (s *mcpServer) callTool(name string, rawArgs json.RawMessage) (text string,
 	if !handled {
 		return name + ": no handler for this verb", true, nil
 	}
-	if r == nil {
-		return buf.String(), false, nil
+	text, isErr = toolResultText(buf.Bytes(), r)
+	return text, isErr, nil
+}
+
+// maxToolResult bounds what one tool call hands the model: a record or a
+// transcript can be any size, and the whole of it would be one JSON line.
+const maxToolResult = 1 << 20
+
+// toolResultText shapes what a body printed, and its error, into a tool
+// result: the output, then why it failed (a refusal with nothing printed reads
+// byte-for-byte as the typed command's). Output that is not UTF-8 -- a
+// transcript tar, a raw record -- is refused rather than sent, since JSON
+// would replace its bytes with U+FFFD; and output past maxToolResult is cut
+// with a notice.
+func toolResultText(out []byte, err error) (string, bool) {
+	if !utf8.Valid(out) {
+		return fmt.Sprintf("the output is binary (%d bytes) and a tool result is text: write it to a file with -o", len(out)), true
 	}
-	// What the body printed, then why it failed. A refusal with nothing
-	// printed reads byte-for-byte as the typed command's.
-	out, msg := buf.String(), r.Error()
+	text := string(out)
+	if len(text) > maxToolResult {
+		cut := maxToolResult
+		for cut > 0 && !utf8.RuneStart(text[cut]) {
+			cut--
+		}
+		text = text[:cut] + fmt.Sprintf("\n[output truncated at %d of %d bytes; -o writes the whole of it to a file where the verb has one]", cut, len(out))
+	}
+	if err == nil {
+		return text, false
+	}
+	msg := err.Error()
 	var ec exitCodeError
-	if errors.As(r, &ec) {
+	if errors.As(err, &ec) {
 		msg = ec.msg
 	}
-	if out != "" && msg != "" && !strings.HasSuffix(out, "\n") {
-		out += "\n"
+	if text != "" && msg != "" && !strings.HasSuffix(text, "\n") {
+		text += "\n"
 	}
-	return out + msg, true, nil
+	return text + msg, true
 }
 
 // lookupTool finds a declared tool by its advertised name.

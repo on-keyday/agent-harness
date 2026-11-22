@@ -1332,7 +1332,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"board", "read"},
-		MCP:  &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_BoardRead, protocol.TaskControlKind_BoardSubscribers, protocol.TaskControlKind_BoardArchiveRead, protocol.TaskControlKind_BoardArchives},
+		MCP:  &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_BoardRead, protocol.TaskControlKind_BoardSubscribers, protocol.TaskControlKind_BoardArchiveRead, protocol.TaskControlKind_BoardArchives, protocol.TaskControlKind_BoardTopics},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/board.go:BoardModal"},
 			{Surface: WebUI, At: "webui/index.html#board-topics"},

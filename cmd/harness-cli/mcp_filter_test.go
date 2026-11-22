@@ -11,6 +11,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/cli/verb"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 func toolNames(tools []map[string]any) map[string]bool {
@@ -280,4 +281,47 @@ func tokensOf(v any) []string {
 		return []string{t}
 	}
 	return nil
+}
+
+// The server CID is resolved once, before serving: resolving it per call could
+// die (a bad value, or a DNS failure) in the middle of a session.
+func TestMCPPinsTheServerCID(t *testing.T) {
+	calls := 0
+	h := cliVerbs{cid: func() objproto.ConnectionID {
+		calls++
+		return objproto.MustParseConnectionID("ws:127.0.0.1:9-1")
+	}}
+	p := pinCID(h)
+	if calls != 1 {
+		t.Fatalf("pinCID resolved %d times, want once", calls)
+	}
+	for i := 0; i < 3; i++ {
+		_ = p.cid()
+	}
+	if calls != 1 {
+		t.Errorf("the pinned cid resolved again (%d calls)", calls)
+	}
+}
+
+// A tool result is one JSON string: binary output would be mangled into
+// U+FFFD and an unbounded one could be any size, so both are shaped here.
+func TestMCPToolResultShape(t *testing.T) {
+	if text, isErr := toolResultText([]byte("hello\n"), nil); text != "hello\n" || isErr {
+		t.Errorf("plain output: %q %t", text, isErr)
+	}
+	bin := []byte{0x1f, 0x8b, 0x08, 0x00, 0xff, 0xfe, 'a'}
+	if text, isErr := toolResultText(bin, nil); !isErr || !strings.Contains(text, "-o") || strings.ContainsRune(text, 0xFFFD) {
+		t.Errorf("binary output: %q %t, want an error pointing at -o and no replacement characters", text, isErr)
+	}
+	big := []byte(strings.Repeat("x", maxToolResult+10))
+	text, isErr := toolResultText(big, nil)
+	if isErr || len(text) > maxToolResult+200 || !strings.Contains(text, "truncated") {
+		t.Errorf("oversized output: %d bytes, isError=%t, want it cut at %d with a notice", len(text), isErr, maxToolResult)
+	}
+	if text, isErr := toolResultText([]byte("partial"), exitCodeError{code: 1}); text != "partial" || !isErr {
+		t.Errorf("exit-code error with printed output: %q %t", text, isErr)
+	}
+	if text, isErr := toolResultText(nil, exitCodeError{code: 3, msg: "ambiguous"}); text != "ambiguous" || !isErr {
+		t.Errorf("exit-code error with a message: %q %t", text, isErr)
+	}
 }

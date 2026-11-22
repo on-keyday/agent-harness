@@ -380,7 +380,10 @@ func formatSpanReport(s *cli.ScreenSnapshot) string {
 // parsed action -- the generated CLI dispatch.
 func runSessionNewWith(cid objproto.ConnectionID, a verb.SpawnAction, out io.Writer) error {
 	repoVal := a.Repo
-	sopts := spawnOpts(a)
+	sopts, err := spawnOpts(a)
+	if err != nil {
+		return err
+	}
 	sopts.EventStream = a.Stream
 	sopts.InitialRows, sopts.InitialCols = uint16(a.Rows), uint16(a.Cols)
 	turnEnd, err := verb.ParseTurnEnd(a.TurnEnd)
