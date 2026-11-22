@@ -318,9 +318,12 @@ func TestMCPToolResultShape(t *testing.T) {
 	if isErr || len(text) > maxToolResult+200 || !strings.Contains(text, "truncated") {
 		t.Errorf("oversized output: %d bytes, isError=%t, want it cut at %d with a notice", len(text), isErr, maxToolResult)
 	}
-	// The code is the only place session exec reports its command's status
-	// without --json, so a bare exit code is named (spec §7).
-	if text, isErr := toolResultText([]byte("partial"), exitCodeError{code: 1}); text != "partial\nexit status 1" || !isErr {
+	// A bare exit code adds nothing: the result reads as the typed command's
+	// stdout, and a JSON result stays one JSON value.
+	if text, isErr := toolResultText([]byte("partial"), exitCodeError{code: 1}); text != "partial" || !isErr {
+		t.Errorf("exit-code error with printed output: %q %t", text, isErr)
+	}
+	if text, isErr := toolResultText([]byte(`{"status":"session_stopped"}`+"\n"), exitCodeError{code: 3}); text != `{"status":"session_stopped"}`+"\n" || !isErr {
 		t.Errorf("exit-code error with printed output: %q %t", text, isErr)
 	}
 	if text, isErr := toolResultText(nil, exitCodeError{code: 3, msg: "ambiguous"}); text != "ambiguous" || !isErr {

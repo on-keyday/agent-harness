@@ -607,9 +607,8 @@ func (s *mcpServer) runTool(ctx context.Context, f toolFilter, spec verb.VerbSpe
 const maxToolResult = 1 << 20
 
 // toolResultText shapes what a body printed, and its error, into a tool
-// result: the output, then why it failed -- the error's text, or for an exit
-// code with none, "exit status N" (session exec's only report of its
-// command's status without --json). Output that is not UTF-8 -- a
+// result: the output, then why it failed (a refusal with nothing printed reads
+// byte-for-byte as the typed command's). Output that is not UTF-8 -- a
 // transcript tar, a raw record -- is refused rather than sent, since JSON
 // would replace its bytes with U+FFFD; and output past maxToolResult is cut
 // with a notice.
@@ -630,7 +629,7 @@ func toolResultText(out []byte, err error) (string, bool) {
 	}
 	msg := err.Error()
 	var ec exitCodeError
-	if errors.As(err, &ec) && ec.msg != "" {
+	if errors.As(err, &ec) {
 		msg = ec.msg
 	}
 	if text != "" && msg != "" && !strings.HasSuffix(text, "\n") {

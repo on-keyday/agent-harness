@@ -354,9 +354,7 @@ that prints to fd 1 fails the "stdout is JSON-RPC only" assertion.
   MCP server that ends the server. These return an exit-code error instead: the
   CLI's `die()` exits with that code and prints the error's text (empty for the
   ones that already printed), so the command line behaves exactly as before;
-  `tools/call` returns the captured output with `isError`, followed by the
-  error's text or, when it has none, `exit status N` — the code is the only
-  place `session exec` reports its command's status without `--json`.
+  `tools/call` returns the captured output with `isError`.
 - **`os.Stdin` in a body.** `board send`, `agent send` read the body from stdin
   when neither text nor `--data` gives one. In the MCP server stdin is the
   JSON-RPC stream, so `cliVerbs` gains `in io.Reader` beside `out`, read through
