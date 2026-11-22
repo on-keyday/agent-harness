@@ -990,7 +990,7 @@ func (h tuiVerbs) CapsWhatIf(v verb.CapsWhatIfAction) tea.Cmd {
 			return nil
 		}
 	}
-	r, err := cli.BuildWhatIf(a.auditTasks(), cli.WhatIfChange(v))
+	r, err := cli.BuildWhatIf(a.auditTasks(), cli.WhatIfChangeAs(v, cli.WhatIfActor()))
 	if err != nil {
 		a.cmdresult.Append(ErrorStyle.Render(err.Error()))
 		return nil

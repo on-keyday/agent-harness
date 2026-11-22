@@ -51,9 +51,10 @@ type SetCapsResult struct {
 }
 
 // SetCapsWith rewrites a live task's authority over an already-connected
-// client. Operator-only, enforced server-side by the caller having no
-// principal task — an in-task agent gets SetCapsStatus_NotOperator however it
-// asks. Long-lived embedders (TUI/WebUI) call this form.
+// client. An operator may rewrite any task; a task may re-grant only its own
+// strict descendants inside its resume scope, bounded like a re-granting resume
+// (delegated-regrant spec R1/R2), enforced server-side. Long-lived embedders
+// (TUI/WebUI) call this form.
 func SetCapsWith(ctx context.Context, c taskControlClient, opts SetCapsOpts) (SetCapsResult, error) {
 	if opts.Caps == nil && opts.Scope == nil && opts.DelegateCaps == nil && opts.DelegateScope == nil &&
 		opts.SpawnDepth == nil && opts.MaxDescendants == nil {
@@ -108,7 +109,7 @@ func SetCapsWith(ctx context.Context, c taskControlClient, opts SetCapsOpts) (Se
 	for _, id := range sc.Affected {
 		out.Affected = append(out.Affected, hex.EncodeToString(id.Id[:]))
 	}
-	return out, setCapsStatusError(sc.Status)
+	return out, setCapsStatusError(sc.Status, string(sc.Message))
 }
 
 // SetCaps dials the server, applies the re-grant and closes. Short-lived
@@ -122,16 +123,22 @@ func SetCaps(ctx context.Context, serverCID objproto.ConnectionID, opts SetCapsO
 	return SetCapsWith(ctx, c, opts)
 }
 
-func setCapsStatusError(s protocol.SetCapsStatus) error {
+// setCapsStatusError renders the answer. msg is the server's own refusal text
+// for a task's re-grant outside its bound (R4); empty otherwise.
+func setCapsStatusError(s protocol.SetCapsStatus, msg string) error {
 	switch s {
 	case protocol.SetCapsStatus_Ok:
 		return nil
 	case protocol.SetCapsStatus_NotFound:
-		return fmt.Errorf("no such task")
+		return fmt.Errorf("no such task within your reach (from inside a task, caps set reaches only " +
+			"your own descendants within your resume scope)")
 	case protocol.SetCapsStatus_NotOperator:
 		return fmt.Errorf("operator only: capabilities can be re-granted from an " +
 			"operator connection, not from inside a task")
 	case protocol.SetCapsStatus_InvalidScope:
+		if msg != "" {
+			return fmt.Errorf("the re-grant is outside what you may grant: %s", msg)
+		}
 		return fmt.Errorf("the scope is inconsistent: override capability lists must " +
 			"not overlap, must name at least one capability, and must not name spawn " +
 			"(it names no task; narrow resume / resume_exact instead). This is not about how " +

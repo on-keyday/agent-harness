@@ -24,10 +24,15 @@ type WhatIfReport struct {
 	Partial bool
 }
 
-// WhatIfChange is the change a parsed `caps what-if` line describes. The
-// positional is the target of a re-grant or reparent and the creator of a
-// spawn.
-func WhatIfChange(a verb.CapsWhatIfAction) authority.Change {
+// WhatIfChange is the change a parsed `caps what-if` line describes, as the
+// operator would make it. The positional is the target of a re-grant or
+// reparent and the creator of a spawn.
+func WhatIfChange(a verb.CapsWhatIfAction) authority.Change { return WhatIfChangeAs(a, "") }
+
+// WhatIfChangeAs is WhatIfChange made by actor (task-id hex, "" = the
+// operator): a re-grant by a task is predicted under the task-caller rule
+// (delegated-regrant spec R9), as the server would apply it.
+func WhatIfChangeAs(a verb.CapsWhatIfAction, actor string) authority.Change {
 	if a.ParentID != "" || a.ParentNone {
 		return authority.Reparent{Target: a.TaskID, NewParent: a.ParentID}
 	}
@@ -56,7 +61,7 @@ func WhatIfChange(a verb.CapsWhatIfAction) authority.Change {
 		s.DelegateScope = authority.ScopeFromWire(bound, nil)
 		return s
 	}
-	r := authority.Regrant{Target: a.TaskID, Caps: a.Caps, DelegateCaps: a.DelegateCaps, Cascade: a.Cascade}
+	r := authority.Regrant{Actor: actor, Target: a.TaskID, Caps: a.Caps, DelegateCaps: a.DelegateCaps, Cascade: a.Cascade}
 	if a.Scope != nil {
 		s := authority.ScopeFromWire(*a.Scope, a.Overrides)
 		r.Scope = &s

@@ -986,6 +986,13 @@ type SessionExecAction struct {
 	Cmd string
 }
 
+// SessionRenameAction is built by: session rename.
+type SessionRenameAction struct {
+	ActionMarker
+	TaskID string
+	Name   string
+}
+
 // SetCapsAction is built by: caps set.
 type SetCapsAction struct {
 	ActionMarker
@@ -3869,6 +3876,16 @@ func init() {
 			}
 			return a, nil
 		},
+		"session rename\x00cli": func(b Bound) (Action, error) {
+			a := SessionRenameAction{}
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.Name = b.Args[1]
+			}
+			return a, nil
+		},
 		"session await-idle\x00cli": func(b Bound) (Action, error) {
 			a := SessionAction{}
 			a.Sub = "await-idle"
@@ -5769,6 +5786,7 @@ const (
 	CmdSessionAttach          = "session attach"
 	CmdSessionLs              = "session ls"
 	CmdSessionKill            = "session kill"
+	CmdSessionRename          = "session rename"
 	CmdSessionAwaitIdle       = "session await-idle"
 	CmdSessionAwaitIdleLs     = "session await-idle ls"
 	CmdSessionAwaitIdleKill   = "session await-idle kill"
@@ -8120,6 +8138,27 @@ func ParseCmdSessionKill(sf Surface, args []string, ctx map[string]string) (Sess
 	return a, nil
 }
 
+func ParseCmdSessionRename(sf Surface, args []string, ctx map[string]string) (SessionRenameAction, error) {
+	var zero SessionRenameAction
+	sp, ok := Lookup("session", "rename")
+	if !ok {
+		return zero, fmt.Errorf("session rename: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(SessionRenameAction)
+	return a, nil
+}
+
 func ParseCmdSessionAwaitIdle(sf Surface, args []string, ctx map[string]string) (SessionAction, error) {
 	var zero SessionAction
 	sp, ok := Lookup("session", "await-idle")
@@ -9327,6 +9366,8 @@ type CLIDispatch[R any] interface {
 	SessionLs(SessionAction) R
 	// session kill
 	SessionKill(SessionAction) R
+	// session rename
+	SessionRename(SessionRenameAction) R
 	// session await-idle
 	SessionAwaitIdle(SessionAction) R
 	// session await-idle ls
@@ -9948,6 +9989,12 @@ func DispatchCLI[R any](h CLIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.SessionKill(a), true, nil
+	case CmdSessionRename:
+		a, perr := ParseCmdSessionRename(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.SessionRename(a), true, nil
 	case CmdSessionAwaitIdle:
 		a, perr := ParseCmdSessionAwaitIdle(CLI, args, ctx)
 		if perr != nil {
@@ -10476,6 +10523,8 @@ func DispatchCLIAction[R any](h CLIDispatch[R], act Action) (r R, handled bool) 
 		return h.CapsWhatIf(a), true
 	case SetParentAction:
 		return h.CapsSetParent(a), true
+	case SessionRenameAction:
+		return h.SessionRename(a), true
 	case AwaitProgressAction:
 		switch a.Sub {
 		case "arm":
@@ -11100,6 +11149,12 @@ func ParseCLICommand(tokens []string, ctx map[string]string) (act Action, handle
 			return a, true, nil
 		case CmdSessionKill:
 			a, perr := ParseCmdSessionKill(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdSessionRename:
+			a, perr := ParseCmdSessionRename(CLI, tokens[n:], ctx)
 			if perr != nil {
 				return nil, true, perr
 			}

@@ -2881,6 +2881,18 @@ var Verbs = []VerbSpec{
 		Examples: []string{"session kill aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 	},
 	{
+		Path: []string{"session", "rename"}, CmdlineSurfaces: CLI,
+		NoModalSurface: "TUI and WebUI are added with their handlers in the surfaces task of docs/superpowers/plans/2026-11-22-delegated-regrant-and-rename.md",
+		Notes: []string{
+			"set a task's display name (shown as name= in ls and as the board sender label); an empty name clears it; at most 64 bytes of UTF-8 with no control characters",
+			"the operator may rename any task; from inside a task you may rename only your own descendants within your resume scope, never yourself (a self-rename would let a task pose as another on the board)",
+		},
+		Action: "SessionRenameAction",
+		Args: []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"},
+			{Name: "name", Type: ArgString, Field: "Name"}},
+		Examples: []string{"session rename aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa nightly-ci"},
+	},
+	{
 		Path: []string{"session", "await-idle"}, CmdlineSurfaces: CLI | TUI | WebUI,
 		WebUIDispatch: WebUIDispatch{Fn: "awaitIdle"},
 		SurfaceNotes:  map[Surface][]string{WebUI: {"fire when the session's output goes idle (default: prints here on fire; --notify: notification feed + hook)"}, TUI: {"fire when the session's output goes idle (default: result line here; --notify: operator notification)"}},

@@ -835,7 +835,7 @@ func (h cliVerbs) CapsWhatIf(a verb.CapsWhatIfAction) error {
 		if err != nil {
 			return err
 		}
-		r, err := cli.BuildWhatIf(body.Tasks, cli.WhatIfChange(a))
+		r, err := cli.BuildWhatIf(body.Tasks, cli.WhatIfChangeAs(a, cli.WhatIfActor()))
 		if err != nil {
 			return err
 		}
@@ -883,6 +883,9 @@ func (h cliVerbs) SessionLs(a verb.SessionAction) error {
 }
 func (h cliVerbs) SessionKill(a verb.SessionAction) error {
 	return h.withClient(func(c *cli.Client) error { return c.Cancel(h.ctx, a.TaskID) })
+}
+func (h cliVerbs) SessionRename(a verb.SessionRenameAction) error {
+	return cli.TaskRenameOut(h.ctx, h.cid(), a.TaskID, a.Name, os.Stdout)
 }
 func (h cliVerbs) SessionAwaitIdle(a verb.SessionAction) error {
 	return runSessionAwaitIdleWith(h.cid(), a)

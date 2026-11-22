@@ -81,7 +81,7 @@ func TestStatusErrorsNameTheFix(t *testing.T) {
 // caps set's invalid-scope answer covers the spawn override too, which is not
 // an overlap or an empty mask.
 func TestSetCapsInvalidScopeNamesSpawn(t *testing.T) {
-	if err := setCapsStatusError(protocol.SetCapsStatus_InvalidScope); err == nil || !strings.Contains(err.Error(), "spawn") {
+	if err := setCapsStatusError(protocol.SetCapsStatus_InvalidScope, ""); err == nil || !strings.Contains(err.Error(), "spawn") {
 		t.Fatalf("invalid_scope: %v, want it to name the spawn override", err)
 	}
 }
