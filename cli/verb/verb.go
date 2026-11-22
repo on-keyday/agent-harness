@@ -374,6 +374,28 @@ type ModalSurface struct {
 	At      string
 }
 
+// MCPEffect is a tool's declared side effect. It fills the MCP
+// readOnlyHint/destructiveHint annotations and is what `--read-only` filters
+// on: the table already knows which verbs take something away, so the answer
+// lives with the declaration instead of in the server.
+type MCPEffect string
+
+const (
+	MCPRead  MCPEffect = "read"
+	MCPWrite MCPEffect = "write"
+)
+
+// MCPTool is one verb's exposure as an MCP tool.
+type MCPTool struct {
+	// Name overrides the derived tool name (the path joined with "."). Empty
+	// means derive. Set only where the path is not a usable tool name.
+	Name string
+
+	// SideEffect is MCPRead or MCPWrite. It decides the annotations and whether
+	// a --read-only server offers the tool.
+	SideEffect MCPEffect
+}
+
 // VerbSpec is one verb path's whole grammar.
 type VerbSpec struct {
 	Path []string
@@ -409,7 +431,20 @@ type VerbSpec struct {
 	// TestEveryVerbHasASurfaceVerdict refuses, so that state cannot survive a
 	// commit.
 	NoModalSurface string
-	Args           []Arg
+
+	// MCP, when non-nil, exposes this verb as an MCP tool. Presence is the
+	// whole statement: a verb the model may call is declared here, and every
+	// MCP-aware consumer reads the same row. It is a pointer so "surveyed and
+	// deliberately not exposed" (nil) can be told from "no opinion" -- the
+	// same distinction NoModalSurface draws for modal surfaces.
+	//
+	// The generator carries this field into no generated code: the parse it
+	// already emits is what an MCP tool call reuses. Declaring it here is what
+	// keeps the tool surface a property of the table rather than a list in the
+	// MCP server.
+	MCP *MCPTool
+
+	Args []Arg
 	Flags          []Flag
 	Trailing       *Trailing
 

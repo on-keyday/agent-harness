@@ -1,0 +1,179 @@
+[
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "description": "list the grantable --caps capability names and --scope forms",
+    "inputSchema": {
+      "properties": {
+        "json": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "name": "caps"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "description": "show THIS connection's own principal + server-enforced caps and scope (no cap required)",
+    "inputSchema": {
+      "properties": {
+        "json": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "name": "whoami"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "description": "the commit this binary — and the skills embedded in it — was built from",
+    "inputSchema": {
+      "properties": {
+        "json": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "name": "version"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "description": "JSON Lines: interactive sessions only. The rows share `ls --json`'s task",
+    "inputSchema": {
+      "properties": {
+        "json": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "name": "session_ls"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "set a task's display name (shown as name= in ls and as the board sender label); an empty name clears it; at most 64 bytes of UTF-8 with no control characters",
+    "inputSchema": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "task-id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task-id",
+        "name"
+      ],
+      "type": "object"
+    },
+    "name": "session_rename"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "description": "list PTY records: each run's start, end, end reason, size on disk, expiry, truncation; with no task, every record you may view",
+    "inputSchema": {
+      "properties": {
+        "task-id": {
+          "items": {
+            "pattern": "^[0-9a-f]{32}$",
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "task-id"
+      ],
+      "type": "object"
+    },
+    "name": "record_ls"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "description": "list the agent sessions recorded for a task's working directory (transcript_read): agent, id, times, size",
+    "inputSchema": {
+      "properties": {
+        "session": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "task-id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task-id",
+        "session"
+      ],
+      "type": "object"
+    },
+    "name": "transcript_ls"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "description": "idempotent dump of subscribed topics; --since 0 (default) = the whole ring",
+    "inputSchema": {
+      "properties": {
+        "in-reply-to": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "json": {
+          "default": false,
+          "type": "boolean"
+        },
+        "server-cid": {
+          "default": "",
+          "type": "string"
+        },
+        "since": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "user-prompt-submit-hook": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "name": "agent_inbox"
+  }
+]

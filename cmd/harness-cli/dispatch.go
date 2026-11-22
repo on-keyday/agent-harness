@@ -43,6 +43,12 @@ import (
 // stdout, and reach cli.Client directly, none of which the TUI does.
 type cliVerbs struct {
 	ctx context.Context
+	// out is where a body writes its result. The CLI sets it to os.Stdout;
+	// the MCP consumer sets it to a buffer so one tool call's output is
+	// captured without swapping the process-global stdout. A nil out means
+	// os.Stdout, so a cliVerbs built without one (a test) behaves as the CLI
+	// does.
+	out io.Writer
 	// cid resolves the server ConnectionID, dying on a bad one. A function
 	// rather than a value because resolution reads flags, env and the
 	// workspace file, and a verb that never dials (version, caps, skill,
@@ -51,6 +57,15 @@ type cliVerbs struct {
 }
 
 var _ verb.CLIDispatch[error] = cliVerbs{}
+
+// stdout is the sink a body writes its result to. It falls back to os.Stdout
+// so a cliVerbs built without an out (a test) behaves as the CLI does.
+func (h cliVerbs) stdout() io.Writer {
+	if h.out != nil {
+		return h.out
+	}
+	return os.Stdout
+}
 
 // dial opens the one connection a verb's body needs. Callers close it.
 func (h cliVerbs) dial() (*cli.Client, error) {
@@ -107,7 +122,7 @@ func (h cliVerbs) FileLs(a verb.FileLsAction) error {
 		if err != nil {
 			return err
 		}
-		return c.FileLs(h.ctx, a.TaskID, a.RelPath, route, os.Stdout)
+		return c.FileLs(h.ctx, a.TaskID, a.RelPath, route, h.stdout())
 	})
 }
 
@@ -178,15 +193,15 @@ func (h cliVerbs) Ls(a verb.ListAction) error {
 		if err != nil {
 			return err
 		}
-		return cli.ListOrdered(h.ctx, h.cid(), os.Stdout, o, a.JSON)
+		return cli.ListOrdered(h.ctx, h.cid(), h.stdout(), o, a.JSON)
 	}
 	switch {
 	case a.Tree:
-		return cli.ListTree(h.ctx, h.cid(), os.Stdout)
+		return cli.ListTree(h.ctx, h.cid(), h.stdout())
 	case a.JSON:
-		return cli.ListJSON(h.ctx, h.cid(), os.Stdout)
+		return cli.ListJSON(h.ctx, h.cid(), h.stdout())
 	default:
-		return cli.List(h.ctx, h.cid(), os.Stdout)
+		return cli.List(h.ctx, h.cid(), h.stdout())
 	}
 }
 
@@ -200,15 +215,15 @@ func (h cliVerbs) Conns(a verb.ConnsAction) error {
 			if perr != nil {
 				return perr
 			}
-			return runTrsf(h.ctx, c, peer, a.Watch, a.JSON, os.Stdout)
+			return runTrsf(h.ctx, c, peer, a.Watch, a.JSON, h.stdout())
 		})
 	}
 	if a.Follow {
 		var err error
 		if a.JSON {
-			err = cli.WatchConnsJSON(h.ctx, h.cid(), os.Stdout)
+			err = cli.WatchConnsJSON(h.ctx, h.cid(), h.stdout())
 		} else {
-			err = cli.WatchConns(h.ctx, h.cid(), os.Stdout)
+			err = cli.WatchConns(h.ctx, h.cid(), h.stdout())
 		}
 		if err != nil && err != context.Canceled {
 			return err
@@ -221,12 +236,12 @@ func (h cliVerbs) Conns(a verb.ConnsAction) error {
 	}
 	if a.JSON {
 		for i := range conns {
-			fmt.Fprintln(os.Stdout, cli.ConnInfoJSONLine(&conns[i]))
+			fmt.Fprintln(h.stdout(), cli.ConnInfoJSONLine(&conns[i]))
 		}
 		return nil
 	}
 	for _, line := range cli.ConnInfoLines(conns) {
-		fmt.Fprintln(os.Stdout, line)
+		fmt.Fprintln(h.stdout(), line)
 	}
 	return nil
 }
@@ -240,9 +255,9 @@ func (h cliVerbs) Overview(a verb.OverviewAction) error {
 			return err
 		}
 		if a.JSON {
-			return json.NewEncoder(os.Stdout).Encode(o)
+			return json.NewEncoder(h.stdout()).Encode(o)
 		}
-		cli.WriteOverview(os.Stdout, o, now)
+		cli.WriteOverview(h.stdout(), o, now)
 		return nil
 	})
 }
@@ -256,15 +271,15 @@ func (h cliVerbs) Notify(a verb.NotifyAction) error {
 }
 
 func (h cliVerbs) Watch(a verb.CatalogAction) error {
-	return cli.Watch(h.ctx, h.cid(), os.Stdout)
+	return cli.Watch(h.ctx, h.cid(), h.stdout())
 }
 
 func (h cliVerbs) NotifyWatch(a verb.CatalogAction) error {
-	return cli.WatchNotificationsText(h.ctx, h.cid(), os.Stdout)
+	return cli.WatchNotificationsText(h.ctx, h.cid(), h.stdout())
 }
 
 func (h cliVerbs) Prune(a verb.PruneAction) error {
-	return cli.Prune(h.ctx, h.cid(), a.Before, a.TaskIDs, os.Stdout)
+	return cli.Prune(h.ctx, h.cid(), a.Before, a.TaskIDs, h.stdout())
 }
 
 func (h cliVerbs) Restore(a verb.RestoreAction) error {
@@ -274,13 +289,13 @@ func (h cliVerbs) Restore(a verb.RestoreAction) error {
 	if a.List {
 		ids = nil
 	}
-	return cli.Restore(h.ctx, h.cid(), ids, os.Stdout)
+	return cli.Restore(h.ctx, h.cid(), ids, h.stdout())
 }
 
 // --- the catalogs: no connection, so no cid() ---------------------------
 
 func (h cliVerbs) Caps(a verb.CatalogAction) error {
-	return cli.WriteCaps(os.Stdout, a.JSON)
+	return cli.WriteCaps(h.stdout(), a.JSON)
 }
 
 func (h cliVerbs) Whoami(a verb.CatalogAction) error {
@@ -288,11 +303,11 @@ func (h cliVerbs) Whoami(a verb.CatalogAction) error {
 	if err != nil {
 		return err
 	}
-	return cli.WriteWhoAmI(os.Stdout, resp, a.JSON)
+	return cli.WriteWhoAmI(h.stdout(), resp, a.JSON)
 }
 
 func (h cliVerbs) Version(a verb.CatalogAction) error {
-	return writeVersion(os.Stdout, a.JSON)
+	return writeVersion(h.stdout(), a.JSON)
 }
 
 // SkillLs answers `skill ls`, the positional spelling of --list.
@@ -353,7 +368,7 @@ func (h cliVerbs) Skill(a verb.CatalogAction) error {
 			}
 			return skillErr(name, err)
 		}
-		os.Stdout.Write(b)
+		h.stdout().Write(b)
 		return nil
 	}
 	md, err := agentskills.Skill(name)
@@ -364,7 +379,7 @@ func (h cliVerbs) Skill(a verb.CatalogAction) error {
 		}
 		return fmt.Errorf("skill %q: %w", name, err)
 	}
-	os.Stdout.Write(md)
+	h.stdout().Write(md)
 	return nil
 }
 
@@ -397,7 +412,7 @@ func (h cliVerbs) gitQuery(a verb.GitAction, q func(*cli.Client, cli.GitQuery) (
 		if err := res.Err(); err != nil {
 			return err
 		}
-		renderGitResult(os.Stdout, res, isTTY(os.Stdout))
+		renderGitResult(h.stdout(), res, isTTY(h.stdout()))
 		return nil
 	})
 }
@@ -502,7 +517,7 @@ func (h cliVerbs) ExecTap(a verb.ExecTapAction) error {
 	defer cancel()
 	return cli.RunExecTapDial(tctx, h.cid(), a.ExecID, cli.ExecTapOpts{
 		Filter: filter, MaxRecordBytes: a.MaxRecordBytes, Mode: cli.TapModeByName(a.Mode),
-	}, os.Stdout)
+	}, h.stdout())
 }
 
 // --- forward ------------------------------------------------------------
@@ -549,7 +564,7 @@ func (h cliVerbs) ForwardTap(a verb.ForwardTapAction) error {
 	defer cancel()
 	return cli.RunForwardTapDial(tctx, h.cid(), a.ForwardID, cli.ForwardTapOpts{
 		Filter: filter, MaxRecordBytes: a.MaxRecordBytes, Mode: cli.TapModeByName(a.Mode),
-	}, os.Stdout)
+	}, h.stdout())
 }
 
 // --- server / board / agent --------------------------------------------
@@ -706,59 +721,59 @@ func (h cliVerbs) BoardWake(a verb.BoardAction) error          { return h.board(
 // BoardSend reads its body from stdin when asked to, which RunBoardAction's
 // signature has no room for -- the same reason AgentSend is not h.board.
 func (h cliVerbs) BoardSend(a verb.BoardSendAction) error {
-	return cli.RunBoardSend(h.ctx, h.cid(), a, os.Stdin, os.Stdout)
+	return cli.RunBoardSend(h.ctx, h.cid(), a, os.Stdin, h.stdout())
 }
 
 func (h cliVerbs) board(a verb.BoardAction) error {
-	return cli.RunBoardAction(h.ctx, h.cid(), a, os.Stdout)
+	return cli.RunBoardAction(h.ctx, h.cid(), a, h.stdout())
 }
 
 // The agent verbs run inside a task's Bash tool and read HARNESS_* env, so
 // they resolve their own server CID and never call h.cid().
 func (h cliVerbs) AgentSend(a verb.AgentSendAction) error {
-	return agent.SendWith(h.ctx, a, os.Stdin, os.Stdout)
+	return agent.SendWith(h.ctx, a, os.Stdin, h.stdout())
 }
 func (h cliVerbs) AgentDispatch(a verb.AgentSendAction) error {
-	return agent.DispatchWith(h.ctx, a, os.Stdin, os.Stdout)
+	return agent.DispatchWith(h.ctx, a, os.Stdin, h.stdout())
 }
 func (h cliVerbs) AgentThread(a verb.AgentAction) error {
-	return agent.ThreadWith(h.ctx, a, os.Stdout)
+	return agent.ThreadWith(h.ctx, a, h.stdout())
 }
 func (h cliVerbs) AgentInbox(a verb.AgentAction) error {
-	return agent.InboxWith(h.ctx, a, os.Stdout)
+	return agent.InboxWith(h.ctx, a, h.stdout())
 }
 func (h cliVerbs) AgentWait(a verb.AgentAction) error {
-	return agent.WaitWith(h.ctx, a, os.Stdout)
+	return agent.WaitWith(h.ctx, a, h.stdout())
 }
 func (h cliVerbs) AgentSubscribe(a verb.AgentAction) error {
-	return agent.SubscribeWith(h.ctx, a, os.Stdout)
+	return agent.SubscribeWith(h.ctx, a, h.stdout())
 }
 func (h cliVerbs) AgentUnsubscribe(a verb.AgentAction) error {
-	return agent.UnsubscribeWith(h.ctx, a, os.Stdout)
+	return agent.UnsubscribeWith(h.ctx, a, h.stdout())
 }
 func (h cliVerbs) AgentTopics(a verb.AgentAction) error {
-	return agent.TopicsWith(h.ctx, a, os.Stdout)
+	return agent.TopicsWith(h.ctx, a, h.stdout())
 }
 func (h cliVerbs) AgentSubscriptions(a verb.AgentAction) error {
-	return agent.SubscriptionsWith(h.ctx, a, os.Stdout)
+	return agent.SubscriptionsWith(h.ctx, a, h.stdout())
 }
 func (h cliVerbs) AgentContacts(a verb.AgentAction) error {
-	return agent.ContactsWith(h.ctx, a, os.Stdout)
+	return agent.ContactsWith(h.ctx, a, h.stdout())
 }
 func (h cliVerbs) AgentRetained(a verb.AgentAction) error {
-	return agent.RetainedWith(h.ctx, a, os.Stdout)
+	return agent.RetainedWith(h.ctx, a, h.stdout())
 }
 func (h cliVerbs) AgentPurge(a verb.AgentAction) error {
-	return agent.PurgeWith(h.ctx, a, os.Stdout)
+	return agent.PurgeWith(h.ctx, a, h.stdout())
 }
 func (h cliVerbs) AgentArchives(a verb.AgentAction) error {
-	return agent.ArchivesWith(h.ctx, a, os.Stdout)
+	return agent.ArchivesWith(h.ctx, a, h.stdout())
 }
 func (h cliVerbs) AgentRead(a verb.AgentAction) error {
-	return agent.ReadWith(h.ctx, a, os.Stdout)
+	return agent.ReadWith(h.ctx, a, h.stdout())
 }
 func (h cliVerbs) AgentRetract(a verb.AgentAction) error {
-	return agent.RetractWith(h.ctx, a, os.Stdout)
+	return agent.RetractWith(h.ctx, a, h.stdout())
 }
 
 // --- caps set / set-parent ---------------------------------------------
@@ -800,7 +815,7 @@ func (h cliVerbs) CapsAudit(a verb.CapsAuditAction) error {
 		if err != nil {
 			return err
 		}
-		return cli.WriteCapsAuditReport(os.Stdout, body.Tasks, a.All, a.Empty, focus, a.JSON)
+		return cli.WriteCapsAuditReport(h.stdout(), body.Tasks, a.All, a.Empty, focus, a.JSON)
 	})
 }
 
@@ -825,7 +840,7 @@ func (h cliVerbs) CapsReach(a verb.CapsReachAction) error {
 		if err != nil {
 			return err
 		}
-		return cli.WriteReachReport(os.Stdout, r, cli.ReachFormatOf(a.JSON, a.Tree))
+		return cli.WriteReachReport(h.stdout(), r, cli.ReachFormatOf(a.JSON, a.Tree))
 	})
 }
 
@@ -841,7 +856,7 @@ func (h cliVerbs) CapsWhatIf(a verb.CapsWhatIfAction) error {
 		}
 		kind, _ := cli.EffectiveClientKind(protocol.ClientKind_Cli)
 		r.Partial = kind == protocol.ClientKind_Agent || kind == protocol.ClientKind_Credential
-		return cli.WriteWhatIf(os.Stdout, r, a.JSON)
+		return cli.WriteWhatIf(h.stdout(), r, a.JSON)
 	})
 }
 
@@ -879,13 +894,13 @@ func (h cliVerbs) SessionExec(a verb.SessionExecAction) error {
 	return runSessionExecWith(h.cid(), a)
 }
 func (h cliVerbs) SessionLs(a verb.SessionAction) error {
-	return cli.SessionListJSON(h.ctx, h.cid(), os.Stdout)
+	return cli.SessionListJSON(h.ctx, h.cid(), h.stdout())
 }
 func (h cliVerbs) SessionKill(a verb.SessionAction) error {
 	return h.withClient(func(c *cli.Client) error { return c.Cancel(h.ctx, a.TaskID) })
 }
 func (h cliVerbs) SessionRename(a verb.SessionRenameAction) error {
-	return cli.TaskRenameOut(h.ctx, h.cid(), a.TaskID, a.Name, os.Stdout)
+	return cli.TaskRenameOut(h.ctx, h.cid(), a.TaskID, a.Name, h.stdout())
 }
 func (h cliVerbs) SessionAwaitIdle(a verb.SessionAction) error {
 	return runSessionAwaitIdleWith(h.cid(), a)
@@ -976,7 +991,7 @@ func (h cliVerbs) Lifecycle(a verb.LifecycleAction) error {
 	if fi, err := os.Stdin.Stat(); err == nil && fi.Mode()&os.ModeCharDevice == 0 {
 		stdin = os.Stdin
 	}
-	cli.ReportLifecycle(h.ctx, h.cid, a.State, a.Hook, stdin, os.Stdout, os.Stderr)
+	cli.ReportLifecycle(h.ctx, h.cid, a.State, a.Hook, stdin, h.stdout(), os.Stderr)
 	return nil
 }
 
@@ -998,7 +1013,7 @@ func (h cliVerbs) AwaitProgress(a verb.AwaitProgressAction) error {
 	}); err != nil {
 		return err
 	}
-	_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
+	_ = json.NewEncoder(h.stdout()).Encode(map[string]any{
 		"status":      cli.AwaitProgressStatusString(resp.Status),
 		"progress":    string(resp.Progress),
 		"progress_at": resp.ProgressAt,
@@ -1113,7 +1128,7 @@ func (h cliVerbs) Forward(a verb.ForwardOpenAction) error {
 			}
 			return cli.RunHTTPRequestForward(fctx, c, a.TaskID, wHost, wPort, cli.HTTPRequestSpec{
 				Method: a.HTTPMethod, Path: a.HTTPPath, Headers: a.HTTPHeaders, Body: body,
-			}, os.Stdout, logf)
+			}, h.stdout(), logf)
 		}
 		return cli.RunStdioForward(fctx, c, a.TaskID, wHost, wPort, logf)
 	}
@@ -1234,17 +1249,17 @@ func (h cliVerbs) PruneLocal(a verb.PruneLocalAction) error {
 		return err
 	}
 	if len(a.TaskIDs) == 0 {
-		return cli.PruneLocal(h.ctx, abs, a.Before, nil, os.Stdout)
+		return cli.PruneLocal(h.ctx, abs, a.Before, nil, h.stdout())
 	}
-	safe, err := classifyForLocalPrune(h.ctx, h.cid(), a.TaskIDs, a.Force, os.Stdout)
+	safe, err := classifyForLocalPrune(h.ctx, h.cid(), a.TaskIDs, a.Force, h.stdout())
 	if err != nil {
 		return err
 	}
 	if len(safe) == 0 {
-		fmt.Fprintln(os.Stdout, "prune-local: no removable task ids (use --force to override server-active state)")
+		fmt.Fprintln(h.stdout(), "prune-local: no removable task ids (use --force to override server-active state)")
 		return nil
 	}
-	return cli.PruneLocal(h.ctx, abs, 0, safe, os.Stdout)
+	return cli.PruneLocal(h.ctx, abs, 0, safe, h.stdout())
 }
 
 // unimplemented reports a verb the declaration gives this surface and this
@@ -1258,11 +1273,11 @@ func (h cliVerbs) unimplemented(name string) error {
 // --- PTY records (pillar A spec, A1) -----------------------------------------
 
 func (h cliVerbs) RecordLs(a verb.RecordLsAction) error {
-	return cli.RecordLs(h.ctx, h.cid(), a.TaskID, os.Stdout)
+	return cli.RecordLs(h.ctx, h.cid(), a.TaskID, h.stdout())
 }
 
 func (h cliVerbs) RecordGet(a verb.RecordGetAction) error {
-	out := io.Writer(os.Stdout)
+	out := io.Writer(h.stdout())
 	if a.Output != "" {
 		f, err := os.Create(a.Output)
 		if err != nil {
@@ -1278,31 +1293,31 @@ func (h cliVerbs) RecordRm(a verb.RecordRmAction) error {
 	if err := cli.CheckRecordRm(a.Ref, a.AllRuns); err != nil {
 		return err
 	}
-	return cli.RecordRm(h.ctx, h.cid(), a.Ref, a.AllRuns, os.Stdout)
+	return cli.RecordRm(h.ctx, h.cid(), a.Ref, a.AllRuns, h.stdout())
 }
 
 func (h cliVerbs) RecordKeep(a verb.RecordKeepAction) error {
-	return cli.RecordKeepOut(h.ctx, h.cid(), a.Ref, a.Forever, a.For, os.Stdout)
+	return cli.RecordKeepOut(h.ctx, h.cid(), a.Ref, a.Forever, a.For, h.stdout())
 }
 
 func (h cliVerbs) RecordOn(a verb.RecordSwitchAction) error {
-	return cli.RecordSwitchOut(h.ctx, h.cid(), a.TaskID, true, os.Stdout)
+	return cli.RecordSwitchOut(h.ctx, h.cid(), a.TaskID, true, h.stdout())
 }
 
 func (h cliVerbs) RecordOff(a verb.RecordSwitchAction) error {
-	return cli.RecordSwitchOut(h.ctx, h.cid(), a.TaskID, false, os.Stdout)
+	return cli.RecordSwitchOut(h.ctx, h.cid(), a.TaskID, false, h.stdout())
 }
 
 // --- Agent transcripts (pillar B) ---------------------------------------------
 
 func (h cliVerbs) TranscriptLs(a verb.TranscriptLsAction) error {
-	return cli.TranscriptLs(h.ctx, h.cid(), a.TaskID, a.Session, os.Stdout)
+	return cli.TranscriptLs(h.ctx, h.cid(), a.TaskID, a.Session, h.stdout())
 }
 
 // TranscriptGet writes to stdout, or to -o through cli.TranscriptToFile.
 func (h cliVerbs) TranscriptGet(a verb.TranscriptGetAction) error {
 	if a.Output == "" {
-		return cli.TranscriptGetOut(h.ctx, h.cid(), a.TaskID, a.Session, a.File, os.Stdout)
+		return cli.TranscriptGetOut(h.ctx, h.cid(), a.TaskID, a.Session, a.File, h.stdout())
 	}
 	return cli.TranscriptToFile(a.Output, func(w io.Writer) error {
 		return cli.TranscriptGetOut(h.ctx, h.cid(), a.TaskID, a.Session, a.File, w)
@@ -1312,51 +1327,59 @@ func (h cliVerbs) TranscriptGet(a verb.TranscriptGetAction) error {
 // --- Credentials (docs/superpowers/specs/2026-11-21-credential-tasks-design.md) ---
 
 func (h cliVerbs) CredentialKeygen(a verb.CredentialKeygenAction) error {
-	return cli.CredentialKeygenOut(a, os.Stdout)
+	return cli.CredentialKeygenOut(a, h.stdout())
 }
 
 func (h cliVerbs) CredentialBind(a verb.CredentialBindAction) error {
-	return cli.CredentialBindWith(a, os.Stdout)
+	return cli.CredentialBindWith(a, h.stdout())
 }
 
 func (h cliVerbs) CredentialNew(a verb.CredentialIssueAction) error {
-	return cli.CredentialIssueOut(h.ctx, h.cid(), a, os.Stdout)
+	return cli.CredentialIssueOut(h.ctx, h.cid(), a, h.stdout())
 }
 
 func (h cliVerbs) CredentialRekey(a verb.CredentialIssueAction) error {
-	return cli.CredentialIssueOut(h.ctx, h.cid(), a, os.Stdout)
+	return cli.CredentialIssueOut(h.ctx, h.cid(), a, h.stdout())
 }
 
 func (h cliVerbs) CredentialLs(a verb.CredentialLsAction) error {
-	return cli.CredentialLsOut(h.ctx, h.cid(), a.JSON, os.Stdout)
+	return cli.CredentialLsOut(h.ctx, h.cid(), a.JSON, h.stdout())
 }
 
 func (h cliVerbs) CredentialRevoke(a verb.CredentialRevokeAction) error {
-	return cli.CredentialRevokeOut(h.ctx, h.cid(), a.ID, os.Stdout)
+	return cli.CredentialRevokeOut(h.ctx, h.cid(), a.ID, h.stdout())
 }
 
 // --- Schedules (pillar S) ------------------------------------------------------
 
 func (h cliVerbs) ScheduleNew(a verb.ScheduleSpecAction) error {
-	return cli.ScheduleSpecOut(h.ctx, h.cid(), a, os.Stdout)
+	return cli.ScheduleSpecOut(h.ctx, h.cid(), a, h.stdout())
 }
 
 func (h cliVerbs) ScheduleEdit(a verb.ScheduleSpecAction) error {
-	return cli.ScheduleSpecOut(h.ctx, h.cid(), a, os.Stdout)
+	return cli.ScheduleSpecOut(h.ctx, h.cid(), a, h.stdout())
 }
 
 func (h cliVerbs) ScheduleRun(a verb.ScheduleIDAction) error {
-	return cli.ScheduleIDOut(h.ctx, h.cid(), a, os.Stdout)
+	return cli.ScheduleIDOut(h.ctx, h.cid(), a, h.stdout())
 }
 
 func (h cliVerbs) ScheduleRm(a verb.ScheduleIDAction) error {
-	return cli.ScheduleIDOut(h.ctx, h.cid(), a, os.Stdout)
+	return cli.ScheduleIDOut(h.ctx, h.cid(), a, h.stdout())
 }
 
 func (h cliVerbs) ScheduleLs(a verb.ScheduleLsAction) error {
-	return cli.ScheduleLsOut(h.ctx, h.cid(), a.JSON, os.Stdout)
+	return cli.ScheduleLsOut(h.ctx, h.cid(), a.JSON, h.stdout())
 }
 
 func (h cliVerbs) ScheduleShow(a verb.ScheduleShowAction) error {
-	return cli.ScheduleShowOut(h.ctx, h.cid(), a.ID, a.JSON, os.Stdout)
+	return cli.ScheduleShowOut(h.ctx, h.cid(), a.ID, a.JSON, h.stdout())
+}
+
+// --- MCP ---------------------------------------------------------------
+
+// MCP serves the declared tools on stdio. It blocks in the foreground, the
+// same shape as ssh-gateway: the verb IS the server while it runs.
+func (h cliVerbs) Mcp(a verb.MCPAction) error {
+	return serveMCP(h, a.ReadOnly)
 }

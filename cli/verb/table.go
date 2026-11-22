@@ -2182,6 +2182,7 @@ var Verbs = []VerbSpec{
 		Action:   "CatalogAction",
 		Const:    map[string]string{"Sub": "caps"},
 		Flags:    []Flag{{Name: "json", Type: FlagBool, Default: false, Field: "JSON", Help: "output the capability catalog as JSON"}},
+		MCP:      &MCPTool{SideEffect: MCPRead},
 		Examples: []string{"caps", "caps --json"},
 	},
 	{
@@ -2213,6 +2214,7 @@ var Verbs = []VerbSpec{
 		Action:   "CatalogAction",
 		Const:    map[string]string{"Sub": "whoami"},
 		Flags:    []Flag{{Name: "json", Type: FlagBool, Default: false, Field: "JSON", Help: "output the identity as a JSON object"}},
+		MCP:      &MCPTool{SideEffect: MCPRead},
 		Examples: []string{"whoami"},
 	},
 	// Three verbs the migration dispatched and never declared -- found by the
@@ -2280,7 +2282,25 @@ var Verbs = []VerbSpec{
 		Action:   "CatalogAction",
 		Const:    map[string]string{"Sub": "version"},
 		Flags:    []Flag{{Name: "json", Type: FlagBool, Default: false, Field: "JSON", Help: "output the build stamp as a JSON object"}},
+		MCP:      &MCPTool{SideEffect: MCPRead},
 		Examples: []string{"version"},
+	},
+	// The MCP consumer. It is a verb so the sandbox's single bridged binary
+	// already carries it; a separate binary would need its own bind mount and
+	// its own copy of the dispatch. It is NOT itself a tool (an MCP server
+	// cannot be reached from inside the server it serves).
+	{
+		Path: []string{"mcp"}, CmdlineSurfaces: CLI,
+		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; an MCP server owns stdout and blocks in a foreground loop, which no modal can do",
+		Notes: []string{
+			"serve the control plane as MCP tools on stdio (one JSON-RPC message per line)",
+			"which verbs are tools is declared in this table (VerbSpec.MCP); the server is a transport and a declaration filter, never a second implementation",
+			"a tool call runs the same body the command line runs, in this process; authority is the connection's caps, enforced server-side",
+			"--read-only drops the verbs whose declaration says they take something away",
+		},
+		Action:   "MCPAction",
+		Flags:    []Flag{{Name: "stdio", Type: FlagBool, Default: false, Field: "Stdio", Help: "the transport; the only one, accepted for symmetry with future ones"}, {Name: "read-only", Type: FlagBool, Default: false, Field: "ReadOnly", Help: "expose only tools whose declaration does not say they take something away"}},
+		Examples: []string{"mcp", "mcp --read-only"},
 	},
 	{
 		Path: []string{"prune-local"}, CmdlineSurfaces: CLI,
@@ -2853,6 +2873,7 @@ var Verbs = []VerbSpec{
 		},
 		Action: "SessionAction",
 		Const:  map[string]string{"Sub": "ls"},
+		MCP:    &MCPTool{SideEffect: MCPRead},
 		// This listing has no text form -- it has emitted JSON Lines since it
 		// was added, and scripts read it. --json is accepted so that a hand
 		// which types it on `ls`, `conns`, `exec ls` and `forward ls` is not
@@ -2889,6 +2910,7 @@ var Verbs = []VerbSpec{
 			"the operator may rename any task; from inside a task you may rename only your own descendants within your resume scope, never yourself (a self-rename would let a task pose as another on the board)",
 		},
 		Action: "SessionRenameAction",
+		MCP:  &MCPTool{SideEffect: MCPWrite},
 		Args: []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"},
 			{Name: "name", Type: ArgString, Field: "Name"}},
 		Examples: []string{"session rename aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa nightly-ci"},
@@ -3112,6 +3134,7 @@ var Verbs = []VerbSpec{
 		},
 		Notes:  []string{"list PTY records: each run's start, end, end reason, size on disk, expiry, truncation; with no task, every record you may view"},
 		Action: "RecordLsAction",
+		MCP:    &MCPTool{SideEffect: MCPRead},
 		Args:   []Arg{{Name: "task-id", Type: ArgTaskID, Variadic: true, MaxCount: 1, Field: "TaskID"}},
 		Examples: []string{
 			"record ls",
@@ -3211,6 +3234,7 @@ var Verbs = []VerbSpec{
 			"a shared session (a --no-worktree task's repo) is listed only with exec_run on the task as well",
 		},
 		Action: "TranscriptLsAction",
+		MCP:    &MCPTool{SideEffect: MCPRead},
 		Args: []Arg{
 			{Name: "task-id", Type: ArgTaskID, Field: "TaskID"},
 			{Name: "session", Type: ArgString, Variadic: true, MaxCount: 1, Field: "Session"},
@@ -3665,6 +3689,7 @@ var Verbs = []VerbSpec{
 		},
 		Action: "AgentAction",
 		Const:  map[string]string{"Sub": "inbox"},
+		MCP:    &MCPTool{SideEffect: MCPRead},
 		Flags: append(agentCommonFlags(),
 			Flag{Name: "since", Type: FlagUint64, Default: uint64(0), Field: "Since", Help: "start from this seq (0 = whole ring)"},
 			agentJSONEitherWay(),

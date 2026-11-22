@@ -93,7 +93,11 @@ func renderGitResult(w io.Writer, res *cli.GitResult, color bool) {
 // isTTY reports whether f is a terminal, which is the only condition under
 // which colour escapes belong in the output — a redirected diff has to stay
 // byte-clean for `git apply`.
-func isTTY(f *os.File) bool {
+func isTTY(w io.Writer) bool {
+	f, ok := w.(*os.File)
+	if !ok {
+		return false
+	}
 	st, err := f.Stat()
 	if err != nil {
 		return false

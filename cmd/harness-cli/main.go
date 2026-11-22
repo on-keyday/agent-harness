@@ -121,7 +121,7 @@ func main() {
 	// is the path. It is peeled here exactly as the TUI and the WebUI peel it,
 	// and goes through the same generated entry.
 	tokens := append([]string{sub}, args...)
-	h := cliVerbs{ctx: ctx, cid: parseCID}
+	h := cliVerbs{ctx: ctx, cid: parseCID, out: os.Stdout}
 
 	if err, handled, perr := verb.DispatchCLILine[error](h, tokens, nil); handled {
 		if perr != nil {
