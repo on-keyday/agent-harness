@@ -79,6 +79,7 @@ re-grant on a live task, and a way to rename a task.
 | R7 | **Provenance**: a new `AuthoritySource.task_caps_set` with the caller as `AuthorityActor`; cascaded descendants keep `cascade` with the target as actor. Rename writes no authority provenance (not authority) | this spec |
 | R8 | **Credential targets**: a descendant credential may be re-granted under R1 (it is the issuer's to re-key anyway, D18a); D14's masked bits still refused (`masked_cap`) | this spec |
 | R9 | **What-if**: `authority/whatif.go` (`apply`, `Regrant`) predicts the same rule, so `caps whatif`-style previews agree with the server | this spec |
+| R11 | **Adding caps without `--scope` keeps the target's recorded scope**, even when the operator made it wider than the caller's own reach — resume parity (R2). The caller does not hold that scope itself; it can use it only by driving the descendant (e.g. `exec_cowrite`), and a descendant wider than its parent is an operator's deliberate setting. Credential re-key refuses the same shape because there the re-keyer holds the key and acts as the credential directly (credential D18). Found in the final review; the alternative (refuse unless the added bits fit the caller's reach) would stop a parent from adding a bit to an operator-widened worker without narrowing it | operator, 2026-11-22 |
 | R10 | **Persistence**: rename writes a `task_renamed` WAL event (TaskID, name); replay sets `Name`. A renamed task's past board messages keep the name they were published with (`from_name` is a copy) | this spec |
 
 ## Design
