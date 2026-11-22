@@ -364,16 +364,18 @@ func TestCredentialPrincipalIsNeverZero(t *testing.T) {
 		t.Fatalf("schedule create answered %v, want permission_denied for schedule_edit", resp.Kind)
 	}
 
-	// Operator-only verbs read "no principal" as the operator; a credential
-	// has one.
+	// set_caps reads "no principal" as the operator, which may rewrite any
+	// task, itself included; a task may re-grant only its strict descendants
+	// (delegated-regrant R1). So a credential re-granting ITSELF is answered
+	// not_found — an operator would have got ok.
 	setCaps := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_SetCaps}}
 	setCaps.SetSetCaps(protocol.SetCapsRequest{TaskId: tid})
 	resp, err = c.RoundTripTaskControl(ctx, setCaps)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r := resp.SetCaps(); r == nil || r.Status != protocol.SetCapsStatus_NotOperator {
-		t.Fatalf("set_caps from a credential answered %+v, want not_operator", resp.SetCaps())
+	if r := resp.SetCaps(); r == nil || r.Status != protocol.SetCapsStatus_NotFound {
+		t.Fatalf("set_caps from a credential on itself answered %+v, want not_found", resp.SetCaps())
 	}
 }
 

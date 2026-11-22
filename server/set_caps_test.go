@@ -21,9 +21,10 @@ func sendSetCaps(t *testing.T, h *TaskHandler, conn *fakeConn, req protocol.SetC
 	return *got
 }
 
-// The gate is operator identity, never a capability bit — a bit authorising
-// "rewrite capabilities" would grant itself all on first use.
-func TestSetCapsRejectsNonOperator(t *testing.T) {
+// A task caller may re-grant only its own descendants (delegated-regrant R1);
+// any other target answers not_found (R4), and nothing changes. The free
+// rewrite stays the operator's: a bit authorising it would grant itself all.
+func TestSetCapsTaskCallerOutsideItsSubtreeIsNotFound(t *testing.T) {
 	h, _, c, _, u := scopeFixture(t)
 	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9900-1")}
 	if h.principals == nil {
@@ -34,8 +35,8 @@ func TestSetCapsRejectsNonOperator(t *testing.T) {
 	req := protocol.SetCapsRequest{TaskId: hexToTaskID(t, u), Caps: protocol.Capability_All}
 	req.SetCapsPresent(true)
 	got := sendSetCaps(t, h, conn, req)
-	if got.Status != protocol.SetCapsStatus_NotOperator {
-		t.Fatalf("status = %v, want not_operator", got.Status)
+	if got.Status != protocol.SetCapsStatus_NotFound {
+		t.Fatalf("status = %v, want not_found", got.Status)
 	}
 	if e, _ := h.Tasks.Get(u); e.Capabilities == protocol.Capability_All {
 		t.Fatal("a confined caller raised another task's caps")

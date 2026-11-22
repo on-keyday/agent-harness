@@ -9,21 +9,26 @@ import (
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
-// handleSetCaps rewrites a live task's authority on the operator's behalf.
+// handleSetCaps rewrites a live task's authority.
 //
-// The gate is the caller having NO principal task, not a capability bit. A bit
-// authorising "rewrite capabilities" is self-amplifying: whoever holds it
-// grants itself all on first use and intersectCaps can never claw it back.
-// Operator identity is the only ungrantable predicate the server has, and it
-// is established at the PSK gate (server/psk.go) where a non-agent client must
-// prove operatorPSK — a secret never injected into an agent task environment.
+// The operator (a caller with NO principal task) may write anything. A bit
+// authorising "rewrite capabilities" freely would be self-amplifying: whoever
+// held it would grant itself all on first use. Operator identity is the only
+// ungrantable predicate the server has, established at the PSK gate
+// (server/psk.go) where a non-agent client must prove operatorPSK.
 //
-// not_operator is a real answer rather than a not-found: it says something
-// about the caller, nothing about the target, so it is not an existence oracle.
+// A TASK caller gets the bounded re-grant a re-granting resume already gives it
+// (docs/superpowers/specs/2026-11-22-delegated-regrant-and-rename-design.md):
+// only on a strict descendant inside its resume scope (regrantReaches, R1), and
+// the update is grantFor's with the caller as granter (R2) — its own caps and
+// delegation bound bound every half, so nothing here lets a task raise itself
+// or anyone outside its subtree. Every refusal of R1 is not_found, so the
+// answer is no existence oracle (R4).
 func (h *TaskHandler) handleSetCaps(conn ConnHandle, requestID uint32, cid string, req *protocol.SetCapsRequest) {
-	respond := func(status protocol.SetCapsStatus, affected []string, connsClosed uint32) {
+	respondMsg := func(status protocol.SetCapsStatus, affected []string, connsClosed uint32, msg string) {
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_SetCaps, RequestId: requestID}
 		body := protocol.SetCapsResponse{Status: status, ConnsClosed: connsClosed}
+		body.SetMessage([]byte(msg))
 		for _, hexID := range affected {
 			raw, err := hex.DecodeString(hexID)
 			if err != nil || len(raw) != authority.TaskIDHexLen/2 {
@@ -38,16 +43,15 @@ func (h *TaskHandler) handleSetCaps(conn ConnHandle, requestID uint32, cid strin
 		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
 	}
-
-	if h.lookupPrincipal(cid).Id != ([16]byte{}) {
-		slog.Warn("set_caps denied: caller is not an operator", "cid", cid)
-		respond(protocol.SetCapsStatus_NotOperator, nil, 0)
-		return
+	respond := func(status protocol.SetCapsStatus, affected []string, connsClosed uint32) {
+		respondMsg(status, affected, connsClosed, "")
 	}
 
+	caller := h.lookupPrincipal(cid)
+	operator := caller.Id == ([16]byte{})
 	targetHex := hex.EncodeToString(req.TaskId.Id[:])
 	before, ok := h.Tasks.Get(targetHex)
-	if !ok {
+	if !ok || (!operator && !h.regrantReaches(cid, targetHex)) {
 		respond(protocol.SetCapsStatus_NotFound, nil, 0)
 		return
 	}
@@ -70,6 +74,38 @@ func (h *TaskHandler) handleSetCaps(conn ConnHandle, requestID uint32, cid strin
 		}
 	}
 
+	by := AuthorityWrite{Source: protocol.AuthoritySource_OperatorCapsSet}
+	var u GrantUpdate
+	if operator {
+		var refused bool
+		if u, refused = h.operatorCapsUpdate(cid, req, respond); refused {
+			return
+		}
+	} else {
+		var err error
+		u, err = h.grantFor(h.granter(cid, h.callerCaps(cid)), setCapsGrantRequest(req), targetHex)
+		if err != nil {
+			slog.Warn("set_caps denied: re-grant outside the caller's bound", "cid", cid, "task", targetHex, "err", err)
+			respondMsg(protocol.SetCapsStatus_InvalidScope, nil, 0, err.Error())
+			return
+		}
+		by = AuthorityWrite{Source: protocol.AuthoritySource_TaskCapsSet, Actor: caller}
+	}
+
+	after, ok := h.Tasks.SetCaps(targetHex, u, by)
+
+	if !ok {
+		respond(protocol.SetCapsStatus_NotFound, nil, 0)
+		return
+	}
+	h.finishSetCaps(conn, req, before, after, u, respond)
+}
+
+// operatorCapsUpdate builds the operator's update: every present half written
+// as given, after validation only (no attenuation — the operator may widen
+// past its own reach). refused reports that a response was already sent.
+func (h *TaskHandler) operatorCapsUpdate(cid string, req *protocol.SetCapsRequest,
+	respond func(protocol.SetCapsStatus, []string, uint32)) (GrantUpdate, bool) {
 	// The spawn limits are written on the target only: the cascade below
 	// never sets their bits, so no descendant's limits change (spec D13).
 	u := GrantUpdate{
@@ -92,7 +128,7 @@ func (h *TaskHandler) handleSetCaps(conn ConnHandle, requestID uint32, cid strin
 		if err := authority.Validate(newScope); err != nil {
 			slog.Warn("set_caps denied: inconsistent scope", "cid", cid, "err", err)
 			respond(protocol.SetCapsStatus_InvalidScope, nil, 0)
-			return
+			return GrantUpdate{}, true
 		}
 		u.To.Scope = newScope
 	}
@@ -103,17 +139,46 @@ func (h *TaskHandler) handleSetCaps(conn ConnHandle, requestID uint32, cid strin
 		if err := authority.Validate(bound); err != nil {
 			slog.Warn("set_caps denied: inconsistent delegate scope", "cid", cid, "err", err)
 			respond(protocol.SetCapsStatus_InvalidScope, nil, 0)
-			return
+			return GrantUpdate{}, true
 		}
 		u.To.DelegateScope = bound
 	}
+	return u, false
+}
 
-	after, ok := h.Tasks.SetCaps(targetHex, u, AuthorityWrite{Source: protocol.AuthoritySource_OperatorCapsSet})
-
-	if !ok {
-		respond(protocol.SetCapsStatus_NotFound, nil, 0)
-		return
+// setCapsGrantRequest reads a set_caps request as the re-grant request a
+// resume carries: each half behind its own presence bit.
+func setCapsGrantRequest(req *protocol.SetCapsRequest) grantRequest {
+	return grantRequest{
+		Caps: req.Caps, Scope: authority.ScopeFromWire(req.Scope, req.Overrides),
+		DelegateCaps: req.DelegateCaps, DelegateScope: authority.ScopeFromWire(req.DelegateScope, nil),
+		CapsPresent: req.CapsPresent(), ScopePresent: req.ScopePresent(),
+		DelegateCapsPresent: req.DelegateCapsPresent(), DelegateScopePresent: req.DelegateScopePresent(),
+		SpawnDepth: req.SpawnDepth, MaxDescendants: req.MaxDescendants,
+		SpawnDepthPresent: req.SpawnDepthPresent(), MaxDescendantsPresent: req.MaxDescendantsPresent(),
 	}
+}
+
+// regrantReaches is R1: a task may re-grant (or rename) only a STRICT
+// descendant — never itself, an ancestor or a task outside its subtree, which
+// would let it act through that task's tree position (credential D18a) — and
+// only one inside the scope of its resume bit, the power a re-granting resume
+// already exercises. Descendants are read from the live creator index.
+func (h *TaskHandler) regrantReaches(cid, targetHex string) bool {
+	callerHex := h.principalHex(cid)
+	if callerHex == "" || callerHex == targetHex || !h.resumeTargetAllowed(cid, false, targetHex) {
+		return false
+	}
+	descendants := map[string]bool{}
+	authority.DescendantsOf(h.childIndex(), callerHex, descendants)
+	return descendants[targetHex]
+}
+
+// finishSetCaps runs everything after the target's write, for either caller:
+// the cascade, the narrowing teardown and the answer.
+func (h *TaskHandler) finishSetCaps(conn ConnHandle, req *protocol.SetCapsRequest, before, after TaskEntry, u GrantUpdate,
+	respond func(protocol.SetCapsStatus, []string, uint32)) {
+	targetHex := after.ID
 	affected := []string{targetHex}
 	// Over caps and scope only: the bound is exercised over no connection, so
 	// a change to it alone tears nothing down.
