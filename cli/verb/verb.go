@@ -9,7 +9,11 @@
 // code, a tea.Cmd, a DOM update -- stays in that surface.
 package verb
 
-import "flag"
+import (
+	"flag"
+
+	"github.com/on-keyday/agent-harness/runner/protocol"
+)
 
 // Surface is the set of front-ends a verb or option is reachable from.
 // Which surfaces a verb appears on is part of the declaration, not an
@@ -385,15 +389,31 @@ const (
 	MCPWrite MCPEffect = "write"
 )
 
-// MCPTool is one verb's exposure as an MCP tool.
+// MCPTool is one verb's exposure as an MCP tool. Its name is the path joined
+// with "_" and nothing else: MCP's tool-name grammar is [A-Za-z0-9_-], and a
+// path that cannot be a name is a declaration to fix, not an override to add.
 type MCPTool struct {
-	// Name overrides the derived tool name (the path joined with "."). Empty
-	// means derive. Set only where the path is not a usable tool name.
-	Name string
-
 	// SideEffect is MCPRead or MCPWrite. It decides the annotations and whether
-	// a --read-only server offers the tool.
+	// a --read-only server offers the tool. A verb that always can write -- the
+	// server's state, or a file on this machine (file pull) -- is MCPWrite.
 	SideEffect MCPEffect
+
+	// WriteFlags are the flags whose presence makes an MCPRead verb write:
+	// `record get -o` writes a local file. A --read-only server lists the verb
+	// with these flags omitted and refuses them; any other server lists it
+	// whole, not read-only.
+	WriteFlags []string
+
+	// Omit lists flags the tool's schema leaves out, and Fixed the tokens every
+	// tool call passes ahead of the caller's arguments. Both exist for ONE
+	// reason, which Why states: a verb that is a single request/response with
+	// some flag set (or unset) would otherwise stream, block or take this
+	// process's terminal -- `conns --follow` streams, `session new` without -d
+	// attaches the terminal. A call naming an omitted flag is refused as an
+	// unknown argument, as a flag the verb never had.
+	Omit  []string
+	Fixed []string
+	Why   string
 }
 
 // VerbSpec is one verb path's whole grammar.
@@ -432,11 +452,10 @@ type VerbSpec struct {
 	// commit.
 	NoModalSurface string
 
-	// MCP, when non-nil, exposes this verb as an MCP tool. Presence is the
-	// whole statement: a verb the model may call is declared here, and every
-	// MCP-aware consumer reads the same row. It is a pointer so "surveyed and
-	// deliberately not exposed" (nil) can be told from "no opinion" -- the
-	// same distinction NoModalSurface draws for modal surfaces.
+	// MCP, when non-nil, is this verb's tool declaration. Every verb with a CLI
+	// surface carries either MCP or MCPNotATool, and
+	// TestEveryCLIVerbHasAnMCPVerdict refuses one with neither or both. It is a
+	// pointer so "declared" can be told from "forgotten".
 	//
 	// The generator carries this field into no generated code: the parse it
 	// already emits is what an MCP tool call reuses. Declaring it here is what
@@ -444,9 +463,24 @@ type VerbSpec struct {
 	// MCP server.
 	MCP *MCPTool
 
-	Args []Arg
-	Flags          []Flag
-	Trailing       *Trailing
+	// MCPNotATool is the other answer, for the reason NoModalSurface exists:
+	// "we looked, and it cannot be one" is a result worth keeping. Non-empty
+	// means the verb is NOT a tool and says why. The admissible reasons are
+	// structural -- it streams until interrupted, it blocks, it owns this
+	// process's terminal or stdin, or it is the MCP server -- never policy.
+	MCPNotATool string
+
+	// Sends lists the TaskControl kinds this verb's body may send, whatever its
+	// flags; empty for a verb that sends none. It is the one edge between a
+	// verb and the server's capability knowledge that the table owns: which
+	// bits each kind needs is authority's. The command-line dispatch installs
+	// it on the client (cli.ExpectKinds), and a body that sends a kind not
+	// listed is refused before the request leaves.
+	Sends []protocol.TaskControlKind
+
+	Args     []Arg
+	Flags    []Flag
+	Trailing *Trailing
 
 	// PathspecField is the Action field the trailing `-- <path>` lands in.
 	PathspecField string

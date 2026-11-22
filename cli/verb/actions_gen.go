@@ -545,10 +545,10 @@ type ListAction struct {
 // MCPAction is built by: mcp.
 type MCPAction struct {
 	ActionMarker
-	// the transport; the only one, accepted for symmetry with future ones
-	Stdio bool
-	// expose only tools whose declaration does not say they take something away
+	// expose only tools that write nothing; a tool that writes only with a flag is exposed without that fl…
 	ReadOnly bool
+	// expose only tools some call of which these capabilities can satisfy (comma-separated names; a tool n…
+	Caps *protocol.Capability
 }
 
 // NotifyAction is built by: notify.
@@ -3149,8 +3149,14 @@ func init() {
 		},
 		"mcp\x00cli": func(b Bound) (Action, error) {
 			a := MCPAction{}
-			a.Stdio = b.Bool("stdio")
 			a.ReadOnly = b.Bool("read-only")
+			if b.Set["caps"] {
+				v, err := parseCapsFlag(b.Str("caps"))
+				if err != nil {
+					return nil, fmt.Errorf("mcp: --caps: %w", err)
+				}
+				a.Caps = v
+			}
 			return a, nil
 		},
 		"prune-local\x00cli": func(b Bound) (Action, error) {

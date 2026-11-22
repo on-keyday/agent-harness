@@ -232,9 +232,6 @@ func toolFromSpec(spec verb.VerbSpec) map[string]any {
 // toolName is the path joined with "_". MCP tool names are [A-Za-z0-9_-]{1,64};
 // a dot, which reads more naturally, is not in that set.
 func toolName(spec verb.VerbSpec) string {
-	if spec.MCP.Name != "" {
-		return spec.MCP.Name
-	}
 	return strings.Join(spec.Path, "_")
 }
 
