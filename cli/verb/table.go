@@ -1314,7 +1314,7 @@ var Verbs = []VerbSpec{
 	// widening when unset.
 	{
 		Path: []string{"board", "topics"},
-		MCP:  &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_BoardTopics},
+		MCP:  &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_BoardTopics, protocol.TaskControlKind_BoardSubscribers},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/board.go:BoardModal"},
 			{Surface: WebUI, At: "webui/index.html#board-topics"},
