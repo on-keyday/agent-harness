@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -451,7 +452,7 @@ func TestIntegrationCancelKillsClaude(t *testing.T) {
 	// has started the process. Cancel mid-execution: wait for the agent's own
 	// first line on the session's screen.
 	eventually(t, func() bool {
-		screen, err := c.SessionSnapshot(context.Background(), id, 40, 120, 200*time.Millisecond, false)
+		screen, err := c.SessionSnapshot(context.Background(), id, 40, 120, 200*time.Millisecond, false, os.Stderr)
 		return err == nil && strings.Contains(screen, "slow claude starting")
 	}, 10*time.Second, 100*time.Millisecond, "the agent to be running before cancel")
 

@@ -22,7 +22,7 @@ func sendLine(args ...string) error {
 	if err != nil {
 		return err
 	}
-	return runSessionSendWith(context.Background(), objproto.ConnectionID{}, a, os.Stdout)
+	return runSessionSendWith(context.Background(), objproto.ConnectionID{}, a, os.Stdout, os.Stderr)
 }
 
 // The RENDER flags are rejected without --snapshot BEFORE anything dials, so

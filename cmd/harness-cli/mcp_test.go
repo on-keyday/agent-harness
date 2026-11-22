@@ -3,8 +3,6 @@
 package main
 
 import (
-	"bufio"
-	"bytes"
 	"encoding/json"
 	"flag"
 	"os"
@@ -189,7 +187,8 @@ func mustJSON(t *testing.T, v any) string {
 }
 
 // TestMCPStdioSession drives the loop over pipes: initialize, initialized,
-// tools/list, a tools/call and a malformed frame. stdout must be JSON-RPC only.
+// tools/list, a tools/call and a malformed frame. stdout must be JSON-RPC only
+// (pipeSession fails on a line that is not).
 func TestMCPStdioSession(t *testing.T) {
 	in := strings.Join([]string{
 		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"0"}}}`,
@@ -201,30 +200,27 @@ func TestMCPStdioSession(t *testing.T) {
 		`{"jsonrpc":"2.0","id":5,"method":"ping"}`,
 	}, "\n") + "\n"
 
-	var out bytes.Buffer
-	srv := &mcpServer{h: cliVerbs{}}
-	if err := srv.serve(strings.NewReader(in), &out); err != nil {
-		t.Fatalf("serve: %v", err)
+	// The input stays open until every answer is in: end of input is the
+	// client's shutdown, and a call still in flight then is not answered
+	// (spec §11 2c).
+	p := startPipeSession(t, &mcpServer{h: cliVerbs{}})
+	for _, l := range strings.Split(strings.TrimSpace(in), "\n") {
+		p.send(l)
 	}
-
-	sc := bufio.NewScanner(bytes.NewReader(out.Bytes()))
 	var responses []map[string]any
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" {
-			continue
-		}
-		var m map[string]any
-		if err := json.Unmarshal([]byte(line), &m); err != nil {
-			t.Fatalf("stdout is not JSON-RPC: %q (%v)", line, err)
-		}
+	for len(responses) < 6 {
+		m := p.next()
 		if m["jsonrpc"] != "2.0" {
 			t.Fatalf("missing jsonrpc 2.0: %v", m)
 		}
 		responses = append(responses, m)
 	}
-	if err := sc.Err(); err != nil {
-		t.Fatal(err)
+	p.end()
+	if err := <-p.done; err != nil {
+		t.Fatalf("serve: %v", err)
+	}
+	for r := range p.resps {
+		responses = append(responses, r)
 	}
 
 	// initialize, tools/list, tools/call version, tools/call nope, parse error,

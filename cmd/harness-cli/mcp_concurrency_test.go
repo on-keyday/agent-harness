@@ -85,13 +85,13 @@ func idOf(m map[string]any) float64 {
 // notifications/cancelled ends it with no response (spec D18, V11).
 func TestMCPCallsOverlapAndCancel(t *testing.T) {
 	cancelled := make(chan struct{})
-	srv := &mcpServer{h: cliVerbs{}, run: func(ctx context.Context, _ toolFilter, spec verb.VerbSpec, _ json.RawMessage) (string, bool) {
+	srv := &mcpServer{h: cliVerbs{}, run: func(ctx context.Context, _ toolFilter, spec verb.VerbSpec, _ json.RawMessage) ([]string, bool) {
 		if toolName(spec) != "agent_wait" {
-			return "fast", false
+			return []string{"fast"}, false
 		}
 		<-ctx.Done()
 		close(cancelled)
-		return "ended: " + ctx.Err().Error(), true
+		return []string{"ended: " + ctx.Err().Error()}, true
 	}}
 	p := startPipeSession(t, srv)
 
@@ -132,9 +132,9 @@ func TestMCPCallsOverlapAndCancel(t *testing.T) {
 // would kill the process with SIGPIPE before its bodies close their
 // connections.
 func TestMCPEndOfInputCancelsInFlight(t *testing.T) {
-	srv := &mcpServer{h: cliVerbs{}, run: func(ctx context.Context, _ toolFilter, _ verb.VerbSpec, _ json.RawMessage) (string, bool) {
+	srv := &mcpServer{h: cliVerbs{}, run: func(ctx context.Context, _ toolFilter, _ verb.VerbSpec, _ json.RawMessage) ([]string, bool) {
 		<-ctx.Done()
-		return "ended", true
+		return []string{"ended"}, true
 	}}
 	p := startPipeSession(t, srv)
 	p.send(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"agent_wait","arguments":{}}}`)
@@ -158,10 +158,10 @@ func TestMCPEndOfInputCancelsInFlight(t *testing.T) {
 func TestMCPCallContextsAreDistinct(t *testing.T) {
 	ctxs := make(chan context.Context, 2)
 	release := make(chan struct{})
-	srv := &mcpServer{h: cliVerbs{}, run: func(ctx context.Context, _ toolFilter, _ verb.VerbSpec, _ json.RawMessage) (string, bool) {
+	srv := &mcpServer{h: cliVerbs{}, run: func(ctx context.Context, _ toolFilter, _ verb.VerbSpec, _ json.RawMessage) ([]string, bool) {
 		ctxs <- ctx
 		<-release
-		return "", false
+		return nil, false
 	}}
 	p := startPipeSession(t, srv)
 	p.send(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"agent_wait","arguments":{}}}`)

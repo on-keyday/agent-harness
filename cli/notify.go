@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"unicode/utf8"
 
@@ -52,7 +53,7 @@ func encodedNotifyWireLen(nr *protocol.NotifyRequest) int {
 
 // mtuGuardNotify truncates nr.Text (rune-safe, with a trailing ellipsis) so the
 // encoded message fits notifyWireBudget, and warns on stderr. No-op if it fits.
-func mtuGuardNotify(nr *protocol.NotifyRequest) {
+func mtuGuardNotify(nr *protocol.NotifyRequest, stderr io.Writer) {
 	if encodedNotifyWireLen(nr) <= notifyWireBudget {
 		return
 	}
@@ -68,7 +69,7 @@ func mtuGuardNotify(nr *protocol.NotifyRequest) {
 	trimmed := truncateRunes(original, maxText) + ell
 	nr.Text = []byte(trimmed)
 	nr.TextLen = uint16(len(nr.Text))
-	fmt.Fprintf(os.Stderr, "notify: text truncated %d→%d bytes to fit transport MTU\n", len(original), len(nr.Text))
+	fmt.Fprintf(stderr, "notify: text truncated %d→%d bytes to fit transport MTU\n", len(original), len(nr.Text))
 }
 
 // truncateRunes returns the longest prefix of s that is <= maxBytes and ends on
@@ -90,13 +91,20 @@ func truncateRunes(s string, maxBytes int) string {
 
 // Notify sends a notification over an existing *Client. Long-lived consumers
 // (TUI/WebUI) call this on their persistent client. level is "info|warn|error".
+// Its notes (truncated, no hook) go to os.Stderr; NotifyTo names the writer.
 func (c *Client) Notify(ctx context.Context, level, title, text string) error {
+	return c.NotifyTo(ctx, level, title, text, os.Stderr)
+}
+
+// NotifyTo is Notify with its notes written to stderr -- in the MCP server,
+// the tool result (spec D20).
+func (c *Client) NotifyTo(ctx context.Context, level, title, text string, stderr io.Writer) error {
 	lvl, err := parseNotifyLevel(level)
 	if err != nil {
 		return err
 	}
 	nr := newNotifyRequest(lvl, title, text)
-	mtuGuardNotify(nr)
+	mtuGuardNotify(nr, stderr)
 
 	tcr := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_Notify}}
 	tcr.SetNotify(*nr)
@@ -113,7 +121,7 @@ func (c *Client) Notify(ctx context.Context, level, title, text string) error {
 	}
 	switch out.Status {
 	case protocol.NotifyStatus_NoHook:
-		fmt.Fprintln(os.Stderr, "notify: server has no --notify-hook configured (recorded live-only, no external delivery)")
+		fmt.Fprintln(stderr, "notify: server has no --notify-hook configured (recorded live-only, no external delivery)")
 	case protocol.NotifyStatus_SpawnFailed:
 		return fmt.Errorf("notify: server failed to spawn the configured hook")
 	}
@@ -122,11 +130,11 @@ func (c *Client) Notify(ctx context.Context, level, title, text string) error {
 
 // Notify (package-level) opens a fresh Client per call — for short-lived
 // harness-cli. Long-lived consumers should hold a *Client and call the method.
-func Notify(ctx context.Context, peerCID objproto.ConnectionID, level, title, text string) error {
+func Notify(ctx context.Context, peerCID objproto.ConnectionID, level, title, text string, stderr io.Writer) error {
 	c, err := Dial(ctx, peerCID, protocol.ClientKind_Cli)
 	if err != nil {
 		return err
 	}
 	defer c.Close()
-	return c.Notify(ctx, level, title, text)
+	return c.NotifyTo(ctx, level, title, text, stderr)
 }

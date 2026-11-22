@@ -53,6 +53,11 @@ type cliVerbs struct {
 	// MCP consumer sets a reader that fails, because its stdin is the
 	// JSON-RPC stream. A nil in means os.Stdin.
 	in io.Reader
+	// errOut is where a body writes what the command line shows on stderr --
+	// summaries, warnings, a per-id failure. The MCP consumer captures it
+	// into the tool result (spec D20); fd 2 there is only the client's log.
+	// A nil errOut means os.Stderr.
+	errOut io.Writer
 	// cid resolves the server ConnectionID, dying on a bad one. A function
 	// rather than a value because resolution reads flags, env and the
 	// workspace file, and a verb that never dials (version, caps, skill,
@@ -78,6 +83,15 @@ func (h cliVerbs) stdin() io.Reader {
 		return h.in
 	}
 	return os.Stdin
+}
+
+// stderr is where a body writes what the command line shows on stderr,
+// falling back to os.Stderr as stdout falls back to os.Stdout.
+func (h cliVerbs) stderr() io.Writer {
+	if h.errOut != nil {
+		return h.errOut
+	}
+	return os.Stderr
 }
 
 // baseCtx is the context a body's calls derive from, falling back to
@@ -306,7 +320,7 @@ func (h cliVerbs) Cancel(a verb.CancelAction) error {
 }
 
 func (h cliVerbs) Notify(a verb.NotifyAction) error {
-	return cli.Notify(h.ctx, h.cid(), a.Level, a.Title, a.Text)
+	return cli.Notify(h.ctx, h.cid(), a.Level, a.Title, a.Text, h.stderr())
 }
 
 func (h cliVerbs) Watch(a verb.CatalogAction) error {
@@ -538,7 +552,7 @@ func (h cliVerbs) ExecKill(a verb.ExecRunAction) error {
 	var failed error
 	for _, id := range a.ExecIDs {
 		if err := cli.ExecRunKill(h.ctx, h.cid(), id); err != nil {
-			fmt.Fprintf(os.Stderr, "exec kill %d: %v\n", id, err)
+			fmt.Fprintf(h.stderr(), "exec kill %d: %v\n", id, err)
 			failed = err
 			continue
 		}
@@ -585,7 +599,7 @@ func (h cliVerbs) ForwardKill(a verb.ForwardKillAction) error {
 	var failed error
 	for _, id := range a.ForwardIDs {
 		if err := cli.KillPortForward(h.ctx, h.cid(), id); err != nil {
-			fmt.Fprintf(os.Stderr, "forward kill %d: %v\n", id, err)
+			fmt.Fprintf(h.stderr(), "forward kill %d: %v\n", id, err)
 			failed = err
 			continue
 		}
@@ -764,7 +778,7 @@ func (h cliVerbs) BoardSend(a verb.BoardSendAction) error {
 }
 
 func (h cliVerbs) board(a verb.BoardAction) error {
-	return cli.RunBoardAction(h.ctx, h.cid(), a, h.stdout())
+	return cli.RunBoardAction(h.ctx, h.cid(), a, h.stdout(), h.stderr())
 }
 
 // The agent verbs run inside a task's Bash tool and read HARNESS_* env, so
@@ -773,10 +787,10 @@ func (h cliVerbs) AgentSend(a verb.AgentSendAction) error {
 	return agent.SendWith(h.ctx, a, h.stdin(), h.stdout())
 }
 func (h cliVerbs) AgentDispatch(a verb.AgentSendAction) error {
-	return agent.DispatchWith(h.ctx, a, h.stdin(), h.stdout())
+	return agent.DispatchWith(h.ctx, a, h.stdin(), h.stdout(), h.stderr())
 }
 func (h cliVerbs) AgentThread(a verb.AgentAction) error {
-	return agent.ThreadWith(h.ctx, a, h.stdout())
+	return agent.ThreadWith(h.ctx, a, h.stdout(), h.stderr())
 }
 func (h cliVerbs) AgentInbox(a verb.AgentAction) error {
 	return agent.InboxWith(h.ctx, a, h.stdout())
@@ -800,7 +814,7 @@ func (h cliVerbs) AgentContacts(a verb.AgentAction) error {
 	return agent.ContactsWith(h.ctx, a, h.stdout())
 }
 func (h cliVerbs) AgentRetained(a verb.AgentAction) error {
-	return agent.RetainedWith(h.ctx, a, h.stdout())
+	return agent.RetainedWith(h.ctx, a, h.stdout(), h.stderr())
 }
 func (h cliVerbs) AgentPurge(a verb.AgentAction) error {
 	return agent.PurgeWith(h.ctx, a, h.stdout())
@@ -835,7 +849,7 @@ func (h cliVerbs) CapsSet(a verb.SetCapsAction) error {
 	for _, id := range res.Affected {
 		fmt.Fprintln(h.stdout(), id)
 	}
-	fmt.Fprintf(os.Stderr, "changed %d task(s); closed %d connection(s)\n",
+	fmt.Fprintf(h.stderr(), "changed %d task(s); closed %d connection(s)\n",
 		len(res.Affected), res.ConnsClosed)
 	return nil
 }
@@ -920,16 +934,16 @@ func (h cliVerbs) SessionNew(a verb.SpawnAction) error {
 	if err := requireRepo("session new", a); err != nil {
 		return err
 	}
-	return runSessionNewWith(h.ctx, h.cid(), a, h.stdout())
+	return runSessionNewWith(h.ctx, h.cid(), a, h.stdout(), h.stderr())
 }
 func (h cliVerbs) SessionAttach(a verb.SessionAction) error {
 	return runSessionAttachWith(h.ctx, h.cid(), a)
 }
 func (h cliVerbs) SessionSnapshot(a verb.SessionAction) error {
-	return runSessionSnapshotWith(h.ctx, h.cid(), a, h.stdout())
+	return runSessionSnapshotWith(h.ctx, h.cid(), a, h.stdout(), h.stderr())
 }
 func (h cliVerbs) SessionSend(a verb.SendAction) error {
-	return runSessionSendWith(h.ctx, h.cid(), a, h.stdout())
+	return runSessionSendWith(h.ctx, h.cid(), a, h.stdout(), h.stderr())
 }
 func (h cliVerbs) SessionExec(a verb.SessionExecAction) error {
 	return runSessionExecWith(h.ctx, h.cid(), a, h.stdout())
@@ -976,7 +990,7 @@ func (h cliVerbs) SessionAwaitIdleKill(a verb.SessionAction) error {
 	var failed error
 	for _, id := range a.WatcherIDs {
 		if err := cli.AwaitIdleKill(h.ctx, h.cid(), id); err != nil {
-			fmt.Fprintf(os.Stderr, "await-idle kill %d: %v\n", id, err)
+			fmt.Fprintf(h.stderr(), "await-idle kill %d: %v\n", id, err)
 			failed = err
 			continue
 		}
@@ -1082,10 +1096,10 @@ func (h cliVerbs) AwaitProgressKill(a verb.AwaitProgressAction) error {
 }
 
 func (h cliVerbs) SessionResize(a verb.SessionAction) error {
-	return runSessionResizeWith(h.ctx, h.cid(), a)
+	return runSessionResizeWith(h.ctx, h.cid(), a, h.stderr())
 }
 func (h cliVerbs) SessionMode(a verb.SessionAction) error {
-	return runSessionModeWith(h.ctx, h.cid(), a)
+	return runSessionModeWith(h.ctx, h.cid(), a, h.stderr())
 }
 func (h cliVerbs) SessionStreamAttach(a verb.SessionAction) error {
 	return runSessionStreamAttachWith(h.ctx, h.cid(), a)

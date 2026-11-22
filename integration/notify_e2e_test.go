@@ -90,7 +90,7 @@ func TestNotifyEgressHookE2E(t *testing.T) {
 	// Give the server a moment to start listening.
 	time.Sleep(300 * time.Millisecond)
 
-	if err := cli.Notify(ctx, peerCID, "info", "title", "hello-egress"); err != nil {
+	if err := cli.Notify(ctx, peerCID, "info", "title", "hello-egress", os.Stderr); err != nil {
 		t.Fatalf("Notify: %v", err)
 	}
 

@@ -26,12 +26,12 @@ func Retained(ctx context.Context, args []string, stdout io.Writer) error {
 	if perr != nil {
 		return perr
 	}
-	return RetainedWith(ctx, a, stdout)
+	return RetainedWith(ctx, a, stdout, os.Stderr)
 }
 
 // RetainedWith is Retained for a caller that already has the parsed action --
 // the generated CLI dispatch, which parses from the declaration itself.
-func RetainedWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) error {
+func RetainedWith(ctx context.Context, a verb.AgentAction, stdout, stderr io.Writer) error {
 	serverCID := &a.ServerCID
 	topic := &a.Topic
 	self := &a.Self
@@ -81,7 +81,7 @@ func RetainedWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) err
 		// them (Status); only this rendering collapsed them. Diagnostics go to
 		// stderr so `agent retained --topic T | jq` stays a clean JSON-Lines
 		// stream — the same split cli/cmd_board.go uses for `board read`.
-		fmt.Fprintf(os.Stderr, "agent retained: topic %q is not on the board (never published, or evicted / purged)\n", *topic)
+		fmt.Fprintf(stderr, "agent retained: topic %q is not on the board (never published, or evicted / purged)\n", *topic)
 		return nil
 	case protocol.BoardStatus_Ok:
 		var body protocol.RetainedBody
@@ -89,15 +89,15 @@ func RetainedWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) err
 			return fmt.Errorf("retained: %w", err)
 		}
 		if r.OwnOnly() {
-			fmt.Fprintf(os.Stderr, "agent retained: %s carries another task's messages; listing only the ones this task sent "+
+			fmt.Fprintf(stderr, "agent retained: %s carries another task's messages; listing only the ones this task sent "+
 				"(the rest needs board_observe)\n", *topic)
 		}
 		if len(body.Metas) == 0 {
 			if r.OwnOnly() {
-				fmt.Fprintf(os.Stderr, "agent retained: topic %q holds none sent by this task\n", *topic)
+				fmt.Fprintf(stderr, "agent retained: topic %q holds none sent by this task\n", *topic)
 				return nil
 			}
-			fmt.Fprintf(os.Stderr, "agent retained: topic %q is on the board but holds no messages\n", *topic)
+			fmt.Fprintf(stderr, "agent retained: topic %q is on the board but holds no messages\n", *topic)
 			return nil
 		}
 		for _, m := range body.Metas {

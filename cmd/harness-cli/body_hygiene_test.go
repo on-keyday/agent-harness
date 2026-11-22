@@ -12,9 +12,10 @@ import (
 
 // One harness-cli process serves many MCP tool calls at once, with stdin and
 // stdout carrying the JSON-RPC stream (spec §7, D16, D18). So a tool's body may
-// not end the process, read fd 0, write fd 1 or run outside the call's context:
-// it returns an exit-code error, reads h.stdin(), writes h.stdout() and dials
-// with h.ctx. This scans every function in the package;
+// not end the process, read fd 0, write fd 1 or fd 2, or run outside the call's
+// context: it returns an exit-code error, reads h.stdin(), writes h.stdout() and
+// h.stderr(), and dials with h.ctx. fd 2 is the client's log, which the model
+// never sees (spec D20). This scans every function in the package;
 // the ones allowed to touch the process's streams are named below with the
 // reason -- the process entry points, and the bodies of verbs that are NOT
 // tools (VerbSpec.MCPNotATool), which own the terminal by design.
@@ -23,6 +24,11 @@ var processStreamAllowed = map[string]string{
 	"die":                        "turns a verb's error into the process's exit",
 	"helpWidth":                  "asks the terminal's width for -h; never reached by a tool call (help is a parse error there)",
 	"forceExitWithStacks":        "second interrupt of a blocking verb",
+	"interruptContext":           "reports Ctrl-C on the terminal; only the not-a-tool verbs that block until interrupted use it",
+	"usage":                      "the process's own usage text for a line that names no verb",
+	"filter":                     "the MCP server's own log (whoami failed), not a tool's output",
+	"SshGateway":                 "ssh-gateway is not a tool: it serves until interrupted",
+	"forwardIPLink":              "forward is not a tool: it holds the link until interrupted",
 	"runExecAction":              "exec is not a tool: it splices stdin/stdout to the command",
 	"runFileEdit":                "file edit is not a tool: it runs $EDITOR on the terminal",
 	"runFileNew":                 "file new is not a tool: it runs $EDITOR on the terminal",
@@ -34,6 +40,7 @@ var processStreamAllowed = map[string]string{
 	"serveMCP":                   "the MCP server itself owns stdin and stdout",
 	"stdout":                     "cliVerbs' nil-safe default: a cliVerbs built with no sink is the command line's",
 	"stdin":                      "cliVerbs' nil-safe default: a cliVerbs built with no reader is the command line's",
+	"stderr":                     "cliVerbs' nil-safe default: a cliVerbs built with no errOut is the command line's",
 	"baseCtx":                    "cliVerbs' nil-safe default: a cliVerbs built with no context (a test) runs under Background",
 }
 
@@ -81,7 +88,7 @@ func TestToolBodiesDoNotTouchProcessStreams(t *testing.T) {
 				}
 				// A context of the body's own making escapes the call's: MCP's
 				// cancellation and the verb's declared Sends (spec §7, §8.2).
-				bad := (x.Name == "os" && (sel.Sel.Name == "Exit" || sel.Sel.Name == "Stdin" || sel.Sel.Name == "Stdout")) ||
+				bad := (x.Name == "os" && (sel.Sel.Name == "Exit" || sel.Sel.Name == "Stdin" || sel.Sel.Name == "Stdout" || sel.Sel.Name == "Stderr")) ||
 					(x.Name == "fmt" && (sel.Sel.Name == "Print" || sel.Sel.Name == "Printf" || sel.Sel.Name == "Println")) ||
 					(x.Name == "context" && (sel.Sel.Name == "Background" || sel.Sel.Name == "TODO"))
 				if !bad {
@@ -98,7 +105,7 @@ func TestToolBodiesDoNotTouchProcessStreams(t *testing.T) {
 	}
 	sort.Strings(found)
 	for _, f := range found {
-		t.Errorf("process stream outside the allowed bodies: %s -- write h.stdout(), read h.stdin(), return an exit-code error, use h.ctx", f)
+		t.Errorf("process stream outside the allowed bodies: %s -- write h.stdout()/h.stderr(), read h.stdin(), return an exit-code error, use h.ctx", f)
 	}
 	for fn := range processStreamAllowed {
 		if !seen[fn] {

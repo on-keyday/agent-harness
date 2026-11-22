@@ -5,7 +5,7 @@ package cli
 import (
 	"context"
 	"fmt"
-	"os"
+	"io"
 	"strings"
 	"time"
 
@@ -58,7 +58,9 @@ import (
 // never-attached session reports no size at all: there the repaint paints the
 // server's 80x24 into whatever default was chosen, which is partial rather than
 // corrupt. Untested — no case in the suite reaches a sizeless session.
-func (c *Client) collectScreen(ctx context.Context, taskIDHex string, defRows, defCols uint16, settle time.Duration, includeSynth bool) (*vtgrid.Terminal, string, int, int, LiveActivity, error) {
+// stderr takes the note that the session reported no size -- in the MCP
+// server, the tool result (spec D20).
+func (c *Client) collectScreen(ctx context.Context, taskIDHex string, defRows, defCols uint16, settle time.Duration, includeSynth bool, stderr io.Writer) (*vtgrid.Terminal, string, int, int, LiveActivity, error) {
 	raw, err := c.CollectRaw(ctx, taskIDHex, settle, includeSynth)
 	if err != nil {
 		return nil, "", 0, 0, LiveActivity{}, err
@@ -66,7 +68,7 @@ func (c *Client) collectScreen(ctx context.Context, taskIDHex string, defRows, d
 	rows, cols := raw.Rows, raw.Cols
 	if !raw.HasSize || rows == 0 || cols == 0 {
 		rows, cols = defRows, defCols
-		fmt.Fprintf(os.Stderr,
+		fmt.Fprintf(stderr,
 			"harness-cli: session %s reported no terminal size; rendering at %dx%d (full-screen TUIs may mis-render)\n",
 			taskIDHex, cols, rows)
 	}
@@ -115,8 +117,8 @@ func renderScreen(term *vtgrid.Terminal) string {
 // settle is how long to keep collecting bytes after attach before rendering;
 // the replay arrives in a burst, so a short window (e.g. 1.5s) is enough for a
 // static screen.
-func (c *Client) SessionSnapshot(ctx context.Context, taskIDHex string, defRows, defCols uint16, settle time.Duration, includeSynth bool) (string, error) {
-	term, _, _, _, _, err := c.collectScreen(ctx, taskIDHex, defRows, defCols, settle, includeSynth)
+func (c *Client) SessionSnapshot(ctx context.Context, taskIDHex string, defRows, defCols uint16, settle time.Duration, includeSynth bool, stderr io.Writer) (string, error) {
+	term, _, _, _, _, err := c.collectScreen(ctx, taskIDHex, defRows, defCols, settle, includeSynth, stderr)
 	if err != nil {
 		return taskIDHex, err
 	}
@@ -148,8 +150,8 @@ func (c *Client) SessionSnapshotRaw(ctx context.Context, taskIDHex string, settl
 // identical to real input; this side-channel surfaces the attribute the
 // flattened text throws away — without re-emitting raw escapes (which an LLM
 // reader can't use). Returns (plainText, styleReport).
-func (c *Client) SessionSnapshotStyled(ctx context.Context, taskIDHex string, defRows, defCols uint16, settle time.Duration, withAttrs, withColor, includeSynth bool) (string, string, error) {
-	term, _, cols, rows, _, err := c.collectScreen(ctx, taskIDHex, defRows, defCols, settle, includeSynth)
+func (c *Client) SessionSnapshotStyled(ctx context.Context, taskIDHex string, defRows, defCols uint16, settle time.Duration, withAttrs, withColor, includeSynth bool, stderr io.Writer) (string, string, error) {
+	term, _, cols, rows, _, err := c.collectScreen(ctx, taskIDHex, defRows, defCols, settle, includeSynth, stderr)
 	if err != nil {
 		return taskIDHex, "", err
 	}
@@ -266,8 +268,8 @@ func (s *ScreenSnapshot) Detect(set DetectRuleSet) DetectExplain {
 // The grid stays width-WRAPPED here exactly as it is on screen — a long logical
 // line is still split across rows. Use SessionSnapshotRaw or `session exec` when
 // logical lines matter; this shape trades that for row/column addressability.
-func (c *Client) SessionSnapshotStructured(ctx context.Context, taskIDHex string, defRows, defCols uint16, settle time.Duration, withAttrs, withColor, includeSynth bool) (*ScreenSnapshot, error) {
-	term, title, cols, rows, live, err := c.collectScreen(ctx, taskIDHex, defRows, defCols, settle, includeSynth)
+func (c *Client) SessionSnapshotStructured(ctx context.Context, taskIDHex string, defRows, defCols uint16, settle time.Duration, withAttrs, withColor, includeSynth bool, stderr io.Writer) (*ScreenSnapshot, error) {
+	term, title, cols, rows, live, err := c.collectScreen(ctx, taskIDHex, defRows, defCols, settle, includeSynth, stderr)
 	if err != nil {
 		return nil, err
 	}
@@ -285,8 +287,8 @@ func (c *Client) SessionSnapshotStructured(ctx context.Context, taskIDHex string
 //
 // Attribute and colour spans are always collected here: the ANSI render needs
 // the same per-cell styling, so declining to collect it would save nothing.
-func (c *Client) SessionSnapshotANSI(ctx context.Context, taskIDHex string, defRows, defCols uint16, settle time.Duration, includeSynth bool) (string, *ScreenSnapshot, error) {
-	term, title, cols, rows, live, err := c.collectScreen(ctx, taskIDHex, defRows, defCols, settle, includeSynth)
+func (c *Client) SessionSnapshotANSI(ctx context.Context, taskIDHex string, defRows, defCols uint16, settle time.Duration, includeSynth bool, stderr io.Writer) (string, *ScreenSnapshot, error) {
+	term, title, cols, rows, live, err := c.collectScreen(ctx, taskIDHex, defRows, defCols, settle, includeSynth, stderr)
 	if err != nil {
 		return "", nil, err
 	}

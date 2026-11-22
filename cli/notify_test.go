@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"io"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -26,7 +27,7 @@ func TestNewNotifyRequest_IgnoresEnv(t *testing.T) {
 func TestMtuGuardNotify_Truncates(t *testing.T) {
 	long := strings.Repeat("あ", 2000) // ~6 KB UTF-8, far over budget
 	nr := newNotifyRequest(protocol.NotifyLevel_Info, "", long)
-	mtuGuardNotify(nr)
+	mtuGuardNotify(nr, io.Discard)
 
 	if encodedNotifyWireLen(nr) > notifyWireBudget {
 		t.Fatalf("after guard encoded len %d > budget %d", encodedNotifyWireLen(nr), notifyWireBudget)
@@ -41,7 +42,7 @@ func TestMtuGuardNotify_Truncates(t *testing.T) {
 
 func TestMtuGuardNotify_ShortNoop(t *testing.T) {
 	nr := newNotifyRequest(protocol.NotifyLevel_Info, "", "short")
-	mtuGuardNotify(nr)
+	mtuGuardNotify(nr, io.Discard)
 	if string(nr.Text) != "short" {
 		t.Fatalf("short text must be untouched, got %q", nr.Text)
 	}

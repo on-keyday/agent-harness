@@ -5,6 +5,7 @@ package integration
 import (
 	"bytes"
 	"context"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -109,7 +110,7 @@ func TestSessionSnapshotRaw_PreservesEscapes(t *testing.T) {
 
 	// true: the render feeds its emulator the whole burst, the server's own
 	// replay additions included — the same default the CLI ships.
-	text, err := c1.SessionSnapshot(context.Background(), taskIDHex, 40, 120, settle, true)
+	text, err := c1.SessionSnapshot(context.Background(), taskIDHex, 40, 120, settle, true, os.Stderr)
 	if err != nil {
 		t.Fatalf("SessionSnapshot: %v", err)
 	}

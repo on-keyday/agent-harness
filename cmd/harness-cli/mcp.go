@@ -92,7 +92,7 @@ type mcpServer struct {
 
 	// run executes one admitted tools/call under its own context; nil is
 	// runTool. A test injects one to hold a call open.
-	run func(ctx context.Context, f toolFilter, spec verb.VerbSpec, args json.RawMessage) (text string, isErr bool)
+	run func(ctx context.Context, f toolFilter, spec verb.VerbSpec, args json.RawMessage) (blocks []string, isErr bool)
 }
 
 // serveMCP is the verb body. It reads requests from the process's stdin and
@@ -293,7 +293,7 @@ func (s *mcpServer) serve(in io.Reader, out io.Writer) error {
 			calls.Add(1)
 			go func(id json.RawMessage, filter toolFilter, args json.RawMessage) {
 				defer calls.Done()
-				text, isErr := run(ctx, filter, spec, args)
+				blocks, isErr := run(ctx, filter, spec, args)
 				fmu.Lock()
 				dropped := f.cancelled
 				if inFlight[key] == f {
@@ -304,7 +304,11 @@ func (s *mcpServer) serve(in io.Reader, out io.Writer) error {
 				if dropped {
 					return // the client withdrew the request (MCP cancellation)
 				}
-				res := map[string]any{"content": []map[string]any{{"type": "text", "text": text}}}
+				content := make([]map[string]any, 0, len(blocks))
+				for _, b := range blocks {
+					content = append(content, map[string]any{"type": "text", "text": b})
+				}
+				res := map[string]any{"content": content}
 				if isErr {
 					res["isError"] = true
 				}
@@ -557,19 +561,19 @@ func resolveTool(f toolFilter, name string) (verb.VerbSpec, *mcpError) {
 // runTool runs one admitted tool under ctx. A refusal by the verb or by the
 // server is a tool result with isError, which is what a client shows the
 // model.
-func (s *mcpServer) runTool(ctx context.Context, f toolFilter, spec verb.VerbSpec, rawArgs json.RawMessage) (text string, isErr bool) {
+func (s *mcpServer) runTool(ctx context.Context, f toolFilter, spec verb.VerbSpec, rawArgs json.RawMessage) (blocks []string, isErr bool) {
 	name := toolName(spec)
 	args := map[string]any{}
 	if len(rawArgs) > 0 && string(rawArgs) != "null" {
 		dec := json.NewDecoder(bytes.NewReader(rawArgs))
 		dec.UseNumber()
 		if err := dec.Decode(&args); err != nil {
-			return name + ": arguments: " + err.Error(), true
+			return []string{name + ": arguments: " + err.Error()}, true
 		}
 	}
 	argv, err := buildArgv(spec, args, f.readOnly)
 	if err != nil {
-		return name + ": " + err.Error(), true
+		return []string{name + ": " + err.Error()}, true
 	}
 
 	// The SAME path a typed command takes: Parse validates (check + Validate),
@@ -580,62 +584,82 @@ func (s *mcpServer) runTool(ctx context.Context, f toolFilter, spec verb.VerbSpe
 	fs.SetOutput(io.Discard)
 	b, err := sp.Parse(fs, argv)
 	if err != nil {
-		return name + ": " + err.Error(), true
+		return []string{name + ": " + err.Error()}, true
 	}
 	act, err := sp.BuildFunc()(b)
 	if err != nil {
-		return name + ": " + err.Error(), true
+		return []string{name + ": " + err.Error()}, true
 	}
 
 	// A COPY with its own sink, no stdin and this call's context: the handler
 	// must not touch the JSON-RPC stream, and cancelling the call reaches every
 	// client it dials. The verb may send only the kinds it declares (D14).
 	sub := s.h
-	var buf bytes.Buffer
-	sub.out = &buf
+	var buf, errBuf bytes.Buffer
+	sub.out, sub.errOut = &buf, &errBuf
 	sub.in = noStdin{}
 	sub.ctx = cli.WithExpectedKinds(ctx, spec.FlagSetName(), spec.Sends)
 	r, handled := verb.DispatchCLIAction[error](sub, act)
 	if !handled {
-		return name + ": no handler for this verb", true
+		return []string{name + ": no handler for this verb"}, true
 	}
-	return toolResultText(buf.Bytes(), r)
+	return toolResultBlocks(buf.Bytes(), errBuf.Bytes(), r)
 }
 
-// maxToolResult bounds what one tool call hands the model: a record or a
-// transcript can be any size, and the whole of it would be one JSON line.
+// maxToolResult bounds what one tool call hands the model, per block: a
+// record or a transcript can be any size, and the whole of it would be one
+// JSON line.
 const maxToolResult = 1 << 20
 
-// toolResultText shapes what a body printed, and its error, into a tool
-// result: the output, then why it failed (a refusal with nothing printed reads
-// byte-for-byte as the typed command's). Output that is not UTF-8 -- a
-// transcript tar, a raw record -- is refused rather than sent, since JSON
-// would replace its bytes with U+FFFD; and output past maxToolResult is cut
-// with a notice.
-func toolResultText(out []byte, err error) (string, bool) {
-	if !utf8.Valid(out) {
-		return fmt.Sprintf("the output is binary (%d bytes) and a tool result is text: write it to a file with -o", len(out)), true
+// toolResultBlocks shapes what a body wrote, and its error, into the text
+// blocks of a tool result (spec §5.3, D20): stdout, then -- when there is any
+// -- stderr ending with the error's text, which is where the command line
+// prints it. stdout stays a block of its own, so a JSON result parses as JSON.
+// stdout that is not UTF-8 -- a transcript tar, a raw record -- is refused
+// rather than sent, since JSON would replace its bytes with U+FFFD.
+func toolResultBlocks(out, errOut []byte, err error) ([]string, bool) {
+	isErr := err != nil
+	stdout := ""
+	if utf8.Valid(out) {
+		stdout = boundText(string(out), len(out))
+	} else {
+		stdout = fmt.Sprintf("the output is binary (%d bytes) and a tool result is text: write it to a file with -o", len(out))
+		isErr = true
 	}
-	text := string(out)
-	if len(text) > maxToolResult {
-		cut := maxToolResult
-		for cut > 0 && !utf8.RuneStart(text[cut]) {
-			cut--
+	stderr := strings.ToValidUTF8(string(errOut), "\uFFFD")
+	if err != nil {
+		msg := err.Error()
+		var ec exitCodeError
+		if errors.As(err, &ec) {
+			msg = ec.msg // empty for a body that already printed why
 		}
-		text = text[:cut] + fmt.Sprintf("\n[output truncated at %d of %d bytes; -o writes the whole of it to a file where the verb has one]", cut, len(out))
+		if stderr != "" && msg != "" && !strings.HasSuffix(stderr, "\n") {
+			stderr += "\n"
+		}
+		stderr += msg
 	}
-	if err == nil {
-		return text, false
+	stderr = boundText(stderr, len(stderr))
+
+	var blocks []string
+	if stdout != "" || stderr == "" {
+		blocks = append(blocks, stdout)
 	}
-	msg := err.Error()
-	var ec exitCodeError
-	if errors.As(err, &ec) {
-		msg = ec.msg
+	if stderr != "" {
+		blocks = append(blocks, stderr)
 	}
-	if text != "" && msg != "" && !strings.HasSuffix(text, "\n") {
-		text += "\n"
+	return blocks, isErr
+}
+
+// boundText cuts text past maxToolResult on a rune boundary, with a notice.
+func boundText(text string, total int) string {
+	if len(text) <= maxToolResult {
+		return text
 	}
-	return text + msg, true
+	cut := maxToolResult
+	for cut > 0 && !utf8.RuneStart(text[cut]) {
+		cut--
+	}
+	return text[:cut] + fmt.Sprintf("\n[output truncated at %d of %d bytes; -o writes the whole of it to a file where the verb has one]", cut, total)
 }
 
 // lookupTool finds a declared tool by its advertised name.

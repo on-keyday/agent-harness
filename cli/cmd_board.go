@@ -118,13 +118,16 @@ func RunBoardSubcmd(ctx context.Context, cid objproto.ConnectionID, sub string, 
 	if berr != nil {
 		return berr
 	}
-	return RunBoardAction(ctx, cid, act.(verb.BoardAction), out)
+	return RunBoardAction(ctx, cid, act.(verb.BoardAction), out, os.Stderr)
 }
 
 // RunBoardAction is RunBoardSubcmd for a caller that already has the parsed
 // action -- the generated CLI dispatch, which parses from the declaration
 // itself rather than handing this function a sub-verb string to look up.
-func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.BoardAction, out io.Writer) error {
+// stderr takes what the command line shows on fd 2 -- empty-topic notes,
+// unavailable subscriber counts -- so an MCP tool call can return it (spec
+// D20).
+func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.BoardAction, out, stderr io.Writer) error {
 	switch ba.Sub {
 	case verb.SubTopics:
 		rows, err := BoardTopics(ctx, cid)
@@ -148,7 +151,7 @@ func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.Boar
 		} else {
 			// Requires board_observe; a caller without it still gets the topics.
 			subsOK = false
-			fmt.Fprintf(os.Stderr, "board topics: subscriber counts unavailable: %v\n", serr)
+			fmt.Fprintf(stderr, "board topics: subscriber counts unavailable: %v\n", serr)
 		}
 
 		type topicRow struct {
@@ -251,7 +254,7 @@ func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.Boar
 		}
 		defer c.Close()
 		if ba.Archive != "" {
-			return readArchive(ctx, c, ba, out)
+			return readArchive(ctx, c, ba, out, stderr)
 		}
 		msgs, found, err := c.BoardReadPage(ctx, topic, ba.Before, uint16(ba.Limit))
 		if err != nil {
@@ -260,7 +263,7 @@ func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.Boar
 		if ba.Limit == 0 {
 			// The ring only. On a flushed topic everything older is on disk,
 			// and nothing on this output would say so.
-			defer flushedHint(ctx, c, topic)
+			defer flushedHint(ctx, c, topic, stderr)
 		}
 		if !found {
 			// Exit 0 per spec, but say which nothing this is: "no such topic"
@@ -268,11 +271,11 @@ func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.Boar
 			// the exit code does not separate them either. Diagnostics go to
 			// stderr so `board read T | ...` stays clean — the same split
 			// cli/notify.go and cli/attach_native.go use.
-			fmt.Fprintf(os.Stderr, "board read: topic %q is not on the board (never published, or evicted / purged)\n", topic)
+			fmt.Fprintf(stderr, "board read: topic %q is not on the board (never published, or evicted / purged)\n", topic)
 			return nil
 		}
 		if len(msgs) == 0 {
-			fmt.Fprintf(os.Stderr, "board read: topic %q is on the board but holds no messages\n", topic)
+			fmt.Fprintf(stderr, "board read: topic %q is on the board but holds no messages\n", topic)
 			return nil
 		}
 		// Who has actually been handed each of these. The subscriber rows carry
@@ -282,7 +285,7 @@ func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.Boar
 		// shown_to=0/0, and the reason goes to stderr.
 		subs, serr := c.BoardSubscribers(ctx, topic)
 		if serr != nil {
-			fmt.Fprintf(os.Stderr, "board read: delivery marks unavailable: %v\n", serr)
+			fmt.Fprintf(stderr, "board read: delivery marks unavailable: %v\n", serr)
 		}
 		shown := printBoardMessages(out, topic, msgs, subs, ba, func(m BoardMessage) string {
 			return " " + ShownToLabel(subs, topic, m.Seq)
@@ -290,7 +293,7 @@ func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.Boar
 		if shown == 0 {
 			// Third way to print nothing: the topic has messages, none of them
 			// a reply to the requested seq.
-			fmt.Fprintf(os.Stderr, "board read: topic %q holds %d message(s), none replying to %d\n",
+			fmt.Fprintf(stderr, "board read: topic %q holds %d message(s), none replying to %d\n",
 				topic, len(msgs), *inReplyTo)
 		}
 
@@ -324,7 +327,7 @@ func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.Boar
 			fmt.Fprintln(out, r.Summary())
 		}
 		if len(rows) == 0 && !ba.JSON {
-			fmt.Fprintln(os.Stderr, "board archives: none")
+			fmt.Fprintln(stderr, "board archives: none")
 		}
 		return nil
 	case verb.SubThread:
@@ -346,7 +349,7 @@ func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.Boar
 		if serr != nil {
 			return serr
 		}
-		return renderThreadRows(out, ba, rows)
+		return renderThreadRows(out, stderr, ba, rows)
 
 	case verb.SubSubscribers:
 		// Optional <topic>: with it, only the tasks a publish to that topic
@@ -507,7 +510,7 @@ func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.Boar
 
 // renderThreadRows is the operator face's call into RenderThreads; the two
 // faces share one renderer so their rows cannot drift.
-func renderThreadRows(out io.Writer, ba verb.BoardAction, rows []ThreadRow) error {
+func renderThreadRows(out, stderr io.Writer, ba verb.BoardAction, rows []ThreadRow) error {
 	// The destination is judged here, where it is still a file, and travels as
 	// a mode. Obligation 2 of the spec's payload section lives in this line:
 	// a redirected `board thread > out` must carry the published bytes.
@@ -517,6 +520,7 @@ func renderThreadRows(out io.Writer, ba verb.BoardAction, rows []ThreadRow) erro
 		HeadersOnly: ba.HeadersOnly,
 		Body:        BodyModeFor(destFile, ba.Raw),
 		Window:      ThreadWindowOperator,
+		Stderr:      stderr,
 	}, nil)
 }
 
@@ -543,6 +547,9 @@ type ThreadRenderOptions struct {
 	// that must always escape.
 	Body   BodyMode
 	Window string
+	// Stderr takes the window line in JSON mode, where it cannot join the
+	// feed. Nil is os.Stderr.
+	Stderr io.Writer
 }
 
 // RenderThreads draws the rows BuildThreads and SelectThreads produced.
@@ -554,7 +561,7 @@ type ThreadRenderOptions struct {
 // stderr instead.
 func RenderThreads(out io.Writer, rows []ThreadRow, opts ThreadRenderOptions, keep func(seq uint64) bool) error {
 	if opts.JSON {
-		fmt.Fprintln(os.Stderr, opts.Window)
+		fmt.Fprintln(stderrOr(opts.Stderr), opts.Window)
 	} else {
 		fmt.Fprintln(out, opts.Window)
 	}
@@ -815,7 +822,7 @@ func printBoardMessages(out io.Writer, topic string, msgs []BoardMessage, subs [
 
 // readArchive is board read --archive: a page of an archive, 64 unless
 // --limit says otherwise, withdrawn messages marked as on a topic.
-func readArchive(ctx context.Context, c *Client, ba verb.BoardAction, out io.Writer) error {
+func readArchive(ctx context.Context, c *Client, ba verb.BoardAction, out, stderr io.Writer) error {
 	limit := ba.Limit
 	if limit == 0 {
 		limit = 64
@@ -825,11 +832,11 @@ func readArchive(ctx context.Context, c *Client, ba verb.BoardAction, out io.Wri
 		return err
 	}
 	if !found {
-		fmt.Fprintf(os.Stderr, "board read: no archive %q (board archives lists them)\n", ba.Archive)
+		fmt.Fprintf(stderr, "board read: no archive %q (board archives lists them)\n", ba.Archive)
 		return nil
 	}
 	if len(msgs) == 0 {
-		fmt.Fprintf(os.Stderr, "board read: archive %q holds nothing below seq %d\n", ba.Archive, ba.Before)
+		fmt.Fprintf(stderr, "board read: archive %q holds nothing below seq %d\n", ba.Archive, ba.Before)
 		return nil
 	}
 	// The rows name the topic the messages were posted to, as board read of
@@ -849,14 +856,14 @@ func readArchive(ctx context.Context, c *Client, ba verb.BoardAction, out io.Wri
 // flushedHint tells the reader of a flushed topic's ring that what came before
 // it is on disk, and how to page it. On stderr, as board read's other
 // diagnostics, so `board read T | ...` stays clean.
-func flushedHint(ctx context.Context, c *Client, topic string) {
+func flushedHint(ctx context.Context, c *Client, topic string, stderr io.Writer) {
 	rows, err := c.BoardTopics(ctx)
 	if err != nil {
 		return
 	}
 	for _, r := range rows {
 		if r.Name == topic && r.Retention != nil && r.Retention.RingFloor != 0 {
-			fmt.Fprintf(os.Stderr, "board read: %s was flushed through seq %d; older messages are on disk: board read %s --limit 64\n",
+			fmt.Fprintf(stderr, "board read: %s was flushed through seq %d; older messages are on disk: board read %s --limit 64\n",
 				topic, r.Retention.RingFloor, topic)
 		}
 	}

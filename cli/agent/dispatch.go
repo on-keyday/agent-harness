@@ -84,12 +84,12 @@ func Dispatch(ctx context.Context, args []string, stdin io.Reader, stdout io.Wri
 		return berr
 	}
 	a := act.(verb.AgentSendAction)
-	return DispatchWith(ctx, a, stdin, stdout)
+	return DispatchWith(ctx, a, stdin, stdout, os.Stderr)
 }
 
 // DispatchWith is Dispatch for a caller that already has the parsed action --
 // the generated CLI dispatch, which parses from the declaration itself.
-func DispatchWith(ctx context.Context, a verb.AgentSendAction, stdin io.Reader, stdout io.Writer) error {
+func DispatchWith(ctx context.Context, a verb.AgentSendAction, stdin io.Reader, stdout, stderr io.Writer) error {
 	serverCID, topic, replyTo := &a.ServerCID, &a.Topic, &a.ReplyTo
 	data, timeout := &a.Data, &a.Timeout
 	if *topic == "" {
@@ -157,7 +157,7 @@ func DispatchWith(ctx context.Context, a verb.AgentSendAction, stdin io.Reader, 
 	// `session send`'s does — and it has to be printed BEFORE the wait,
 	// because a body that went out empty or truncated otherwise shows up
 	// only as a timeout minutes later, which names nothing.
-	fmt.Fprintf(os.Stderr, "agent dispatch: published %d bytes from %s as seq %d, delivered_to %d\n",
+	fmt.Fprintf(stderr, "agent dispatch: published %d bytes from %s as seq %d, delivered_to %d\n",
 		len(payload), source, sent.Seq, sent.DeliveredTo)
 
 	// The server-side wait gets what is LEFT of the budget after the publish

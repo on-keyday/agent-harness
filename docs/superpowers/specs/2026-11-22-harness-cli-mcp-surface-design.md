@@ -139,6 +139,7 @@ evidence.
 | 17 | A verb that writes only when a flag is given declares that flag in `MCPTool.WriteFlags` and stays `read`: a `--read-only` server lists it with the flag omitted (and refuses it as unknown), any other server lists it whole with `readOnlyHint: false`. `record get -o`, `transcript get -o`, `skill --extract`/`--force` | **operator** (2026-11-23) |
 | 18 | `tools/call` requests run concurrently, each under its own context; `notifications/cancelled` cancels that context and the cancelled request gets no response. `initialize`, `ping` and `tools/list` are answered in arrival order by the reading loop, so a waiting call never delays them. No bound on concurrent calls: a bound would queue a fast call behind waiting ones, and the client is the agent's own child with the agent's own authority | **operator** (2026-11-23) |
 | 19 | A verb that waits for something else and then answers once is a tool: `session exec`, `session await-idle`, `await-progress`, `agent wait`, `agent dispatch`. A waiting call occupies only itself (D18), and the client's own timeout ends it through cancellation. Streaming and terminal-owning verbs stay excluded | **operator** (2026-11-23) |
+| 20 | A tool body's stderr is injected like its stdout and returned in the tool result, as a second text block after stdout; the error text ends that block. Only the process's own log stays on the process's stderr (§7) | **operator** (2026-11-23) |
 
 ## 5. Interface
 
@@ -259,8 +260,13 @@ and a refusal where it does not (a `Pathspec` verb, whose `--` is taken).
 an unknown key, then runs the shared path — `spec.For(CLI).Parse` →
 `BuildFunc` → `DispatchCLIAction` — and returns:
 
-- handler success → `content: [{ "type": "text", "text": <captured output> }]`
-- handler error → the same shape with the error text, and `"isError": true`
+- handler success → `content: [{ "type": "text", "text": <captured stdout> }]`,
+  followed by a second text block with the captured stderr when there is any
+- handler error → the same shape, with the error text ending the stderr block
+  (where the command line prints it), and `"isError": true`
+
+The stdout block is the body's stdout and nothing else, so a verb whose output
+is JSON returns one block that parses as JSON (D20).
 
 Running the CLI-narrowed spec (`For(CLI)`) keeps positional indices identical to
 the surface an operator types, and `Parse` is the only entry that runs the
@@ -361,9 +367,21 @@ that prints to fd 1 fails the "stdout is JSON-RPC only" assertion.
   a nil-safe `stdin()`; the MCP consumer sets a reader that fails with "a tool
   call has no stdin: give the body as text or --data".
 
-A body's stderr lines (`session send`'s summary, `session mode`'s confirmation)
-stay on the MCP server's stderr, which is the client's log, not the tool
-result. The result is what the body wrote to its sink (§5.3).
+**A body's stderr is injected too (D20).** An earlier pass left a body's
+stderr lines on the MCP server's stderr, the client's log, on the ground that
+writing there breaks nothing. That asked only whether the server survives,
+not whether the model sees what a command-line user sees, and the lines carry
+results: `agent dispatch`'s `delivered_to N` (without it a message nobody
+received reads as a bare timeout minutes later), `board read`'s "topic holds no
+messages", `session send`'s summary, a kill that failed for one id of several.
+So `cliVerbs` gains `errOut io.Writer` beside `out`, read through a nil-safe
+`stderr()`, and the `cli/` functions a tool body calls take the stderr writer
+as a parameter, as they take `out`. The command line passes `os.Stderr`; a tool
+call passes a buffer of its own.
+
+What stays on the process's stderr is the process's own log: `slog` lines from
+the transport, `main` and `die`, the MCP server's own warnings, and the bodies
+of verbs that are not tools.
 
 **A third, since calls overlap (D18): the body's context.** Each call runs
 under its own context, carried in `cliVerbs.ctx`, and a body MUST dial and
@@ -501,7 +519,7 @@ that produced it.
    refuses a tool with a nil `Sends`).
 2b. **No body ends or reads the process, or leaves the call's context.** A
    go/ast scan of `cmd/harness-cli` refuses `os.Exit`, `os.Stdin`, `os.Stdout`,
-   `fmt.Print*`, `context.Background` and `context.TODO` inside the bodies of
+   `os.Stderr`, `fmt.Print*`, `context.Background` and `context.TODO` inside the bodies of
    tool verbs, with an allowlist naming the not-a-tool bodies (V10, §7).
 2c. **Overlap and cancellation.** The serve loop with an injected call runner:
    a call that blocks until its context ends does not delay a second call or a

@@ -32,12 +32,12 @@ func Thread(ctx context.Context, args []string, stdout io.Writer) error {
 	if perr != nil {
 		return perr
 	}
-	return ThreadWith(ctx, a, stdout)
+	return ThreadWith(ctx, a, stdout, os.Stderr)
 }
 
 // ThreadWith is Thread for a caller that already has the parsed action --
 // the generated CLI dispatch, which parses from the declaration itself.
-func ThreadWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) error {
+func ThreadWith(ctx context.Context, a verb.AgentAction, stdout, stderr io.Writer) error {
 	c, err := connectClient(ctx, a.ServerCID)
 	if err != nil {
 		return err
@@ -58,7 +58,7 @@ func ThreadWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) error
 	topicOf := make(map[uint64]string)
 	sizes := make(map[uint64]int) // seq -> published size, from the metas
 	for _, topic := range topics {
-		metas, tsizes, err := retainedMetas(ctx, c, topic)
+		metas, tsizes, err := retainedMetas(ctx, c, topic, stderr)
 		if err != nil {
 			return err
 		}
@@ -108,6 +108,7 @@ func ThreadWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) error
 		HeadersOnly: a.HeadersOnly,
 		Body:        cli.BodyModeFor(destFile, a.Raw),
 		Window:      ThreadWindowAgent,
+		Stderr:      stderr,
 	}, nil)
 }
 
@@ -156,7 +157,7 @@ func listSubscribedTopics(ctx context.Context, c *cli.Client) ([]string, error) 
 // caller, through the same scoped read `agent read` uses. Retracted messages
 // never appear here: agent-facing paths drop them the moment their author
 // calls retract, so the agent face shows what the task can actually see.
-func retainedMetas(ctx context.Context, c *cli.Client, topic string) ([]cli.BoardMessage, map[uint64]int, error) {
+func retainedMetas(ctx context.Context, c *cli.Client, topic string, stderr io.Writer) ([]cli.BoardMessage, map[uint64]int, error) {
 	lr := protocol.AgentListRetainedRequest{}
 	lr.SetTopic([]byte(topic))
 	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_AgentListRetained}}
@@ -185,7 +186,7 @@ func retainedMetas(ctx context.Context, c *cli.Client, topic string) ([]cli.Boar
 		if r.OwnOnly() {
 			// A subscription this task can no longer fully read (board_observe
 			// was taken away): show what it sent there rather than end the view.
-			fmt.Fprintf(os.Stderr, "agent thread: %s: only this task's own messages are visible\n", topic)
+			fmt.Fprintf(stderr, "agent thread: %s: only this task's own messages are visible\n", topic)
 		}
 		out := make([]cli.BoardMessage, 0, len(body.Metas))
 		sizes := make(map[uint64]int, len(body.Metas))

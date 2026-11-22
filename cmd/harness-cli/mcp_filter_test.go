@@ -5,6 +5,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"strconv"
 	"strings"
 	"testing"
@@ -62,6 +63,10 @@ func TestMCPCapsFlagNarrows(t *testing.T) {
 
 func ptrCap(c protocol.Capability) *protocol.Capability { return &c }
 
+// rpcSession feeds lines and ends the input at once, so it sees only what the
+// reading loop answers itself -- initialize, ping, tools/list, a refused call.
+// An admitted call still in flight at end of input is not answered (spec §11
+// 2c); drive those with startPipeSession.
 func rpcSession(t *testing.T, srv *mcpServer, lines ...string) []map[string]any {
 	t.Helper()
 	var out bytes.Buffer
@@ -303,30 +308,45 @@ func TestMCPPinsTheServerCID(t *testing.T) {
 	}
 }
 
-// A tool result is one JSON string: binary output would be mangled into
-// U+FFFD and an unbounded one could be any size, so both are shaped here.
+// A tool result is the body's stdout, then its stderr (spec D20). Binary
+// output would be mangled into U+FFFD and an unbounded one could be any size,
+// so both are shaped here.
 func TestMCPToolResultShape(t *testing.T) {
-	if text, isErr := toolResultText([]byte("hello\n"), nil); text != "hello\n" || isErr {
-		t.Errorf("plain output: %q %t", text, isErr)
+	same := func(got, want []string) bool {
+		return strings.Join(got, "\x00") == strings.Join(want, "\x00") && len(got) == len(want)
+	}
+	if b, isErr := toolResultBlocks([]byte("hello\n"), nil, nil); !same(b, []string{"hello\n"}) || isErr {
+		t.Errorf("plain output: %q %t", b, isErr)
 	}
 	bin := []byte{0x1f, 0x8b, 0x08, 0x00, 0xff, 0xfe, 'a'}
-	if text, isErr := toolResultText(bin, nil); !isErr || !strings.Contains(text, "-o") || strings.ContainsRune(text, 0xFFFD) {
-		t.Errorf("binary output: %q %t, want an error pointing at -o and no replacement characters", text, isErr)
+	if b, isErr := toolResultBlocks(bin, nil, nil); !isErr || len(b) != 1 || !strings.Contains(b[0], "-o") || strings.ContainsRune(b[0], 0xFFFD) {
+		t.Errorf("binary output: %q %t, want an error pointing at -o and no replacement characters", b, isErr)
 	}
 	big := []byte(strings.Repeat("x", maxToolResult+10))
-	text, isErr := toolResultText(big, nil)
-	if isErr || len(text) > maxToolResult+200 || !strings.Contains(text, "truncated") {
-		t.Errorf("oversized output: %d bytes, isError=%t, want it cut at %d with a notice", len(text), isErr, maxToolResult)
+	if b, isErr := toolResultBlocks(big, nil, nil); isErr || len(b) != 1 || len(b[0]) > maxToolResult+200 || !strings.Contains(b[0], "truncated") {
+		t.Errorf("oversized output: %d blocks, isError=%t, want one cut at %d with a notice", len(b), isErr, maxToolResult)
 	}
 	// A bare exit code adds nothing: the result reads as the typed command's
 	// stdout, and a JSON result stays one JSON value.
-	if text, isErr := toolResultText([]byte("partial"), exitCodeError{code: 1}); text != "partial" || !isErr {
-		t.Errorf("exit-code error with printed output: %q %t", text, isErr)
+	if b, isErr := toolResultBlocks([]byte("partial"), nil, exitCodeError{code: 1}); !same(b, []string{"partial"}) || !isErr {
+		t.Errorf("exit-code error with printed output: %q %t", b, isErr)
 	}
-	if text, isErr := toolResultText([]byte(`{"status":"session_stopped"}`+"\n"), exitCodeError{code: 3}); text != `{"status":"session_stopped"}`+"\n" || !isErr {
-		t.Errorf("exit-code error with printed output: %q %t", text, isErr)
+	js := `{"status":"session_stopped"}` + "\n"
+	if b, isErr := toolResultBlocks([]byte(js), nil, exitCodeError{code: 3}); !same(b, []string{js}) || !isErr {
+		t.Errorf("exit-code error after JSON: %q %t", b, isErr)
 	}
-	if text, isErr := toolResultText(nil, exitCodeError{code: 3, msg: "ambiguous"}); text != "ambiguous" || !isErr {
-		t.Errorf("exit-code error with a message: %q %t", text, isErr)
+	// The error text is what the command line prints on stderr, so it ends
+	// the stderr block.
+	if b, isErr := toolResultBlocks(nil, nil, exitCodeError{code: 3, msg: "ambiguous"}); !same(b, []string{"ambiguous"}) || !isErr {
+		t.Errorf("exit-code error with a message: %q %t", b, isErr)
+	}
+	if b, isErr := toolResultBlocks([]byte("out\n"), []byte("session send: 5 bytes\n"), nil); !same(b, []string{"out\n", "session send: 5 bytes\n"}) || isErr {
+		t.Errorf("stdout and stderr: %q %t, want two blocks, stdout first", b, isErr)
+	}
+	if b, isErr := toolResultBlocks(nil, []byte("board read: topic \"x\" holds no messages\n"), nil); !same(b, []string{"board read: topic \"x\" holds no messages\n"}) || isErr {
+		t.Errorf("stderr only: %q %t", b, isErr)
+	}
+	if b, isErr := toolResultBlocks([]byte(js), []byte("warn\n"), errors.New("boom")); !same(b, []string{js, "warn\nboom"}) || !isErr {
+		t.Errorf("JSON, a warning and an error: %q %t, want the JSON block intact", b, isErr)
 	}
 }

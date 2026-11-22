@@ -146,7 +146,7 @@ const defaultSendSettleMs = 1500
 
 // runSessionSnapshotWith is runSessionSnapshot for a caller that already has the parsed action --
 // the generated CLI dispatch.
-func runSessionSnapshotWith(ctx context.Context, cid objproto.ConnectionID, a verb.SessionAction, out io.Writer) error {
+func runSessionSnapshotWith(ctx context.Context, cid objproto.ConnectionID, a verb.SessionAction, out, errOut io.Writer) error {
 	taskIDHex := a.TaskID
 	rows, cols, settleMs := &a.Rows, &a.Cols, &a.SettleMs
 	style, colorOut, withoutSynth := &a.Style, &a.Color, &a.WithoutSynth
@@ -173,10 +173,10 @@ func runSessionSnapshotWith(ctx context.Context, cid objproto.ConnectionID, a ve
 		// were any such bytes, never on whether they were kept.
 		switch {
 		case synth > 0 && !*withoutSynth:
-			fmt.Fprintf(os.Stderr, "harness-cli: %d of these bytes are server-synthesised replay "+
+			fmt.Fprintf(errOut, "harness-cli: %d of these bytes are server-synthesised replay "+
 				"(mode preamble and screen repaint), not PTY output\n", synth)
 		case synth > 0:
-			fmt.Fprintf(os.Stderr, "harness-cli: withheld %d bytes of server-synthesised replay "+
+			fmt.Fprintf(errOut, "harness-cli: withheld %d bytes of server-synthesised replay "+
 				"(mode preamble and screen repaint); the screen the server would have "+
 				"painted is not in this output\n", synth)
 		}
@@ -193,7 +193,7 @@ func runSessionSnapshotWith(ctx context.Context, cid objproto.ConnectionID, a ve
 	if *detect {
 		opts.detectAgent = *detectAgent
 	}
-	return printSessionScreen(ctx, c, taskIDHex, opts, out)
+	return printSessionScreen(ctx, c, taskIDHex, opts, out, errOut)
 }
 
 // screenOpts is what the two snapshot-rendering commands agree on. A struct
@@ -231,13 +231,13 @@ type screenOpts struct {
 // selecting which style dimensions are collected, and the object reports both
 // back so a reader can tell "no spans because none were asked for" from "asked
 // for and none present".
-func printSessionScreen(ctx context.Context, c *cli.Client, taskIDHex string, o screenOpts, out io.Writer) error {
+func printSessionScreen(ctx context.Context, c *cli.Client, taskIDHex string, o screenOpts, out, errOut io.Writer) error {
 	// --ansi carries its own capture because it needs the cells, not the
 	// flattened rows — and it still yields the structured form, so a detection
 	// verdict can accompany the picture rather than costing a second capture of
 	// a screen that has moved on since.
 	if o.ansi {
-		painted, snap, err := c.SessionSnapshotANSI(ctx, taskIDHex, o.rows, o.cols, o.settle, o.includeSynth)
+		painted, snap, err := c.SessionSnapshotANSI(ctx, taskIDHex, o.rows, o.cols, o.settle, o.includeSynth, errOut)
 		if err != nil {
 			return err
 		}
@@ -260,7 +260,7 @@ func printSessionScreen(ctx context.Context, c *cli.Client, taskIDHex string, o 
 	// Detection needs the title, which only the structured capture keeps, so
 	// asking for it selects that path regardless of the output encoding.
 	if o.asJSON || o.detectAgent != "" {
-		snap, err := c.SessionSnapshotStructured(ctx, taskIDHex, o.rows, o.cols, o.settle, o.withAttrs, o.withColor, o.includeSynth)
+		snap, err := c.SessionSnapshotStructured(ctx, taskIDHex, o.rows, o.cols, o.settle, o.withAttrs, o.withColor, o.includeSynth, errOut)
 		if err != nil {
 			return err
 		}
@@ -289,7 +289,7 @@ func printSessionScreen(ctx context.Context, c *cli.Client, taskIDHex string, o 
 	}
 
 	if o.withAttrs || o.withColor {
-		text, report, err := c.SessionSnapshotStyled(ctx, taskIDHex, o.rows, o.cols, o.settle, o.withAttrs, o.withColor, o.includeSynth)
+		text, report, err := c.SessionSnapshotStyled(ctx, taskIDHex, o.rows, o.cols, o.settle, o.withAttrs, o.withColor, o.includeSynth, errOut)
 		if err != nil {
 			return err
 		}
@@ -299,7 +299,7 @@ func printSessionScreen(ctx context.Context, c *cli.Client, taskIDHex string, o 
 		return nil
 	}
 
-	snap, err := c.SessionSnapshot(ctx, taskIDHex, o.rows, o.cols, o.settle, o.includeSynth)
+	snap, err := c.SessionSnapshot(ctx, taskIDHex, o.rows, o.cols, o.settle, o.includeSynth, errOut)
 	if err != nil {
 		return err
 	}
@@ -373,7 +373,7 @@ func formatSpanReport(s *cli.ScreenSnapshot) string {
 
 // runSessionNewWith is runSessionNew for a caller that already has the
 // parsed action -- the generated CLI dispatch.
-func runSessionNewWith(ctx context.Context, cid objproto.ConnectionID, a verb.SpawnAction, out io.Writer) error {
+func runSessionNewWith(ctx context.Context, cid objproto.ConnectionID, a verb.SpawnAction, out, errOut io.Writer) error {
 	repoVal := a.Repo
 	sopts, err := spawnOpts(a)
 	if err != nil {
@@ -430,8 +430,8 @@ func runSessionNewWith(ctx context.Context, cid objproto.ConnectionID, a verb.Sp
 		if err != nil {
 			return exitOnAmbiguous(err)
 		}
-		fmt.Fprintf(os.Stderr, "harness-cli: stream session %s started\n", taskIDHex)
-		return c.SessionStreamAttach(ctx, taskIDHex, out, os.Stderr)
+		fmt.Fprintf(errOut, "harness-cli: stream session %s started\n", taskIDHex)
+		return c.SessionStreamAttach(ctx, taskIDHex, out, errOut)
 	}
 
 	id, err := c.Interactive(ctx, repoVal, sopts)
@@ -465,7 +465,7 @@ func runSessionAttachWith(ctx context.Context, cid objproto.ConnectionID, a verb
 
 // runSessionSendWith is runSessionSend for a caller that already has the parsed action --
 // the generated CLI dispatch.
-func runSessionSendWith(ctx context.Context, cid objproto.ConnectionID, a verb.SendAction, out io.Writer) error {
+func runSessionSendWith(ctx context.Context, cid objproto.ConnectionID, a verb.SendAction, out, errOut io.Writer) error {
 	taskIDHex := a.TaskID
 	enter, interp, quiet := &a.Enter, &a.Interp, &a.Quiet
 	flushMs := &a.FlushMs
@@ -512,7 +512,7 @@ func runSessionSendWith(ctx context.Context, cid objproto.ConnectionID, a verb.S
 			return fmt.Errorf("session send --resize %dx%d: %s", resizeRows, resizeCols, cli.ResizeRejectedHint)
 		}
 		if !*quiet {
-			fmt.Fprintf(os.Stderr, "session send: resized to %dx%d before sending\n", resizeRows, resizeCols)
+			fmt.Fprintf(errOut, "session send: resized to %dx%d before sending\n", resizeRows, resizeCols)
 		}
 	}
 	// Empty only with --resize (the verb refuses it otherwise): there is
@@ -568,7 +568,7 @@ func runSessionSendWith(ctx context.Context, cid objproto.ConnectionID, a verb.S
 		if *detect {
 			opts.detectAgent = *detectAgent
 		}
-		if err := printSessionScreen(ctx, c, taskIDHex, opts, out); err != nil {
+		if err := printSessionScreen(ctx, c, taskIDHex, opts, out, errOut); err != nil {
 			return err
 		}
 	}
@@ -587,7 +587,7 @@ func runSessionSendWith(ctx context.Context, cid objproto.ConnectionID, a verb.S
 	if *enter {
 		cr = "trailing CR appended (-enter)"
 	}
-	fmt.Fprintf(os.Stderr, "session send: %d %s%s, %s\n", len(data), unit, esc, cr)
+	fmt.Fprintf(errOut, "session send: %d %s%s, %s\n", len(data), unit, esc, cr)
 	return nil
 }
 
@@ -749,7 +749,7 @@ func parseResizeSpec(spec string) (rows, cols uint16, err error) {
 
 // runSessionResizeWith is runSessionResize for a caller that already has the parsed action --
 // the generated CLI dispatch.
-func runSessionResizeWith(ctx context.Context, cid objproto.ConnectionID, a verb.SessionAction) error {
+func runSessionResizeWith(ctx context.Context, cid objproto.ConnectionID, a verb.SessionAction, errOut io.Writer) error {
 	taskIDHex := a.TaskID
 	waitMs, quiet := &a.WaitMs, &a.Quiet
 	rows, cols, perr := parseResizeSpec(a.Size)
@@ -770,14 +770,14 @@ func runSessionResizeWith(ctx context.Context, cid objproto.ConnectionID, a verb
 		return exitCodeError{code: 3, msg: "session resize: " + cli.ResizeRejectedHint}
 	}
 	if !*quiet {
-		fmt.Fprintf(os.Stderr, "session resize: %s now %dx%d (rows x cols)\n", taskIDHex, rows, cols)
+		fmt.Fprintf(errOut, "session resize: %s now %dx%d (rows x cols)\n", taskIDHex, rows, cols)
 	}
 	return nil
 }
 
 // runSessionModeWith switches a running session between foreground and
 // background (pillar A spec, A-D19).
-func runSessionModeWith(ctx context.Context, cid objproto.ConnectionID, a verb.SessionAction) error {
+func runSessionModeWith(ctx context.Context, cid objproto.ConnectionID, a verb.SessionAction, errOut io.Writer) error {
 	background, err := verb.ParseRunModeWord(a.Mode)
 	if err != nil {
 		return err
@@ -798,6 +798,6 @@ func runSessionModeWith(ctx context.Context, cid objproto.ConnectionID, a verb.S
 	if err := c.SessionMode(ctx, a.TaskID, background, cond); err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "session %s is now %s\n", a.TaskID, a.Mode)
+	fmt.Fprintf(errOut, "session %s is now %s\n", a.TaskID, a.Mode)
 	return nil
 }
