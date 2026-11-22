@@ -28,7 +28,7 @@ func (h *TaskHandler) handleOpenExecTap(conn ConnHandle, req *protocol.OpenExecT
 	if !ok || !h.execVisibleTo(connID, e) {
 		return errResp(protocol.OpenExecTapStatus_NoSuchExec)
 	}
-	if !h.inScope(connID, protocol.Capability_ExecTap, e.taskIDHex) {
+	if !h.inScope(connID, requiredCentral(protocol.TaskControlKind_OpenExecTap), e.taskIDHex) {
 		return errResp(protocol.OpenExecTapStatus_NoSuchExec)
 	}
 	if conn == nil {

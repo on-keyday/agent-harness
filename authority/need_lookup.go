@@ -82,6 +82,11 @@ func RecordKeepCap(forever bool, ttl time.Duration, curForever bool, curTTL time
 	return protocol.Capability_RecordPersist
 }
 
+// ResizeCap is the bit an observer's resize of a session needs, inside that
+// bit's own scope. It is not part of an attach's need: a resize from a viewer
+// that lacks it is ignored, never refused.
+const ResizeCap = protocol.Capability_ExecResize
+
 // RecordOnCap is the bit asking for a session to be recorded needs, wherever
 // it is asked: an open with --record, a schedule that records, `record on`.
 // Keeping takes the server's disk and pushes older records out under the cap.

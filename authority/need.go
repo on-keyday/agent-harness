@@ -423,6 +423,10 @@ func ScopeBit(req *protocol.TaskControlRequest, held protocol.Capability) protoc
 		return ResumeCap(oi.ResumeTaskId, oi.ResumeExact())
 	case protocol.TaskControlKind_RecordKeep:
 		return protocol.Capability_RecordPersist | protocol.Capability_RecordDelete
+	case protocol.TaskControlKind_RestoreTasks:
+		// Listing needs no bit and is still filtered by prune's scope: both
+		// halves reach the same target set.
+		return RestoreCap(0)
 	}
 	n := RequestNeed(req)
 	if len(n.Clauses) == 0 {

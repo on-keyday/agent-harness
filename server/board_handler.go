@@ -216,7 +216,7 @@ func (h *TaskHandler) handleBoardRetract(conn ConnHandle, requestID uint32, topi
 func (h *TaskHandler) handleBoardContactsClear(conn ConnHandle, requestID uint32, cid string, task protocol.TaskID, topic string) {
 	out := protocol.BoardContactsClearResponse{RequestId: requestID, Status: protocol.BoardStatus_NotFound}
 	taskHex := hex.EncodeToString(task.Id[:])
-	if h.Board != nil && h.inScope(cid, protocol.Capability_BoardPurge, taskHex) {
+	if h.Board != nil && h.inScope(cid, requiredCentral(protocol.TaskControlKind_BoardContactsClear), taskHex) {
 		if n, found := h.Board.ClearContacts(task, topic); found {
 			out.Status = protocol.BoardStatus_Ok
 			out.Removed = uint8(min(n, 255))
@@ -435,7 +435,7 @@ func (h *TaskHandler) handleBoardMembership(conn ConnHandle, requestID uint32, c
 	// Not itself: a self-join would turn what the caller may publish now — a
 	// board_peer that can be revoked — into a membership that outlives it.
 	by := h.lookupPrincipal(cid)
-	if by == r.Task || !h.inScope(cid, protocol.Capability_BoardMember, taskHex) {
+	if by == r.Task || !h.inScope(cid, requiredCentral(protocol.TaskControlKind_BoardMembership), taskHex) {
 		respond(protocol.BoardMembershipStatus_NotFound)
 		return
 	}

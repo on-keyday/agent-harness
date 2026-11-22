@@ -162,7 +162,7 @@ func (h *TaskHandler) credentialIssue(cid string, req *protocol.CredentialIssueR
 // request writes — so a re-key confers nothing a fresh issue would not.
 func (h *TaskHandler) credentialRekey(cid string, req *protocol.CredentialRekeyRequest, now time.Time) protocol.CredentialResponse {
 	idHex := hex.EncodeToString(req.TaskId.Id[:])
-	if !h.inScope(cid, protocol.Capability_CredentialIssue, idHex) || !h.rekeyReaches(cid, idHex) {
+	if !h.inScope(cid, requiredCentral(protocol.TaskControlKind_CredentialRekey), idHex) || !h.rekeyReaches(cid, idHex) {
 		return credentialRefusal(protocol.CredentialStatus_NoSuchTask, "")
 	}
 	rec, ok := h.Tasks.Get(idHex)

@@ -274,7 +274,7 @@ func (h *TaskHandler) scheduleReach(cid string, sc Schedule) bool {
 	if target == "" {
 		return h.principalHex(cid) == ""
 	}
-	return h.inScope(cid, protocol.Capability_ScheduleEdit, target)
+	return h.inScope(cid, requiredCentral(protocol.TaskControlKind_ScheduleEdit), target)
 }
 
 // scheduleRunReach uses the run bit's own scope independently of management
@@ -284,7 +284,7 @@ func (h *TaskHandler) scheduleRunReach(cid string, sc Schedule) bool {
 	if target == "" {
 		return h.principalHex(cid) == ""
 	}
-	return h.inScope(cid, protocol.Capability_ScheduleRun, target)
+	return h.inScope(cid, requiredCentral(protocol.TaskControlKind_ScheduleRun), target)
 }
 
 // scheduleReadReach preserves reads through management reach without requiring
@@ -293,7 +293,7 @@ func (h *TaskHandler) scheduleRunReach(cid string, sc Schedule) bool {
 // default scope. This predicate is never used to authorize mutations.
 func (h *TaskHandler) scheduleReadReach(cid string, sc Schedule) bool {
 	return h.scheduleReach(cid, sc) ||
-		(hasCap(h.callerCaps(cid), protocol.Capability_ScheduleRun) && h.scheduleRunReach(cid, sc))
+		(hasCap(h.callerCaps(cid), requiredCentral(protocol.TaskControlKind_ScheduleRun)) && h.scheduleRunReach(cid, sc))
 }
 
 // scheduleOwnTask is S-D20: the caller is the task bound to sc.
@@ -429,7 +429,7 @@ func (h *TaskHandler) scheduleBinding(cid string, taskHex, own string) (TaskEntr
 		return TaskEntry{}, &r
 	}
 	t, ok := h.Tasks.Get(taskHex)
-	if !ok || !h.inScope(cid, protocol.Capability_ScheduleEdit, taskHex) {
+	if !ok || !h.inScope(cid, requiredCentral(protocol.TaskControlKind_ScheduleEdit), taskHex) {
 		return fail(protocol.ScheduleStatus_TaskNotReachable, "no task %s within your reach", short(taskHex))
 	}
 	// A firing resumes its task onto a runner; a credential task has none and
@@ -1270,7 +1270,7 @@ func (h *TaskHandler) openUnbinds(oi *protocol.OpenInteractiveRequest) (taskHex 
 // switch of a bound task beyond the bit (checked by the caller): the task must
 // be within the caller's schedule reach, and may not be the caller itself.
 func (h *TaskHandler) unbindRefusal(cid, taskHex string) (reach, self bool) {
-	reach = h.inScope(cid, protocol.Capability_ScheduleEdit, taskHex)
+	reach = h.inScope(cid, authority.UnbindCap, taskHex)
 	self = h.principalHex(cid) == taskHex
 	return reach, self
 }

@@ -51,15 +51,17 @@ func (h *TaskHandler) handleTranscript(cid string, conn ConnHandle, req *protoco
 	// A name past the bounds answers the status the runner would give, before
 	// a relay that could not fit one datagram (Task 5 review, I2).
 	switch {
-	case !h.inScope(cid, protocol.Capability_TranscriptRead, idHex):
+	case !h.inScope(cid, requiredCentral(req.Header.Kind), idHex):
 		// no_such_task, as out was initialised: no existence oracle.
 	case len(session) > protocol.TranscriptSessionMax:
 		out.Status = protocol.TranscriptStatus_NoSuchSession
 	case len(file) > protocol.TranscriptFileMax:
 		out.Status = protocol.TranscriptStatus_NoSuchFile
 	default:
-		includeShared := hasCap(h.callerCaps(cid), protocol.Capability_ExecRun) &&
-			h.inScope(cid, protocol.Capability_ExecRun, idHex)
+		// A session recorded in a shared directory (the repo itself) is listed
+		// only to a caller that may run a command in that task's worktree.
+		runBit := requiredCentral(protocol.TaskControlKind_OpenExecRun)
+		includeShared := hasCap(h.callerCaps(cid), runBit) && h.inScope(cid, runBit, idHex)
 		out = h.transcriptQuery(conn, taskID, op, session, file, includeShared)
 	}
 	if req.Header.Kind == protocol.TaskControlKind_TranscriptList {

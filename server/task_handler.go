@@ -561,7 +561,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		// out-of-scope task answers no_such_task, indistinguishable from one
 		// that does not exist.
 		result := protocol.CancelResult_NoSuchTask
-		if h.inScope(cid, protocol.Capability_Cancel, taskID) {
+		if h.inScope(cid, requiredCentral(protocol.TaskControlKind_Cancel), taskID) {
 			h.Tasks.Cancel(taskID, protocol.EndReason_Cancelled, h.lookupPrincipal(cid))
 			result = protocol.CancelResult_Ok
 		}
@@ -586,7 +586,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		if h.PruneFn != nil {
 			// nil allowed = unrestricted (operator, or a global base).
 			var allowed map[string]bool
-			if all, set := h.scopeSet(cid, protocol.Capability_Prune); !all {
+			if all, set := h.scopeSet(cid, requiredCentral(protocol.TaskControlKind_PruneTasks)); !all {
 				allowed = set
 			}
 			r, sa, sm := h.PruneFn(allowed, pr)
@@ -760,7 +760,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			return
 		}
 		gresp := protocol.GitQueryResponse{Status: protocol.GitQueryStatus_NoSuchTask}
-		if h.inScope(cid, protocol.Capability_FileRead, hex.EncodeToString(gq.TaskId.Id[:])) {
+		if h.inScope(cid, requiredCentral(protocol.TaskControlKind_GitQuery), hex.EncodeToString(gq.TaskId.Id[:])) {
 			gresp = h.handleGitQuery(conn, gq)
 		}
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_GitQuery, RequestId: req.Header.RequestId}
@@ -786,7 +786,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		requestID := req.Header.RequestId
 		go func() {
 			eresp := protocol.ExecRunResponse{Status: protocol.ExecRunStatus_NotFound}
-			if h.inScope(cid, protocol.Capability_ExecRun, hex.EncodeToString(envCopy.TaskId.Id[:])) {
+			if h.inScope(cid, requiredCentral(protocol.TaskControlKind_OpenExecRun), hex.EncodeToString(envCopy.TaskId.Id[:])) {
 				eresp = h.handleOpenExecRun(conn, &envCopy)
 			} else {
 				discardPayloadStream(conn, envCopy.PayloadStreamId)

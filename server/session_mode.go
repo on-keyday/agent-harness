@@ -31,7 +31,7 @@ func (h *TaskHandler) handleSessionMode(cid string, conn ConnHandle, req *protoc
 		return
 	}
 	taskID := hex.EncodeToString(sm.TaskId.Id[:])
-	if !h.inScope(cid, protocol.Capability_Cancel, taskID) {
+	if !h.inScope(cid, requiredCentral(protocol.TaskControlKind_SessionMode), taskID) {
 		respond(protocol.SessionModeStatus_NotFound, "")
 		return
 	}

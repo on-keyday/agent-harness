@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -29,8 +30,11 @@ const (
 	capResolvedLiteral capTargetKind = iota
 	// capResolvedVia: the site passes a variable or helper call instead,
 	// because the bit is chosen at runtime (direction, mode, which of two
-	// bits the caller holds). The expression is named so the check has
-	// something to look for.
+	// bits the caller holds) or comes from authority. The expression is named
+	// so the check has something to look for. When it is
+	// requiredCentral(protocol.TaskControlKind_X), the check also asks
+	// authority whether X's central bit IS this bit, which a literal could
+	// not prove either.
 	capResolvedVia
 	// capNoTargetResolution: the bit gates a KIND rather than a target task,
 	// so there is nothing to resolve. Requires a reason.
@@ -44,7 +48,7 @@ type capTargetClass struct {
 }
 
 var capTargetClasses = map[protocol.Capability]capTargetClass{
-	protocol.Capability_Cancel: {kind: capResolvedLiteral},
+	protocol.Capability_Cancel: {kind: capResolvedVia, via: "requiredCentral(protocol.TaskControlKind_Cancel)"},
 	protocol.Capability_Spawn: {
 		kind:   capNoTargetResolution,
 		reason: "creating a task names no existing one; resuming is the resume bits'",
@@ -56,7 +60,7 @@ var capTargetClasses = map[protocol.Capability]capTargetClass{
 	// Capability_Resume is a prefix of Capability_ResumeExact.
 	protocol.Capability_Resume:      {kind: capResolvedVia, via: "resumeBit"},
 	protocol.Capability_ResumeExact: {kind: capResolvedVia, via: "resumeBit"},
-	protocol.Capability_Prune:       {kind: capResolvedLiteral},
+	protocol.Capability_Prune:       {kind: capResolvedVia, via: "requiredCentral(protocol.TaskControlKind_PruneTasks)"},
 
 	// Chosen at runtime, so passed as a variable rather than by name.
 	protocol.Capability_FileRead:      {kind: capResolvedVia, via: "lfNeed"},
@@ -66,14 +70,14 @@ var capTargetClasses = map[protocol.Capability]capTargetClass{
 	protocol.Capability_ForwardLink:   {kind: capResolvedVia, via: "need"},
 
 	// forward_tap names a FORWARD, which resolves to the task that owns it, and
-	// the handler passes the bit to authorize by name. Not capNoTargetResolution:
+	// the handler passes the bit to inScope. Not capNoTargetResolution:
 	// a forward VISIBLE through the visibility rank may still belong to a task outside
 	// the caller's action scope, which is the same distinction kill_port_forward
 	// draws one line above.
-	protocol.Capability_ForwardTap: {kind: capResolvedLiteral},
+	protocol.Capability_ForwardTap: {kind: capResolvedVia, via: "requiredCentral(protocol.TaskControlKind_OpenForwardTap)"},
 	// exec_tap names an EXEC, which resolves to the task that owns it; the
-	// handler passes the bit to inScope by name.
-	protocol.Capability_ExecTap: {kind: capResolvedLiteral},
+	// handler passes the bit to inScope.
+	protocol.Capability_ExecTap: {kind: capResolvedVia, via: "requiredCentral(protocol.TaskControlKind_OpenExecTap)"},
 
 	// The attach modes are three powers; the scope that binds one is the
 	// MODE's own bit, not whichever stronger bit satisfied the check.
@@ -82,18 +86,18 @@ var capTargetClasses = map[protocol.Capability]capTargetClass{
 	protocol.Capability_ExecControl: {kind: capResolvedVia, via: "authority.AttachModeScopeCap"},
 
 	// exec_run names a task in both of its requests: open_exec_run carries a
-	// task id, and exec_run_kill carries an exec id that resolves to one. Both
-	// pass the bit by name.
-	protocol.Capability_ExecRun: {kind: capResolvedLiteral},
+	// task id, and exec_run_kill carries an exec id that resolves to one
+	// (authorize, which this scan does not read).
+	protocol.Capability_ExecRun: {kind: capResolvedVia, via: "requiredCentral(protocol.TaskControlKind_OpenExecRun)"},
 
 	// exec_resize rides an attach, but its target is checked against its OWN
 	// scope when the attach decides whether the observer's resizes are honoured
 	// (resizeAllowed), so --scope-for exec_resize narrows it.
-	protocol.Capability_ExecResize: {kind: capResolvedLiteral},
+	protocol.Capability_ExecResize: {kind: capResolvedVia, via: "authority.ResizeCap"},
 	// Issuing names no task; re-key resolves its target, the credential task,
-	// through this bit's scope by name, among the caller's own descendants
+	// through this bit's scope, among the caller's own descendants
 	// (credential-tasks D18).
-	protocol.Capability_CredentialIssue: {kind: capResolvedLiteral},
+	protocol.Capability_CredentialIssue: {kind: capResolvedVia, via: "requiredCentral(protocol.TaskControlKind_CredentialRekey)"},
 	protocol.Capability_Notify: {
 		kind:   capNoTargetResolution,
 		reason: "a notification names no task; its origin is stamped from the sender",
@@ -117,8 +121,8 @@ var capTargetClasses = map[protocol.Capability]capTargetClass{
 	},
 	// purge's topic verbs (board purge / retract and their thread forms) name a
 	// TOPIC, which no task scope bounds; board clear-contacts names a TASK and
-	// passes the bit to inScope by name. The literal is that call.
-	protocol.Capability_BoardPurge: {kind: capResolvedLiteral},
+	// passes the bit to inScope.
+	protocol.Capability_BoardPurge: {kind: capResolvedVia, via: "requiredCentral(protocol.TaskControlKind_BoardContactsClear)"},
 	protocol.Capability_BoardSend: {
 		kind:   capNoTargetResolution,
 		reason: "board_send names a board TOPIC, for the same reason as board_observe",
@@ -128,20 +132,21 @@ var capTargetClasses = map[protocol.Capability]capTargetClass{
 	protocol.Capability_BoardPeer: {kind: capResolvedLiteral},
 	// board_member names the task it subscribes or joins; the handler checks
 	// that task against this bit's own scope.
-	protocol.Capability_BoardMember: {kind: capResolvedLiteral},
+	protocol.Capability_BoardMember: {kind: capResolvedVia, via: "requiredCentral(protocol.TaskControlKind_BoardMembership)"},
 	// The record bits name the task whose record they act on; the handlers
 	// check that task against the bit's own scope (and its exclude_self).
 	// recordBit is chosen by the request's direction (keep, switch).
 	protocol.Capability_RecordPersist: {kind: capResolvedVia, via: "recordBit"},
 	protocol.Capability_RecordDelete:  {kind: capResolvedVia, via: "recordBit"},
 	// transcript_read names the task whose transcripts are read; the handler
-	// checks that task against the bit's own scope (pillar B).
-	protocol.Capability_TranscriptRead: {kind: capResolvedLiteral},
+	// checks that task against the bit's own scope (pillar B). One handler
+	// serves list and get, so the kind is the request's.
+	protocol.Capability_TranscriptRead: {kind: capResolvedVia, via: "requiredCentral(req.Header.Kind)"},
 	// schedule names the task whose reach decides who may act on a schedule —
 	// its bound task, else its creator — and the task a verb binds; the handler
 	// checks both against this bit's own scope (pillar S, S-D17).
-	protocol.Capability_ScheduleEdit: {kind: capResolvedLiteral},
-	protocol.Capability_ScheduleRun:  {kind: capResolvedLiteral},
+	protocol.Capability_ScheduleEdit: {kind: capResolvedVia, via: "requiredCentral(protocol.TaskControlKind_ScheduleEdit)"},
+	protocol.Capability_ScheduleRun:  {kind: capResolvedVia, via: "requiredCentral(protocol.TaskControlKind_ScheduleRun)"},
 }
 
 // serverSources concatenates the package's non-test sources, which is what the
@@ -222,6 +227,11 @@ func TestCapabilityTargetClassesMatchTheSource(t *testing.T) {
 					"call mentions it — the indirection moved or went away",
 					bit, class.via)
 			}
+			if k, ok := centralKindNamed(class.via); ok {
+				if c, _ := authority.CentralCap(k); c != bit {
+					t.Errorf("%s is resolved via %s, whose central bit is %v", bit, class.via, c)
+				}
+			}
 		case capNoTargetResolution:
 			if class.reason == "" {
 				t.Errorf("%s: exempted without a reason — every exemption must be justified", bit)
@@ -263,4 +273,19 @@ func capConstName(c protocol.Capability) string {
 		sb.WriteString(strings.ToUpper(p[:1]) + p[1:])
 	}
 	return sb.String()
+}
+
+// centralKindNamed reads X out of "requiredCentral(protocol.TaskControlKind_X)".
+func centralKindNamed(via string) (protocol.TaskControlKind, bool) {
+	name, ok := strings.CutPrefix(via, "requiredCentral(protocol.TaskControlKind_")
+	if !ok {
+		return 0, false
+	}
+	name = strings.TrimSuffix(name, ")")
+	for k := protocol.TaskControlKind(0); k <= protocol.TaskControlKind_TaskRename; k++ {
+		if k.String() == name {
+			return k, true
+		}
+	}
+	return 0, false
 }

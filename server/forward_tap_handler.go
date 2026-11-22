@@ -40,7 +40,7 @@ func (h *TaskHandler) handleOpenForwardTap(conn ConnHandle, req *protocol.OpenFo
 	if !ok || !h.forwardVisibleTo(connID, pf) {
 		return errResp(protocol.OpenForwardTapStatus_NoSuchForward)
 	}
-	if !h.inScope(connID, protocol.Capability_ForwardTap, pf.taskIDHex) {
+	if !h.inScope(connID, requiredCentral(protocol.TaskControlKind_OpenForwardTap), pf.taskIDHex) {
 		return errResp(protocol.OpenForwardTapStatus_NoSuchForward)
 	}
 	if conn == nil {

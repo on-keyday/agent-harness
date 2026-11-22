@@ -102,7 +102,7 @@ func (h *TaskHandler) handleProgressClear(conn ConnHandle, req *protocol.TaskCon
 		return
 	}
 	taskHex := hex.EncodeToString(pc.TaskId.Id[:])
-	if !h.inScope(conn.ConnectionID().String(), protocol.Capability_Cancel, taskHex) {
+	if !h.inScope(conn.ConnectionID().String(), requiredCentral(protocol.TaskControlKind_ProgressClear), taskHex) {
 		respond(protocol.ProgressSetStatus_NotFound, 0)
 		return
 	}

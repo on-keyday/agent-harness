@@ -226,6 +226,14 @@ func TestScopeBit(t *testing.T) {
 	if got := ScopeBit(reqOf(protocol.TaskControlKind_Cancel), protocol.Capability_All); got != protocol.Capability_Cancel {
 		t.Errorf("cancel: scope %v, want cancel", got)
 	}
+	// Listing what could be restored needs no bit, and is still filtered by
+	// prune's scope: the halves share one target set.
+	listOnly := req(protocol.TaskControlKind_RestoreTasks, func(r *protocol.TaskControlRequest) {
+		r.SetRestoreTasks(protocol.RestoreTasksRequest{ListOnly: 1})
+	})
+	if got := ScopeBit(listOnly, 0); got != protocol.Capability_Prune {
+		t.Errorf("restore list-only: scope %v, want prune", got)
+	}
 }
 
 // KindNeed serves a handler that holds only the decoded body. It is the need

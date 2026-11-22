@@ -9,13 +9,35 @@ import (
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
+// requiredCentral is the bit the central gate checked for kind, for a handler
+// that holds only the decoded body and scopes its target by that same bit. A
+// kind the central gate does not check has no such bit: asking is a bug.
+func requiredCentral(kind protocol.TaskControlKind) protocol.Capability {
+	c, ok := authority.CentralCap(kind)
+	if !ok {
+		panic("requiredCentral: " + kind.String() + " is not gated centrally")
+	}
+	return c
+}
+
+// anyResume is a non-zero resume id: which bits a resume needs does not depend
+// on which task it names.
+var anyResume = protocol.TaskID{Id: [16]byte{1}}
+
+// capBits is c's set bits, lowest first.
+func capBits(c protocol.Capability) []protocol.Capability {
+	var out []protocol.Capability
+	eachBit(c, func(b protocol.Capability) { out = append(out, b) })
+	return out
+}
+
 // resumeRequestBits is authority.ResumeCap's resume set as separate bits, for
 // resolving the target against each bit's own scope.
 func resumeRequestBits(exact bool) []protocol.Capability {
 	if exact {
-		return []protocol.Capability{protocol.Capability_Resume, protocol.Capability_ResumeExact}
+		return capBits(authority.ResumeCap(anyResume, true))
 	}
-	return []protocol.Capability{protocol.Capability_Resume}
+	return capBits(authority.ResumeCap(anyResume, false))
 }
 
 // resumeTargetAllowed is the target gate of a resume: allowed when SOME bit the
@@ -50,7 +72,7 @@ func (h *TaskHandler) controlSeatAllowed(cid, resumeHex string) bool {
 	// principalRecord, not the bare record: a credential that is not live, or
 	// whose key is no longer the one this connection proved, holds no seat.
 	self, ok := h.principalRecord(cid, hex.EncodeToString(pid.Id[:]))
-	return ok && authority.CoversNewChild(self.Scope, protocol.Capability_ExecControl)
+	return ok && authority.CoversNewChild(self.Scope, authority.AttachModeScopeCap(protocol.AttachMode_Control))
 }
 
 // resizeAllowed reports whether an observer attach by cid to targetHex may
@@ -59,8 +81,8 @@ func (h *TaskHandler) controlSeatAllowed(cid, resumeHex string) bool {
 // `--scope-for exec_resize=…` was accepted and changed nothing; "may drive A
 // and B, may resize only A" was not grantable.
 func (h *TaskHandler) resizeAllowed(cid, targetHex string) bool {
-	return hasCap(h.callerCaps(cid), protocol.Capability_ExecResize) &&
-		h.inScope(cid, protocol.Capability_ExecResize, targetHex)
+	return hasCap(h.callerCaps(cid), authority.ResizeCap) &&
+		h.inScope(cid, authority.ResizeCap, targetHex)
 }
 
 // hasAnyCap reports whether have includes AT LEAST ONE bit of want. Distinct

@@ -122,6 +122,11 @@ func (h *TaskHandler) handleRestoreTasks(conn ConnHandle, requestID uint32, cid 
 	})
 }
 
+// requiredRestoreScope is the bit whose scope bounds both halves of a restore
+// -- the listing needs no bit and is still filtered by it.
+var requiredRestoreScope = authority.ScopeBit(&protocol.TaskControlRequest{
+	Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_RestoreTasks}}, 0)
+
 // restoreScope is the caller's target set for a restore: the prune scope,
 // widened to see the tasks a prune already removed.
 func (h *TaskHandler) restoreScope(cid string) (all bool, allowed map[string]bool) {
@@ -129,8 +134,8 @@ func (h *TaskHandler) restoreScope(cid string) (all bool, allowed map[string]boo
 		// No WAL to widen with. Fall back to the live set rather than to
 		// "everything": a restore that could not read the log cannot justify
 		// a wider target set than a prune would have had.
-		return h.scopeSet(cid, protocol.Capability_Prune)
+		return h.scopeSet(cid, requiredRestoreScope)
 	}
-	return h.scopeSetWith(cid, protocol.Capability_Prune,
+	return h.scopeSetWith(cid, requiredRestoreScope,
 		walChildIndex(h.childIndex(), h.RestoreEventsFn()))
 }
