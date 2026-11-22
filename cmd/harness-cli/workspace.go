@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
-	"os"
+	"io"
 
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/cli/verb"
@@ -23,7 +23,7 @@ import (
 // reads the config path and the resolved server-cid from the process-level
 // values main() installed, because a verb method carries the ACTION and
 // nothing about how this process was invoked.
-func runWorkspaceAction(ctx context.Context, a verb.WorkspaceAction, cid func() objproto.ConnectionID) error {
+func runWorkspaceAction(ctx context.Context, a verb.WorkspaceAction, cid func() objproto.ConnectionID, out io.Writer) error {
 	f, path, err := workspace.Load(workspaceCfgPath)
 	if err != nil {
 		return err
@@ -39,11 +39,11 @@ func runWorkspaceAction(ctx context.Context, a verb.WorkspaceAction, cid func() 
 		// test written per sub-verb.
 		names := f.Names()
 		if len(names) == 0 {
-			fmt.Printf("no workspaces in %s\n", path)
+			fmt.Fprintf(out, "no workspaces in %s\n", path)
 			return nil
 		}
 		for _, n := range names {
-			fmt.Println(n)
+			fmt.Fprintln(out, n)
 		}
 		return nil
 
@@ -54,7 +54,7 @@ func runWorkspaceAction(ctx context.Context, a verb.WorkspaceAction, cid func() 
 		if err := f.Save(path); err != nil {
 			return err
 		}
-		fmt.Printf("workspace %s removed from %s\n", a.Name, path)
+		fmt.Fprintf(out, "workspace %s removed from %s\n", a.Name, path)
 		return nil
 
 	case verb.SubShow:
@@ -64,7 +64,7 @@ func runWorkspaceAction(ctx context.Context, a verb.WorkspaceAction, cid func() 
 		if a.Name == "" {
 			for _, n := range f.Names() {
 				ws, _ := f.Workspace(n)
-				os.Stdout.Write(workspace.Block(ws))
+				out.Write(workspace.Block(ws))
 			}
 			return nil
 		}
@@ -72,7 +72,7 @@ func runWorkspaceAction(ctx context.Context, a verb.WorkspaceAction, cid func() 
 		if !ok {
 			return fmt.Errorf("no workspace named %q in %s", a.Name, path)
 		}
-		os.Stdout.Write(workspace.Block(ws))
+		out.Write(workspace.Block(ws))
 		return nil
 
 	case verb.SubSave:
@@ -134,12 +134,12 @@ func runWorkspaceAction(ctx context.Context, a verb.WorkspaceAction, cid func() 
 		if err := f.Save(path); err != nil {
 			return err
 		}
-		fmt.Printf("workspace %s saved to %s: %d task(s), %d forward(s), %d in-process skipped\n",
+		fmt.Fprintf(out, "workspace %s saved to %s: %d task(s), %d forward(s), %d in-process skipped\n",
 			name, path, len(ws.Tasks), countTaskForwards(ws), skipped)
 		return nil
 
 	case verb.SubForwardAdd, verb.SubForwardRm:
-		return editWorkspaceForwards(f, path, a)
+		return editWorkspaceForwards(f, path, a, out)
 	}
 	return fmt.Errorf("workspace: unhandled sub-verb %q", a.Sub)
 }
@@ -147,7 +147,7 @@ func runWorkspaceAction(ctx context.Context, a verb.WorkspaceAction, cid func() 
 // editWorkspaceForwards is `workspace forward add/rm`: the file only. A CLI
 // process holds no forward, so there is nothing for it to start, stop, adopt
 // or release — which is also why this verb, unlike `apply`, exists here.
-func editWorkspaceForwards(f *workspace.File, path string, a verb.WorkspaceAction) error {
+func editWorkspaceForwards(f *workspace.File, path string, a verb.WorkspaceAction, out io.Writer) error {
 	cur, ok := f.Workspace(a.Name)
 	if !ok {
 		// A header-only workspace made here would apply against whatever
@@ -185,9 +185,9 @@ func editWorkspaceForwards(f *workspace.File, path string, a verb.WorkspaceActio
 		}
 	}
 	if a.Sub == verb.SubForwardAdd {
-		fmt.Printf("workspace %s: %d added, %d already present (task %s)\n", a.Name, changed, unchanged, a.TaskID)
+		fmt.Fprintf(out, "workspace %s: %d added, %d already present (task %s)\n", a.Name, changed, unchanged, a.TaskID)
 	} else {
-		fmt.Printf("workspace %s: %d removed, %d not declared (task %s)\n", a.Name, changed, unchanged, a.TaskID)
+		fmt.Fprintf(out, "workspace %s: %d removed, %d not declared (task %s)\n", a.Name, changed, unchanged, a.TaskID)
 	}
 	return nil
 }

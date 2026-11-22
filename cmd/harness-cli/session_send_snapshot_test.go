@@ -3,6 +3,7 @@
 package main
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -20,7 +21,7 @@ func sendLine(args ...string) error {
 	if err != nil {
 		return err
 	}
-	return runSessionSendWith(objproto.ConnectionID{}, a)
+	return runSessionSendWith(objproto.ConnectionID{}, a, os.Stdout)
 }
 
 // The RENDER flags are rejected without --snapshot BEFORE anything dials, so

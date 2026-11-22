@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -64,7 +65,7 @@ func noServer() objproto.ConnectionID {
 func TestWorkspaceForwardAddWritesTheFile(t *testing.T) {
 	path := withConfig(t, "[workspace dev]\n")
 	add := verb.WorkspaceAction{Sub: verb.SubForwardAdd, Name: "dev", TaskID: wfTask, L: []string{"3000"}}
-	if err := runWorkspaceAction(context.Background(), add, noServer); err != nil {
+	if err := runWorkspaceAction(context.Background(), add, noServer, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(path)
@@ -76,7 +77,7 @@ func TestWorkspaceForwardAddWritesTheFile(t *testing.T) {
 	// A second add of the same forward is a no-op, under another spelling too.
 	again := add
 	again.L = []string{"127.0.0.1:3000:127.0.0.1:3000"}
-	if err := runWorkspaceAction(context.Background(), again, noServer); err != nil {
+	if err := runWorkspaceAction(context.Background(), again, noServer, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	b2, _ := os.ReadFile(path)
@@ -84,7 +85,7 @@ func TestWorkspaceForwardAddWritesTheFile(t *testing.T) {
 		t.Errorf("the same forward was declared twice:\n%s", b2)
 	}
 	rm := verb.WorkspaceAction{Sub: verb.SubForwardRm, Name: "dev", TaskID: wfTask, L: []string{"3000"}}
-	if err := runWorkspaceAction(context.Background(), rm, noServer); err != nil {
+	if err := runWorkspaceAction(context.Background(), rm, noServer, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	b3, _ := os.ReadFile(path)
@@ -96,7 +97,7 @@ func TestWorkspaceForwardAddWritesTheFile(t *testing.T) {
 func TestWorkspaceForwardAddRefusesAMissingWorkspace(t *testing.T) {
 	path := withConfig(t, "[workspace dev]\n")
 	add := verb.WorkspaceAction{Sub: verb.SubForwardAdd, Name: "nope", TaskID: wfTask, L: []string{"3000"}}
-	err := runWorkspaceAction(context.Background(), add, noServer)
+	err := runWorkspaceAction(context.Background(), add, noServer, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "workspace save nope") {
 		t.Errorf("err = %v, want a refusal naming `workspace save nope`", err)
 	}

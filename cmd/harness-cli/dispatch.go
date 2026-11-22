@@ -49,6 +49,10 @@ type cliVerbs struct {
 	// os.Stdout, so a cliVerbs built without one (a test) behaves as the CLI
 	// does.
 	out io.Writer
+	// in is where a body reads input from: os.Stdin on the command line. The
+	// MCP consumer sets a reader that fails, because its stdin is the
+	// JSON-RPC stream. A nil in means os.Stdin.
+	in io.Reader
 	// cid resolves the server ConnectionID, dying on a bad one. A function
 	// rather than a value because resolution reads flags, env and the
 	// workspace file, and a verb that never dials (version, caps, skill,
@@ -65,6 +69,31 @@ func (h cliVerbs) stdout() io.Writer {
 		return h.out
 	}
 	return os.Stdout
+}
+
+// stdin is where a body reads input from, falling back to os.Stdin as stdout
+// falls back to os.Stdout.
+func (h cliVerbs) stdin() io.Reader {
+	if h.in != nil {
+		return h.in
+	}
+	return os.Stdin
+}
+
+// exitCodeError ends the command line with code, printing msg to stderr when
+// it is not empty. It replaces os.Exit in a verb's body: one harness-cli
+// process serves many MCP tool calls, and a body that exited would end them
+// all. die() turns it back into the exit the command line always had.
+type exitCodeError struct {
+	code int
+	msg  string
+}
+
+func (e exitCodeError) Error() string {
+	if e.msg != "" {
+		return e.msg
+	}
+	return fmt.Sprintf("exit status %d", e.code)
 }
 
 // dial opens the one connection a verb's body needs. Callers close it.
@@ -323,9 +352,9 @@ func (h cliVerbs) Skill(a verb.CatalogAction) error {
 			return fmt.Errorf("skill list: %w", err)
 		}
 		for _, n := range names {
-			fmt.Println(n)
+			fmt.Fprintln(h.stdout(), n)
 			if d, derr := agentskills.Description(n); derr == nil && d != "" {
-				fmt.Printf("    %s\n", d)
+				fmt.Fprintf(h.stdout(), "    %s\n", d)
 			}
 		}
 		return nil
@@ -346,13 +375,13 @@ func (h cliVerbs) Skill(a verb.CatalogAction) error {
 			return skillErr(name, err)
 		}
 		for _, f := range files {
-			fmt.Println(f)
+			fmt.Fprintln(h.stdout(), f)
 		}
 		return nil
 	case a.Extract != "":
 		written, err := agentskills.Extract(name, a.Extract, a.Force)
 		for _, w := range written {
-			fmt.Println(w)
+			fmt.Fprintln(h.stdout(), w)
 		}
 		if err != nil {
 			return skillErr(name, err)
@@ -478,12 +507,12 @@ func (h cliVerbs) ExecLs(a verb.ExecRunAction) error {
 	}
 	if a.JSON {
 		for i := range execs {
-			fmt.Println(cli.ExecRunInfoJSONLine(&execs[i]))
+			fmt.Fprintln(h.stdout(), cli.ExecRunInfoJSONLine(&execs[i]))
 		}
 		return nil
 	}
 	for _, line := range cli.ExecRunInfoLines(execs) {
-		fmt.Println(line)
+		fmt.Fprintln(h.stdout(), line)
 	}
 	return nil
 }
@@ -503,7 +532,7 @@ func (h cliVerbs) ExecKill(a verb.ExecRunAction) error {
 			failed = err
 			continue
 		}
-		fmt.Printf("killed exec %d\n", id)
+		fmt.Fprintf(h.stdout(), "killed exec %d\n", id)
 	}
 	return failed
 }
@@ -531,12 +560,12 @@ func (h cliVerbs) ForwardLs(a verb.ForwardLsAction) error {
 	}
 	if a.JSON {
 		for i := range forwards {
-			fmt.Println(cli.PortForwardInfoJSONLine(&forwards[i]))
+			fmt.Fprintln(h.stdout(), cli.PortForwardInfoJSONLine(&forwards[i]))
 		}
 		return nil
 	}
 	for _, line := range cli.PortForwardInfoLines(forwards) {
-		fmt.Println(line)
+		fmt.Fprintln(h.stdout(), line)
 	}
 	return nil
 }
@@ -550,7 +579,7 @@ func (h cliVerbs) ForwardKill(a verb.ForwardKillAction) error {
 			failed = err
 			continue
 		}
-		fmt.Printf("killed forward %d\n", id)
+		fmt.Fprintf(h.stdout(), "killed forward %d\n", id)
 	}
 	return failed
 }
@@ -583,9 +612,9 @@ func (h cliVerbs) ServerDialRunner(a verb.ServerDialRunnerAction) error {
 	if err != nil {
 		return err
 	}
-	fmt.Println(resp.Status.String())
+	fmt.Fprintln(h.stdout(), resp.Status.String())
 	if resp.Status != protocol.DialRunnerStatus_Ok {
-		os.Exit(1)
+		return exitCodeError{code: 1}
 	}
 	return nil
 }
@@ -601,9 +630,9 @@ func (h cliVerbs) RunnerEnroll(a verb.RunnerEnrollAction) error {
 	if err != nil {
 		return err
 	}
-	fmt.Println(cli.FormatRunnerEnroll(st, key, a.Label))
+	fmt.Fprintln(h.stdout(), cli.FormatRunnerEnroll(st, key, a.Label))
 	if st != protocol.RunnerKeyStatus_Ok && st != protocol.RunnerKeyStatus_AlreadyEnrolled {
-		os.Exit(1)
+		return exitCodeError{code: 1}
 	}
 	return nil
 }
@@ -614,10 +643,10 @@ func (h cliVerbs) RunnerKeys(a verb.RunnerKeysAction) error {
 		return err
 	}
 	if a.JSON {
-		fmt.Print(cli.FormatRunnerKeysJSON(rows))
+		fmt.Fprint(h.stdout(), cli.FormatRunnerKeysJSON(rows))
 		return nil
 	}
-	fmt.Print(cli.FormatRunnerKeys(rows))
+	fmt.Fprint(h.stdout(), cli.FormatRunnerKeys(rows))
 	return nil
 }
 
@@ -627,9 +656,9 @@ func (h cliVerbs) RunnerUnenroll(a verb.RunnerUnenrollAction) error {
 		return err
 	}
 	out, ok := cli.FormatRunnerUnenroll(st, res)
-	fmt.Print(out)
+	fmt.Fprint(h.stdout(), out)
 	if !ok {
-		os.Exit(1)
+		return exitCodeError{code: 1}
 	}
 	return nil
 }
@@ -646,9 +675,9 @@ func (h cliVerbs) RunnerDialAdd(a verb.RunnerDialAddAction) error {
 		return err
 	}
 	out, ok := cli.FormatRunnerDialAdd(st, id, cands)
-	fmt.Println(out)
+	fmt.Fprintln(h.stdout(), out)
 	if !ok {
-		os.Exit(1)
+		return exitCodeError{code: 1}
 	}
 	return nil
 }
@@ -659,10 +688,10 @@ func (h cliVerbs) RunnerDialLs(a verb.RunnerDialListAction) error {
 		return err
 	}
 	if a.JSON {
-		fmt.Print(cli.FormatRunnerDialListJSON(rows))
+		fmt.Fprint(h.stdout(), cli.FormatRunnerDialListJSON(rows))
 		return nil
 	}
-	fmt.Print(cli.FormatRunnerDialList(rows))
+	fmt.Fprint(h.stdout(), cli.FormatRunnerDialList(rows))
 	return nil
 }
 
@@ -676,9 +705,9 @@ func (h cliVerbs) RunnerDialRm(a verb.RunnerDialRemoveAction) error {
 		return err
 	}
 	out, ok := cli.FormatRunnerDialRemove(st, id)
-	fmt.Println(out)
+	fmt.Fprintln(h.stdout(), out)
 	if !ok {
-		os.Exit(1)
+		return exitCodeError{code: 1}
 	}
 	return nil
 }
@@ -689,9 +718,9 @@ func (h cliVerbs) RunnerKick(a verb.RunnerKickAction) error {
 		return err
 	}
 	out, ok := cli.FormatRunnerKick(st, res)
-	fmt.Println(out)
+	fmt.Fprintln(h.stdout(), out)
 	if !ok {
-		os.Exit(1)
+		return exitCodeError{code: 1}
 	}
 	return nil
 }
@@ -721,7 +750,7 @@ func (h cliVerbs) BoardWake(a verb.BoardAction) error          { return h.board(
 // BoardSend reads its body from stdin when asked to, which RunBoardAction's
 // signature has no room for -- the same reason AgentSend is not h.board.
 func (h cliVerbs) BoardSend(a verb.BoardSendAction) error {
-	return cli.RunBoardSend(h.ctx, h.cid(), a, os.Stdin, h.stdout())
+	return cli.RunBoardSend(h.ctx, h.cid(), a, h.stdin(), h.stdout())
 }
 
 func (h cliVerbs) board(a verb.BoardAction) error {
@@ -731,10 +760,10 @@ func (h cliVerbs) board(a verb.BoardAction) error {
 // The agent verbs run inside a task's Bash tool and read HARNESS_* env, so
 // they resolve their own server CID and never call h.cid().
 func (h cliVerbs) AgentSend(a verb.AgentSendAction) error {
-	return agent.SendWith(h.ctx, a, os.Stdin, h.stdout())
+	return agent.SendWith(h.ctx, a, h.stdin(), h.stdout())
 }
 func (h cliVerbs) AgentDispatch(a verb.AgentSendAction) error {
-	return agent.DispatchWith(h.ctx, a, os.Stdin, h.stdout())
+	return agent.DispatchWith(h.ctx, a, h.stdin(), h.stdout())
 }
 func (h cliVerbs) AgentThread(a verb.AgentAction) error {
 	return agent.ThreadWith(h.ctx, a, h.stdout())
@@ -794,7 +823,7 @@ func (h cliVerbs) CapsSet(a verb.SetCapsAction) error {
 		return err
 	}
 	for _, id := range res.Affected {
-		fmt.Println(id)
+		fmt.Fprintln(h.stdout(), id)
 	}
 	fmt.Fprintf(os.Stderr, "changed %d task(s); closed %d connection(s)\n",
 		len(res.Affected), res.ConnsClosed)
@@ -871,7 +900,7 @@ func (h cliVerbs) CapsSetParent(a verb.SetParentAction) error {
 	if err != nil {
 		return err
 	}
-	fmt.Println(cli.SetParentMessage(opts, res))
+	fmt.Fprintln(h.stdout(), cli.SetParentMessage(opts, res))
 	return nil
 }
 
@@ -881,15 +910,17 @@ func (h cliVerbs) SessionNew(a verb.SpawnAction) error {
 	if err := requireRepo("session new", a); err != nil {
 		return err
 	}
-	return runSessionNewWith(h.cid(), a)
+	return runSessionNewWith(h.cid(), a, h.stdout())
 }
 func (h cliVerbs) SessionAttach(a verb.SessionAction) error {
 	return runSessionAttachWith(h.cid(), a)
 }
 func (h cliVerbs) SessionSnapshot(a verb.SessionAction) error {
-	return runSessionSnapshotWith(h.cid(), a)
+	return runSessionSnapshotWith(h.cid(), a, h.stdout())
 }
-func (h cliVerbs) SessionSend(a verb.SendAction) error { return runSessionSendWith(h.cid(), a) }
+func (h cliVerbs) SessionSend(a verb.SendAction) error {
+	return runSessionSendWith(h.cid(), a, h.stdout())
+}
 func (h cliVerbs) SessionExec(a verb.SessionExecAction) error {
 	return runSessionExecWith(h.cid(), a)
 }
@@ -919,12 +950,12 @@ func printWatchers(h cliVerbs, taskFilter string, asJSON bool, cond protocol.Awa
 	ws = cli.FilterWatchers(ws, cond)
 	if asJSON {
 		for i := range ws {
-			fmt.Println(cli.AwaitIdleWatcherJSONLine(&ws[i]))
+			fmt.Fprintln(h.stdout(), cli.AwaitIdleWatcherJSONLine(&ws[i]))
 		}
 		return nil
 	}
 	for _, line := range cli.AwaitIdleWatcherLines(ws) {
-		fmt.Println(line)
+		fmt.Fprintln(h.stdout(), line)
 	}
 	return nil
 }
@@ -939,7 +970,7 @@ func (h cliVerbs) SessionAwaitIdleKill(a verb.SessionAction) error {
 			failed = err
 			continue
 		}
-		fmt.Printf("killed await-idle watcher %d\n", id)
+		fmt.Fprintf(h.stdout(), "killed await-idle watcher %d\n", id)
 	}
 	return failed
 }
@@ -1220,22 +1251,22 @@ func (h cliVerbs) SshGateway(a verb.SSHGatewayAction) error {
 // --- workspace ----------------------------------------------------------
 
 func (h cliVerbs) WorkspaceLs(a verb.WorkspaceAction) error {
-	return runWorkspaceAction(h.ctx, a, h.cid)
+	return runWorkspaceAction(h.ctx, a, h.cid, h.stdout())
 }
 func (h cliVerbs) WorkspaceRm(a verb.WorkspaceAction) error {
-	return runWorkspaceAction(h.ctx, a, h.cid)
+	return runWorkspaceAction(h.ctx, a, h.cid, h.stdout())
 }
 func (h cliVerbs) WorkspaceShow(a verb.WorkspaceAction) error {
-	return runWorkspaceAction(h.ctx, a, h.cid)
+	return runWorkspaceAction(h.ctx, a, h.cid, h.stdout())
 }
 func (h cliVerbs) WorkspaceSave(a verb.WorkspaceAction) error {
-	return runWorkspaceAction(h.ctx, a, h.cid)
+	return runWorkspaceAction(h.ctx, a, h.cid, h.stdout())
 }
 func (h cliVerbs) WorkspaceForwardAdd(a verb.WorkspaceAction) error {
-	return runWorkspaceAction(h.ctx, a, h.cid)
+	return runWorkspaceAction(h.ctx, a, h.cid, h.stdout())
 }
 func (h cliVerbs) WorkspaceForwardRm(a verb.WorkspaceAction) error {
-	return runWorkspaceAction(h.ctx, a, h.cid)
+	return runWorkspaceAction(h.ctx, a, h.cid, h.stdout())
 }
 
 // PruneLocal removes worktrees on THIS machine. The repo comes off the action

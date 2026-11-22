@@ -393,6 +393,13 @@ func die(err error) {
 		fmt.Println(err)
 		os.Exit(0)
 	}
+	var ec exitCodeError
+	if errors.As(err, &ec) {
+		if ec.msg != "" {
+			fmt.Fprintln(os.Stderr, ec.msg)
+		}
+		os.Exit(ec.code)
+	}
 	fmt.Fprintln(os.Stderr, err)
 	os.Exit(1)
 }

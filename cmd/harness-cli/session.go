@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strconv"
@@ -56,9 +57,10 @@ func formatAmbiguousCandidates(cands []cli.RunnerCandidate) string {
 func exitOnAmbiguous(err error) error {
 	var are *cli.AmbiguousRunnerError
 	if errors.As(err, &are) {
-		fmt.Fprint(os.Stderr, formatAmbiguousCandidates(are.Candidates))
-		// 3 = ambiguous runner (distinct from 1=generic, 2=usage).
-		os.Exit(3)
+		// 3 = ambiguous runner (distinct from 1=generic, 2=usage). die prints
+		// the table to stderr and exits 3, as this did itself before a tool
+		// call could reach it.
+		return exitCodeError{code: 3, msg: strings.TrimRight(formatAmbiguousCandidates(are.Candidates), "\n")}
 	}
 	return err
 }
@@ -148,7 +150,7 @@ const defaultSendSettleMs = 1500
 
 // runSessionSnapshotWith is runSessionSnapshot for a caller that already has the parsed action --
 // the generated CLI dispatch.
-func runSessionSnapshotWith(cid objproto.ConnectionID, a verb.SessionAction) error {
+func runSessionSnapshotWith(cid objproto.ConnectionID, a verb.SessionAction, out io.Writer) error {
 	taskIDHex := a.TaskID
 	rows, cols, settleMs := &a.Rows, &a.Cols, &a.SettleMs
 	style, colorOut, withoutSynth := &a.Style, &a.Color, &a.WithoutSynth
@@ -183,7 +185,7 @@ func runSessionSnapshotWith(cid objproto.ConnectionID, a verb.SessionAction) err
 				"(mode preamble and screen repaint); the screen the server would have "+
 				"painted is not in this output\n", synth)
 		}
-		_, err = os.Stdout.Write(b)
+		_, err = out.Write(b)
 		return err
 	}
 
@@ -196,7 +198,7 @@ func runSessionSnapshotWith(cid objproto.ConnectionID, a verb.SessionAction) err
 	if *detect {
 		opts.detectAgent = *detectAgent
 	}
-	return printSessionScreen(ctx, c, taskIDHex, opts)
+	return printSessionScreen(ctx, c, taskIDHex, opts, out)
 }
 
 // screenOpts is what the two snapshot-rendering commands agree on. A struct
@@ -234,7 +236,7 @@ type screenOpts struct {
 // selecting which style dimensions are collected, and the object reports both
 // back so a reader can tell "no spans because none were asked for" from "asked
 // for and none present".
-func printSessionScreen(ctx context.Context, c *cli.Client, taskIDHex string, o screenOpts) error {
+func printSessionScreen(ctx context.Context, c *cli.Client, taskIDHex string, o screenOpts, out io.Writer) error {
 	// --ansi carries its own capture because it needs the cells, not the
 	// flattened rows — and it still yields the structured form, so a detection
 	// verdict can accompany the picture rather than costing a second capture of
@@ -244,10 +246,10 @@ func printSessionScreen(ctx context.Context, c *cli.Client, taskIDHex string, o 
 		if err != nil {
 			return err
 		}
-		fmt.Println(painted)
+		fmt.Fprintln(out, painted)
 		if o.withAttrs || o.withColor {
-			fmt.Println("\n--- styles ---")
-			fmt.Println(formatSpanReport(snap))
+			fmt.Fprintln(out, "\n--- styles ---")
+			fmt.Fprintln(out, formatSpanReport(snap))
 		}
 		if o.detectAgent != "" {
 			set, err := detectRuleSet(o.detectAgent)
@@ -255,7 +257,7 @@ func printSessionScreen(ctx context.Context, c *cli.Client, taskIDHex string, o 
 				return err
 			}
 			v := snap.Detect(set)
-			printDetectReport(&v, snap.Live)
+			printDetectReport(&v, snap.Live, out)
 		}
 		return nil
 	}
@@ -277,17 +279,17 @@ func printSessionScreen(ctx context.Context, c *cli.Client, taskIDHex string, o 
 			verdict = &v
 		}
 		if o.asJSON {
-			return json.NewEncoder(os.Stdout).Encode(struct {
+			return json.NewEncoder(out).Encode(struct {
 				*cli.ScreenSnapshot
 				Detect *cli.DetectExplain `json:"detect,omitempty"`
 			}{snap, verdict})
 		}
-		fmt.Println(strings.TrimRight(strings.Join(snap.Lines, "\n"), "\n"))
+		fmt.Fprintln(out, strings.TrimRight(strings.Join(snap.Lines, "\n"), "\n"))
 		if o.withAttrs || o.withColor {
-			fmt.Println("\n--- styles ---")
-			fmt.Println(formatSpanReport(snap))
+			fmt.Fprintln(out, "\n--- styles ---")
+			fmt.Fprintln(out, formatSpanReport(snap))
 		}
-		printDetectReport(verdict, snap.Live)
+		printDetectReport(verdict, snap.Live, out)
 		return nil
 	}
 
@@ -296,9 +298,9 @@ func printSessionScreen(ctx context.Context, c *cli.Client, taskIDHex string, o 
 		if err != nil {
 			return err
 		}
-		fmt.Println(strings.TrimRight(text, "\n"))
-		fmt.Println("\n--- styles ---")
-		fmt.Println(report)
+		fmt.Fprintln(out, strings.TrimRight(text, "\n"))
+		fmt.Fprintln(out, "\n--- styles ---")
+		fmt.Fprintln(out, report)
 		return nil
 	}
 
@@ -306,7 +308,7 @@ func printSessionScreen(ctx context.Context, c *cli.Client, taskIDHex string, o 
 	if err != nil {
 		return err
 	}
-	fmt.Println(strings.TrimRight(snap, "\n"))
+	fmt.Fprintln(out, strings.TrimRight(snap, "\n"))
 	return nil
 }
 
@@ -334,37 +336,37 @@ func detectRuleSet(agent string) (cli.DetectRuleSet, error) {
 // printDetectReport writes the human form of a verdict: the state, the rule
 // that produced it, and the text that rule read. The per-rule detail stays in
 // --json, the same split `session snapshot --style` already uses.
-func printDetectReport(v *cli.DetectExplain, live cli.LiveActivity) {
+func printDetectReport(v *cli.DetectExplain, live cli.LiveActivity, out io.Writer) {
 	if v == nil {
 		return
 	}
-	fmt.Println("\n--- detect ---")
+	fmt.Fprintln(out, "\n--- detect ---")
 	// Printed beside the verdict rather than with the screen because it answers
 	// the same question the verdict does, from the one input a pane border, a
 	// resize or an unrecognised UI cannot corrupt. It is NOT part of the
 	// verdict: no rule reads it yet, so a reader has to weigh it themselves,
 	// and saying so here is cheaper than having them assume either way.
-	fmt.Printf("live:   %d frames / %d B in %d ms (no rule reads this yet)\n",
+	fmt.Fprintf(out, "live:   %d frames / %d B in %d ms (no rule reads this yet)\n",
 		live.Frames, live.Bytes, live.WindowMs)
 	if !live.Anchored {
-		fmt.Println("        UNANCHORED: no end-of-replay repaint arrived, so the window still" +
+		fmt.Fprintln(out, "        UNANCHORED: no end-of-replay repaint arrived, so the window still"+
 			" holds replayed history delivered at wire speed — the counts above are not a rate")
 	}
-	fmt.Printf("state:  %s\n", v.State)
-	fmt.Printf("agent:  %s (rules %s)\n", v.Agent, v.Version)
+	fmt.Fprintf(out, "state:  %s\n", v.State)
+	fmt.Fprintf(out, "agent:  %s (rules %s)\n", v.Agent, v.Version)
 	switch {
 	case v.MatchedRule != "":
 		for _, r := range v.Rules {
 			if r.ID != v.MatchedRule {
 				continue
 			}
-			fmt.Printf("rule:   %s (region=%s priority=%d)\n", r.ID, r.Evidence.Region, r.Priority)
-			fmt.Printf("read:   %q\n", r.Evidence.RegionPreview)
+			fmt.Fprintf(out, "rule:   %s (region=%s priority=%d)\n", r.ID, r.Evidence.Region, r.Priority)
+			fmt.Fprintf(out, "read:   %q\n", r.Evidence.RegionPreview)
 		}
 	default:
 		// Naming the reason is the point: without it `unknown` and a confident
 		// verdict are the same line.
-		fmt.Printf("rule:   none (%s)\n", v.FallbackReason)
+		fmt.Fprintf(out, "rule:   none (%s)\n", v.FallbackReason)
 	}
 }
 
@@ -376,7 +378,7 @@ func formatSpanReport(s *cli.ScreenSnapshot) string {
 
 // runSessionNewWith is runSessionNew for a caller that already has the
 // parsed action -- the generated CLI dispatch.
-func runSessionNewWith(cid objproto.ConnectionID, a verb.SpawnAction) error {
+func runSessionNewWith(cid objproto.ConnectionID, a verb.SpawnAction, out io.Writer) error {
 	repoVal := a.Repo
 	sopts := spawnOpts(a)
 	sopts.EventStream = a.Stream
@@ -408,7 +410,7 @@ func runSessionNewWith(cid objproto.ConnectionID, a verb.SpawnAction) error {
 		if err != nil {
 			return exitOnAmbiguous(err)
 		}
-		fmt.Println(taskIDHex)
+		fmt.Fprintln(out, taskIDHex)
 		return nil
 	}
 
@@ -417,7 +419,7 @@ func runSessionNewWith(cid objproto.ConnectionID, a verb.SpawnAction) error {
 		if err != nil {
 			return exitOnAmbiguous(err)
 		}
-		fmt.Printf("session %s ended\n", id)
+		fmt.Fprintf(out, "session %s ended\n", id)
 		return nil
 	}
 
@@ -432,14 +434,14 @@ func runSessionNewWith(cid objproto.ConnectionID, a verb.SpawnAction) error {
 			return exitOnAmbiguous(err)
 		}
 		fmt.Fprintf(os.Stderr, "harness-cli: stream session %s started\n", taskIDHex)
-		return c.SessionStreamAttach(ctx, taskIDHex, os.Stdout, os.Stderr)
+		return c.SessionStreamAttach(ctx, taskIDHex, out, os.Stderr)
 	}
 
 	id, err := c.Interactive(ctx, repoVal, sopts)
 	if err != nil {
 		return exitOnAmbiguous(err)
 	}
-	fmt.Printf("session %s ended\n", id)
+	fmt.Fprintf(out, "session %s ended\n", id)
 	return nil
 }
 
@@ -467,7 +469,7 @@ func runSessionAttachWith(cid objproto.ConnectionID, a verb.SessionAction) error
 
 // runSessionSendWith is runSessionSend for a caller that already has the parsed action --
 // the generated CLI dispatch.
-func runSessionSendWith(cid objproto.ConnectionID, a verb.SendAction) error {
+func runSessionSendWith(cid objproto.ConnectionID, a verb.SendAction, out io.Writer) error {
 	taskIDHex := a.TaskID
 	enter, interp, quiet := &a.Enter, &a.Interp, &a.Quiet
 	flushMs := &a.FlushMs
@@ -571,7 +573,7 @@ func runSessionSendWith(cid objproto.ConnectionID, a verb.SendAction) error {
 		if *detect {
 			opts.detectAgent = *detectAgent
 		}
-		if err := printSessionScreen(ctx, c, taskIDHex, opts); err != nil {
+		if err := printSessionScreen(ctx, c, taskIDHex, opts, out); err != nil {
 			return err
 		}
 	}
@@ -772,8 +774,7 @@ func runSessionResizeWith(cid objproto.ConnectionID, a verb.SessionAction) error
 		return err
 	}
 	if !applied {
-		fmt.Fprintf(os.Stderr, "session resize: %s\n", cli.ResizeRejectedHint)
-		os.Exit(3)
+		return exitCodeError{code: 3, msg: "session resize: " + cli.ResizeRejectedHint}
 	}
 	if !*quiet {
 		fmt.Fprintf(os.Stderr, "session resize: %s now %dx%d (rows x cols)\n", taskIDHex, rows, cols)
