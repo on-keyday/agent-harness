@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/appwire"
+	"github.com/on-keyday/agent-harness/cli/cliopts"
 	"github.com/on-keyday/agent-harness/cli/verb"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/vtgrid"
@@ -524,4 +525,20 @@ func CredentialRevokeWith(ctx context.Context, c *Client, id string, out io.Writ
 	}
 	fmt.Fprintf(out, "credential %s: revoked; its connections are closed and its next handshake is refused (credential rekey brings the id back with a new key)\n", hex.EncodeToString(tid.Id[:])[:8])
 	return nil
+}
+
+// SelfTaskID is the task id this process acts as: the credential's, or the
+// agent's HARNESS_TASK_ID. The agent verbs that address "my own" topic
+// (`--self`) read it, so they work under a credential as under an agent.
+// Both builds: in a browser there is no credential and no HARNESS_TASK_ID,
+// so it answers ResolveTaskID's error.
+func SelfTaskID() (protocol.TaskID, error) {
+	c, err := activeCredential()
+	if err != nil {
+		return protocol.TaskID{}, err
+	}
+	if c != nil {
+		return c.TaskID, nil
+	}
+	return cliopts.ResolveTaskID("")
 }

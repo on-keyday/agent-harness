@@ -10,7 +10,6 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/on-keyday/agent-harness/cli/cliopts"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -76,20 +75,6 @@ func loadCredentialFile(path, source string) (*Credential, error) {
 		return nil, fmt.Errorf("%s: %s: %w", source, path, err)
 	}
 	return &c, nil
-}
-
-// SelfTaskID is the task id this process acts as: the credential's, or the
-// agent's HARNESS_TASK_ID. The agent verbs that address "my own" topic
-// (`--self`) read it, so they work under a credential as under an agent.
-func SelfTaskID() (protocol.TaskID, error) {
-	c, err := activeCredential()
-	if err != nil {
-		return protocol.TaskID{}, err
-	}
-	if c != nil {
-		return c.TaskID, nil
-	}
-	return cliopts.ResolveTaskID("")
 }
 
 // WhatIfActor is the task a what-if from this process is made by: this
