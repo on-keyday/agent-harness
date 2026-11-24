@@ -545,14 +545,14 @@ func TestHandleOpenInteractiveOkSetsRepoPathOnOpenExec(t *testing.T) {
 	h := newTestHandler(t)
 	now := time.Now()
 
-	runnerConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9100-1"), nextStreamID: 42}
+	runnerConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9100-1"), nextBidi: liveStream(t, 42)}
 	h.Registry.Add(&RunnerEntry{
 		ID: tcid("A"), Hostname: "h", AllowedRoots: []string{"/shared/repo"}, MaxTasks: 1,
 		ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now,
 		Conn: runnerConn,
 	})
 
-	tuiConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9101-2"), nextStreamID: 7}
+	tuiConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9101-2"), nextBidi: liveStream(t, 7)}
 
 	req := &protocol.OpenInteractiveRequest{}
 	req.SetRepoPath([]byte("/shared/repo"))
@@ -706,12 +706,12 @@ func TestOpenInteractiveAgentUnavailable(t *testing.T) {
 func TestOpenInteractivePinnedEmptyProfileUsesDefault(t *testing.T) {
 	h := newTestHandler(t)
 	now := time.Now()
-	runnerConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9300-1"), nextStreamID: 71}
+	runnerConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9300-1"), nextBidi: liveStream(t, 71)}
 	h.Registry.Add(&RunnerEntry{ID: tcid("ws:127.0.0.1:9300-1"), Identity: testRunnerID("ws:127.0.0.1:9300-1"), Hostname: "pinhost", AllowedRoots: []string{"/repo"}, MaxTasks: 1, AgentProfiles: []string{"claude", "codex"}, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: runnerConn})
 
 	sel := protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_ByHostname}
 	sel.SetHostname(mustHostname(t, "pinhost"))
-	tuiConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9301-2"), nextStreamID: 12}
+	tuiConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9301-2"), nextBidi: liveStream(t, 12)}
 
 	req := &protocol.OpenInteractiveRequest{Selector: sel}
 	req.SetRepoPath([]byte("/repo")) // empty agent_profile
@@ -847,7 +847,7 @@ func TestHandleOpenInteractive_RegistersSessionMux(t *testing.T) {
 		Conn: runnerConn,
 	})
 
-	tuiConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9201-2"), nextStreamID: 11}
+	tuiConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9201-2"), nextBidi: liveStream(t, 11)}
 
 	req := &protocol.OpenInteractiveRequest{}
 	req.SetRepoPath([]byte("/repo"))

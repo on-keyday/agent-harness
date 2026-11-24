@@ -45,6 +45,19 @@ func newFakeStream(t *testing.T) *fakeBidiStream {
 	return f
 }
 
+// liveStream is a stream that stays open, with the given id, for a fakeConn's
+// nextBidi on an open that must succeed. fakeConn's default (nextStreamID) is
+// a noopBidiStream, which reads EOF at once: the session's mux then stops or
+// detaches while the open is still running, and the open answers
+// internal_error or the task reads Detached — but only sometimes, in a package
+// run.
+func liveStream(t *testing.T, id trsf.StreamID) *fakeBidiStream {
+	t.Helper()
+	s := newFakeStream(t)
+	s.streamID = id
+	return s
+}
+
 // QueueRead enqueues a chunk that will be returned by the next ReadDirect call.
 func (f *fakeBidiStream) QueueRead(data []byte) {
 	f.mu.Lock()
