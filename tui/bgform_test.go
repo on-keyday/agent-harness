@@ -74,10 +74,12 @@ func TestRunModeKey(t *testing.T) {
 }
 
 func TestRunCell(t *testing.T) {
-	old := time.Local
-	time.Local = time.UTC
-	defer func() { time.Local = old }()
+	// The deadline is read on the reader's clock; the expectations are
+	// written in time.Local rather than time.Local being set, which races
+	// time.Now in goroutines other tests leave behind.
 	at := uint64(time.Date(2026, 11, 14, 15, 4, 0, 0, time.UTC).UnixNano())
+	local := time.Unix(0, int64(at)).Local()
+	hm, day := local.Format("15:04"), local.Format("01-02")
 	bg := func(ti protocol.TaskInfo) protocol.TaskInfo { ti.RunMode = protocol.RunMode_Background; return ti }
 	for _, c := range []struct {
 		name string
@@ -88,9 +90,9 @@ func TestRunCell(t *testing.T) {
 		{"queued busy", bg(protocol.TaskInfo{Status: protocol.TaskStatus_Queued, WaitReason: protocol.WaitReason_AllBusy}), "all_busy"},
 		{"queued none", bg(protocol.TaskInfo{Status: protocol.TaskStatus_Queued, WaitReason: protocol.WaitReason_NoCandidate}), "no_candidate"},
 		{"queued placing", bg(protocol.TaskInfo{Status: protocol.TaskStatus_Queued}), "placing"},
-		{"running", bg(protocol.TaskInfo{Status: protocol.TaskStatus_Running, DeadlineNs: at, DeadlineRemainingMs: 65*60_000 + 30_000}), "1h05m 15:04"},
-		{"under a minute", bg(protocol.TaskInfo{Status: protocol.TaskStatus_Detached, DeadlineNs: at, DeadlineRemainingMs: 20_000}), "0m 15:04"},
-		{"days out", bg(protocol.TaskInfo{Status: protocol.TaskStatus_Running, DeadlineNs: at, DeadlineRemainingMs: (51*60 + 7) * 60_000}), "2d03h 11-14"},
+		{"running", bg(protocol.TaskInfo{Status: protocol.TaskStatus_Running, DeadlineNs: at, DeadlineRemainingMs: 65*60_000 + 30_000}), "1h05m " + hm},
+		{"under a minute", bg(protocol.TaskInfo{Status: protocol.TaskStatus_Detached, DeadlineNs: at, DeadlineRemainingMs: 20_000}), "0m " + hm},
+		{"days out", bg(protocol.TaskInfo{Status: protocol.TaskStatus_Running, DeadlineNs: at, DeadlineRemainingMs: (51*60 + 7) * 60_000}), "2d03h " + day},
 		{"ended", bg(protocol.TaskInfo{Status: protocol.TaskStatus_Cancelled, EndedAt: 1, EndReason: protocol.EndReason_BlockedTimeout}), "blocked_timeout"},
 		{"ended before end reasons", bg(protocol.TaskInfo{Status: protocol.TaskStatus_Failed, EndedAt: 1}), "unknown"},
 	} {
@@ -104,10 +106,12 @@ func TestRunCell(t *testing.T) {
 // run facts used to lead the About column, which is about 0 cells wide below
 // ~240 terminal columns, so they were readable only in the `d` popup.
 func TestTaskListShowsRunFactsAtCommonWidths(t *testing.T) {
-	old := time.Local
-	time.Local = time.UTC
-	defer func() { time.Local = old }()
+	// The deadline is read on the reader's clock; the expectations are
+	// written in time.Local rather than time.Local being set, which races
+	// time.Now in goroutines other tests leave behind.
 	at := uint64(time.Date(2026, 11, 14, 15, 4, 0, 0, time.UTC).UnixNano())
+	local := time.Unix(0, int64(at)).Local()
+	hm := local.Format("15:04")
 	running := protocol.TaskInfo{Status: protocol.TaskStatus_Running, RunMode: protocol.RunMode_Background,
 		DeadlineNs: at, DeadlineRemainingMs: 65 * 60_000, Kind: protocol.TaskKind_Interactive}
 	running.Id.Id[0] = 1
@@ -120,7 +124,7 @@ func TestTaskListShowsRunFactsAtCommonWidths(t *testing.T) {
 		a.layout()
 		a.tasks.SetRows([]protocol.TaskInfo{running, queued}, nil)
 		view := a.tasks.View()
-		for _, want := range []string{"1h05m 15:04", "no_candidate"} {
+		for _, want := range []string{"1h05m " + hm, "no_candidate"} {
 			if !strings.Contains(view, want) {
 				t.Errorf("terminal %d: task list does not show %q:\n%s", w, want, view)
 			}

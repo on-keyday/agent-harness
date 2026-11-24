@@ -85,17 +85,19 @@ func TestRunStr(t *testing.T) {
 	}
 	// until= is the deadline on the reader's clock; the date joins it once
 	// the deadline is a day or more away, where a bare time is ambiguous.
-	defer func(l *time.Location) { time.Local = l }(time.Local)
-	time.Local = time.UTC
+	// The expectation is read in time.Local rather than time.Local being set:
+	// goroutines other tests leave behind call time.Now, which reads it (a
+	// data race CI caught).
 	at := time.Date(2026, 11, 13, 8, 30, 0, 0, time.UTC)
+	local := at.Local()
 	running := protocol.TaskInfo{Status: protocol.TaskStatus_Detached, RunMode: protocol.RunMode_Background, DeadlineNs: uint64(at.UnixNano()), DeadlineRemainingMs: 90_000}
-	if got := RunStr(&running); got != "run=bg deadline=1m30s until=08:30" {
-		t.Errorf("running: %q", got)
+	if got, want := RunStr(&running), "run=bg deadline=1m30s until="+local.Format("15:04"); got != want {
+		t.Errorf("running: %q, want %q", got, want)
 	}
 	far := running
 	far.DeadlineRemainingMs = uint64((30 * time.Hour).Milliseconds())
-	if got := RunStr(&far); got != "run=bg deadline=30h0m0s until=11-13T08:30" {
-		t.Errorf("running, a day out: %q", got)
+	if got, want := RunStr(&far), "run=bg deadline=30h0m0s until="+local.Format("01-02T15:04"); got != want {
+		t.Errorf("running, a day out: %q, want %q", got, want)
 	}
 	ended := protocol.TaskInfo{Status: protocol.TaskStatus_Cancelled, EndedAt: 5, RunMode: protocol.RunMode_Background, EndReason: protocol.EndReason_TurnDoneQuiet}
 	if got := RunStr(&ended); got != "run=bg end=turn_done_quiet" {
