@@ -540,6 +540,8 @@ type ListAction struct {
 	Filtered bool
 	// order and group the tasks: created|activity|live|state|repo (default: the server's order)
 	Order string
+	// how many finished tasks to list, newest first: a number or all (default 100); the tasks left out are…
+	Finished *uint32
 }
 
 // MCPAction is built by: mcp.
@@ -3037,6 +3039,13 @@ func init() {
 			a.JSON = b.Bool("json")
 			a.Tree = b.Bool("tree")
 			a.Order = b.Str("order")
+			if b.Set["finished"] {
+				v, err := parseFinishedFlag(b.Str("finished"))
+				if err != nil {
+					return nil, fmt.Errorf("ls: --finished: %w", err)
+				}
+				a.Finished = v
+			}
 			return a, nil
 		},
 		"ls\x00webui": func(b Bound) (Action, error) {

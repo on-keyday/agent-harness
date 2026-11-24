@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/cli/verb"
 	"github.com/on-keyday/agent-harness/runner"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/server"
@@ -55,7 +56,7 @@ func scopeEnv(t *testing.T, addr string) (context.Context, objproto.ConnectionID
 func lsRow(t *testing.T, ctx context.Context, c *cli.Client, taskID string) map[string]any {
 	t.Helper()
 	var buf bytes.Buffer
-	if err := c.ListJSON(ctx, &buf); err != nil {
+	if err := c.ListJSON(ctx, &buf, verb.FinishedDefault); err != nil {
 		t.Fatalf("ls --json: %v", err)
 	}
 	var doc struct {

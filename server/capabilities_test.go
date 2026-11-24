@@ -637,7 +637,7 @@ func TestListFilteredToSubtree(t *testing.T) {
 	h.principals[callerConn.ConnectionID().String()] = aTID
 
 	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_List}}
-	req.SetList(protocol.ListQuery{})
+	req.SetList(defaultListQuery())
 	h.Handle(callerConn, encodeTaskControlRequest(t, req))
 
 	if len(callerConn.sendStreams) != 1 {
@@ -719,7 +719,7 @@ func TestListIncludesRedactedParent(t *testing.T) {
 	h.principals[callerConn.ConnectionID().String()] = hexToTaskID(t, cHex)
 
 	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_List}}
-	req.SetList(protocol.ListQuery{})
+	req.SetList(defaultListQuery())
 	h.Handle(callerConn, encodeTaskControlRequest(t, req))
 
 	if len(callerConn.sendStreams) != 1 {
@@ -843,7 +843,7 @@ func TestListRunnersGatedByInfoGlobal(t *testing.T) {
 	}
 
 	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_List}}
-	req.SetList(protocol.ListQuery{})
+	req.SetList(defaultListQuery())
 
 	// -- Case 1: confined caller (no InfoGlobal) sees zero runners ---
 	confinedConn := &fakeConn{

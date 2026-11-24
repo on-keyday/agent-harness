@@ -1456,10 +1456,44 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // agent dropdown (multi-agent-profile design §6).
   let knownAgentProfiles = [];
 
+  // taskAllFinished: the task list holds every finished task (the button under
+  // it) rather than the newest 100 (ListQuery.finished_limit). Every snapshot
+  // asks with it, through takeSnapshot: the bridge keeps the last listing for
+  // orderTasks and the tree, so a snapshot taken with another bound would
+  // change the rows under them.
+  let taskAllFinished = false;
+  const takeSnapshot = () => window.harness.snapshot({ allFinished: taskAllFinished });
+  const taskHistoryNote = document.getElementById("task-history-note");
+  // renderTaskHistoryNote says what the bound leaves out, with the button that
+  // changes it. Hidden only when nothing is left out and the bound is on:
+  // there is then nothing to say and nothing to change.
+  function renderTaskHistoryNote(omitted) {
+    if (!taskHistoryNote) return;
+    taskHistoryNote.hidden = !taskAllFinished && !omitted;
+    if (taskHistoryNote.hidden) return;
+    const text = document.createElement("span");
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "task-chip";
+    if (taskAllFinished) {
+      text.textContent = "終了したタスクをすべて表示中";
+      btn.textContent = "新しい 100 件だけにする";
+    } else {
+      text.textContent = `古い終了タスク ${omitted} 件は一覧にありません`;
+      btn.textContent = "すべて表示";
+    }
+    btn.addEventListener("click", () => setTaskAllFinished(!taskAllFinished));
+    taskHistoryNote.replaceChildren(text, btn);
+  }
+  async function setTaskAllFinished(on) {
+    taskAllFinished = on;
+    await refreshSnapshot();
+  }
+
   const refreshSnapshot = async () => {
     let snap;
     try {
-      snap = await window.harness.snapshot();
+      snap = await takeSnapshot();
     } catch (e) {
       taskList.textContent = `snapshot error: ${e.message}`;
       return;
@@ -1479,6 +1513,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     lastTaskTree = snap.taskTree || [];
     lastGrantEdges = snap.grantEdges || [];
     renderTaskList(snap.tasks);
+    renderTaskHistoryNote(snap.finishedOmitted || 0);
     // After renderTaskList, so a task line's jump finds the row it opens.
     renderRunnerRows(runnerList, sortedRunners, {
       tasks: snap.tasks, statusColor: taskStatusColor, repoTail, onTask: revealTaskInList,
@@ -3324,7 +3359,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
           actions.replaceChildren();
           let t = null;
           try {
-            const snap = await window.harness.snapshot();
+            const snap = await takeSnapshot();
             t = (snap.tasks || []).find((x) => x.id === taskID);
           } catch (_) { /* snapshot unavailable — fall through to unknown */ }
           const mkBtn = (label, fn) => {
@@ -3702,6 +3737,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     get harness() { return window.harness; },
     echo: (text) => appendCmdOutput(text, true),
     refreshSnapshot: () => refreshSnapshot(),
+    allFinished: () => taskAllFinished,
     composeRepo: () => runnerSelect.value || "",
     composeHost: () => (hostSelect ? hostSelect.value || "" : ""),
     composeAgent: () => (agentSelect ? agentSelect.value || "" : ""),
@@ -3968,7 +4004,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     try {
       let t = null;
       if (!reason) {
-        const snap = await window.harness.snapshot();
+        const snap = await takeSnapshot();
         t = (snap.tasks || []).find(x => x.id === taskID) || null;
       }
       ({ kind, reattachable, ended } = interactiveClosedNotice(reason, t));
@@ -5661,7 +5697,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     const id = pendingReattachTaskID;
     if (!id) return;
     try {
-      const snap = await window.harness.snapshot();
+      const snap = await takeSnapshot();
       const t = (snap.tasks || []).find(x => x.id === id);
       if (t && (t.status === "Running" || t.status === "Detached")) {
         showQuickReattach(id);
@@ -6103,9 +6139,15 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // openTaskByIdInput resolves the id field against the listed tasks.
   const taskIdOpen = document.getElementById("task-id-open");
   const taskIdOpenNote = document.getElementById("task-id-open-note");
-  const openTaskByIdInput = () => {
-    const r = resolveTaskIdInput(taskIdOpen.value, lastTasks);
+  const openTaskByIdInput = async () => {
+    let r = resolveTaskIdInput(taskIdOpen.value, lastTasks);
     taskIdOpenNote.textContent = "";
+    if (r.kind === "none" && !taskAllFinished && taskHistoryNote && !taskHistoryNote.hidden) {
+      // The list is cut, so "not listed" is not "no such task": look again
+      // with every finished task. The note under the list shows the switch.
+      await setTaskAllFinished(true);
+      r = resolveTaskIdInput(taskIdOpen.value, lastTasks);
+    }
     if (r.kind === "one") { openTaskActionsDialog(r.task); return; }
     if (r.kind === "none") { taskIdOpenNote.textContent = `一覧に ${taskIdOpen.value.trim()} のタスクはありません`; return; }
     if (r.kind !== "many") return;
@@ -6835,7 +6877,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // activity-desc (same ordering as the task list). Used by the `grid`
   // command's no-arg path; the show button reads lastTasks directly.
   async function liveSessionIds() {
-    const snap = await window.harness.snapshot();
+    const snap = await takeSnapshot();
     return (snap.tasks || [])
       // isSessionKind: feeds the same grid as above.
       .filter((t) => isSessionKind(t) && (t.status === "Running" || t.status === "Detached"))

@@ -241,20 +241,24 @@ func requireRepo(name string, a verb.SpawnAction) error {
 }
 
 func (h cliVerbs) Ls(a verb.ListAction) error {
+	finished := verb.FinishedDefault
+	if a.Finished != nil {
+		finished = *a.Finished
+	}
 	if a.Order != "" {
 		o, err := cli.ParseTaskOrder(a.Order)
 		if err != nil {
 			return err
 		}
-		return cli.ListOrdered(h.ctx, h.cid(), h.stdout(), o, a.JSON)
+		return cli.ListOrdered(h.ctx, h.cid(), h.stdout(), o, a.JSON, finished)
 	}
 	switch {
 	case a.Tree:
-		return cli.ListTree(h.ctx, h.cid(), h.stdout())
+		return cli.ListTree(h.ctx, h.cid(), h.stdout(), finished)
 	case a.JSON:
-		return cli.ListJSON(h.ctx, h.cid(), h.stdout())
+		return cli.ListJSON(h.ctx, h.cid(), h.stdout(), finished)
 	default:
-		return cli.List(h.ctx, h.cid(), h.stdout())
+		return cli.List(h.ctx, h.cid(), h.stdout(), finished)
 	}
 }
 
@@ -864,7 +868,7 @@ func (h cliVerbs) CapsAudit(a verb.CapsAuditAction) error {
 		focus = c
 	}
 	return h.withClient(func(c *cli.Client) error {
-		body, err := c.Snapshot(h.ctx)
+		body, err := c.SnapshotFinished(h.ctx, verb.FinishedAll)
 		if err != nil {
 			return err
 		}
@@ -882,7 +886,7 @@ func (h cliVerbs) CapsReach(a verb.CapsReachAction) error {
 		focus = c
 	}
 	return h.withClient(func(c *cli.Client) error {
-		body, err := c.Snapshot(h.ctx)
+		body, err := c.SnapshotFinished(h.ctx, verb.FinishedAll)
 		if err != nil {
 			return err
 		}
@@ -899,7 +903,7 @@ func (h cliVerbs) CapsReach(a verb.CapsReachAction) error {
 
 func (h cliVerbs) CapsWhatIf(a verb.CapsWhatIfAction) error {
 	return h.withClient(func(c *cli.Client) error {
-		body, err := c.Snapshot(h.ctx)
+		body, err := c.SnapshotFinished(h.ctx, verb.FinishedAll)
 		if err != nil {
 			return err
 		}

@@ -9,6 +9,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/cli/verb"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -120,7 +121,21 @@ func (a *App) onIdleWatchers(msg tea.KeyMsg) (tea.Cmd, bool) {
 // `i` opens the caps audit over every listed task.
 func (a *App) onCapsAudit(msg tea.KeyMsg) (tea.Cmd, bool) {
 	a.openCapsAudit(false, false, 0)
-	return nil, true
+	// The open audit widens the snapshot to the whole history
+	// (snapshotFinished); fetch it now rather than at the next event.
+	return a.refreshSnapshot(), true
+}
+
+// onFinishedAll is H: every finished task in the list, or the newest
+// verb.FinishedDefault again. Fetched at once, since the server holds the rows.
+func (a *App) onFinishedAll(msg tea.KeyMsg) (tea.Cmd, bool) {
+	a.allFinished = !a.allFinished
+	if a.allFinished {
+		a.cmdresult.Append("tasks: every finished task")
+	} else {
+		a.cmdresult.Append(fmt.Sprintf("tasks: the newest %d finished tasks", verb.FinishedDefault))
+	}
+	return a.refreshSnapshot(), true
 }
 
 func (a *App) openCapsAudit(includeEnded, includeEmpty bool, focus protocol.Capability) {

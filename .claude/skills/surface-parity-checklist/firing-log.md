@@ -4587,3 +4587,31 @@ done:    1 (`session rename` row, CLI|TUI|WebUI, `WebUIDispatch{taskRename}`;
 omitted: 9/26 (no session default involved), 14 (`session ls` unaffected),
          18/18a/19/21/22/31–34a (no new field, column or form), 38 (no screen)
 missed:  none found by this walk
+
+### 2026-11-24 (pre-landing) — the list's history bound: `ls --finished`, TUI `H`, WebUI note
+
+Spec `2026-11-24-list-finished-bound-design.md` (D1–D7). Native execution.
+S1–S6 `n/a` (no agent preset, argv or launch env changed).
+done:    1 (`ls --finished`, CLI only with SurfaceReason: the TUI/WebUI keep
+         the choice across polls), 2 (grammar in `verb.ParseFinished`), 4 (`H`,
+         mainKeys + binding row), 6 (note + button under the WebUI task list;
+         「id で開く」 widens when the list is cut), 8 (`harness.snapshot` /
+         `harness.list` take `{allFinished}`), 11/12 (last `ls` line, printed
+         at 0; `finished_omitted` in `--json`), 16 (a trailing header row, so
+         the column set is untouched — 34 by construction), 23
+         (`finishedOmitted` in the snapshot), 24 (per path: caps
+         audit/reach/what-if and `credential ls` ask for every finished task,
+         listings take the default — written in the spec), 27/28a (one funnel
+         per surface: `SnapshotFinished`; the TUI's 14 `RefreshSnapshot`
+         sites through `a.refreshSnapshot`, the page's 5 `harness.snapshot`
+         sites through `takeSnapshot`), 29/30 (TUI result line on `H`), 33
+         (a bad `--finished` errors), 35, 36 (harness-cli skill + both
+         mirrors), 37, 39 (spec Surfaces table checked row by row), live checks
+         on a dummy with 104 finished tasks: CLI all four forms + bad value,
+         TUI note row and `H` both ways in a PTY, WebUI note, button both
+         ways, typed `ls`, id-open of an omitted task (Playwright, 1280/390)
+omitted: 14 (`session ls` is JSON Lines with no envelope to carry a count; it
+         keeps the default bound), 31 for the TUI/WebUI note (shown only when
+         something is left out or every task is listed: a hint with nothing
+         to say or change; the CLI line carries the zero)
+missed:  none found by this walk

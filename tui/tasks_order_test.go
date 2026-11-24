@@ -6,6 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/cli/verb"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -185,5 +186,38 @@ func TestTasksTableKeepsOldLiveTasksPastTheCut(t *testing.T) {
 	rows := a.tasks.Rows()
 	if len(rows) != 101 || rows[len(rows)-1].Id.Id[0] != 1 {
 		t.Fatalf("got %d rows, last %d; want 100 finished + the old live task", len(rows), rows[len(rows)-1].Id.Id[0])
+	}
+}
+
+// What the cut leaves out is said on the table's last row, and H lists every
+// finished task (and says so, with the way back).
+func TestTasksTableNamesWhatTheCutLeavesOutAndHListsIt(t *testing.T) {
+	a := New(Config{})
+	a.width, a.height = 160, 40
+	var ts []protocol.TaskInfo
+	for i := 0; i < 102; i++ {
+		f := tuiTask(byte(10+i), 0, uint64(100+i))
+		f.Status = protocol.TaskStatus_Succeeded
+		ts = append(ts, f)
+	}
+	a.snapshotOmitted = 3 // what the server already left out
+	setAuditTasks(a, ts...)
+	if got := len(a.tasks.Rows()); got != 100 {
+		t.Fatalf("got %d rows, want the newest 100 finished", got)
+	}
+	if a.tasks.finishedNote == "" || !strings.Contains(a.tasks.finishedNote, "5 older") {
+		t.Fatalf("note = %q, want it to count the 2 cut here plus the server's 3", a.tasks.finishedNote)
+	}
+	if a.snapshotFinished() != verb.FinishedDefault {
+		t.Fatalf("snapshot bound = %d before H, want the default", a.snapshotFinished())
+	}
+	a = press(t, a, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(mainKeys.FinishedAll)})
+	if !a.allFinished || a.snapshotFinished() != verb.FinishedAll {
+		t.Fatalf("after H: allFinished=%v bound=%d, want every finished task asked for", a.allFinished, a.snapshotFinished())
+	}
+	a.snapshotOmitted = 0 // the snapshot H asked for
+	a.refreshTasksTable()
+	if got := len(a.tasks.Rows()); got != 102 || !strings.Contains(a.tasks.finishedNote, "every finished task") {
+		t.Fatalf("after H: %d rows, note %q; want all 102 and a note naming the way back", got, a.tasks.finishedNote)
 	}
 }

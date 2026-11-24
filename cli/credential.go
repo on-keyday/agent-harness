@@ -484,7 +484,9 @@ func CredentialListJSON(out io.Writer, tasks []protocol.TaskInfo) error {
 
 // CredentialLsWith runs credential ls.
 func CredentialLsWith(ctx context.Context, c *Client, asJSON bool, out io.Writer) error {
-	lr, err := c.Snapshot(ctx)
+	// Ended credentials included, however old: a revoked one is what
+	// credential rekey brings back, so the list is not a history to bound.
+	lr, err := c.SnapshotFinished(ctx, verb.FinishedAll)
 	if err != nil {
 		return err
 	}

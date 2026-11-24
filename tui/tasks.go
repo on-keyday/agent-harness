@@ -57,7 +57,14 @@ type TasksModel struct {
 	// (skipHeader), so SelectedID / SelectedTask only ever see a task.
 	order     cli.TaskOrder
 	rowHeader []string
+	// finishedNote, when set, is a last header row saying what the history
+	// cut leaves out and how H changes it (App.refreshTasksTable).
+	finishedNote string
 }
+
+// SetFinishedNote sets the history row SetRows appends; "" for none. It takes
+// effect on the next SetRows, which is what refreshTasksTable calls next.
+func (m *TasksModel) SetFinishedNote(note string) { m.finishedNote = note }
 
 // obsColumnMinWidth is the panel width at which the tasks table can afford the
 // Obs column. Below it the column is DROPPED rather than squeezed: fitColumns
@@ -348,6 +355,16 @@ func (m *TasksModel) SetRows(ts []protocol.TaskInfo, runners []protocol.RunnerIn
 				gutter[i] += "\u2020"
 			}
 		}
+	}
+	// The history note goes last, as a header row: never selected, and
+	// drawn across the line like a group header in either view.
+	if m.finishedNote != "" {
+		if header == nil {
+			header = make([]string, len(ordered))
+		}
+		ordered = append(ordered[:len(ordered):len(ordered)], protocol.TaskInfo{})
+		header = append(header, m.finishedNote)
+		gutter = append(gutter, "")
 	}
 	// In a mode that reorders on every poll, the cursor follows its task, or
 	// an action on the selection would hit whichever task moved under it.

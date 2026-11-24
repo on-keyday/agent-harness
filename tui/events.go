@@ -21,7 +21,10 @@ import (
 type SnapshotMsg struct {
 	Runners []protocol.RunnerInfo
 	Tasks   []protocol.TaskInfo
-	Err     error
+	// FinishedOmitted is ListResultBody.finished_omitted: finished tasks the
+	// bound asked for (RefreshSnapshot's finished) left out.
+	FinishedOmitted uint32
+	Err             error
 }
 
 // ScheduleListMsg is the answer of DoScheduleList: the schedules the caller

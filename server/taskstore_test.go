@@ -1285,23 +1285,3 @@ func TestWALReplayRestoresParentChange(t *testing.T) {
 		t.Fatalf("d after replay: %x, want zero (detached via ABSENT creator_task_id key)", gotD.CreatorTaskID.Id)
 	}
 }
-
-// The task list keeps every live task however old, and caps only the finished
-// ones (newest first): the live ones are what an operator opens the list for.
-func TestTaskStoreListLiveAndRecentKeepsOldLiveTasks(t *testing.T) {
-	s := NewTaskStore()
-	create := func() string {
-		return s.Create("/repo", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()}, "")
-	}
-	live := create()
-	old, recent := create(), create()
-	s.Finish(old, 0, nil)
-	s.Finish(recent, 0, nil)
-	var got []string
-	for _, e := range s.ListLiveAndRecent(1) {
-		got = append(got, e.ID)
-	}
-	if len(got) != 2 || got[0] != live || got[1] != recent {
-		t.Fatalf("ListLiveAndRecent(1) = %v, want [live %s, newest finished %s]", got, live, recent)
-	}
-}

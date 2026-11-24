@@ -44,6 +44,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/cli/verb"
 	"github.com/on-keyday/agent-harness/runner"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/server"
@@ -229,7 +230,7 @@ func TestChainedRelay_3Hop_E2E(t *testing.T) {
 	listCtx, listCancel := context.WithTimeout(ctx, 10*time.Second)
 	defer listCancel()
 	var buf bytes.Buffer
-	listErr := cli.List(listCtx, serverCID, &buf)
+	listErr := cli.List(listCtx, serverCID, &buf, verb.FinishedDefault)
 	if listErr != nil {
 		t.Fatalf("cli.List should succeed through 3-hop chained relay: %v", listErr)
 	}

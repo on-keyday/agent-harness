@@ -101,7 +101,7 @@ func OrderTasks(ts []protocol.TaskInfo, o TaskOrder, now time.Time) []TaskGroup 
 	case OrderLive:
 		var live, done []protocol.TaskInfo
 		for _, t := range all {
-			if isTerminalStatus(t.Status) {
+			if protocol.FinishedStatus(t.Status) {
 				done = append(done, t)
 			} else {
 				live = append(live, t)
@@ -148,7 +148,7 @@ func OrderTasks(ts []protocol.TaskInfo, o TaskOrder, now time.Time) []TaskGroup 
 		for _, n := range names {
 			var live, done []protocol.TaskInfo
 			for _, t := range buckets[n] {
-				if isTerminalStatus(t.Status) {
+				if protocol.FinishedStatus(t.Status) {
 					done = append(done, t)
 				} else {
 					live = append(live, t)
@@ -222,7 +222,7 @@ func nonEmptyGroups(gs []TaskGroup) []TaskGroup {
 // lifecycle decides; otherwise the program's own report on a live terminal.
 func stateGroup(t protocol.TaskInfo) string {
 	switch {
-	case isTerminalStatus(t.Status):
+	case protocol.FinishedStatus(t.Status):
 		return groupFinished
 	case t.Status == protocol.TaskStatus_Queued:
 		return groupQueued

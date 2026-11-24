@@ -1406,7 +1406,9 @@ func capsAuditPromise(verbName string, render func([]protocol.TaskInfo) (js.Valu
 				rejectErr(reject, err)
 				return
 			}
-			lr, err := c.Snapshot(rootCtx)
+			// The whole history: an ended task's recorded caps come back on a
+			// resume, so audit, reach and what-if count it however old.
+			lr, err := c.SnapshotFinished(rootCtx, verb.FinishedAll)
 			if err != nil {
 				rejectErr(reject, fmt.Errorf("%s: %w", verbName, err))
 				return
@@ -1564,10 +1566,12 @@ func rejectAmbiguous(reject js.Value, err error) bool {
 
 // harnessList returns the list output as a string.
 //
-//	harness.list() -> Promise<string>
+//	harness.list(mode, {allFinished?}) -> Promise<string>
 //
 // harnessList renders the shared listing. mode selects which of the three
 // renderers cli.Client already has -- "" (rows), "json" or "tree".
+// allFinished is harness.snapshot's: the page passes the choice its task list
+// is showing, so the typed ls and the list beside it hold the same rows.
 //
 // --json and --tree parsed on this surface and were discarded, because only
 // the row renderer was exposed. The renderers existed the whole time.
@@ -1575,6 +1579,10 @@ func harnessList(this js.Value, args []js.Value) any {
 	mode := ""
 	if len(args) > 0 && args[0].Type() == js.TypeString {
 		mode = args[0].String()
+	}
+	finished := verb.FinishedDefault
+	if len(args) > 1 && args[1].Type() == js.TypeObject && args[1].Get("allFinished").Truthy() {
+		finished = verb.FinishedAll
 	}
 	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
 		resolve := promiseArgs[0]
@@ -1593,7 +1601,7 @@ func harnessList(this js.Value, args []js.Value) any {
 			case "tree":
 				render = c.ListTree
 			}
-			if err := render(rootCtx, &buf); err != nil {
+			if err := render(rootCtx, &buf, finished); err != nil {
 				rejectErr(reject, fmt.Errorf("list: %w", err))
 				return
 			}
@@ -1678,7 +1686,12 @@ func harnessOrderTasks(this js.Value, args []js.Value) any {
 // TaskIDs are pre-hexed, and statuses are stringified so the JS side does
 // not need a label table.
 //
-//	harness.snapshot() -> Promise<{
+// allFinished asks for every finished task instead of the newest
+// verb.FinishedDefault (ListQuery.finished_limit); finishedOmitted is how many
+// the bound left out (ListResultBody.finished_omitted).
+//
+//	harness.snapshot({allFinished?}) -> Promise<{
+//	  finishedOmitted: number,
 //	  runners:  [{id, cid, hostname, goos, status, tasks, maxTasks, roots, connectedAt, lastSeen, agentBin, agentProfiles, skillsInjected}],
 //	  tasks:    [{id, status, kind, repoPath, prompt, assignedTo, exitCode,
 //	              createdAt, startedAt, endedAt, agentProfile, skillsInjected,
@@ -1698,7 +1711,11 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 				rejectErr(reject, err)
 				return
 			}
-			lr, err := c.Snapshot(rootCtx)
+			finished := verb.FinishedDefault
+			if len(args) > 0 && args[0].Type() == js.TypeObject && args[0].Get("allFinished").Truthy() {
+				finished = verb.FinishedAll
+			}
+			lr, err := c.SnapshotFinished(rootCtx, finished)
 			if err != nil {
 				rejectErr(reject, fmt.Errorf("snapshot: %w", err))
 				return
@@ -2014,6 +2031,8 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 				"forwards":      forwards,
 				"execs":         execs,
 				"idle_watchers": idleWatchers,
+				// float64: syscall/js takes no uint32.
+				"finishedOmitted": float64(lr.FinishedOmitted),
 			}))
 		}()
 		return nil

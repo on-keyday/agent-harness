@@ -482,18 +482,19 @@ func DoIdleWatcherKill(c *cli.Client, id uint64) tea.Cmd {
 	}
 }
 
-// RefreshSnapshot wraps (*cli.Client).Snapshot with the SnapshotMsg envelope
-// the TUI's update loop expects. The RoundTripTaskControl + decode lives in
-// the cli package so the wasm bridge and other consumers can share it.
-func RefreshSnapshot(c *cli.Client) tea.Cmd {
+// RefreshSnapshot wraps (*cli.Client).SnapshotFinished with the SnapshotMsg
+// envelope the TUI's update loop expects; finished is ListQuery's bound (the
+// App's is snapshotFinished). The RoundTripTaskControl + decode lives in the
+// cli package so the wasm bridge and other consumers can share it.
+func RefreshSnapshot(c *cli.Client, finished uint32) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		lr, err := c.Snapshot(ctx)
+		lr, err := c.SnapshotFinished(ctx, finished)
 		if err != nil {
 			return SnapshotMsg{Err: err}
 		}
-		return SnapshotMsg{Runners: lr.Runners, Tasks: lr.Tasks}
+		return SnapshotMsg{Runners: lr.Runners, Tasks: lr.Tasks, FinishedOmitted: lr.FinishedOmitted}
 	}
 }
 

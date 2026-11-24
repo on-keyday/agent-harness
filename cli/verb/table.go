@@ -2109,7 +2109,7 @@ var Verbs = []VerbSpec{
 			{Surface: TUI, At: "tui/runners.go:RunnersModel"},
 		},
 		Notes: []string{
-			"list runners and tasks: every task that has not ended, plus the 100 newest finished ones; --json emits one {runners,tasks} object",
+			"list runners and tasks: every task that has not ended, plus the 100 newest finished ones (--finished widens that), plus the creators of whatever is listed; --json emits one {runners,tasks,finished_omitted} object",
 		},
 		Action: "ListAction",
 		// --json already carries created_by on every row, so a consumer
@@ -2133,8 +2133,14 @@ var Verbs = []VerbSpec{
 				SurfaceReason: "the WebUI orders its task list with the select beside the filter chips, and the TUI with its o key",
 				Help:          "order and group the tasks: created|activity|live|state|repo (default: the server's order)",
 			},
+			{
+				Name: "finished", Type: FlagString, Default: "", CmdlineSurfaces: CLI, Field: "Finished",
+				FieldType: "*uint32", Convert: "parseFinishedFlag",
+				SurfaceReason: "the TUI's task table takes the same choice from its H key and the WebUI's from the button under its task list; both keep it for the polls that follow, which a one-off command line cannot",
+				Help:          "how many finished tasks to list, newest first: a number or all (default 100); the tasks left out are counted on the last line",
+			},
 		},
-		Examples: []string{"ls", "ls --json", "ls --tree", "ls --order state"},
+		Examples: []string{"ls", "ls --json", "ls --tree", "ls --order state", "ls --finished all"},
 	},
 	{
 		Path: []string{"conns"}, CmdlineSurfaces: CLI | TUI | WebUI,

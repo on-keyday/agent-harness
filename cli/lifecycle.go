@@ -80,7 +80,7 @@ func LifecycleWord(st protocol.LifecycleState) string {
 // credential task has no process, so no hooks that could report: it has no
 // lifecycle to render, rather than one that never reported.
 func LifecycleShown(t *protocol.TaskInfo) bool {
-	return t.Kind != protocol.TaskKind_Credential && !isTerminalStatus(t.Status)
+	return t.Kind != protocol.TaskKind_Credential && !protocol.FinishedStatus(t.Status)
 }
 
 // LifecycleStr is `lifecycle=waiting (3m ago)` for the CLI `ls` row,

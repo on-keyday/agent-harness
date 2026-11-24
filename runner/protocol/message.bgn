@@ -984,8 +984,16 @@ format ProxyControl:
 format DialGreeting:
     version :u8
 
+# ListQuery bounds the one part of a list that grows without limit: history.
+# Every task that has not ended is listed however old, and so is every
+# creator, up to the root, of a listed task the caller may see (a tree drawn
+# from the list never loses a branch's parent to the bound).
 format ListQuery:
-    query :[..]u8 # currently opaque
+    # At most this many finished tasks (succeeded / failed / cancelled),
+    # newest created first, counted among the tasks the caller may see. A
+    # client that wants every finished task sends 0xffffffff, which is a
+    # limit like any other: no store holds that many.
+    finished_limit :u32
 
 # RunnerID names WHICH RUNNER PROCESS, and nothing else.
 #
@@ -1398,6 +1406,11 @@ format ListResultBody:
     runners :[runners_len]RunnerInfo
     tasks_len :u16
     tasks :[tasks_len]TaskInfo
+    # Finished tasks the caller may see that ListQuery.finished_limit left
+    # out (a creator listed for its child is not counted). 0 means the list
+    # holds every finished task visible to the caller, so a client can say
+    # "N older" without guessing from a full page.
+    finished_omitted :u32
 
 # RunnerSelectorKind tags which selector variant is active.
 enum RunnerSelectorKind:

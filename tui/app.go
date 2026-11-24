@@ -149,8 +149,13 @@ type App struct {
 	capsAuditModal CapsAuditModal
 	// auditPins are tasks the caps audit pointed the tree at (a jump target, or
 	// a marked bit's holders) and their creator chains, kept in the task table
-	// past its 100-row cut until the next jump, t, or T.
+	// past its history cut until the next jump, t, or T.
 	auditPins map[string]bool
+	// allFinished is H: the task table lists every finished task rather than
+	// the newest verb.FinishedDefault. snapshotOmitted is the last snapshot's
+	// FinishedOmitted, what the server left out of it.
+	allFinished     bool
+	snapshotOmitted uint32
 
 	// live session viewer grid (full-screen overlay, `g` key)
 	grid GridModel
@@ -587,6 +592,7 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		a.runnersSnapshot = msg.Runners
 		a.runners.SetRows(msg.Runners)
+		a.snapshotOmitted = msg.FinishedOmitted
 		a.tasksByID = make(map[string]protocol.TaskInfo, len(msg.Tasks))
 		now := time.Now()
 		a.actRecvAt = make(map[string]time.Time, len(msg.Tasks))
@@ -655,7 +661,7 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.tasksByID[id] = ti
 			a.refreshTasksTable()
 			a.schedules.rebuild()
-			return a, tea.Batch(RefreshSnapshot(a.client), a.scheduleListFor(msg.Event))
+			return a, tea.Batch(a.refreshSnapshot(), a.scheduleListFor(msg.Event))
 		}
 		cur.Status = msg.Event.TaskStatus
 		if msg.Event.Kind == protocol.StatusEventKind_TaskEnded {
@@ -686,7 +692,7 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.workspaceRetryOnRunner = false
 			a.ArmWorkspace()
 		}
-		return a, RefreshSnapshot(a.client)
+		return a, a.refreshSnapshot()
 
 	case ConnSnapshotMsg:
 		if msg.Err != nil {
@@ -1161,11 +1167,11 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if a.workspace != nil {
 					a.ArmWorkspace()
 				}
-				return a, RefreshSnapshot(a.client)
+				return a, a.refreshSnapshot()
 			}
 		case msg.Topic == topics.RunnersStatus():
 			if msg.Resubscribed && a.client != nil {
-				return a, RefreshSnapshot(a.client)
+				return a, a.refreshSnapshot()
 			}
 		}
 		return a, nil
@@ -1240,7 +1246,7 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// something (a rm whose answer was lost): the tables follow the
 			// server.
 			if (strings.HasPrefix(msg.Verb, "schedule ") || strings.HasPrefix(msg.Verb, "credential ")) && a.client != nil {
-				return a, RefreshSnapshot(a.client)
+				return a, a.refreshSnapshot()
 			}
 			return a, nil
 		}
@@ -1252,7 +1258,7 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// snapshot, which carries both. A credential verb changed a task row
 		// (an issue's name and expiry come only with a snapshot).
 		if (strings.HasPrefix(msg.Verb, "schedule ") || strings.HasPrefix(msg.Verb, "credential ")) && a.client != nil {
-			return a, RefreshSnapshot(a.client)
+			return a, a.refreshSnapshot()
 		}
 		return a, nil
 	case ScheduleListMsg:
@@ -1381,7 +1387,7 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			a.cmdresult.Append(OKStyle.Render(fmt.Sprintf("pruned %d task(s)", msg.Removed)))
 		}
-		return a, RefreshSnapshot(a.client)
+		return a, a.refreshSnapshot()
 
 	case FileResultMsg:
 		short := msg.TaskID
@@ -1443,7 +1449,7 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 			line += fmt.Sprintf(", %d connection(s) closed", msg.ConnsClosed)
 		}
 		a.cmdresult.Append(OKStyle.Render(line))
-		return a, RefreshSnapshot(a.client)
+		return a, a.refreshSnapshot()
 
 	case SetParentResultMsg:
 		if msg.Err != nil {
@@ -1451,12 +1457,12 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 		a.cmdresult.Append(OKStyle.Render(cli.SetParentMessage(msg.Opts, msg.Res)))
-		return a, RefreshSnapshot(a.client)
+		return a, a.refreshSnapshot()
 
 	case RunnerKeyResultMsg:
 		a.appendRunnerKeyResult(msg)
 		if msg.Refresh {
-			return a, RefreshSnapshot(a.client)
+			return a, a.refreshSnapshot()
 		}
 		return a, nil
 
@@ -1470,7 +1476,7 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			a.cmdresult.Append(ErrorStyle.Render(fmt.Sprintf("server dial-runner %s: %s", msg.RunnerCID, msg.Status.String())))
 		}
-		return a, RefreshSnapshot(a.client)
+		return a, a.refreshSnapshot()
 
 	case FilePickerListingMsg:
 		var pcmd tea.Cmd
@@ -1685,7 +1691,7 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if a.workspaceDeclares(msg.TaskID) {
 			a.ArmWorkspace()
 		}
-		return a, RefreshSnapshot(a.client)
+		return a, a.refreshSnapshot()
 
 	case InteractiveDoneMsg:
 		a.termReleased = false
@@ -1705,7 +1711,7 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.EndReason != "" {
 			a.cmdresult.Append(WarnStyle.Render(short+": session ended: ") + msg.EndReason)
 		}
-		return a, RefreshSnapshot(a.client)
+		return a, a.refreshSnapshot()
 
 	case SessionListMsg:
 		if msg.Err != nil {
@@ -2479,7 +2485,9 @@ func (a *App) agedTask(id string, t protocol.TaskInfo, now time.Time) protocol.T
 }
 
 // refreshTasksTable rebuilds the tasks table from tasksByID, sorted by
-// descending CreatedAt: every live task and the 100 newest finished ones. Idle badges are aged here: the
+// descending CreatedAt: the rows protocol.ListKeep keeps (every live task, the
+// newest finished ones H allows, their creators) plus the caps audit's pins.
+// Idle badges are aged here: the
 // rendered idle duration is the wire value plus the local time elapsed since
 // receipt (wire age is server-clock, elapsed is local — no cross-host skew).
 // Busy badges are NOT aged; they flip only via the server's idle-edge event.
@@ -2493,26 +2501,69 @@ func (a *App) refreshTasksTable() {
 	// Every credential, ended ones included, before the history cut below:
 	// `credential ls` lists them all, and a revoked one is what `r` re-keys.
 	a.credentials.SetRows(all)
-	// The cut is on history: the 100 newest finished tasks, and every task
-	// that has not ended however old (as the server's list). The caps audit's
-	// pins survive it too: an old task it pointed at is the case it exists for.
+	// The cut is the server's own rule (protocol.ListKeep), applied again
+	// here because the snapshot may hold more than the table shows: the
+	// whole history while the caps audit is in use (snapshotFinished), and
+	// tasks events added since. The audit's pins survive it: an old task it
+	// pointed at is the case it exists for.
+	limit := verb.FinishedDefault
+	if a.allFinished {
+		limit = verb.FinishedAll
+	}
+	n := len(all)
+	keep, omitted := protocol.ListKeep(n, func(i int) protocol.ListRow {
+		t := all[n-1-i] // ListKeep reads creation order, oldest first
+		return protocol.ListRow{ID: FormatTaskID(t.Id), Creator: t.CreatorTaskId, Status: t.Status}
+	}, func(int) bool { return true }, limit)
 	kept := all[:0:0]
-	finished := 0
-	for _, t := range all {
-		switch t.Status {
-		case protocol.TaskStatus_Succeeded, protocol.TaskStatus_Failed, protocol.TaskStatus_Cancelled:
-			finished++
-			if finished > 100 && !a.auditPins[FormatTaskID(t.Id)] {
-				continue
+	for i, t := range all {
+		switch {
+		case keep[n-1-i]:
+		case a.auditPins[FormatTaskID(t.Id)]:
+			if protocol.FinishedStatus(t.Status) {
+				omitted--
 			}
+		default:
+			continue
 		}
 		kept = append(kept, t)
 	}
 	all = kept
+	a.tasks.SetFinishedNote(finishedNote(a.allFinished, a.snapshotOmitted+omitted))
 	a.tasks.SetRows(all, a.runnersSnapshot)
 	if a.capsAuditModal.IsOpen() {
 		a.capsAuditModal.SetTasks(a.auditTasks())
 	}
+}
+
+// snapshotFinished is the bound this TUI's snapshots ask for: every finished
+// task when H asked for them, and also while the caps audit is open or has
+// pinned rows, because the audit counts ended tasks however old (a resume
+// brings their caps back). In that second case the table still cuts to the
+// default itself (refreshTasksTable), so only the audit sees the rest.
+func (a *App) snapshotFinished() uint32 {
+	if a.allFinished || a.capsAuditModal.IsOpen() || len(a.auditPins) > 0 {
+		return verb.FinishedAll
+	}
+	return verb.FinishedDefault
+}
+
+// refreshSnapshot is RefreshSnapshot with this TUI's bound: every snapshot
+// goes through it, so none can ask for a different history than the table
+// is showing.
+func (a *App) refreshSnapshot() tea.Cmd { return RefreshSnapshot(a.client, a.snapshotFinished()) }
+
+// finishedNote is the task table's last row: what the history cut leaves out
+// (omitted, finished tasks) and what H does about it. None when nothing is
+// left out and H is off, since there is then nothing to say or change.
+func finishedNote(all bool, omitted uint32) string {
+	switch {
+	case all:
+		return fmt.Sprintf("── every finished task listed (%s: newest %d only) ──", mainKeys.FinishedAll, verb.FinishedDefault)
+	case omitted > 0:
+		return fmt.Sprintf("── %d older finished task(s) not listed (%s lists them) ──", omitted, mainKeys.FinishedAll)
+	}
+	return ""
 }
 
 // gridPaneTasks is the current, locally aged row of each task the grid shows.

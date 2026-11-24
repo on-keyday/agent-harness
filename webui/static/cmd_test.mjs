@@ -245,8 +245,11 @@ test("session new --x11 is not a flag on this surface", async () => {
 test("ls --json and --tree reach the renderers", async () => {
   for (const [line, want] of [["ls", ""], ["ls --json", "json"], ["ls --tree", "tree"]]) {
     const { calls } = await run(line);
-    eq(named(calls, "list")[0], ["list", want], line);
+    eq(named(calls, "list")[0], ["list", want, { allFinished: false }], line);
   }
+  // The typed ls lists what the task list beside it shows.
+  const all = await run("ls", { allFinished: true });
+  eq(named(all.calls, "list")[0], ["list", "", { allFinished: true }], "ls under すべて表示");
   const f = await run("ls --filtered");
   assert.equal(named(f.calls, "filteredTaskRows").length, 1);
 });

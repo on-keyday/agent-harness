@@ -545,7 +545,11 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		conn.SendMessage(resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})) //nolint:errcheck
 
 	case protocol.TaskControlKind_List:
-		h.handleList(conn, req.Header.RequestId, cid)
+		var finished uint32
+		if q := req.List(); q != nil {
+			finished = q.FinishedLimit
+		}
+		h.handleList(conn, req.Header.RequestId, cid, finished)
 
 	case protocol.TaskControlKind_ListConns:
 		h.handleListConns(conn, req.Header.RequestId, cid)
@@ -2299,12 +2303,10 @@ func (h *TaskHandler) sessionMux(taskID string) *SessionMux {
 	return h.Sessions.Get(taskID)
 }
 
-// listFinishedRows is how many finished tasks a list carries, newest first; a
-// task that has not ended is always listed. The bound is on history: with
-// --task-retain unset nothing is forgotten, and every client lists on a poll.
-const listFinishedRows = 100
-
-func (h *TaskHandler) handleList(conn ConnHandle, requestID uint32, connID string) {
+// handleList's finished is ListQuery.finished_limit: the bound is on history,
+// because with --task-retain unset nothing is forgotten and every client
+// lists on a poll. Which rows it keeps is listRows.
+func (h *TaskHandler) handleList(conn ConnHandle, requestID uint32, connID string, finished uint32) {
 	respond := func(streamID uint64) {
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_List, RequestId: requestID}
 		resp.SetList(protocol.ListResult{StreamId: streamID})
@@ -2313,7 +2315,7 @@ func (h *TaskHandler) handleList(conn ConnHandle, requestID uint32, connID strin
 	}
 
 	all, allowed, parentHex := h.listVisibleToCaller(connID)
-	tasks := h.Tasks.ListLiveAndRecent(listFinishedRows)
+	tasks, omitted := listRows(h.Tasks.List(0), func(id string) bool { return all || allowed[id] }, finished)
 	// RUNNERS visibility rides the task-visibility answer: a confined caller
 	// (visibility rank below global, not an operator) sees zero runners, so it
 	// cannot enumerate the operator's runner topology (hostnames, dial addrs,
@@ -2331,25 +2333,15 @@ func (h *TaskHandler) handleList(conn ConnHandle, requestID uint32, connID strin
 			}
 		}
 	}
-	var filteredTasks []TaskEntry
+	filteredTasks := tasks
 	redactedHex := ""
-	if all {
-		filteredTasks = tasks
-	} else {
-		// The one upward hop (see listVisibleToCaller). Fetched by id rather
-		// than scanned out of `tasks`: a parent is by construction older than
-		// its child, so it is exactly the row the 100-entry window above drops
-		// first. Prepended so the list stays in creation order.
-		if parentHex != "" {
-			if p, ok := h.Tasks.Get(parentHex); ok {
-				filteredTasks = append(filteredTasks, p)
-				redactedHex = parentHex
-			}
-		}
-		for _, t := range tasks {
-			if allowed[t.ID] {
-				filteredTasks = append(filteredTasks, t)
-			}
+	if parentHex != "" {
+		// The one upward hop (see listVisibleToCaller), outside what the
+		// caller may see and so outside listRows. Prepended so the list stays
+		// in creation order: a parent is older than its child.
+		if p, ok := h.Tasks.Get(parentHex); ok {
+			filteredTasks = append([]TaskEntry{p}, tasks...)
+			redactedHex = parentHex
 		}
 	}
 	taskInfos := make([]protocol.TaskInfo, len(filteredTasks))
@@ -2434,6 +2426,7 @@ func (h *TaskHandler) handleList(conn ConnHandle, requestID uint32, connID strin
 	var body protocol.ListResultBody
 	body.SetRunners(runnerInfos)
 	body.SetTasks(taskInfos)
+	body.FinishedOmitted = omitted
 
 	bodyBytes, err := body.EncodeCopy(nil)
 	if err != nil {

@@ -343,6 +343,11 @@ harness-cli ls --json   # same data as one object: {"runners":[...],"tasks":[...
 # caller sees its own row and nothing else. So an id you cannot find here is
 # not an id that does not exist, and `ls` is not a directory a script can rely
 # on enumerating — for those, the id has to be passed in.
+#
+# Finished tasks are bounded too: the 100 newest you can see (plus the
+# creators of what is listed). The last TASKS line counts the rest, and
+# `ls --finished all` (or a number) lists them; --json says it as
+# "finished_omitted". A task that has not ended is always listed.
 
 # Agentboard view: every active topic (JSON Lines). Reveals who is listening —
 # e.g. chat.<short-id> inbound channels and any per-purpose topics in use.

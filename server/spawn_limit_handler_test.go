@@ -138,7 +138,7 @@ func TestListCarriesDescendants(t *testing.T) {
 	h, p, _, _, _ := limitFixture(t, authority.Unbounded(), authority.LimitOf(5), 2)
 	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9970-1"), nextSendStreamID: 10}
 	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_List}}
-	req.SetList(protocol.ListQuery{})
+	req.SetList(defaultListQuery())
 	h.Handle(conn, encodeTaskControlRequest(t, req))
 	if len(conn.sendStreams) != 1 {
 		t.Fatalf("expected 1 send stream, got %d", len(conn.sendStreams))

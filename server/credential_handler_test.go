@@ -707,7 +707,7 @@ func TestListCarriesCredentialFields(t *testing.T) {
 	h.Tasks.TouchCredential(cred, used)
 	conn := credTestConn()
 	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_List, RequestId: 4}}
-	req.SetList(protocol.ListQuery{})
+	req.SetList(defaultListQuery())
 	h.Handle(conn, encodeTaskControlRequest(t, req))
 	body := decodeListBody(t, conn.sendStreams[0].bytes)
 	rec, _ := h.Tasks.Get(cred)

@@ -58,7 +58,7 @@ func listRowAs(t *testing.T, h *TaskHandler, conn *fakeConn, taskHex string) (pr
 	t.Helper()
 	before := len(conn.sendStreams)
 	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_List}}
-	req.SetList(protocol.ListQuery{})
+	req.SetList(defaultListQuery())
 	h.Handle(conn, encodeTaskControlRequest(t, req))
 	if len(conn.sendStreams) != before+1 {
 		t.Fatalf("list opened %d send streams, want 1", len(conn.sendStreams)-before)

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/authority"
+	"github.com/on-keyday/agent-harness/cli/verb"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/objtrsf/trsf"
@@ -82,8 +83,17 @@ func TitleStr(t *protocol.TaskInfo) string {
 // helper so the RoundTripTaskControl + stream-decode logic exists in exactly
 // one place.
 func (c *Client) Snapshot(ctx context.Context) (*protocol.ListResultBody, error) {
+	return c.SnapshotFinished(ctx, verb.FinishedDefault)
+}
+
+// SnapshotFinished is Snapshot carrying at most finished finished tasks
+// (ListQuery.finished_limit; verb.FinishedAll for every one). A caller that
+// reasons over a task's whole history -- caps audit / reach / what-if, which
+// count an ended task because a resume brings its recorded caps back -- asks
+// for all of it; a listing a person reads takes the default.
+func (c *Client) SnapshotFinished(ctx context.Context, finished uint32) (*protocol.ListResultBody, error) {
 	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_List}}
-	req.SetList(protocol.ListQuery{Query: nil})
+	req.SetList(protocol.ListQuery{FinishedLimit: finished})
 	resp, err := c.RoundTripTaskControl(ctx, req)
 	if err != nil {
 		return nil, err
@@ -124,8 +134,8 @@ func (c *Client) Snapshot(ctx context.Context) (*protocol.ListResultBody, error)
 
 // List queries the server for all runners + recent tasks and writes a human-
 // readable summary to out. Method form: callable repeatedly without re-dialing.
-func (c *Client) List(ctx context.Context, out io.Writer) error {
-	lr, err := c.Snapshot(ctx)
+func (c *Client) List(ctx context.Context, out io.Writer, finished uint32) error {
+	lr, err := c.SnapshotFinished(ctx, finished)
 	if err != nil {
 		return err
 	}
@@ -136,8 +146,8 @@ func (c *Client) List(ctx context.Context, out io.Writer) error {
 // ListTree is the --tree counterpart of List: the same snapshot, ordered by
 // the creator link. Reuses List's renderer for the row bodies, so the two views
 // differ only in ordering and the leading gutter.
-func (c *Client) ListTree(ctx context.Context, out io.Writer) error {
-	lr, err := c.Snapshot(ctx)
+func (c *Client) ListTree(ctx context.Context, out io.Writer, finished uint32) error {
+	lr, err := c.SnapshotFinished(ctx, finished)
 	if err != nil {
 		return err
 	}
@@ -150,8 +160,8 @@ func (c *Client) ListTree(ctx context.Context, out io.Writer) error {
 // (rather than JSON Lines) keeps the two heterogeneous lists in one jq-navigable
 // document, and empty lists render as [] (not null) so `.runners | length` never
 // errors.
-func (c *Client) ListJSON(ctx context.Context, out io.Writer) error {
-	lr, err := c.Snapshot(ctx)
+func (c *Client) ListJSON(ctx context.Context, out io.Writer, finished uint32) error {
+	lr, err := c.SnapshotFinished(ctx, finished)
 	if err != nil {
 		return err
 	}
@@ -161,8 +171,8 @@ func (c *Client) ListJSON(ctx context.Context, out io.Writer) error {
 
 // ListOrdered snapshots the server and writes `ls --order o` (asJSON: the
 // --json form, each row carrying its group).
-func (c *Client) ListOrdered(ctx context.Context, out io.Writer, o TaskOrder, asJSON bool) error {
-	lr, err := c.Snapshot(ctx)
+func (c *Client) ListOrdered(ctx context.Context, out io.Writer, o TaskOrder, asJSON bool, finished uint32) error {
+	lr, err := c.SnapshotFinished(ctx, finished)
 	if err != nil {
 		return err
 	}
@@ -198,6 +208,24 @@ func renderList(lr *protocol.ListResultBody, out io.Writer) {
 	for _, t := range lr.Tasks {
 		fmt.Fprintf(out, "  %s\n", taskLine(t, runnerByID))
 	}
+	fmt.Fprintf(out, "  %s\n", FinishedLine(lr))
+}
+
+// FinishedLine is the last line of every human `ls` form: how many finished
+// tasks the list holds and how many older ones the bound left out. Printed
+// with a zero too -- "none left out" is what tells the reader the list is
+// the whole history, which a missing line could not.
+func FinishedLine(lr *protocol.ListResultBody) string {
+	listed := 0
+	for i := range lr.Tasks {
+		if protocol.FinishedStatus(lr.Tasks[i].Status) {
+			listed++
+		}
+	}
+	if lr.FinishedOmitted == 0 {
+		return fmt.Sprintf("finished: %d listed, none older left out", listed)
+	}
+	return fmt.Sprintf("finished: %d listed, %d older left out (ls --finished all)", listed, lr.FinishedOmitted)
 }
 
 // renderListRunners writes the RUNNERS section and returns the runners by id,
@@ -252,6 +280,7 @@ func renderListOrdered(lr *protocol.ListResultBody, out io.Writer, o TaskOrder, 
 			fmt.Fprintf(out, "  %s\n", taskLine(t, runnerByID))
 		}
 	}
+	fmt.Fprintf(out, "  %s\n", FinishedLine(lr))
 }
 
 // renderListJSONOrdered is `ls --json --order MODE`: the tasks in OrderTasks'
@@ -489,6 +518,7 @@ func renderListTree(lr *protocol.ListResultBody, out io.Writer) {
 		}
 		fmt.Fprintf(out, "  %s%s%s\n", TreePrefix(row.IsLast), line, marker)
 	}
+	fmt.Fprintf(out, "  %s\n", FinishedLine(lr))
 }
 
 // orphanMarker flags a task whose creator is not in the listing — pruned, or
@@ -707,6 +737,9 @@ type conditionsJSON struct {
 type listJSON struct {
 	Runners []runnerJSON `json:"runners"`
 	Tasks   []taskJSON   `json:"tasks"`
+	// FinishedOmitted is ListResultBody.finished_omitted: finished tasks the
+	// caller may see that the bound left out. Always present, 0 included.
+	FinishedOmitted uint32 `json:"finished_omitted"`
 }
 
 // renderListJSON writes a ListResult as a single JSON object to out. Shares the
@@ -721,7 +754,7 @@ func renderListJSON(lr *protocol.ListResultBody, out io.Writer) {
 // (nil: no group key on any row).
 func renderListJSONGroups(lr *protocol.ListResultBody, out io.Writer, groups []string) {
 	// Non-nil zero-length slices so empty sections encode as [] not null.
-	doc := listJSON{Runners: []runnerJSON{}, Tasks: []taskJSON{}}
+	doc := listJSON{Runners: []runnerJSON{}, Tasks: []taskJSON{}, FinishedOmitted: lr.FinishedOmitted}
 
 	runnerByID := make(map[string]protocol.RunnerInfo, len(lr.Runners))
 	for _, r := range lr.Runners {
@@ -1049,43 +1082,43 @@ func originStr(k protocol.ClientKind) string {
 // List (package-level) is a thin wrapper that opens a fresh Client per call.
 // Suitable for short-lived CLI processes (harness-cli). Long-lived consumers
 // should hold a *Client and call (*Client).List instead.
-func List(ctx context.Context, peerCID objproto.ConnectionID, out io.Writer) error {
+func List(ctx context.Context, peerCID objproto.ConnectionID, out io.Writer, finished uint32) error {
 	c, err := Dial(ctx, peerCID, protocol.ClientKind_Cli)
 	if err != nil {
 		return err
 	}
 	defer c.Close()
-	return c.List(ctx, out)
+	return c.List(ctx, out, finished)
 }
 
 // ListJSON is the package-level --json wrapper: opens a fresh Client, writes the
 // snapshot as one JSON object, and closes. Mirrors List for short-lived CLI use.
 // ListTree is a package-level fresh-dial wrapper for (*Client).ListTree.
-func ListTree(ctx context.Context, peerCID objproto.ConnectionID, out io.Writer) error {
+func ListTree(ctx context.Context, peerCID objproto.ConnectionID, out io.Writer, finished uint32) error {
 	c, err := Dial(ctx, peerCID, protocol.ClientKind_Cli)
 	if err != nil {
 		return err
 	}
 	defer c.Close()
-	return c.ListTree(ctx, out)
+	return c.ListTree(ctx, out, finished)
 }
 
-func ListJSON(ctx context.Context, peerCID objproto.ConnectionID, out io.Writer) error {
+func ListJSON(ctx context.Context, peerCID objproto.ConnectionID, out io.Writer, finished uint32) error {
 	c, err := Dial(ctx, peerCID, protocol.ClientKind_Cli)
 	if err != nil {
 		return err
 	}
 	defer c.Close()
-	return c.ListJSON(ctx, out)
+	return c.ListJSON(ctx, out, finished)
 }
 
-func ListOrdered(ctx context.Context, peerCID objproto.ConnectionID, out io.Writer, o TaskOrder, asJSON bool) error {
+func ListOrdered(ctx context.Context, peerCID objproto.ConnectionID, out io.Writer, o TaskOrder, asJSON bool, finished uint32) error {
 	c, err := Dial(ctx, peerCID, protocol.ClientKind_Cli)
 	if err != nil {
 		return err
 	}
 	defer c.Close()
-	return c.ListOrdered(ctx, out, o, asJSON)
+	return c.ListOrdered(ctx, out, o, asJSON, finished)
 }
 
 // SessionListJSON is the package-level wrapper for `session ls`: opens a fresh

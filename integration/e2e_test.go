@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/cli/verb"
 	"github.com/on-keyday/agent-harness/runner"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/server"
@@ -150,7 +151,7 @@ func TestOneshotFakeClaudeE2E(t *testing.T) {
 	var lastOutput string
 	for time.Now().Before(deadline) {
 		var buf bytes.Buffer
-		if err := cli.List(ctx, peerCID, &buf); err != nil {
+		if err := cli.List(ctx, peerCID, &buf, verb.FinishedDefault); err != nil {
 			t.Fatalf("list: %v", err)
 		}
 		lastOutput = buf.String()
@@ -244,7 +245,7 @@ func TestOneshotFakeClaudeE2E_NoWorktree(t *testing.T) {
 	var lastOutput string
 	for time.Now().Before(deadline) {
 		var buf bytes.Buffer
-		if err := cli.List(ctx, peerCID, &buf); err != nil {
+		if err := cli.List(ctx, peerCID, &buf, verb.FinishedDefault); err != nil {
 			t.Fatalf("list: %v", err)
 		}
 		lastOutput = buf.String()

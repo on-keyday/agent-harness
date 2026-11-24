@@ -224,7 +224,7 @@ func TestListAndEventsCarryNoPTY(t *testing.T) {
 	}
 	pipeID, ptyID := mk(true), mk(false)
 	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_List}}
-	req.SetList(protocol.ListQuery{})
+	req.SetList(defaultListQuery())
 	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9831-1"), nextSendStreamID: 10}
 	h.Handle(conn, encodeTaskControlRequest(t, req))
 	got := map[string]bool{}

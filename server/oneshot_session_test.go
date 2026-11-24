@@ -192,7 +192,7 @@ func TestListCarriesOneshot(t *testing.T) {
 	oneID, plainID := mk(true), mk(false)
 
 	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_List}}
-	req.SetList(protocol.ListQuery{})
+	req.SetList(defaultListQuery())
 	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9830-1"), nextSendStreamID: 10}
 	h.Handle(conn, encodeTaskControlRequest(t, req))
 	if len(conn.sendStreams) != 1 {

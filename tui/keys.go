@@ -40,6 +40,7 @@ type mainKeyMap struct {
 	Execs           string
 	IdleWatchers    string
 	CapsAudit       string
+	FinishedAll     string
 	FilePicker      string
 	Git             string
 
@@ -87,6 +88,7 @@ var mainKeys = mainKeyMap{
 	Execs:           "e",
 	IdleWatchers:    "I",
 	CapsAudit:       "i",
+	FinishedAll:     "H",
 	FilePicker:      "F",
 	Git:             "G",
 
@@ -388,6 +390,7 @@ var mainKeyBindings = []keyBinding{
 	{Keys: []string{mainKeys.Overview}, Scope: scopeGlobal, Do: (*App).onOverview, Short: "V overview", Long: "one screen: needs you, tasks, hosts, forwards, board (enter opens the selected row)"},
 	{Keys: []string{mainKeys.Board}, Scope: scopeGlobal, Do: (*App).onBoard, Short: "O board", Long: "agentboard topics view"},
 	{Keys: []string{mainKeys.Tree}, Scope: scopeGlobal, Do: (*App).onTree, Short: "T tree", Long: "toggle the task list between flat and creator-tree order"},
+	{Keys: []string{mainKeys.FinishedAll}, Scope: scopeGlobal, Do: (*App).onFinishedAll, Short: "H history", Long: "toggle the task list between the newest 100 finished tasks and every one (the last row says how many are not listed)"},
 	{Keys: []string{mainKeys.Order}, Scope: scopeGlobal, Do: (*App).onOrder, Short: "o order", Long: "cycle the flat task list's order: created → activity → live → state → repo (the last three grouped under headers; not in the tree view)"},
 	{Keys: []string{mainKeys.Forwards}, Scope: scopeGlobal, Do: (*App).onForwards, Short: "f forwards", Long: "port-forward list (t taps the selected row's traffic, r refreshes, x kills)"},
 	{Keys: []string{mainKeys.Execs}, Scope: scopeGlobal, Do: (*App).onExecs, Short: "e execs", Long: "running-exec list (t taps the selected row's stdin/stdout/stderr, x kills)"},

@@ -161,6 +161,7 @@ export function recordingCtx(page, overrides = {}) {
     harness,
     echo: record("echo"),
     refreshSnapshot: async () => { calls.push(["refreshSnapshot"]); },
+    allFinished: () => overrides.allFinished ?? false,
     composeRepo: () => overrides.repo ?? "/dropdown/repo",
     composeHost: () => overrides.host ?? "",
     composeAgent: () => overrides.agent ?? "",

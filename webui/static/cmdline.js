@@ -485,8 +485,11 @@ async function runVerbCommandDispatch(tokens, ctx) {
       } else {
         // --json and --tree reach cli.Client's own renderers; both parsed
         // here and were dropped while only the row form was exposed.
+        // The bound the task list is showing, so the typed ls and the list
+        // hold the same rows.
         out = await ctx.harness.list(
-          b.flags.json ? "json" : b.flags.tree ? "tree" : "");
+          b.flags.json ? "json" : b.flags.tree ? "tree" : "",
+          { allFinished: ctx.allFinished() });
       }
       break;
     }

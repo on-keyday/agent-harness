@@ -282,7 +282,10 @@ bin/harness-cli --server-cid 'ws:HOSTNAME:8539-*' \
 
 # 4. Inspect / control
 bin/harness-cli ls                      # every task that has not ended, however old,
-                                        # plus the 100 newest finished ones
+                                        # plus the 100 newest finished ones and the
+                                        # creators of whatever is listed; the last
+                                        # line counts the finished ones left out
+bin/harness-cli ls --finished all       # every finished task too (or a number)
 bin/harness-cli ls --tree               # order tasks under whoever spawned them
 bin/harness-cli ls --order state        # created|activity|live|state|repo; live/state/repo
                                         # print an `== label (n) ==` line per group, and
@@ -1658,8 +1661,9 @@ task itself.
     into view. The node opens the task sheet with its 🔑 re-grant.
 
 Ended tasks are marked too, because a resume brings their recorded caps
-back. A finished task older than the TUI table's 100 newest finished rows
-is kept in the table, with its creators, while the audit points at it.
+back, so the audit (and `caps reach` / `caps what-if`) reads every finished
+task, not the list's newest 100. A finished task older than those 100 is
+kept in the TUI table, with its creators, while the audit points at it.
 
 `caps reach` answers the per-task question: what ONE task reaches, per
 capability it exercises, what it sees, and what it may hand down —
@@ -2206,6 +2210,12 @@ group, which the cursor skips; the result pane names the mode on each
 switch, and in a mode that reorders on every poll the cursor stays on its
 task. The creator tree (`T`) is its own order, so `o` does nothing there.
 These are the same rules as `ls --order` and the WebUI's order select.
+
+The tasks table holds every task that has not ended and the 100 newest
+finished ones, as `ls` does. When older finished tasks are left out, its last
+row says how many; `H` lists every finished task (and back). The WebUI says
+the same under its task list, with a button for it, and its 「id で開く」
+widens the list by itself when the id is not among the listed tasks.
 
 ```
  Runners [Tasks] Schedules Credentials | runners 3: 1 idle 2 busy

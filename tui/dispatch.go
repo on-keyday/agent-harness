@@ -798,7 +798,7 @@ func (h tuiVerbs) Refresh(v verb.ScreenAction) tea.Cmd {
 		return nil
 	}
 	a.cmdresult.Append("refreshing snapshot…")
-	return RefreshSnapshot(a.client)
+	return a.refreshSnapshot()
 }
 
 // Reconnect forces the client↔server link to re-dial NOW instead of waiting out

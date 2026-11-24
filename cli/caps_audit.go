@@ -54,7 +54,7 @@ func CapsAudit(tasks []protocol.TaskInfo, includeEnded, includeEmpty bool) []Aud
 			if t.Capabilities&c != c {
 				continue
 			}
-			live := !isTerminalStatus(t.Status)
+			live := !protocol.FinishedStatus(t.Status)
 			if !live && !includeEnded {
 				continue
 			}
@@ -152,12 +152,4 @@ func repoBasename(p string) string {
 		p = p[i+1:]
 	}
 	return p
-}
-
-func isTerminalStatus(s protocol.TaskStatus) bool {
-	switch s {
-	case protocol.TaskStatus_Succeeded, protocol.TaskStatus_Failed, protocol.TaskStatus_Cancelled:
-		return true
-	}
-	return false
 }

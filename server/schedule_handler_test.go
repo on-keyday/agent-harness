@@ -1099,7 +1099,7 @@ func TestTaskInfoCarriesScheduleID(t *testing.T) {
 	conn := schedOpConn()
 	conn.nextSendStreamID = 42
 	lreq := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_List, RequestId: 1}}
-	lreq.SetList(protocol.ListQuery{})
+	lreq.SetList(defaultListQuery())
 	e.h.Handle(conn, encodeTaskControlRequest(t, lreq))
 	resp := lastTaskControlResponse(t, conn)
 	var body protocol.ListResultBody

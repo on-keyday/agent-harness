@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -223,6 +224,32 @@ func TestRenderListJSONPty(t *testing.T) {
 	for i, want := range []bool{true, false, false} {
 		if v, ok := got.Tasks[i]["pty"]; !ok || v != want {
 			t.Errorf("task %d: pty=%v present=%v, want %v", i, v, ok, want)
+		}
+	}
+}
+
+// ls --json carries finished_omitted on every listing, 0 included, and the
+// human forms end on the line that says the same.
+func TestListCarriesFinishedOmitted(t *testing.T) {
+	for _, n := range []uint32{0, 7} {
+		lr := &protocol.ListResultBody{FinishedOmitted: n}
+		var buf bytes.Buffer
+		renderListJSON(lr, &buf)
+		var got map[string]any
+		if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		if v, ok := got["finished_omitted"]; !ok || v != float64(n) {
+			t.Fatalf("finished_omitted = %v (present %v), want %d", v, ok, n)
+		}
+		buf.Reset()
+		renderList(lr, &buf)
+		want := "none older left out"
+		if n > 0 {
+			want = "7 older left out (ls --finished all)"
+		}
+		if !strings.Contains(buf.String(), want) {
+			t.Fatalf("ls rows for omitted=%d:\n%s\nwant a line containing %q", n, buf.String(), want)
 		}
 	}
 }

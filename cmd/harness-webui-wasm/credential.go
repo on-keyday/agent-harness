@@ -134,7 +134,7 @@ func credentialRowJS(t protocol.TaskInfo) map[string]any {
 func harnessCredentialList(this js.Value, args []js.Value) any {
 	asJSON := len(args) > 0 && args[0].Type() == js.TypeObject && args[0].Get("json").Truthy()
 	return credentialPromise(func() (any, error) { return nil, nil }, func(c *cli.Client, _ any) (any, error) {
-		lr, err := c.Snapshot(rootCtx)
+		lr, err := c.SnapshotFinished(rootCtx, verb.FinishedAll) // as credential ls: ended ones too
 		if err != nil {
 			return nil, err
 		}
