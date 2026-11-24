@@ -47,6 +47,7 @@ class LandTest(unittest.TestCase):
         g(self.main, "worktree", "add", "-q", "-b", "harness/x", str(self.wt))
         self.head = commit(self.wt, "server/a.go", "package server\n")
         self.env = mock.patch.dict(os.environ, {"LAND_SKEW_CMD": "true", "LAND_IDENT_CMD": "true",
+                                                "LAND_WASM_CMD": "true",
                                                 "LAND_BUILD_CMD": "sh -c 'touch built'"})
         self.env.start()
 
@@ -99,6 +100,15 @@ class LandTest(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("local identifier check failed", err)
         self.assertEqual(self.origin_main(), before)
+
+    def test_a_failed_wasm_check_pushes_nothing(self) -> None:
+        before = self.origin_main()
+        with mock.patch.dict(os.environ, {"LAND_WASM_CMD": "false"}):
+            rc, _, err = self.run_land()
+        self.assertEqual(rc, 1)
+        self.assertIn("wasm check failed", err)
+        self.assertEqual(self.origin_main(), before)
+        self.assertFalse((self.main / "built").exists())
 
     def test_refuses_when_the_main_checkout_is_not_on_main(self) -> None:
         g(self.main, "checkout", "-q", "-b", "side")
