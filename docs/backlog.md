@@ -490,3 +490,82 @@ choice two ways. Move the open to `kind :TaskKind` too.
 **Why deferred.** A wire change to the open path that nothing is blocked on;
 found while designing the schedule fix, and kept out of it (operator,
 2026-11-17).
+
+---
+
+## Let A message B, from two clicks on the WebUI tree
+
+**What.** In the WebUI task tree, pick a task A, then a task B. A gets
+`board_peer` scoped to B (`--scope-for board_peer=ids:<B>`), so A may publish
+to `chat.<B>`. The tree also offers the reverse operation: removing B again.
+The first case was a task in another repository that should report harness
+bugs to the harness agent. The feature is not limited to that case.
+
+Today this takes the task sheet's 🔑 re-grant dialog. The operator adds the
+`board_peer` chip and writes a `--scope-for` row. Every existing override must
+be kept, and `--keep-conns` must be on.
+
+**Evidence** (2026-11-24, read, not exercised):
+
+- Publishing to another task's `chat.<id>` outside the base set needs
+  `board_peer`, and its target set must contain that task. A's creator and
+  A's children need no bit (`2026-10-16-agentboard-reach-design.md` §2, D16).
+- `SetCapsRequest` (`runner/protocol/message.bgn`) writes scope and overrides
+  together under `scope_present`. So adding one target is a read-modify-write
+  of the task's whole scope. Without `keep_conns`, a narrowing closes the
+  task's connections.
+- `cli.BuildTaskGrants` (`cli/tasktree.go:392`) already draws id-named grants
+  as edges on the tree.
+- A one-way grant is enough for a conversation that A starts. When B reads A's
+  message, B gains `chat.<A>` as a contact (reach spec §3). A contact goes
+  away in four cases:
+  - B's task finishes: `Revoke` (`agentboard/board.go:266`) drops the whole
+    `taskState`. A detach does not drop it.
+  - It is pushed out by the 64-entry bound (`agentboard/taskstate.go:65`).
+  - The operator runs `board clear-contacts`.
+  - The server restarts. Contacts are not in the store: `storeRecord`
+    (`agentboard/filestore.go:72`) has no contact record.
+
+  A contact made by a direct message never comes back after a restart, because
+  `chat.*` topics cannot be retained (`Retainable`,
+  `agentboard/retention.go:24`). One kind of contact can come back. It needs a
+  reply to the task's own message, sitting on a retained group topic. The
+  replied-to message must also be restored into the ring. If the task then
+  reads that reply again (the second branch of `addressedTo`,
+  `agentboard/reach.go:306`), the contact is made again. That includes a
+  contact cleared before the restart: the clear floor lives in memory only.
+
+**DECIDED (operator, 2026-11-24): scope.** The feature adds and removes the
+grant `board_peer ids:<B>`. Two things were proposed and declined: telling A
+where B is (a message on `chat.<A>`), and choosing one-way or two-way in the
+dialog.
+
+**NOT DECIDED: the rest.**
+
+- *How to merge into A's current authority* (proposed):
+  - A holds no `board_peer`: add the bit, plus an override with base `none`
+    and `ids:<B>`. The override stops A inheriting a `global` base scope.
+  - A's base clause carries `board_peer`: copy that clause into an override
+    and add B.
+  - `board_peer` shares an override mask with other bits: split it out.
+  - A already reaches B: send nothing, and say so.
+  - Removal deletes B from the ids. Drop the bit together with an override
+    that becomes empty: dropping only the override would fall back to the base
+    scope, which is wider. Offer no removal when B is reached through
+    `subtree` / `global` rather than `ids:`.
+  - Send with `keep_conns`.
+- *Where the merge lives* (proposed: 1):
+  1. One Go function, reached through a `caps peer add/rm <A> <B>` verb (CLI,
+     TUI and WebUI command lines) and a wasm bridge for the tree gesture.
+     Sends the existing `SetCapsRequest`. It can overwrite a `caps set` made
+     inside the WebUI snapshot's ~5 s staleness.
+  2. WebUI JavaScript only. This duplicates the scope merge in JS and leaves
+     the TUI and CLI without it.
+  3. A server-side add/remove request. This removes the race, but it is a
+     `.bgn` change with a server-first rollout.
+- *Whether removal also clears the matching contacts on both sides.* Without
+  that, a route A or B already holds survives the removal until one of the
+  four cases above.
+
+**Why deferred.** The operator judged it not needed yet (2026-11-24). Nothing
+is blocked on it: the re-grant dialog does the same thing by hand.
