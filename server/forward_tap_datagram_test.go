@@ -168,7 +168,7 @@ func TestRelayForwardDatagramIPForward(t *testing.T) {
 	cfg := testLinkConfig(t, "10.200.0.1/30", "10.200.0.2")
 	pf := &portForward{direction: protocol.PortForwardDirection_Link, protocolKind: protocol.ForwardProtocol_Ip,
 		taskIDHex: taskHex, runnerID: testRunnerID("runner-1"), runnerCID: runnerConn.ConnectionID().String(),
-		clientCxn: client, clientCID: client.ConnectionID().String(), link: &cfg}
+		clientCxn: client, clientCID: client.ConnectionID(), link: &cfg}
 	id := h.pforwards().add(pf)
 	tap, recs := newTestTap(t, pf, protocol.ForwardTapFilter_Both, 0)
 	defer pf.removeTap(tap)
@@ -176,7 +176,7 @@ func TestRelayForwardDatagramIPForward(t *testing.T) {
 
 	dg := protocol.ForwardDatagram{ForwardId: id, FlowId: 0, Payload: []byte("an ip packet")}
 	raw := dg.MustAppend([]byte{byte(appwire.AppKind_ForwardDatagram)})
-	s.relayForwardDatagram(streamingConn{}, client.ConnectionID().String(), &dg, raw)
+	s.relayForwardDatagram(streamingConn{}, client.ConnectionID(), &dg, raw)
 
 	sent := runnerConn.Datagrams()
 	if len(sent) != 1 || !bytes.Equal(sent[0], raw) {
@@ -189,7 +189,7 @@ func TestRelayForwardDatagramIPForward(t *testing.T) {
 
 	// A third connection is refused, and the tap is not offered what never
 	// belonged to this forward.
-	s.relayForwardDatagram(streamingConn{}, tcid("intruder").String(), &dg, raw)
+	s.relayForwardDatagram(streamingConn{}, tcid("intruder"), &dg, raw)
 	if n := len(runnerConn.Datagrams()) + len(client.Datagrams()); n != 1 {
 		t.Fatalf("an intruder's datagram was relayed (%d sent in total)", n)
 	}

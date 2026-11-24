@@ -45,9 +45,9 @@ func (f *transcriptFixture) agentCaller(t *testing.T, caps protocol.Capability, 
 	f.callerID++
 	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9150-" + string(rune('0'+f.callerID))), nextStreamID: 100}
 	if f.h.principals == nil {
-		f.h.principals = make(map[string]protocol.TaskID)
+		f.h.principals = make(map[objproto.ConnectionID]protocol.TaskID)
 	}
-	f.h.principals[conn.ConnectionID().String()] = hexToTaskID(t, self)
+	f.h.principals[conn.ConnectionID()] = hexToTaskID(t, self)
 	return conn
 }
 

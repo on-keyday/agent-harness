@@ -7,6 +7,7 @@ import (
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // handleRestoreTasks puts back task records a prune forgot, rebuilt from the
@@ -29,7 +30,7 @@ import (
 // creator edges from task_created, which is the only place they survive, and
 // the SAME scopeSet policy then decides. A second scope implementation reading
 // the WAL is the drift shape server/capabilities.go exists to prevent.
-func (h *TaskHandler) handleRestoreTasks(conn ConnHandle, requestID uint32, cid string, req *protocol.RestoreTasksRequest) {
+func (h *TaskHandler) handleRestoreTasks(conn ConnHandle, requestID uint32, cid objproto.ConnectionID, req *protocol.RestoreTasksRequest) {
 	respond := func(body protocol.RestoreTasksResponse) {
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_RestoreTasks, RequestId: requestID}
 		resp.SetRestoreTasks(body)
@@ -129,7 +130,7 @@ var requiredRestoreScope, _ = authority.ScopeBit(&protocol.TaskControlRequest{
 
 // restoreScope is the caller's target set for a restore: the prune scope,
 // widened to see the tasks a prune already removed.
-func (h *TaskHandler) restoreScope(cid string) (all bool, allowed map[string]bool) {
+func (h *TaskHandler) restoreScope(cid objproto.ConnectionID) (all bool, allowed map[string]bool) {
 	if h.RestoreEventsFn == nil {
 		// No WAL to widen with. Fall back to the live set rather than to
 		// "everything": a restore that could not read the log cannot justify

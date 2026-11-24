@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // resolveRunMode is the run mode an open asks for (A-D1): the one it names,
@@ -28,7 +29,7 @@ func (h *TaskHandler) resolveRunMode(req *protocol.OpenInteractiveRequest, resum
 // backgroundOpen is what openBackground needs from handleOpenInteractive once
 // the grant, the resume target and the repo are settled.
 type backgroundOpen struct {
-	cid       string
+	cid       objproto.ConnectionID
 	req       *protocol.OpenInteractiveRequest
 	origin    protocol.ClientKind
 	creator   protocol.TaskID

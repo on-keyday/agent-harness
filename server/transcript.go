@@ -6,6 +6,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // handleTranscript answers transcript_list and transcript_get (pillar B,
@@ -18,7 +19,7 @@ import (
 // scope on the same task (B-D2); the runner applies it, since only the runner
 // knows which sessions are shared. The answer is never parsed here: it is
 // spliced from the runner's stream to the caller's, as git queries are.
-func (h *TaskHandler) handleTranscript(cid string, conn ConnHandle, req *protocol.TaskControlRequest) {
+func (h *TaskHandler) handleTranscript(cid objproto.ConnectionID, conn ConnHandle, req *protocol.TaskControlRequest) {
 	resp := protocol.TaskControlResponse{Kind: req.Header.Kind, RequestId: req.Header.RequestId}
 	var (
 		taskID        protocol.TaskID

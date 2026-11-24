@@ -140,18 +140,18 @@ func (c *credConn) RoundTripTaskControl(ctx context.Context, req *protocol.TaskC
 
 // serverCIDOf is the server-side id of the connection whose principal is tid,
 // once its identity is recorded.
-func (e *pubsubAuthzServer) serverCIDOf(ctx context.Context, t *testing.T, tid protocol.TaskID) string {
+func (e *pubsubAuthzServer) serverCIDOf(ctx context.Context, t *testing.T, tid protocol.TaskID) objproto.ConnectionID {
 	t.Helper()
 	for {
 		e.s.activeConnsMu.Lock()
-		var found string
+		var found objproto.ConnectionID
 		for cid := range e.s.activeConns {
-			if e.s.taskHandler.lookupPrincipal(cid.String()) == tid {
-				found = cid.String()
+			if e.s.taskHandler.lookupPrincipal(cid) == tid {
+				found = cid
 			}
 		}
 		e.s.activeConnsMu.Unlock()
-		if found != "" {
+		if found != (objproto.ConnectionID{}) {
 			return found
 		}
 		if ctx.Err() != nil {
@@ -197,7 +197,7 @@ func TestCredentialHandshakeAccepts(t *testing.T) {
 	// D6, server.go connInfoFor: a credential conn shows its principal.
 	var listed bool
 	for _, ci := range e.s.ConnList(protocol.TaskID{}, true) {
-		if string(ci.Cid) == cid {
+		if string(ci.Cid) == cid.String() {
 			listed = true
 			if ci.Role != protocol.ConnRole_Credential || ci.PrincipalTask != tid {
 				t.Errorf("conn row role=%v principal=%x, want credential/%s", ci.Role, ci.PrincipalTask.Id, id)
@@ -383,10 +383,10 @@ func TestCredentialPrincipalIsNeverZero(t *testing.T) {
 func TestRecordCredentialIdentityRefusesZero(t *testing.T) {
 	h := newTestTaskHandler(NewTaskStore())
 	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9300-1")}
-	if st := h.RecordCredentialIdentity(conn.id.String(), conn, protocol.TaskID{}, credKey(1)); st == protocol.ClientHelloStatus_Ok {
+	if st := h.RecordCredentialIdentity(conn.id, conn, protocol.TaskID{}, credKey(1)); st == protocol.ClientHelloStatus_Ok {
 		t.Fatal("a zero credential principal was recorded")
 	}
-	if k := h.lookupClientKind(conn.id.String()); k == protocol.ClientKind_Credential {
+	if k := h.lookupClientKind(conn.id); k == protocol.ClientKind_Credential {
 		t.Fatal("a refused credential left its kind recorded")
 	}
 	// Through the gate's dispatch, too.
@@ -415,10 +415,10 @@ func TestClientHelloClaimingCredentialKindRefused(t *testing.T) {
 	h := newTestTaskHandler(NewTaskStore())
 	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9301-1")}
 	hello := &protocol.ClientHello{Kind: protocol.ClientKind_Credential}
-	if st := h.RecordClientIdentity(conn.id.String(), conn, hello); st != protocol.ClientHelloStatus_NotPermitted {
+	if st := h.RecordClientIdentity(conn.id, conn, hello); st != protocol.ClientHelloStatus_NotPermitted {
 		t.Fatalf("a client hello claiming credential: %v, want not_permitted", st)
 	}
-	if k := h.lookupClientKind(conn.id.String()); k != protocol.ClientKind_Unspecified {
+	if k := h.lookupClientKind(conn.id); k != protocol.ClientKind_Unspecified {
 		t.Fatalf("kind %v recorded for a refused hello", k)
 	}
 }
@@ -430,13 +430,13 @@ func TestClientHelloClaimingCredentialKindRefused(t *testing.T) {
 func recordCredentialConn(t *testing.T, h *TaskHandler, tid protocol.TaskID, pub [32]byte, port int) *fakeConn {
 	t.Helper()
 	conn := &fakeConn{id: objproto.MustParseConnectionID(fmt.Sprintf("ws:127.0.0.1:%d-1", port))}
-	if st := h.RecordCredentialIdentity(conn.id.String(), conn, tid, pub); st != protocol.ClientHelloStatus_Ok {
+	if st := h.RecordCredentialIdentity(conn.id, conn, tid, pub); st != protocol.ClientHelloStatus_Ok {
 		t.Fatalf("RecordCredentialIdentity: %v", st)
 	}
 	return conn
 }
 
-func wantSeesNothing(t *testing.T, h *TaskHandler, cid string) {
+func wantSeesNothing(t *testing.T, h *TaskHandler, cid objproto.ConnectionID) {
 	t.Helper()
 	if caps := h.callerCaps(cid); caps != protocol.Capability_None {
 		t.Errorf("callerCaps = %v, want none", caps)
@@ -471,7 +471,7 @@ func TestCredentialDeadBeforeTimerSeesNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 	conn := recordCredentialConn(t, h, taskIDFromHex(id), pub, 9310)
-	cid := conn.id.String()
+	cid := conn.id
 	if !h.authorize(cid, protocol.Capability_Cancel, target) {
 		t.Fatal("a live credential cannot act on its scoped target")
 	}
@@ -506,7 +506,7 @@ func TestRevokedCredentialSeesNothing(t *testing.T) {
 	id, _ := issueCredential(t, tasks, authority.Grant{Caps: protocol.Capability_Cancel, Scope: authority.Scope{Base: protocol.ScopeBase_Global}}, pub, time.Now().Add(time.Hour))
 	conn := recordCredentialConn(t, h, taskIDFromHex(id), pub, 9311)
 	tasks.Cancel(id, protocol.EndReason_Cancelled, protocol.TaskID{})
-	wantSeesNothing(t, h, conn.id.String())
+	wantSeesNothing(t, h, conn.id)
 }
 
 // Review Focus 1: a principal whose record is gone (a credential pruned after
@@ -524,7 +524,7 @@ func TestMissingPrincipalRecordSeesNothing(t *testing.T) {
 	if removed, _, _ := tasks.PruneByIDs(nil, []string{id}); removed != 1 {
 		t.Fatalf("prune removed %d", removed)
 	}
-	wantSeesNothing(t, h, conn.id.String())
+	wantSeesNothing(t, h, conn.id)
 
 	// The same for an agent principal: the fallback was not credential-specific.
 	agentConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9313-1")}
@@ -532,11 +532,11 @@ func TestMissingPrincipalRecordSeesNothing(t *testing.T) {
 	gone.Id[0] = 0x42
 	hello := &protocol.ClientHello{Kind: protocol.ClientKind_Agent}
 	hello.SetAgentInfo(protocol.AgentInfo{TaskId: gone, RunnerId: testRunnerID("gone")})
-	if st := h.RecordClientIdentity(agentConn.id.String(), agentConn, hello); st != protocol.ClientHelloStatus_Ok {
+	if st := h.RecordClientIdentity(agentConn.id, agentConn, hello); st != protocol.ClientHelloStatus_Ok {
 		t.Fatalf("agent hello: %v", st)
 	}
 	tasks.Create("repo", "", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent, gone, "", protocol.RunnerSelector{}, nil, authority.Grant{}, "")
-	wantSeesNothing(t, h, agentConn.id.String())
+	wantSeesNothing(t, h, agentConn.id)
 }
 
 // D18: a re-key that rotates a live credential's key ends the authority of a
@@ -553,7 +553,7 @@ func TestRotatedKeyConnectionHoldsNothing(t *testing.T) {
 		Scope: authority.Scope{Base: protocol.ScopeBase_None, IDs: []string{target}},
 	}, oldPub, time.Now().Add(time.Hour))
 	oldConn := recordCredentialConn(t, h, tid, oldPub, 9320)
-	if !h.authorize(oldConn.id.String(), protocol.Capability_Cancel, target) {
+	if !h.authorize(oldConn.id, protocol.Capability_Cancel, target) {
 		t.Fatal("the credential cannot act before the rotation")
 	}
 
@@ -571,14 +571,14 @@ func TestRotatedKeyConnectionHoldsNothing(t *testing.T) {
 	if rec, _ := tasks.Get(target); rec.Status == protocol.TaskStatus_Cancelled {
 		t.Fatal("the replaced key cancelled the target")
 	}
-	wantSeesNothing(t, h, oldConn.id.String())
+	wantSeesNothing(t, h, oldConn.id)
 
 	// The new key's connection holds the credential's authority.
 	newConn := recordCredentialConn(t, h, tid, newPub, 9321)
-	if !h.authorize(newConn.id.String(), protocol.Capability_Cancel, target) {
+	if !h.authorize(newConn.id, protocol.Capability_Cancel, target) {
 		t.Fatal("the new key's connection cannot act on the scoped target")
 	}
-	if _, allowed := h.visibleToCaller(newConn.id.String()); !allowed[target] {
+	if _, allowed := h.visibleToCaller(newConn.id); !allowed[target] {
 		t.Fatalf("the new key's connection sees %v, want the target", allowed)
 	}
 }
@@ -596,10 +596,10 @@ func TestOldKeyRecordedAfterRotationIsRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9322-1")}
-	if st := h.RecordCredentialIdentity(conn.id.String(), conn, tid, oldPub); st == protocol.ClientHelloStatus_Ok {
+	if st := h.RecordCredentialIdentity(conn.id, conn, tid, oldPub); st == protocol.ClientHelloStatus_Ok {
 		t.Fatal("an identity proved with the replaced key was accepted")
 	}
-	if caps := h.callerCaps(conn.id.String()); caps != protocol.Capability_None {
+	if caps := h.callerCaps(conn.id); caps != protocol.Capability_None {
 		t.Fatalf("the refused connection holds %v", caps)
 	}
 }
@@ -754,7 +754,7 @@ func TestDropStaleCredentialConnsKeepsTheNewKey(t *testing.T) {
 		n := 0
 		e.s.activeConnsMu.Lock()
 		for cid := range e.s.activeConns {
-			if e.s.taskHandler.lookupPrincipal(cid.String()) == tid {
+			if e.s.taskHandler.lookupPrincipal(cid) == tid {
 				n++
 			}
 		}

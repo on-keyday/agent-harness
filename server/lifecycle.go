@@ -25,7 +25,7 @@ func (h *TaskHandler) handleLifecycleSet(conn ConnHandle, req *protocol.TaskCont
 		respond(protocol.LifecycleSetStatus_BadRequest, 0)
 		return
 	}
-	cid := conn.ConnectionID().String()
+	cid := conn.ConnectionID()
 	pid := h.lookupPrincipal(cid)
 	if pid.Id == ([16]byte{}) {
 		respond(protocol.LifecycleSetStatus_NoPrincipal, 0)

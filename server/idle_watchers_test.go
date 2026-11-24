@@ -9,6 +9,7 @@ import (
 	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/exec/frame"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // A watcher that is armed and then stopped through its channel returns
@@ -88,7 +89,7 @@ func agentboardForTest(t *testing.T) *agentboard.Board {
 // armBoardWatcher registers a board-sink watcher directly, bypassing the
 // session mux: these tests are about who may see and end one, not about
 // firing.
-func armBoardWatcher(h *TaskHandler, taskHex string, requester protocol.TaskID, cid string) uint64 {
+func armBoardWatcher(h *TaskHandler, taskHex string, requester protocol.TaskID, cid objproto.ConnectionID) uint64 {
 	return h.idleWatchers().add(&idleWatcher{
 		taskIDHex: taskHex, sink: protocol.AwaitSink_Board, topic: "chat.x",
 		requester: requester, clientCID: cid, stop: make(chan struct{}),
@@ -109,17 +110,17 @@ func TestIdleWatchers_OperatorSeesAllAgentSeesOwn(t *testing.T) {
 
 	a, b := hexToTaskID(t, aHex), hexToTaskID(t, bHex)
 	if h.principals == nil {
-		h.principals = make(map[string]protocol.TaskID)
+		h.principals = make(map[objproto.ConnectionID]protocol.TaskID)
 	}
-	aConn := "ws:127.0.0.1:9601-1"
-	bConn := "ws:127.0.0.1:9601-2"
-	opConn := "ws:127.0.0.1:9601-9"
+	aConn := objproto.MustParseConnectionID("ws:127.0.0.1:9601-1")
+	bConn := objproto.MustParseConnectionID("ws:127.0.0.1:9601-2")
+	opConn := objproto.MustParseConnectionID("ws:127.0.0.1:9601-9")
 	h.principals[aConn] = a
 	h.principals[bConn] = b
 
 	wa := armBoardWatcher(h, target, a, aConn)
 	wb := armBoardWatcher(h, target, b, bConn)
-	wo := armBoardWatcher(h, target, protocol.TaskID{}, "ws:127.0.0.1:9601-3")
+	wo := armBoardWatcher(h, target, protocol.TaskID{}, objproto.MustParseConnectionID("ws:127.0.0.1:9601-3"))
 
 	if got := h.visibleIdleWatchers(opConn, protocol.TaskID{}); len(got) != 3 {
 		t.Fatalf("operator sees %d watchers, want 3", len(got))
@@ -155,19 +156,19 @@ func TestIdleWatchers_AgentLosesSightWhenScopeNarrows(t *testing.T) {
 		"")
 
 	a := hexToTaskID(t, aHex)
-	h.principals = map[string]protocol.TaskID{"ws:127.0.0.1:9601-1": a}
-	armBoardWatcher(h, "ee000000000000000000000000000000", a, "ws:127.0.0.1:9601-1")
-	if got := h.visibleIdleWatchers("ws:127.0.0.1:9601-1", protocol.TaskID{}); len(got) != 0 {
+	h.principals = map[objproto.ConnectionID]protocol.TaskID{objproto.MustParseConnectionID("ws:127.0.0.1:9601-1"): a}
+	armBoardWatcher(h, "ee000000000000000000000000000000", a, objproto.MustParseConnectionID("ws:127.0.0.1:9601-1"))
+	if got := h.visibleIdleWatchers(objproto.MustParseConnectionID("ws:127.0.0.1:9601-1"), protocol.TaskID{}); len(got) != 0 {
 		t.Fatalf("agent sees %d watchers on an out-of-scope task, want 0", len(got))
 	}
 }
 
 func TestDropIdleWatchersForConn_ReplyOnly(t *testing.T) {
 	h := &TaskHandler{Tasks: NewTaskStore(), Sessions: NewSessionRegistry()}
-	cid := "ws:127.0.0.1:9601-1"
+	cid := objproto.MustParseConnectionID("ws:127.0.0.1:9601-1")
 	reply := h.idleWatchers().add(&idleWatcher{taskIDHex: "aa", sink: protocol.AwaitSink_Reply, clientCID: cid, stop: make(chan struct{})})
 	board := armBoardWatcher(h, "aa", protocol.TaskID{}, cid)
-	other := h.idleWatchers().add(&idleWatcher{taskIDHex: "aa", sink: protocol.AwaitSink_Reply, clientCID: "ws:127.0.0.1:9601-2", stop: make(chan struct{})})
+	other := h.idleWatchers().add(&idleWatcher{taskIDHex: "aa", sink: protocol.AwaitSink_Reply, clientCID: objproto.MustParseConnectionID("ws:127.0.0.1:9601-2"), stop: make(chan struct{})})
 
 	h.DropIdleWatchersForConn(cid)
 
@@ -202,7 +203,7 @@ func TestHandleAwaitIdle_ReplyKilledAnswersCancelled(t *testing.T) {
 	waitFor(t, func() bool { return len(h.idleWatchers().list("")) == 1 })
 	id := h.idleWatchers().list("")[0].id
 
-	if r := h.handleAwaitIdleKill("", &protocol.AwaitIdleKillRequest{WatcherId: id}); r.Status != protocol.AwaitIdleKillStatus_Ok {
+	if r := h.handleAwaitIdleKill(objproto.ConnectionID{}, &protocol.AwaitIdleKillRequest{WatcherId: id}); r.Status != protocol.AwaitIdleKillStatus_Ok {
 		t.Fatalf("kill: %v", r.Status)
 	}
 	waitFor(t, func() bool { return len(conn.Sent()) == 1 })
@@ -236,7 +237,7 @@ func TestHandleAwaitIdle_BoardKilledPublishesNothing(t *testing.T) {
 	req := protocol.AwaitIdleRequest{TaskId: tid, ThresholdMs: 50, Sink: protocol.AwaitSink_Board}
 	req.SetTopic([]byte("chat.deadbeef"))
 	resp := awaitIdleViaHandle(t, h, conn, req)
-	if r := h.handleAwaitIdleKill("", &protocol.AwaitIdleKillRequest{WatcherId: resp.WatcherId}); r.Status != protocol.AwaitIdleKillStatus_Ok {
+	if r := h.handleAwaitIdleKill(objproto.ConnectionID{}, &protocol.AwaitIdleKillRequest{WatcherId: resp.WatcherId}); r.Status != protocol.AwaitIdleKillStatus_Ok {
 		t.Fatalf("kill: %v", r.Status)
 	}
 	runner.QueueRead(makeWireFrame(byte(frame.FrameType_Stdout), []byte("x")))
@@ -266,7 +267,7 @@ func TestIdleWatcher_FireKillRaceHasOneWinner(t *testing.T) {
 		tcr.SetAwaitIdle(protocol.AwaitIdleRequest{TaskId: tid, ThresholdMs: 1, Sink: protocol.AwaitSink_Reply})
 		h.Handle(conn, tcr.MustAppend(nil))
 		// id is 1: a fresh handler per iteration.
-		kr := h.handleAwaitIdleKill("", &protocol.AwaitIdleKillRequest{WatcherId: 1})
+		kr := h.handleAwaitIdleKill(objproto.ConnectionID{}, &protocol.AwaitIdleKillRequest{WatcherId: 1})
 		waitFor(t, func() bool { return len(conn.Sent()) >= 1 })
 		time.Sleep(2 * idleWatchTick)
 		if n := len(conn.Sent()); n != 1 {

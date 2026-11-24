@@ -3,6 +3,8 @@ package server
 import (
 	"testing"
 	"time"
+
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 func TestExecRegistry(t *testing.T) {
@@ -96,12 +98,12 @@ func TestExecsAccessorIsStable(t *testing.T) {
 // possible.
 func TestExecRegistryRefusesAConnectionAlreadyDropped(t *testing.T) {
 	r := newExecRegistry()
-	r.markConnGone("ws:127.0.0.1:1-1")
+	r.markConnGone(objproto.MustParseConnectionID("ws:127.0.0.1:1-1"))
 	// 0 is never a real id, so it is the refusal.
-	if id := r.add(&execRun{clientCID: "ws:127.0.0.1:1-1"}); id != 0 {
+	if id := r.add(&execRun{clientCID: objproto.MustParseConnectionID("ws:127.0.0.1:1-1")}); id != 0 {
 		t.Fatalf("registered exec %d for a connection that was already dropped", id)
 	}
-	if id := r.add(&execRun{clientCID: "ws:127.0.0.1:2-2"}); id == 0 {
+	if id := r.add(&execRun{clientCID: objproto.MustParseConnectionID("ws:127.0.0.1:2-2")}); id == 0 {
 		t.Fatal("refused an exec for a live connection")
 	}
 }
@@ -110,10 +112,10 @@ func TestExecRegistryRefusesAConnectionAlreadyDropped(t *testing.T) {
 // in flight; it must not grow for the life of the server.
 func TestExecRegistryForgetsOldDroppedConnections(t *testing.T) {
 	r := newExecRegistry()
-	r.markConnGone("old")
-	r.gone["old"] = time.Now().Add(-2 * time.Minute)
-	r.markConnGone("new")
-	if _, still := r.gone["old"]; still {
+	r.markConnGone(tcid("old"))
+	r.gone[tcid("old")] = time.Now().Add(-2 * time.Minute)
+	r.markConnGone(tcid("new"))
+	if _, still := r.gone[tcid("old")]; still {
 		t.Fatal("a connection dropped two minutes ago is still remembered")
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // reachHandler is newAgentTaskHandler with a real store behind the board's
@@ -228,7 +229,7 @@ func TestAgentSendRefusesAReplyToBeyondItsOwnReach(t *testing.T) {
 // principal task) is not reach-checked, like the rest of the operator face.
 func TestAwaitIdleBoardSinkObeysTheRequestersReach(t *testing.T) {
 	h, conn, _, me := reachHandler(t, 0)
-	h.principals = map[string]protocol.TaskID{conn.ConnectionID().String(): me}
+	h.principals = map[objproto.ConnectionID]protocol.TaskID{conn.ConnectionID(): me}
 
 	arm := func(topic string) protocol.TaskControlResponse {
 		t.Helper()

@@ -101,7 +101,7 @@ func TestBoardMembership_TaskBounds(t *testing.T) {
 	h.Board = newTestBoard(t)
 	h.Board.SetReach(storeReach{h.Tasks})
 	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9703-1")}
-	h.principals = map[string]protocol.TaskID{conn.ConnectionID().String(): hexToTaskID(t, c)}
+	h.principals = map[objproto.ConnectionID]protocol.TaskID{conn.ConnectionID(): hexToTaskID(t, c)}
 	gid, uid := hexToTaskID(t, g), hexToTaskID(t, u)
 	h.Board.Attach(protocol.RunnerID{}, gid, "h", "bash")
 	h.Board.Attach(protocol.RunnerID{}, uid, "h", "bash")

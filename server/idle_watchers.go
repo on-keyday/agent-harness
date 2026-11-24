@@ -9,6 +9,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // idleWatcher is one armed await-idle watcher. The server holds it so
@@ -37,7 +38,7 @@ type idleWatcher struct {
 	// requester is the arming principal, resolved at arm time because the
 	// board/notify sinks outlive the arming connection. Zero = operator.
 	requester  protocol.TaskID
-	clientCID  string
+	clientCID  objproto.ConnectionID
 	clientKind protocol.ClientKind
 	// stop ends the SessionMux goroutine early. Closed only by the path that
 	// won the remove, so it is closed at most once.
@@ -124,7 +125,7 @@ func (r *idleWatcherRegistry) list(taskFilter string) []*idleWatcher {
 // why this is narrower than the exec and forward siblings. Target still
 // visible: arming required the target in scope, a later caps set can narrow
 // that, and the rest of the repo then reports the task as absent.
-func (h *TaskHandler) idleWatcherVisibleTo(connID string, w *idleWatcher) bool {
+func (h *TaskHandler) idleWatcherVisibleTo(connID objproto.ConnectionID, w *idleWatcher) bool {
 	all, allowed := h.visibleToCaller(connID)
 	if all {
 		return true
@@ -132,7 +133,7 @@ func (h *TaskHandler) idleWatcherVisibleTo(connID string, w *idleWatcher) bool {
 	return h.lookupPrincipal(connID) == w.requester && allowed[w.taskIDHex]
 }
 
-func (h *TaskHandler) visibleIdleWatchers(connID string, filter protocol.TaskID) []protocol.AwaitIdleWatcherInfo {
+func (h *TaskHandler) visibleIdleWatchers(connID objproto.ConnectionID, filter protocol.TaskID) []protocol.AwaitIdleWatcherInfo {
 	taskFilter := ""
 	if filter.Id != ([16]byte{}) {
 		taskFilter = hex.EncodeToString(filter.Id[:])
@@ -162,14 +163,14 @@ func idleWatcherInfo(w *idleWatcher) protocol.AwaitIdleWatcherInfo {
 		copy(info.TaskId.Id[:], raw)
 	}
 	info.SetTopic([]byte(w.topic))
-	info.SetOriginCid([]byte(w.clientCID))
+	info.SetOriginCid([]byte(w.clientCID.String()))
 	return info
 }
 
 // handleAwaitIdleList streams the visible watchers, exactly as
 // handleExecRunList streams execs: the response names a stream, the rows ride
 // it until EOF.
-func (h *TaskHandler) handleAwaitIdleList(conn ConnHandle, requestID uint32, connID string, filter protocol.TaskID) {
+func (h *TaskHandler) handleAwaitIdleList(conn ConnHandle, requestID uint32, connID objproto.ConnectionID, filter protocol.TaskID) {
 	respond := func(streamID uint64) {
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_AwaitList, RequestId: requestID}
 		resp.SetAwaitList(protocol.AwaitIdleListResponse{StreamId: streamID})
@@ -207,7 +208,7 @@ func (h *TaskHandler) handleAwaitIdleList(conn ConnHandle, requestID uint32, con
 // handleAwaitIdleKill disarms one watcher. A watcher the predicate refuses is
 // reported as absent, as handleExecRunKill does, so the answer does not
 // confirm that someone else's watcher exists.
-func (h *TaskHandler) handleAwaitIdleKill(connID string, req *protocol.AwaitIdleKillRequest) protocol.AwaitIdleKillResponse {
+func (h *TaskHandler) handleAwaitIdleKill(connID objproto.ConnectionID, req *protocol.AwaitIdleKillRequest) protocol.AwaitIdleKillResponse {
 	notFound := protocol.AwaitIdleKillResponse{Status: protocol.AwaitIdleKillStatus_NotFound}
 	w, ok := h.idleWatchers().get(req.WatcherId)
 	if !ok || !h.idleWatcherVisibleTo(connID, w) {
@@ -228,7 +229,7 @@ func (h *TaskHandler) handleAwaitIdleKill(connID string, req *protocol.AwaitIdle
 // rows that look armed and deliver nowhere. Board and notify watchers are left
 // alone: outliving the arming request is what those sinks are for. Sits beside
 // DropExecRunsForConn in handleConnection's teardown.
-func (h *TaskHandler) DropIdleWatchersForConn(connID string) {
+func (h *TaskHandler) DropIdleWatchersForConn(connID objproto.ConnectionID) {
 	for _, w := range h.idleWatchers().list("") {
 		if w.clientCID != connID || w.sink != protocol.AwaitSink_Reply {
 			continue

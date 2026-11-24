@@ -214,11 +214,11 @@ func TestListHidesUnseenActor(t *testing.T) {
 	}
 	conn := func(port int, task string) *fakeConn {
 		fc := &fakeConn{id: objproto.MustParseConnectionID(fmt.Sprintf("ws:127.0.0.1:%d-1", port)), nextSendStreamID: 12}
-		h.principals[fc.ConnectionID().String()] = hexToTaskID(t, task)
+		h.principals[fc.ConnectionID()] = hexToTaskID(t, task)
 		return fc
 	}
 	if h.principals == nil {
-		h.principals = make(map[string]protocol.TaskID)
+		h.principals = make(map[objproto.ConnectionID]protocol.TaskID)
 	}
 
 	row, ok := listRowAs(t, h, conn(9933, g), g)

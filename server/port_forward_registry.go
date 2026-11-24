@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/objtrsf/trsf"
 )
 
@@ -27,7 +28,7 @@ type portForward struct {
 	runnerCID  string
 	control    trsf.BidirectionalStream
 	clientCxn  ConnHandle
-	clientCID  string
+	clientCID  objproto.ConnectionID
 	clientKind protocol.ClientKind
 	bindAddr   string
 	bindPort   uint16
@@ -172,7 +173,7 @@ type remoteForwardInfo struct {
 	direction protocol.PortForwardDirection
 	taskIDHex string
 	runnerID  protocol.RunnerID
-	clientCID string
+	clientCID objproto.ConnectionID
 }
 
 // snapshot returns a copy of the active registrations for debug dumps.
@@ -181,9 +182,9 @@ func (r *portForwardRegistry) snapshot() []remoteForwardInfo {
 	defer r.mu.Unlock()
 	out := make([]remoteForwardInfo, 0, len(r.m))
 	for _, pf := range r.m {
-		cid := ""
+		var cid objproto.ConnectionID
 		if pf.clientCxn != nil {
-			cid = pf.clientCxn.ConnectionID().String()
+			cid = pf.clientCxn.ConnectionID()
 		}
 		out = append(out, remoteForwardInfo{forwardID: pf.forwardID, direction: pf.direction, taskIDHex: pf.taskIDHex, runnerID: pf.runnerID, clientCID: cid})
 	}

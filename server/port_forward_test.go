@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/objtrsf/trsf"
 )
 
@@ -228,7 +229,7 @@ func TestHandleRegisterPortForward_LocalNoSuchTask(t *testing.T) {
 		Direction: protocol.PortForwardDirection_Local,
 	}
 	req.SetTargetHost([]byte("db.internal"))
-	resp := h.handleRegisterPortForward(nil, req, "")
+	resp := h.handleRegisterPortForward(nil, req, objproto.ConnectionID{})
 	if resp.Status != protocol.OpenPortForwardStatus_NoSuchTask {
 		t.Fatalf("got status %v, want NoSuchTask", resp.Status)
 	}
@@ -273,7 +274,7 @@ func TestHandleRegisterPortForward_LocalRegisters(t *testing.T) {
 	req.SetTargetHost([]byte("db.internal"))
 	req.SetBindAddr([]byte("127.0.0.1"))
 
-	resp := h.handleRegisterPortForward(clientConn, req, clientConn.ConnectionID().String())
+	resp := h.handleRegisterPortForward(clientConn, req, clientConn.ConnectionID())
 	if resp.Status != protocol.OpenPortForwardStatus_Ok {
 		t.Fatalf("status = %v, want Ok", resp.Status)
 	}
@@ -327,7 +328,7 @@ func TestVisiblePortForwards_ReapsDeadTaskAndListsRest(t *testing.T) {
 	// The dead task leaves Running only AFTER both forwards were registered.
 	h.Tasks.Cancel(deadHex, protocol.EndReason_Cancelled, protocol.TaskID{})
 
-	got := h.visiblePortForwards("", protocol.TaskID{})
+	got := h.visiblePortForwards(objproto.ConnectionID{}, protocol.TaskID{})
 	if len(got) != 1 || got[0].ForwardId != liveID {
 		t.Fatalf("expected only forward %d, got %+v", liveID, got)
 	}
@@ -356,7 +357,7 @@ func TestVisiblePortForwards_ReapsDeadTaskAndListsRest(t *testing.T) {
 
 func TestKillPortForward_UnknownIDAndDoubleKill(t *testing.T) {
 	h := &TaskHandler{Tasks: NewTaskStore(), Registry: NewRegistry()}
-	if st := h.killPortForward("", 9999); st != protocol.KillPortForwardStatus_NoSuchForward {
+	if st := h.killPortForward(objproto.ConnectionID{}, 9999); st != protocol.KillPortForwardStatus_NoSuchForward {
 		t.Fatalf("unknown id: status = %v, want no_such_forward", st)
 	}
 
@@ -366,7 +367,7 @@ func TestKillPortForward_UnknownIDAndDoubleKill(t *testing.T) {
 		control: ctrl, clientCxn: &fakeConn{nextStreamID: 200}}
 	id := h.pforwards().add(pf)
 
-	if st := h.killPortForward("", id); st != protocol.KillPortForwardStatus_Ok {
+	if st := h.killPortForward(objproto.ConnectionID{}, id); st != protocol.KillPortForwardStatus_Ok {
 		t.Fatalf("first kill: status = %v, want ok", st)
 	}
 
@@ -385,7 +386,7 @@ func TestKillPortForward_UnknownIDAndDoubleKill(t *testing.T) {
 	}
 
 	// Exactly one caller may win: the second kill must not also report ok.
-	if st := h.killPortForward("", id); st != protocol.KillPortForwardStatus_NoSuchForward {
+	if st := h.killPortForward(objproto.ConnectionID{}, id); st != protocol.KillPortForwardStatus_NoSuchForward {
 		t.Fatalf("second kill: status = %v, want no_such_forward", st)
 	}
 }
@@ -422,8 +423,8 @@ func TestVisiblePortForwards_SubtreeGatingAndTaskFilter(t *testing.T) {
 	childHex := addRunningTaskWithCreator(t, h, 0x52, "runner-1", ownTID) // descendant
 	otherHex := addRunningTask(t, h, 0x53, "runner-1")                    // unrelated task
 
-	const callerCID = "confined-conn-subtree"
-	h.principals = map[string]protocol.TaskID{callerCID: ownTID}
+	callerCID := tcid("confined-conn-subtree")
+	h.principals = map[objproto.ConnectionID]protocol.TaskID{callerCID: ownTID}
 
 	conn := &fakeConn{nextStreamID: 400}
 	mk := func(taskHex string, bindPort uint16) *portForward {
@@ -479,8 +480,8 @@ func TestKillPortForward_InvisibleForwardNoSuchForward(t *testing.T) {
 	var ownTID protocol.TaskID
 	copyHexToID(t, ownHex, &ownTID)
 
-	const callerCID = "confined-conn-kill"
-	h.principals = map[string]protocol.TaskID{callerCID: ownTID}
+	callerCID := tcid("confined-conn-kill")
+	h.principals = map[objproto.ConnectionID]protocol.TaskID{callerCID: ownTID}
 
 	pf := &portForward{direction: protocol.PortForwardDirection_Local, taskIDHex: otherHex,
 		control: newRecordingBidiStream(10), clientCxn: &fakeConn{nextStreamID: 700}}
@@ -611,7 +612,7 @@ func runRemoteRegister(t *testing.T, h *TaskHandler, clientConn *fakeConn, req *
 func runSetupRegister(t *testing.T, h *TaskHandler, clientConn *fakeConn, req *protocol.RegisterPortForwardRequest, runnerConn *fakeConn, ok bool, detail string) protocol.RegisterPortForwardResponse {
 	t.Helper()
 	respCh := make(chan protocol.RegisterPortForwardResponse, 1)
-	cid := clientConn.ConnectionID().String()
+	cid := clientConn.ConnectionID()
 	go func() { respCh <- h.handleRegisterPortForward(clientConn, req, cid) }()
 	br := &protocol.ForwardSetupResult{ForwardId: 1}
 	br.SetOk(ok)
@@ -742,7 +743,7 @@ func TestKillPortForward_Remote(t *testing.T) {
 		t.Fatalf("register status = %v, want Ok", resp.Status)
 	}
 
-	if st := h.killPortForward("", resp.ForwardId); st != protocol.KillPortForwardStatus_Ok {
+	if st := h.killPortForward(objproto.ConnectionID{}, resp.ForwardId); st != protocol.KillPortForwardStatus_Ok {
 		t.Fatalf("kill: status = %v, want ok", st)
 	}
 	if _, ok := h.pforwards().get(resp.ForwardId); ok {
@@ -793,13 +794,13 @@ func TestDropPortForwardsForConn(t *testing.T) {
 
 	deadCtrl := newRecordingBidiStream(9)
 	dying := &portForward{direction: protocol.PortForwardDirection_Local, taskIDHex: taskHex,
-		control: deadCtrl, clientCxn: &fakeConn{nextStreamID: 900}, clientCID: "ws:127.0.0.1:1-dead"}
+		control: deadCtrl, clientCxn: &fakeConn{nextStreamID: 900}, clientCID: tcid("ws:127.0.0.1:1-dead")}
 	survivor := &portForward{direction: protocol.PortForwardDirection_Local, taskIDHex: taskHex,
-		control: newRecordingBidiStream(10), clientCxn: &fakeConn{nextStreamID: 901}, clientCID: "ws:127.0.0.1:2-live"}
+		control: newRecordingBidiStream(10), clientCxn: &fakeConn{nextStreamID: 901}, clientCID: tcid("ws:127.0.0.1:2-live")}
 	dyingID := h.pforwards().add(dying)
 	survivorID := h.pforwards().add(survivor)
 
-	h.DropPortForwardsForConn("ws:127.0.0.1:1-dead")
+	h.DropPortForwardsForConn(tcid("ws:127.0.0.1:1-dead"))
 
 	if _, ok := h.pforwards().get(dyingID); ok {
 		t.Error("the dead connection's registration should have been dropped")
@@ -842,7 +843,7 @@ func TestHandleRegisterPortForward_LocalInProcess(t *testing.T) {
 	}
 	req.SetTargetHost([]byte("127.0.0.1"))
 
-	resp := h.handleRegisterPortForward(clientConn, req, clientConn.ConnectionID().String())
+	resp := h.handleRegisterPortForward(clientConn, req, clientConn.ConnectionID())
 	if resp.Status != protocol.OpenPortForwardStatus_Ok {
 		t.Fatalf("status = %v, want Ok", resp.Status)
 	}
@@ -889,7 +890,7 @@ func TestHandleRegisterPortForward_RemoteInProcessRejected(t *testing.T) {
 	req.SetBindAddr([]byte("127.0.0.1"))
 	req.SetTargetHost([]byte("127.0.0.1"))
 
-	resp := h.handleRegisterPortForward(clientConn, req, clientConn.ConnectionID().String())
+	resp := h.handleRegisterPortForward(clientConn, req, clientConn.ConnectionID())
 	if resp.Status != protocol.OpenPortForwardStatus_InternalError {
 		t.Fatalf("status = %v, want InternalError", resp.Status)
 	}

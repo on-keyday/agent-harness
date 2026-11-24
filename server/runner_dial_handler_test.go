@@ -139,9 +139,9 @@ func TestRunnerDialCapabilities(t *testing.T) {
 	tid := f.h.Tasks.Create("r", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
 		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_RunnerEnroll}, "")
 	if f.h.principals == nil {
-		f.h.principals = map[string]protocol.TaskID{}
+		f.h.principals = map[objproto.ConnectionID]protocol.TaskID{}
 	}
-	f.h.principals[agent.ConnectionID().String()] = hexToTaskID(t, tid)
+	f.h.principals[agent.ConnectionID()] = hexToTaskID(t, tid)
 	r := protocol.RunnerDialAddRequest{}
 	r.SetKeyPrefix([]byte(hex.EncodeToString(k)))
 	r.SetCandidates([]protocol.RunnerDialCandidate{{}})

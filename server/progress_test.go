@@ -28,7 +28,7 @@ func newProgressFixture(t *testing.T) *progressFixture {
 		"")
 
 	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9711-1"), nextSendStreamID: 10}
-	h.principals = map[string]protocol.TaskID{conn.ConnectionID().String(): hexToTaskID(t, tHex)}
+	h.principals = map[objproto.ConnectionID]protocol.TaskID{conn.ConnectionID(): hexToTaskID(t, tHex)}
 	return &progressFixture{h: h, tHex: tHex, conn: conn}
 }
 
@@ -232,7 +232,7 @@ func TestProgressSet_RedactedOnParentHop(t *testing.T) {
 
 	h.Tasks.SetProgress(pHex, "parent's private stage", 1)
 	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9713-1"), nextSendStreamID: 10}
-	h.principals = map[string]protocol.TaskID{conn.ConnectionID().String(): hexToTaskID(t, cHex)}
+	h.principals = map[objproto.ConnectionID]protocol.TaskID{conn.ConnectionID(): hexToTaskID(t, cHex)}
 
 	row, ok := listRowAs(t, h, conn, pHex)
 	if !ok {
@@ -338,9 +338,9 @@ func TestProgressClear_Gates(t *testing.T) {
 	pConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9761-1")}
 	cConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9762-1")}
 	op := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9763-1")}
-	h.principals = map[string]protocol.TaskID{
-		pConn.ConnectionID().String(): hexToTaskID(t, parent),
-		cConn.ConnectionID().String(): hexToTaskID(t, child),
+	h.principals = map[objproto.ConnectionID]protocol.TaskID{
+		pConn.ConnectionID(): hexToTaskID(t, parent),
+		cConn.ConnectionID(): hexToTaskID(t, child),
 	}
 
 	// A parent holding cancel clears its child's line.

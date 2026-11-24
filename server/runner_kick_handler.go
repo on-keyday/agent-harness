@@ -75,7 +75,7 @@ func (h *TaskHandler) handleRunnerKick(conn ConnHandle, requestID uint32, r *pro
 	}
 	body.SetRemovedDials(removed)
 
-	by := h.enrolledBy(conn.ConnectionID().String())
+	by := h.enrolledBy(conn.ConnectionID())
 	leave := protocol.LeaveRequest{}
 	leave.SetBy([]byte(by))
 	req := &protocol.RunnerRequest{Kind: protocol.RunnerRequestType_Leave}

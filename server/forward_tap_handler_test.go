@@ -24,16 +24,16 @@ func registerTapTestForward(t *testing.T, h *TaskHandler, taskHex string) *portF
 	return pf
 }
 
-func tapConn(cid string) *fakeConn {
-	return &fakeConn{id: objproto.MustParseConnectionID(cid)}
+func tapConn(cid objproto.ConnectionID) *fakeConn {
+	return &fakeConn{id: cid}
 }
 
 func TestOpenForwardTapUnknownIDIsNoSuchForward(t *testing.T) {
 	h, p, _, _, _ := scopeFixture(t)
-	conn := tapConn("ws:127.0.0.1:9970-1")
+	conn := tapConn(objproto.MustParseConnectionID("ws:127.0.0.1:9970-1"))
 	_ = p
 
-	got := h.handleOpenForwardTap(conn, &protocol.OpenForwardTapRequest{ForwardId: 999}, conn.ConnectionID().String())
+	got := h.handleOpenForwardTap(conn, &protocol.OpenForwardTapRequest{ForwardId: 999}, conn.ConnectionID())
 	if got.Status != protocol.OpenForwardTapStatus_NoSuchForward {
 		t.Fatalf("status %v", got.Status)
 	}
@@ -49,7 +49,7 @@ func TestOpenForwardTapInvisibleForwardIsNotAnOracle(t *testing.T) {
 	h, _, c, _, u := scopeFixture(t)
 	pf := registerTapTestForward(t, h, u) // owned by a task outside c's subtree
 	cid := bindPrincipal(t, h, c)
-	conn := tapConn("ws:127.0.0.1:9971-1")
+	conn := tapConn(objproto.MustParseConnectionID("ws:127.0.0.1:9971-1"))
 
 	got := h.handleOpenForwardTap(conn, &protocol.OpenForwardTapRequest{ForwardId: pf.forwardID}, cid)
 	if got.Status != protocol.OpenForwardTapStatus_NoSuchForward {
@@ -73,7 +73,7 @@ func TestOpenForwardTapRefusesOutOfActionScope(t *testing.T) {
 		Base:    protocol.ScopeBase_None,
 		VisBase: protocol.ScopeBase_Global, VisBasePresent: true,
 	})
-	conn := tapConn("ws:127.0.0.1:9972-1")
+	conn := tapConn(objproto.MustParseConnectionID("ws:127.0.0.1:9972-1"))
 
 	got := h.handleOpenForwardTap(conn, &protocol.OpenForwardTapRequest{ForwardId: pf.forwardID}, cid)
 	if got.Status != protocol.OpenForwardTapStatus_NoSuchForward {
@@ -85,7 +85,7 @@ func TestOpenForwardTapAttachesAndIsCountedOnTheListing(t *testing.T) {
 	h, p, _, _, _ := scopeFixture(t)
 	pf := registerTapTestForward(t, h, p)
 	// An operator connection: no principal, so Capability_All and full scope.
-	conn := tapConn("ws:127.0.0.1:9973-1")
+	conn := tapConn(objproto.MustParseConnectionID("ws:127.0.0.1:9973-1"))
 	// A recordingBidiStream, not the nextStreamID-driven noopBidiStream, for
 	// the same reason the two port-forward siblings use one: noopBidiStream's
 	// ReadDirect returns EOF immediately, and the handler now watches the tap
@@ -99,7 +99,7 @@ func TestOpenForwardTapAttachesAndIsCountedOnTheListing(t *testing.T) {
 	got := h.handleOpenForwardTap(conn, &protocol.OpenForwardTapRequest{
 		ForwardId:       pf.forwardID,
 		DirectionFilter: protocol.ForwardTapFilter_Both,
-	}, conn.ConnectionID().String())
+	}, conn.ConnectionID())
 	if got.Status != protocol.OpenForwardTapStatus_Ok {
 		t.Fatalf("status %v", got.Status)
 	}

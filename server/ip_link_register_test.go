@@ -152,7 +152,7 @@ func TestRegisterIPLink_InvalidConfigRefused(t *testing.T) {
 	bad := *req.Link()
 	bad.PrefixLen = 32
 	req.SetLink(bad)
-	resp := h.handleRegisterPortForward(clientConn, req, clientConn.ConnectionID().String())
+	resp := h.handleRegisterPortForward(clientConn, req, clientConn.ConnectionID())
 	if resp.Status != protocol.OpenPortForwardStatus_InternalError {
 		t.Fatalf("status = %v, want InternalError", resp.Status)
 	}
@@ -179,7 +179,7 @@ func TestRegisterRefusesIllegalShape(t *testing.T) {
 		if shape.p == protocol.ForwardProtocol_Ip {
 			req.SetLink(testLinkConfig(t, "10.200.0.1/30", "10.200.0.2"))
 		}
-		resp := h.handleRegisterPortForward(clientConn, req, clientConn.ConnectionID().String())
+		resp := h.handleRegisterPortForward(clientConn, req, clientConn.ConnectionID())
 		if resp.Status != protocol.OpenPortForwardStatus_InternalError {
 			t.Errorf("%v × %v: status = %v, want InternalError", shape.p, shape.d, resp.Status)
 		}
@@ -195,7 +195,7 @@ func TestRegisterRefusesIllegalShape(t *testing.T) {
 func TestRegisterIPLink_RunnerGoneDuringSetup(t *testing.T) {
 	h, clientConn, runnerConn, _, req := linkFixture(t)
 	respCh := make(chan protocol.RegisterPortForwardResponse, 1)
-	go func() { respCh <- h.handleRegisterPortForward(clientConn, req, clientConn.ConnectionID().String()) }()
+	go func() { respCh <- h.handleRegisterPortForward(clientConn, req, clientConn.ConnectionID()) }()
 	deadline := time.Now().Add(2 * time.Second)
 	for len(h.pforwards().list()) == 0 {
 		if time.Now().After(deadline) {

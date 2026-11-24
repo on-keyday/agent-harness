@@ -4,12 +4,13 @@ import (
 	"log/slog"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // forwardVisibleTo reports whether connID may see pf at all. Factored out of
 // visiblePortForwards so the listing and the tap decide visibility with one
 // predicate rather than two that can drift apart.
-func (h *TaskHandler) forwardVisibleTo(connID string, pf *portForward) bool {
+func (h *TaskHandler) forwardVisibleTo(connID objproto.ConnectionID, pf *portForward) bool {
 	all, allowed := h.visibleToCaller(connID)
 	return all || allowed[pf.taskIDHex]
 }
@@ -32,7 +33,7 @@ func (h *TaskHandler) forwardVisibleTo(connID string, pf *portForward) bool {
 //
 // Visibility before scope, for the reason in (2): denying on scope for a
 // forward the caller cannot see would leak the same fact.
-func (h *TaskHandler) handleOpenForwardTap(conn ConnHandle, req *protocol.OpenForwardTapRequest, connID string) protocol.OpenForwardTapResponse {
+func (h *TaskHandler) handleOpenForwardTap(conn ConnHandle, req *protocol.OpenForwardTapRequest, connID objproto.ConnectionID) protocol.OpenForwardTapResponse {
 	errResp := func(s protocol.OpenForwardTapStatus) protocol.OpenForwardTapResponse {
 		return protocol.OpenForwardTapResponse{Status: s}
 	}

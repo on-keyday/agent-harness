@@ -286,7 +286,7 @@ func TestRestoreScopeExcludesAStranger(t *testing.T) {
 func TestRestoreScopeIsUnrestrictedForAnOperator(t *testing.T) {
 	h, _, _, _, _ := scopeFixture(t)
 	h.RestoreEventsFn = func() []WALEvent { return nil }
-	all, allowed := h.restoreScope("ws:127.0.0.1:1-operator")
+	all, allowed := h.restoreScope(tcid("ws:127.0.0.1:1-operator"))
 	if !all || allowed != nil {
 		t.Fatalf("operator restore scope: all=%v allowed=%v, want unrestricted", all, allowed)
 	}

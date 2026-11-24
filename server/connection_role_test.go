@@ -6,10 +6,11 @@ import (
 
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 func TestPSKDispatchIdentityRejectsFailedPrincipalRegistration(t *testing.T) {
-	d := &Dispatcher{RecordClientIdentity: func(string, ConnHandle, *protocol.ClientHello) protocol.ClientHelloStatus {
+	d := &Dispatcher{RecordClientIdentity: func(objproto.ConnectionID, ConnHandle, *protocol.ClientHello) protocol.ClientHelloStatus {
 		return protocol.ClientHelloStatus_BadTicket
 	}}
 	conn := &fakeConn{id: tcid("rejected-principal")}

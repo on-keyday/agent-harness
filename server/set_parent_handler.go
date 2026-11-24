@@ -7,6 +7,7 @@ import (
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // handleSetParent re-points a live task's parent link (its creator_task_id) on
@@ -25,7 +26,7 @@ import (
 //     (role inversion) wants the former parent's live attach kept
 //   - no descendant list in the response — descendants follow implicitly,
 //     their own links are untouched
-func (h *TaskHandler) handleSetParent(conn ConnHandle, requestID uint32, cid string, req *protocol.SetParentRequest) {
+func (h *TaskHandler) handleSetParent(conn ConnHandle, requestID uint32, cid objproto.ConnectionID, req *protocol.SetParentRequest) {
 	respond := func(status protocol.SetParentStatus, oldP, newP, swapped protocol.TaskID) {
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_SetParent, RequestId: requestID}
 		resp.SetSetParent(protocol.SetParentResponse{Status: status, OldParent: oldP, NewParent: newP, SwappedId: swapped})

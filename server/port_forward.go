@@ -9,6 +9,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/objtrsf/trsf"
 )
 
@@ -86,7 +87,7 @@ func (h *TaskHandler) handleOpenPortForward(conn ConnHandle, req *protocol.OpenP
 // handleRegisterPortForward registers one forward and returns its id plus the
 // server-created control stream. Local registrations never contact the runner:
 // the listener is already bound client-side, so only task liveness is checked.
-func (h *TaskHandler) handleRegisterPortForward(conn ConnHandle, req *protocol.RegisterPortForwardRequest, cid string) protocol.RegisterPortForwardResponse {
+func (h *TaskHandler) handleRegisterPortForward(conn ConnHandle, req *protocol.RegisterPortForwardRequest, cid objproto.ConnectionID) protocol.RegisterPortForwardResponse {
 	errResp := func(s protocol.OpenPortForwardStatus) protocol.RegisterPortForwardResponse {
 		return protocol.RegisterPortForwardResponse{Status: s}
 	}

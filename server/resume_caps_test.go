@@ -27,9 +27,9 @@ func newResumeFixture(t *testing.T, caps protocol.Capability, scope authority.Sc
 
 	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9710-1")}
 	if h.principals == nil {
-		h.principals = make(map[string]protocol.TaskID)
+		h.principals = make(map[objproto.ConnectionID]protocol.TaskID)
 	}
-	h.principals[conn.ConnectionID().String()] = hexToTaskID(t, self)
+	h.principals[conn.ConnectionID()] = hexToTaskID(t, self)
 	return &resumeFixture{h: h, conn: conn, selfID: self}
 }
 

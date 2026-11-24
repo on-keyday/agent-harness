@@ -14,7 +14,7 @@ import (
 // the operator, holding delegHeld) carrying the given limits, plus n children
 // of P already in the store. It returns P, its connection id, the runner's
 // stream and the children.
-func limitFixture(t *testing.T, depth, max protocol.SpawnLimit, n int) (h *TaskHandler, p, cid string, runner *fakeBidiStream, kids []string) {
+func limitFixture(t *testing.T, depth, max protocol.SpawnLimit, n int) (h *TaskHandler, p string, cid objproto.ConnectionID, runner *fakeBidiStream, kids []string) {
 	t.Helper()
 	h = newTestHandler(t)
 	runner = openRunner(t, h)
@@ -42,7 +42,7 @@ func rearmRunner(t *testing.T, h *TaskHandler) {
 }
 
 // agentOpen is a detached open by the agent on cid.
-func agentOpen(h *TaskHandler, cid string, req *protocol.OpenInteractiveRequest) protocol.OpenInteractiveResponse {
+func agentOpen(h *TaskHandler, cid objproto.ConnectionID, req *protocol.OpenInteractiveRequest) protocol.OpenInteractiveResponse {
 	resp, _ := h.handleOpenInteractive(cid, nil, req, protocol.ClientKind_Agent, h.lookupPrincipal(cid), delegHeld, "")
 	return resp
 }

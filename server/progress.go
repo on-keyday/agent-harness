@@ -53,7 +53,7 @@ func (h *TaskHandler) handleProgressSet(conn ConnHandle, req *protocol.TaskContr
 		respond(protocol.ProgressSetStatus_BadText, 0)
 		return
 	}
-	cid := conn.ConnectionID().String()
+	cid := conn.ConnectionID()
 	pid := h.lookupPrincipal(cid)
 	if pid.Id == ([16]byte{}) {
 		respond(protocol.ProgressSetStatus_NoPrincipal, 0)
@@ -102,7 +102,7 @@ func (h *TaskHandler) handleProgressClear(conn ConnHandle, req *protocol.TaskCon
 		return
 	}
 	taskHex := hex.EncodeToString(pc.TaskId.Id[:])
-	if !h.inScope(conn.ConnectionID().String(), requiredCentral(protocol.TaskControlKind_ProgressClear), taskHex) {
+	if !h.inScope(conn.ConnectionID(), requiredCentral(protocol.TaskControlKind_ProgressClear), taskHex) {
 		respond(protocol.ProgressSetStatus_NotFound, 0)
 		return
 	}

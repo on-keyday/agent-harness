@@ -26,7 +26,7 @@ func bgOpen(agent string) *protocol.OpenInteractiveRequest {
 }
 
 func openBG(h *TaskHandler, oi *protocol.OpenInteractiveRequest, prompt string) protocol.OpenInteractiveResponse {
-	resp, _ := h.handleOpenInteractive("", nil, oi, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All, prompt)
+	resp, _ := h.handleOpenInteractive(objproto.ConnectionID{}, nil, oi, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All, prompt)
 	return resp
 }
 

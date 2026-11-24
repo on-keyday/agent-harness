@@ -13,6 +13,7 @@ import (
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // The six schedule verbs (pillar S, "Verbs", S-D12..S-D20): create, edit,
@@ -108,7 +109,7 @@ func scheduleIDFromHex(idHex string) protocol.ScheduleID {
 // from the payload stream the spec names (off the receive loop, as an open's
 // is: the stream's frames arrive on the loop this runs on); the bit was
 // checked centrally (authority.CentralCap).
-func (h *TaskHandler) handleSchedule(cid string, conn ConnHandle, req *protocol.TaskControlRequest) {
+func (h *TaskHandler) handleSchedule(cid objproto.ConnectionID, conn ConnHandle, req *protocol.TaskControlRequest) {
 	kind := req.Header.Kind
 	// deny answers a missing bit as the task-control permission denial (S-D17a),
 	// the shape authority.CentralCap's own denial has.
@@ -249,7 +250,7 @@ func (h *TaskHandler) withSpecPrompt(conn ConnHandle, spec *protocol.ScheduleSpe
 
 // --- identity and reach ---
 
-func (h *TaskHandler) principalHex(cid string) string {
+func (h *TaskHandler) principalHex(cid objproto.ConnectionID) string {
 	p := h.lookupPrincipal(cid)
 	if p.Id == ([16]byte{}) {
 		return ""
@@ -269,7 +270,7 @@ func scheduleTarget(sc Schedule) string {
 // scheduleReach reports management reach through schedule_edit's own scope.
 // Reading also admits a schedule_run holder's run reach (scheduleReadReach).
 // A schedule with no target is the operator's.
-func (h *TaskHandler) scheduleReach(cid string, sc Schedule) bool {
+func (h *TaskHandler) scheduleReach(cid objproto.ConnectionID, sc Schedule) bool {
 	target := scheduleTarget(sc)
 	if target == "" {
 		return h.principalHex(cid) == ""
@@ -279,7 +280,7 @@ func (h *TaskHandler) scheduleReach(cid string, sc Schedule) bool {
 
 // scheduleRunReach uses the run bit's own scope independently of management
 // reach. No target means the schedule belongs to the operator.
-func (h *TaskHandler) scheduleRunReach(cid string, sc Schedule) bool {
+func (h *TaskHandler) scheduleRunReach(cid objproto.ConnectionID, sc Schedule) bool {
 	target := scheduleTarget(sc)
 	if target == "" {
 		return h.principalHex(cid) == ""
@@ -291,13 +292,13 @@ func (h *TaskHandler) scheduleRunReach(cid string, sc Schedule) bool {
 // a capability, and lets run-only callers discover schedules they can fire.
 // An absent run bit must not widen an existing read restriction through its
 // default scope. This predicate is never used to authorize mutations.
-func (h *TaskHandler) scheduleReadReach(cid string, sc Schedule) bool {
+func (h *TaskHandler) scheduleReadReach(cid objproto.ConnectionID, sc Schedule) bool {
 	return h.scheduleReach(cid, sc) ||
 		(hasCap(h.callerCaps(cid), requiredCentral(protocol.TaskControlKind_ScheduleRun)) && h.scheduleRunReach(cid, sc))
 }
 
 // scheduleOwnTask is S-D20: the caller is the task bound to sc.
-func (h *TaskHandler) scheduleOwnTask(cid string, sc Schedule) bool {
+func (h *TaskHandler) scheduleOwnTask(cid objproto.ConnectionID, sc Schedule) bool {
 	self := h.principalHex(cid)
 	return self != "" && sc.State == protocol.ScheduleTaskState_Bound && sc.TaskID == self
 }
@@ -305,7 +306,7 @@ func (h *TaskHandler) scheduleOwnTask(cid string, sc Schedule) bool {
 // scheduleFor is the schedule a verb names, once the caller may know it
 // exists: an unknown id and one out of reach answer alike (never
 // permission_denied, so ids are not probed).
-func (h *TaskHandler) scheduleFor(cid string, id protocol.ScheduleID) (Schedule, *protocol.ScheduleResponse) {
+func (h *TaskHandler) scheduleFor(cid objproto.ConnectionID, id protocol.ScheduleID) (Schedule, *protocol.ScheduleResponse) {
 	sc, ok := h.Sched.Store.Get(hex.EncodeToString(id.Id[:]))
 	if !ok || !h.scheduleReach(cid, sc) {
 		r := scheduleRefusal(protocol.ScheduleStatus_NoSuchSchedule, "")
@@ -423,7 +424,7 @@ func (h *TaskHandler) storedGrant(g *authority.Granter, r grantRequest, idHex st
 // scheduleBinding is S-D14: the task a schedule is to be bound to must exist,
 // be within the caller's reach, be bound to no other schedule, and not be
 // running in foreground. own is the schedule being edited ("" on a create).
-func (h *TaskHandler) scheduleBinding(cid string, taskHex, own string) (TaskEntry, *protocol.ScheduleResponse) {
+func (h *TaskHandler) scheduleBinding(cid objproto.ConnectionID, taskHex, own string) (TaskEntry, *protocol.ScheduleResponse) {
 	fail := func(st protocol.ScheduleStatus, format string, args ...any) (TaskEntry, *protocol.ScheduleResponse) {
 		r := scheduleRefusal(st, format, args...)
 		return TaskEntry{}, &r
@@ -457,7 +458,7 @@ func short(id string) string {
 // applySpec builds the definition a create or an edit stores: base with the
 // spec's named fields applied, every S-D12 check made over the result. create
 // is true for a new schedule; base then holds only its defaults.
-func (h *TaskHandler) applySpec(cid string, base Schedule, spec *protocol.ScheduleSpec, prompt string, create bool, now time.Time) (scheduleDraft, *protocol.ScheduleResponse) {
+func (h *TaskHandler) applySpec(cid objproto.ConnectionID, base Schedule, spec *protocol.ScheduleSpec, prompt string, create bool, now time.Time) (scheduleDraft, *protocol.ScheduleResponse) {
 	d := scheduleDraft{sc: base.clone()}
 	sc := &d.sc
 	refuse := func(st protocol.ScheduleStatus, format string, args ...any) (scheduleDraft, *protocol.ScheduleResponse) {
@@ -697,7 +698,7 @@ func scheduleSpecTask(spec *protocol.ScheduleSpec) string {
 // run of it only records skipped_no_task. `schedule run` has its own rule,
 // scheduleRunPower: the firer picks timing only, and the prompt was set by
 // someone who held full resume over T at bind (below) or edit.
-func (h *TaskHandler) schedulePower(cid string, cur *Schedule, bindTask string) (protocol.Capability, *protocol.ScheduleResponse) {
+func (h *TaskHandler) schedulePower(cid objproto.ConnectionID, cur *Schedule, bindTask string) (protocol.Capability, *protocol.ScheduleResponse) {
 	callerCaps := h.callerCaps(cid)
 	// A bind means nothing will be created, so a bind needs no spawn even on a
 	// pending_create schedule (authority.SchedulePower decides which).
@@ -733,7 +734,7 @@ func (h *TaskHandler) schedulePower(cid string, cur *Schedule, bindTask string) 
 // caller holds (resumeTargetAllowed). A missing bit is returned as the mask a
 // resume of that exactness needs; a target out of scope answers
 // task_not_reachable.
-func (h *TaskHandler) scheduleRunPower(cid string, sc *Schedule) (protocol.Capability, *protocol.ScheduleResponse) {
+func (h *TaskHandler) scheduleRunPower(cid objproto.ConnectionID, sc *Schedule) (protocol.Capability, *protocol.ScheduleResponse) {
 	callerCaps := h.callerCaps(cid)
 	for _, c := range authority.ScheduleRunPower(sc.State) {
 		if !hasAnyCap(callerCaps, c.AnyOf) {
@@ -749,7 +750,7 @@ func (h *TaskHandler) scheduleRunPower(cid string, sc *Schedule) (protocol.Capab
 	return 0, nil
 }
 
-func (h *TaskHandler) scheduleCreate(cid string, spec *protocol.ScheduleSpec, prompt string) (protocol.ScheduleResponse, protocol.Capability) {
+func (h *TaskHandler) scheduleCreate(cid objproto.ConnectionID, spec *protocol.ScheduleSpec, prompt string) (protocol.ScheduleResponse, protocol.Capability) {
 	if c, refusal := h.schedulePower(cid, nil, scheduleSpecTask(spec)); c != 0 || refusal != nil {
 		if refusal != nil {
 			return *refusal, 0
@@ -759,7 +760,7 @@ func (h *TaskHandler) scheduleCreate(cid string, spec *protocol.ScheduleSpec, pr
 	return h.scheduleCreateChecked(cid, spec, prompt), 0
 }
 
-func (h *TaskHandler) scheduleCreateChecked(cid string, spec *protocol.ScheduleSpec, prompt string) protocol.ScheduleResponse {
+func (h *TaskHandler) scheduleCreateChecked(cid objproto.ConnectionID, spec *protocol.ScheduleSpec, prompt string) protocol.ScheduleResponse {
 	ops := h.Sched
 	now := ops.now()
 	d, refusal := h.applySpec(cid, Schedule{}, spec, prompt, true, now)
@@ -862,7 +863,7 @@ func (o *ScheduleOps) boundChanged(taskHex string) {
 	}
 }
 
-func (h *TaskHandler) scheduleEdit(cid string, id protocol.ScheduleID, spec *protocol.ScheduleSpec, prompt string) (resp protocol.ScheduleResponse, deny protocol.Capability) {
+func (h *TaskHandler) scheduleEdit(cid objproto.ConnectionID, id protocol.ScheduleID, spec *protocol.ScheduleSpec, prompt string) (resp protocol.ScheduleResponse, deny protocol.Capability) {
 	ops := h.Sched
 	idHex := hex.EncodeToString(id.Id[:])
 	ops.withFiringMutex(idHex, func() {
@@ -874,7 +875,7 @@ func (h *TaskHandler) scheduleEdit(cid string, id protocol.ScheduleID, spec *pro
 	return resp, deny
 }
 
-func (h *TaskHandler) scheduleEditLocked(cid string, id protocol.ScheduleID, idHex string, spec *protocol.ScheduleSpec, prompt string) (protocol.ScheduleResponse, protocol.Capability) {
+func (h *TaskHandler) scheduleEditLocked(cid objproto.ConnectionID, id protocol.ScheduleID, idHex string, spec *protocol.ScheduleSpec, prompt string) (protocol.ScheduleResponse, protocol.Capability) {
 	cur, refusal := h.scheduleFor(cid, id)
 	if refusal != nil {
 		return *refusal, 0
@@ -891,7 +892,7 @@ func (h *TaskHandler) scheduleEditLocked(cid string, id protocol.ScheduleID, idH
 	return h.scheduleEditChecked(cid, id, idHex, spec, prompt, cur), 0
 }
 
-func (h *TaskHandler) scheduleEditChecked(cid string, id protocol.ScheduleID, idHex string, spec *protocol.ScheduleSpec, prompt string, cur Schedule) protocol.ScheduleResponse {
+func (h *TaskHandler) scheduleEditChecked(cid objproto.ConnectionID, id protocol.ScheduleID, idHex string, spec *protocol.ScheduleSpec, prompt string, cur Schedule) protocol.ScheduleResponse {
 	ops := h.Sched
 	now := ops.now()
 	d, refusal := h.applySpec(cid, cur, spec, prompt, false, now)
@@ -967,7 +968,7 @@ func (h *TaskHandler) scheduleEditChecked(cid string, id protocol.ScheduleID, id
 
 // --- delete and run ---
 
-func (h *TaskHandler) scheduleDelete(cid string, id protocol.ScheduleID) (resp protocol.ScheduleResponse) {
+func (h *TaskHandler) scheduleDelete(cid objproto.ConnectionID, id protocol.ScheduleID) (resp protocol.ScheduleResponse) {
 	ops := h.Sched
 	idHex := hex.EncodeToString(id.Id[:])
 	ops.withFiringMutex(idHex, func() {
@@ -1005,7 +1006,7 @@ func (h *TaskHandler) scheduleDelete(cid string, id protocol.ScheduleID) (resp p
 // schedule that vanished or whose intent could not be saved; the first is
 // answered no_such_schedule before it is called, so the zero outcome means
 // the second.
-func (h *TaskHandler) scheduleRun(cid string, id protocol.ScheduleID) (protocol.ScheduleResponse, protocol.Capability) {
+func (h *TaskHandler) scheduleRun(cid objproto.ConnectionID, id protocol.ScheduleID) (protocol.ScheduleResponse, protocol.Capability) {
 	ops := h.Sched
 	idHex := hex.EncodeToString(id.Id[:])
 	check := h.scheduleRunCheck(cid)
@@ -1050,7 +1051,7 @@ func (h *TaskHandler) scheduleRun(cid string, id protocol.ScheduleID) (protocol.
 // scheduleRunCheck is `schedule run`'s FireCheck: reach (no_such_schedule),
 // the schedule's own task (S-D20), then what S-D17a needs for a run
 // (scheduleRunPower), in that order.
-func (h *TaskHandler) scheduleRunCheck(cid string) FireCheck {
+func (h *TaskHandler) scheduleRunCheck(cid objproto.ConnectionID) FireCheck {
 	return func(sc Schedule) *FireVeto {
 		if !h.scheduleRunReach(cid, sc) {
 			r := scheduleRefusal(protocol.ScheduleStatus_NoSuchSchedule, "")
@@ -1157,7 +1158,7 @@ func (h *TaskHandler) scheduleRow(sc Schedule, visAll bool, visible map[string]b
 	return row
 }
 
-func (h *TaskHandler) scheduleListBody(cid string) protocol.ScheduleListBody {
+func (h *TaskHandler) scheduleListBody(cid objproto.ConnectionID) protocol.ScheduleListBody {
 	visAll, visible := h.visibleToCaller(cid)
 	var rows []protocol.ScheduleRow
 	for _, sc := range h.Sched.Store.List() {
@@ -1170,7 +1171,7 @@ func (h *TaskHandler) scheduleListBody(cid string) protocol.ScheduleListBody {
 	return body
 }
 
-func (h *TaskHandler) scheduleDetail(cid string, id protocol.ScheduleID) (*protocol.ScheduleDetail, *protocol.ScheduleResponse) {
+func (h *TaskHandler) scheduleDetail(cid objproto.ConnectionID, id protocol.ScheduleID) (*protocol.ScheduleDetail, *protocol.ScheduleResponse) {
 	sc, ok := h.Sched.Store.Get(hex.EncodeToString(id.Id[:]))
 	if !ok || !h.scheduleReadReach(cid, sc) {
 		r := scheduleRefusal(protocol.ScheduleStatus_NoSuchSchedule, "")
@@ -1269,7 +1270,7 @@ func (h *TaskHandler) openUnbinds(oi *protocol.OpenInteractiveRequest) (taskHex 
 // unbindRefusal is what S-D15 and S-D20 add to a foreground resume or a mode
 // switch of a bound task beyond the bit (checked by the caller): the task must
 // be within the caller's schedule reach, and may not be the caller itself.
-func (h *TaskHandler) unbindRefusal(cid, taskHex string) (reach, self bool) {
+func (h *TaskHandler) unbindRefusal(cid objproto.ConnectionID, taskHex string) (reach, self bool) {
 	reach = h.inScope(cid, authority.UnbindCap, taskHex)
 	self = h.principalHex(cid) == taskHex
 	return reach, self

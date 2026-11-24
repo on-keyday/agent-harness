@@ -30,9 +30,9 @@ func trsfCaller(t *testing.T, h *TaskHandler, port string) *fakeConn {
 
 	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:" + port + "-1")}
 	if h.principals == nil {
-		h.principals = make(map[string]protocol.TaskID)
+		h.principals = make(map[objproto.ConnectionID]protocol.TaskID)
 	}
-	h.principals[conn.ConnectionID().String()] = hexToTaskID(t, idHex)
+	h.principals[conn.ConnectionID()] = hexToTaskID(t, idHex)
 	return conn
 }
 

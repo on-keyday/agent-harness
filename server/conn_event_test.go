@@ -105,7 +105,7 @@ func TestConnEvents_OpenIdentifyClose(t *testing.T) {
 	// publishes conn_identified.
 	hello := &protocol.ClientHello{Kind: protocol.ClientKind_Cli}
 	fc := &fakeConn{id: cid}
-	status := s.taskHandler.RecordClientIdentity(cidStr, fc, hello)
+	status := s.taskHandler.RecordClientIdentity(cid, fc, hello)
 	if status != protocol.ClientHelloStatus_Ok {
 		t.Fatalf("RecordClientIdentity: status=%v", status)
 	}
@@ -271,9 +271,9 @@ func TestConnEvents_SubtreeGating(t *testing.T) {
 	cliCIDStr := "ws:127.0.0.1:9502-2"
 	addActiveConn(s, cliCIDStr, now)
 	if s.taskHandler.clientKinds == nil {
-		s.taskHandler.clientKinds = make(map[string]protocol.ClientKind)
+		s.taskHandler.clientKinds = make(map[objproto.ConnectionID]protocol.ClientKind)
 	}
-	s.taskHandler.clientKinds[cliCIDStr] = protocol.ClientKind_Cli
+	s.taskHandler.clientKinds[objproto.MustParseConnectionID(cliCIDStr)] = protocol.ClientKind_Cli
 	cliCID := objproto.MustParseConnectionID(cliCIDStr)
 	cliSC, _ := func() (streamingConn, bool) {
 		s.activeConnsMu.Lock()
@@ -283,7 +283,7 @@ func TestConnEvents_SubtreeGating(t *testing.T) {
 	}()
 
 	// Build the confined viewer's allowed set (subtree of P).
-	_, allowed := s.taskHandler.visibleToCaller(subscriberCIDStr)
+	_, allowed := s.taskHandler.visibleToCaller(subscriberCID)
 
 	// Agent conn with principal=C (child of P): should be visible.
 	agentInfo := s.connInfoFor(agentCSC, allowed, false)

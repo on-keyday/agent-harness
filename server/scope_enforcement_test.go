@@ -19,9 +19,9 @@ import (
 func TestOutOfScopeTargetsAnswerNotFound(t *testing.T) {
 	h, _, c, _, u := scopeFixture(t)
 	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9700-1")}
-	cid := conn.ConnectionID().String()
+	cid := conn.ConnectionID()
 	if h.principals == nil {
-		h.principals = make(map[string]protocol.TaskID)
+		h.principals = make(map[objproto.ConnectionID]protocol.TaskID)
 	}
 	h.principals[cid] = hexToTaskID(t, c)
 	utid := hexToTaskID(t, u)
@@ -122,9 +122,9 @@ func TestOutOfScopeTargetsAnswerNotFound(t *testing.T) {
 func TestInScopeTargetPassesTheGate(t *testing.T) {
 	h, _, c, g, _ := scopeFixture(t)
 	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9701-1")}
-	cid := conn.ConnectionID().String()
+	cid := conn.ConnectionID()
 	if h.principals == nil {
-		h.principals = make(map[string]protocol.TaskID)
+		h.principals = make(map[objproto.ConnectionID]protocol.TaskID)
 	}
 	h.principals[cid] = hexToTaskID(t, c)
 

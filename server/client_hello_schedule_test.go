@@ -13,8 +13,8 @@ import (
 // RecordClientIdentity, so one refusal there covers both.
 func TestClientHelloRefusesScheduleKind(t *testing.T) {
 	h := &TaskHandler{}
-	cidStr := "ws:127.0.0.1:8539-91"
-	fc := &fakeConn{id: objproto.MustParseConnectionID(cidStr)}
+	cidStr := objproto.MustParseConnectionID("ws:127.0.0.1:8539-91")
+	fc := &fakeConn{id: cidStr}
 	st := h.RecordClientIdentity(cidStr, fc, &protocol.ClientHello{Kind: protocol.ClientKind_Schedule})
 	if st != protocol.ClientHelloStatus_NotPermitted {
 		t.Fatalf("status = %v, want not_permitted", st)

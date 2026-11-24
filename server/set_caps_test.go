@@ -28,9 +28,9 @@ func TestSetCapsTaskCallerOutsideItsSubtreeIsNotFound(t *testing.T) {
 	h, _, c, _, u := scopeFixture(t)
 	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9900-1")}
 	if h.principals == nil {
-		h.principals = make(map[string]protocol.TaskID)
+		h.principals = make(map[objproto.ConnectionID]protocol.TaskID)
 	}
-	h.principals[conn.ConnectionID().String()] = hexToTaskID(t, c)
+	h.principals[conn.ConnectionID()] = hexToTaskID(t, c)
 
 	req := protocol.SetCapsRequest{TaskId: hexToTaskID(t, u), Caps: protocol.Capability_All}
 	req.SetCapsPresent(true)

@@ -89,9 +89,9 @@ func (e *schedEnv) connFor(t *testing.T, taskHex string) *fakeConn {
 	t.Helper()
 	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:" + strings.Repeat("9", 1) + "7" + strconv.Itoa(int(schedConnSeq.Add(1))) + "-1"), autoSendStreams: true}
 	if e.h.principals == nil {
-		e.h.principals = make(map[string]protocol.TaskID)
+		e.h.principals = make(map[objproto.ConnectionID]protocol.TaskID)
 	}
-	e.h.principals[conn.ConnectionID().String()] = hexToTaskID(t, taskHex)
+	e.h.principals[conn.ConnectionID()] = hexToTaskID(t, taskHex)
 	return conn
 }
 
@@ -183,7 +183,7 @@ func (e *schedEnv) send(t *testing.T, conn *fakeConn, kind protocol.TaskControlK
 
 // create sends a create that carries no prompt stream (the core takes the prompt
 // separately, as the dispatch does after reading the stream).
-func (e *schedEnv) create(t *testing.T, cid string, sp *protocol.ScheduleSpec, prompt string) protocol.ScheduleResponse {
+func (e *schedEnv) create(t *testing.T, cid objproto.ConnectionID, sp *protocol.ScheduleSpec, prompt string) protocol.ScheduleResponse {
 	t.Helper()
 	r, c := e.h.scheduleCreate(cid, sp, prompt)
 	if c != 0 {
@@ -193,11 +193,11 @@ func (e *schedEnv) create(t *testing.T, cid string, sp *protocol.ScheduleSpec, p
 }
 
 // createDeny is create that also reports the capability a denial names.
-func (e *schedEnv) createDeny(cid string, sp *protocol.ScheduleSpec, prompt string) (protocol.ScheduleResponse, protocol.Capability) {
+func (e *schedEnv) createDeny(cid objproto.ConnectionID, sp *protocol.ScheduleSpec, prompt string) (protocol.ScheduleResponse, protocol.Capability) {
 	return e.h.scheduleCreate(cid, sp, prompt)
 }
 
-func (e *schedEnv) edit(t *testing.T, cid string, id string, sp *protocol.ScheduleSpec, prompt string) protocol.ScheduleResponse {
+func (e *schedEnv) edit(t *testing.T, cid objproto.ConnectionID, id string, sp *protocol.ScheduleSpec, prompt string) protocol.ScheduleResponse {
 	t.Helper()
 	r, c := e.h.scheduleEdit(cid, schedHexID(t, id), sp, prompt)
 	if c != 0 {
@@ -206,7 +206,7 @@ func (e *schedEnv) edit(t *testing.T, cid string, id string, sp *protocol.Schedu
 	return r
 }
 
-func (e *schedEnv) editDeny(t *testing.T, cid string, id string, sp *protocol.ScheduleSpec, prompt string) (protocol.ScheduleResponse, protocol.Capability) {
+func (e *schedEnv) editDeny(t *testing.T, cid objproto.ConnectionID, id string, sp *protocol.ScheduleSpec, prompt string) (protocol.ScheduleResponse, protocol.Capability) {
 	return e.h.scheduleEdit(cid, schedHexID(t, id), sp, prompt)
 }
 
@@ -356,7 +356,7 @@ func TestScheduleOutOfReachIsNoSuch(t *testing.T) {
 	}
 }
 
-func (e *schedEnv) connIDOf(c *fakeConn) string { return c.ConnectionID().String() }
+func (e *schedEnv) connIDOf(c *fakeConn) objproto.ConnectionID { return c.ConnectionID() }
 
 func TestScheduleSelfRefused(t *testing.T) {
 	e := newSchedEnv(t)
@@ -473,7 +473,7 @@ func TestBindRunningForegroundRefused(t *testing.T) {
 	e := newSchedEnv(t)
 	e.addCandidate("claude")
 	task := e.running(t, protocol.RunMode_Foreground, "")
-	if r := e.create(t, "", bindSpec(t, createSpec(), task), "go"); r.Status != protocol.ScheduleStatus_TaskRunningForeground {
+	if r := e.create(t, objproto.ConnectionID{}, bindSpec(t, createSpec(), task), "go"); r.Status != protocol.ScheduleStatus_TaskRunningForeground {
 		t.Fatalf("create: %v %s", r.Status, r.Message)
 	}
 	if len(e.store.List()) != 0 {
@@ -481,7 +481,7 @@ func TestBindRunningForegroundRefused(t *testing.T) {
 	}
 	// The same on an edit's rebind.
 	sc := e.seed(t, 1, protocol.ScheduleTaskState_Unbound, "", "")
-	if r := e.edit(t, "", sc.ID, bindSpec(t, &protocol.ScheduleSpec{}, task), ""); r.Status != protocol.ScheduleStatus_TaskRunningForeground {
+	if r := e.edit(t, objproto.ConnectionID{}, sc.ID, bindSpec(t, &protocol.ScheduleSpec{}, task), ""); r.Status != protocol.ScheduleStatus_TaskRunningForeground {
 		t.Fatalf("edit: %v", r.Status)
 	}
 	if got := e.stored(t, sc.ID); got.State != protocol.ScheduleTaskState_Unbound {
@@ -496,7 +496,7 @@ func TestBindSetsBackground(t *testing.T) {
 	e := newSchedEnv(t)
 	e.addCandidate("claude")
 	task := e.terminal(t, protocol.RunMode_Foreground, "")
-	r := e.create(t, "", bindSpec(t, createSpec(), task), "go")
+	r := e.create(t, objproto.ConnectionID{}, bindSpec(t, createSpec(), task), "go")
 	if r.Status != protocol.ScheduleStatus_Ok {
 		t.Fatalf("create: %v %s", r.Status, r.Message)
 	}
@@ -508,7 +508,7 @@ func TestBindSetsBackground(t *testing.T) {
 		t.Fatalf("task mode %v, want background", tk.RunMode)
 	}
 	// A task already bound to a schedule cannot be bound to a second.
-	if r := e.create(t, "", bindSpec(t, createSpec(), task), "again"); r.Status == protocol.ScheduleStatus_Ok {
+	if r := e.create(t, objproto.ConnectionID{}, bindSpec(t, createSpec(), task), "again"); r.Status == protocol.ScheduleStatus_Ok {
 		t.Fatal("a task was bound to two schedules")
 	}
 	if len(e.store.List()) != 1 {
@@ -518,7 +518,7 @@ func TestBindSetsBackground(t *testing.T) {
 	sp := bindSpec(t, createSpec(), e.terminal(t, protocol.RunMode_Background, ""))
 	sp.SetRepoPresent(true)
 	sp.SetRepoPath([]byte("/r"))
-	if r := e.create(t, "", sp, "go"); r.Status == protocol.ScheduleStatus_Ok || len(e.store.List()) != 1 {
+	if r := e.create(t, objproto.ConnectionID{}, sp, "go"); r.Status == protocol.ScheduleStatus_Ok || len(e.store.List()) != 1 {
 		t.Fatalf("--repo with --task: %v", r.Status)
 	}
 }
@@ -527,7 +527,7 @@ func TestEditRebindsUnboundSchedule(t *testing.T) {
 	e := newSchedEnv(t)
 	task := e.terminal(t, protocol.RunMode_Background, "")
 	sc := e.seed(t, 1, protocol.ScheduleTaskState_Unbound, "", "")
-	if r := e.edit(t, "", sc.ID, bindSpec(t, &protocol.ScheduleSpec{}, task), ""); r.Status != protocol.ScheduleStatus_Ok {
+	if r := e.edit(t, objproto.ConnectionID{}, sc.ID, bindSpec(t, &protocol.ScheduleSpec{}, task), ""); r.Status != protocol.ScheduleStatus_Ok {
 		t.Fatalf("edit: %v %s", r.Status, r.Message)
 	}
 	if got := e.stored(t, sc.ID); got.State != protocol.ScheduleTaskState_Bound || got.TaskID != task || got.Repo != "/r" {
@@ -598,7 +598,7 @@ func TestForegroundResumeOfBoundTaskNeedsBitAndUnbinds(t *testing.T) {
 	}
 
 	// The operator holds every bit: the resume goes through and unbinds.
-	r, _ := e.h.handleOpenInteractive("", nil, foregroundResume(task), protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All, "")
+	r, _ := e.h.handleOpenInteractive(objproto.ConnectionID{}, nil, foregroundResume(task), protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All, "")
 	if r.Status != protocol.OpenInteractiveStatus_Ok {
 		t.Fatalf("operator resume: %v", r.Status)
 	}
@@ -631,7 +631,7 @@ func TestForegroundResumeOfUnboundTaskNeedsNoBit(t *testing.T) {
 	e := newSchedEnv(t)
 	openRunner(t, e.h)
 	task := e.terminal(t, protocol.RunMode_Background, "")
-	r, _ := e.h.handleOpenInteractive("", nil, foregroundResume(task), protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All, "")
+	r, _ := e.h.handleOpenInteractive(objproto.ConnectionID{}, nil, foregroundResume(task), protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All, "")
 	if r.Status != protocol.OpenInteractiveStatus_Ok {
 		t.Fatalf("status %v", r.Status)
 	}
@@ -672,7 +672,7 @@ func TestCreateSharesBackgroundChecks(t *testing.T) {
 		if c.mod != nil {
 			c.mod(sp)
 		}
-		if r := e.create(t, "", sp, c.task); r.Status != c.want {
+		if r := e.create(t, objproto.ConnectionID{}, sp, c.task); r.Status != c.want {
 			t.Errorf("%s: status %v (%s), want %v", c.name, r.Status, r.Message, c.want)
 		}
 	}
@@ -681,7 +681,7 @@ func TestCreateSharesBackgroundChecks(t *testing.T) {
 	}
 	// With a candidate that offers the profile, the same spec is accepted.
 	e.addCandidateOnce()
-	if r := e.create(t, "", createSpec(), "go"); r.Status != protocol.ScheduleStatus_Ok {
+	if r := e.create(t, objproto.ConnectionID{}, createSpec(), "go"); r.Status != protocol.ScheduleStatus_Ok {
 		t.Fatalf("baseline: %v %s", r.Status, r.Message)
 	}
 }
@@ -722,7 +722,7 @@ func TestEditCronDuringRun(t *testing.T) {
 	sp := &protocol.ScheduleSpec{}
 	sp.SetCronPresent(true)
 	sp.SetCron([]byte("*/5 * * * *"))
-	if r := e.edit(t, "", sc.ID, sp, ""); r.Status != protocol.ScheduleStatus_Ok {
+	if r := e.edit(t, objproto.ConnectionID{}, sc.ID, sp, ""); r.Status != protocol.ScheduleStatus_Ok {
 		t.Fatalf("edit: %v %s", r.Status, r.Message)
 	}
 	got := e.stored(t, sc.ID)
@@ -740,7 +740,7 @@ func TestEditCronDuringRun(t *testing.T) {
 	sp2 := &protocol.ScheduleSpec{}
 	sp2.SetAgentPresent(true)
 	sp2.SetAgentProfile([]byte("claude"))
-	if r := e.edit(t, "", sc.ID, sp2, ""); r.Status != protocol.ScheduleStatus_Ok {
+	if r := e.edit(t, objproto.ConnectionID{}, sc.ID, sp2, ""); r.Status != protocol.ScheduleStatus_Ok {
 		t.Fatal(r.Status)
 	}
 	if !e.stored(t, sc.ID).NextAt.Equal(got.NextAt) {
@@ -750,7 +750,7 @@ func TestEditCronDuringRun(t *testing.T) {
 	sp3 := &protocol.ScheduleSpec{}
 	sp3.SetTzPresent(true)
 	sp3.SetTz([]byte("Asia/Tokyo"))
-	if r := e.edit(t, "", sc.ID, sp3, ""); r.Status != protocol.ScheduleStatus_Ok {
+	if r := e.edit(t, objproto.ConnectionID{}, sc.ID, sp3, ""); r.Status != protocol.ScheduleStatus_Ok {
 		t.Fatal(r.Status)
 	}
 	if e.stored(t, sc.ID).TZ != "Asia/Tokyo" {
@@ -773,7 +773,7 @@ func TestEditMergesOnlyWhatItNames(t *testing.T) {
 	sp.SetSizePresent(true)
 	sp.SetInitialRows(30)
 	sp.SetInitialCols(100)
-	if r := e.edit(t, "", sc.ID, sp, "fresh prompt"); r.Status != protocol.ScheduleStatus_Ok {
+	if r := e.edit(t, objproto.ConnectionID{}, sc.ID, sp, "fresh prompt"); r.Status != protocol.ScheduleStatus_Ok {
 		t.Fatalf("%v %s", r.Status, r.Message)
 	}
 	got := e.stored(t, sc.ID)
@@ -787,13 +787,13 @@ func TestEditMergesOnlyWhatItNames(t *testing.T) {
 	bad := &protocol.ScheduleSpec{}
 	bad.SetCronPresent(true)
 	bad.SetCron([]byte("nope"))
-	if r := e.edit(t, "", sc.ID, bad, ""); r.Status != protocol.ScheduleStatus_InvalidCron {
+	if r := e.edit(t, objproto.ConnectionID{}, sc.ID, bad, ""); r.Status != protocol.ScheduleStatus_InvalidCron {
 		t.Errorf("bad cron: %v", r.Status)
 	}
 	bad = &protocol.ScheduleSpec{}
 	bad.SetAgentPresent(true)
 	bad.SetAgentProfile([]byte("codex"))
-	if r := e.edit(t, "", sc.ID, bad, ""); r.Status != protocol.ScheduleStatus_ProfileUnavailable {
+	if r := e.edit(t, objproto.ConnectionID{}, sc.ID, bad, ""); r.Status != protocol.ScheduleStatus_ProfileUnavailable {
 		t.Errorf("profile: %v", r.Status)
 	}
 	if again := e.stored(t, sc.ID); again.Agent != "claude" || again.Cron != sc.Cron {
@@ -836,7 +836,7 @@ func TestEditAndDeleteTakeTheFiringMutex(t *testing.T) {
 	go func() {
 		sp := &protocol.ScheduleSpec{}
 		sp.SetPromptPresent(true)
-		e.edit(t, "", sc.ID, sp, "x")
+		e.edit(t, objproto.ConnectionID{}, sc.ID, sp, "x")
 		e.call(t, schedOpConn(), protocol.TaskControlKind_ScheduleDelete, sc.ID)
 		close(done)
 	}()
@@ -1238,18 +1238,18 @@ func TestScheduleRefusalStatuses(t *testing.T) {
 	// repo_required
 	sp := createSpec()
 	sp.SetRepoPresent(false)
-	want("no repo or task", e.create(t, "", sp, "go"), protocol.ScheduleStatus_RepoRequired)
+	want("no repo or task", e.create(t, objproto.ConnectionID{}, sp, "go"), protocol.ScheduleStatus_RepoRequired)
 	// repo_conflict: --repo with --task, and --repo on a bound schedule's edit.
 	task := e.terminal(t, protocol.RunMode_Background, "")
 	sp = bindSpec(t, createSpec(), task)
 	sp.SetRepoPresent(true)
 	sp.SetRepoPath([]byte("/r"))
-	want("repo with task", e.create(t, "", sp, "go"), protocol.ScheduleStatus_RepoConflict)
+	want("repo with task", e.create(t, objproto.ConnectionID{}, sp, "go"), protocol.ScheduleStatus_RepoConflict)
 	bsc := e.seed(t, 1, protocol.ScheduleTaskState_Bound, task, "")
 	esp := &protocol.ScheduleSpec{}
 	esp.SetRepoPresent(true)
 	esp.SetRepoPath([]byte("/r"))
-	want("repo on bound edit", e.edit(t, "", bsc.ID, esp, ""), protocol.ScheduleStatus_RepoConflict)
+	want("repo on bound edit", e.edit(t, objproto.ConnectionID{}, bsc.ID, esp, ""), protocol.ScheduleStatus_RepoConflict)
 	// scope_not_permitted: a scope id outside the creator's reach.
 	conn, _ := e.agent(t, authority.Grant{Caps: protocol.Capability_ScheduleEdit | protocol.Capability_Spawn | protocol.Capability_FileRead,
 		Scope: authority.Scope{Base: protocol.ScopeBase_Subtree}, DelegateCaps: protocol.Capability_All,
@@ -1271,9 +1271,9 @@ func TestScheduleRefusalStatuses(t *testing.T) {
 	tsp := createSpec()
 	tsp.SetTurnEndPresent(true)
 	tsp.SetTurnEnd(protocol.TurnEndSignal(99))
-	want("turn end", e.create(t, "", tsp, "go"), protocol.ScheduleStatus_TurnEndUnsupported)
+	want("turn end", e.create(t, objproto.ConnectionID{}, tsp, "go"), protocol.ScheduleStatus_TurnEndUnsupported)
 	// task_already_bound
-	want("second binding", e.create(t, "", bindSpec(t, createSpec(), task), "go"), protocol.ScheduleStatus_TaskAlreadyBound)
+	want("second binding", e.create(t, objproto.ConnectionID{}, bindSpec(t, createSpec(), task), "go"), protocol.ScheduleStatus_TaskAlreadyBound)
 	// not_ready
 	e.ready.Store(false)
 	rsc := e.seed(t, 2, protocol.ScheduleTaskState_Unbound, "", "")
@@ -1292,7 +1292,7 @@ func TestBindBackgroundRefusesForegroundRun(t *testing.T) {
 	// Create writes the mode before the schedule: a refusal stores nothing.
 	e.addCandidate("claude")
 	e.h.Tasks.SetDetached(fg) // still foreground and active
-	if r := e.create(t, "", bindSpec(t, createSpec(), fg), "go"); r.Status != protocol.ScheduleStatus_TaskRunningForeground || len(e.store.List()) != 0 {
+	if r := e.create(t, objproto.ConnectionID{}, bindSpec(t, createSpec(), fg), "go"); r.Status != protocol.ScheduleStatus_TaskRunningForeground || len(e.store.List()) != 0 {
 		t.Fatalf("%v, %d schedules", r.Status, len(e.store.List()))
 	}
 }
@@ -1327,7 +1327,7 @@ func TestNilVariantsAreAnswered(t *testing.T) {
 	for _, k := range []protocol.TaskControlKind{protocol.TaskControlKind_ScheduleDelete, protocol.TaskControlKind_ScheduleRun, protocol.TaskControlKind_ScheduleShow} {
 		conn := schedOpConn()
 		req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: k, RequestId: 9}}
-		e.h.handleSchedule("", conn, req)
+		e.h.handleSchedule(objproto.ConnectionID{}, conn, req)
 		if len(conn.Sent()) != 1 {
 			t.Fatalf("%v: %d responses", k, len(conn.Sent()))
 		}
@@ -1370,7 +1370,7 @@ func TestBindingChangesPublishATaskEvent(t *testing.T) {
 	// bind of a task already in background: no mode write, still an event.
 	a := mk()
 	before := len(getEvents())
-	r, _ := h.scheduleCreate("", bindSpec(t, createSpec(), a), "go")
+	r, _ := h.scheduleCreate(objproto.ConnectionID{}, bindSpec(t, createSpec(), a), "go")
 	if r.Status != protocol.ScheduleStatus_Ok {
 		t.Fatalf("%v %s", r.Status, r.Message)
 	}
@@ -1388,11 +1388,11 @@ func TestBindingChangesPublishATaskEvent(t *testing.T) {
 	}
 	// delete.
 	b := mk()
-	r, _ = h.scheduleCreate("", bindSpec(t, createSpec(), b), "go")
+	r, _ = h.scheduleCreate(objproto.ConnectionID{}, bindSpec(t, createSpec(), b), "go")
 	if r.Status != protocol.ScheduleStatus_Ok || !last(b).SchedulePresent() {
 		t.Fatalf("bind b: %v", r.Status)
 	}
-	if d := h.scheduleDelete("", r.Id); d.Status != protocol.ScheduleStatus_Ok {
+	if d := h.scheduleDelete(objproto.ConnectionID{}, r.Id); d.Status != protocol.ScheduleStatus_Ok {
 		t.Fatal(d.Status)
 	}
 	if ev := last(b); ev.SchedulePresent() {
@@ -1433,7 +1433,7 @@ func TestEditOverlaysOnlyNamedConditions(t *testing.T) {
 	edit := func(f func(*protocol.ScheduleSpec)) protocol.ScheduleResponse {
 		sp := &protocol.ScheduleSpec{}
 		f(sp)
-		return e.edit(t, "", sc.ID, sp, "")
+		return e.edit(t, objproto.ConnectionID{}, sc.ID, sp, "")
 	}
 	want := func(name string, c RunConditions) {
 		t.Helper()
@@ -1508,7 +1508,7 @@ func TestTwoEditsOfDifferentConditionsBothSurvive(t *testing.T) {
 	b.SetTurnEndPresent(true)
 	b.SetTurnEnd(protocol.TurnEndSignal_Lifecycle)
 	for _, sp := range []*protocol.ScheduleSpec{a, b} {
-		if r := e.edit(t, "", sc.ID, sp, ""); r.Status != protocol.ScheduleStatus_Ok {
+		if r := e.edit(t, objproto.ConnectionID{}, sc.ID, sp, ""); r.Status != protocol.ScheduleStatus_Ok {
 			t.Fatalf("%v %s", r.Status, r.Message)
 		}
 	}
@@ -1532,7 +1532,7 @@ func TestEditWithUnloadableStoredZoneAnswersInvalidZone(t *testing.T) {
 	sp := &protocol.ScheduleSpec{}
 	sp.SetCronPresent(true)
 	sp.SetCron([]byte("0 10 * * *"))
-	r := e.edit(t, "", sc.ID, sp, "")
+	r := e.edit(t, objproto.ConnectionID{}, sc.ID, sp, "")
 	if r.Status != protocol.ScheduleStatus_InvalidZone || !strings.Contains(string(r.Message), "Gone/Zone") {
 		t.Fatalf("%v %q, want invalid_zone naming Gone/Zone", r.Status, r.Message)
 	}

@@ -55,7 +55,7 @@ func TestOneshotOpenRelaysBit(t *testing.T) {
 	rc := oneshotRunner(h, "A", true)
 	oi := withOneshot(detachedOpen(40, 120))
 	oi.SetAgentProfile([]byte("claude"))
-	resp, _ := h.handleOpenInteractive("", nil, oi, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All, "answer this")
+	resp, _ := h.handleOpenInteractive(objproto.ConnectionID{}, nil, oi, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All, "answer this")
 	if resp.Status != protocol.OpenInteractiveStatus_Ok {
 		t.Fatalf("status %v %q", resp.Status, resp.ErrorMsg)
 	}
@@ -72,7 +72,7 @@ func TestOneshotOpenNeedsPrompt(t *testing.T) {
 	oneshotRunner(h, "A", true)
 	fg := withOneshot(detachedOpen(40, 120))
 	fg.SetAgentProfile([]byte("claude"))
-	if resp, _ := h.handleOpenInteractive("", nil, fg, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All, ""); resp.Status != protocol.OpenInteractiveStatus_PromptRequired {
+	if resp, _ := h.handleOpenInteractive(objproto.ConnectionID{}, nil, fg, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All, ""); resp.Status != protocol.OpenInteractiveStatus_PromptRequired {
 		t.Fatalf("foreground without a prompt: %v", resp.Status)
 	}
 	// A background open already needs one; the rule holds there too.
@@ -88,7 +88,7 @@ func TestOneshotOpenSkipsRunnersWithoutHelloBit(t *testing.T) {
 	old := oneshotRunner(h, "OL", false)
 	fg := withOneshot(detachedOpen(40, 120))
 	fg.SetAgentProfile([]byte("claude"))
-	resp, _ := h.handleOpenInteractive("", nil, fg, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All, "p")
+	resp, _ := h.handleOpenInteractive(objproto.ConnectionID{}, nil, fg, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All, "p")
 	if resp.Status != protocol.OpenInteractiveStatus_ProfileUnavailable {
 		t.Fatalf("foreground on an old runner only: %v, want profile_unavailable", resp.Status)
 	}
@@ -162,7 +162,7 @@ func TestOneshotWithStreamRefused(t *testing.T) {
 	fg := withOneshot(detachedOpen(40, 120))
 	fg.SetAgentProfile([]byte("claude"))
 	fg.SetEventStream(true)
-	if resp, _ := h.handleOpenInteractive("", nil, fg, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All, "p"); resp.Status != protocol.OpenInteractiveStatus_OneshotStream {
+	if resp, _ := h.handleOpenInteractive(objproto.ConnectionID{}, nil, fg, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All, "p"); resp.Status != protocol.OpenInteractiveStatus_OneshotStream {
 		t.Fatalf("foreground: %v", resp.Status)
 	}
 	bg := withOneshot(bgOpen("claude"))

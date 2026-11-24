@@ -94,8 +94,8 @@ func TestConnList_JoinAndRoles(t *testing.T) {
 
 	// (i) CLI conn — record ClientHello kind=Cli
 	cliCID := addActiveConn(s, "ws:127.0.0.1:9100-1", now)
-	s.taskHandler.clientKinds = map[string]protocol.ClientKind{
-		cliCID.String(): protocol.ClientKind_Cli,
+	s.taskHandler.clientKinds = map[objproto.ConnectionID]protocol.ClientKind{
+		cliCID: protocol.ClientKind_Cli,
 	}
 
 	// (ii) Agent conn — record ClientHello kind=Agent with a principal task
@@ -105,11 +105,11 @@ func TestConnList_JoinAndRoles(t *testing.T) {
 	agentTaskID := hex.EncodeToString(principalID.Id[:])
 	s.tasks.Create("/repo", "agent-task", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}}, "")
 	// Override the auto-generated ID with our known principal:
-	s.taskHandler.clientKinds[agentCID.String()] = protocol.ClientKind_Agent
+	s.taskHandler.clientKinds[agentCID] = protocol.ClientKind_Agent
 	if s.taskHandler.principals == nil {
-		s.taskHandler.principals = make(map[string]protocol.TaskID)
+		s.taskHandler.principals = make(map[objproto.ConnectionID]protocol.TaskID)
 	}
-	s.taskHandler.principals[agentCID.String()] = principalID
+	s.taskHandler.principals[agentCID] = principalID
 	_ = agentTaskID
 
 	// (iii) Runner conn — register in the runner registry
@@ -232,9 +232,9 @@ func TestConnList_SubtreeGating(t *testing.T) {
 	// CLI conn (no principal, not an agent)
 	cliCID := addActiveConn(s, "ws:127.0.0.1:9200-5", now)
 	if s.taskHandler.clientKinds == nil {
-		s.taskHandler.clientKinds = make(map[string]protocol.ClientKind)
+		s.taskHandler.clientKinds = make(map[objproto.ConnectionID]protocol.ClientKind)
 	}
-	s.taskHandler.clientKinds[cliCID.String()] = protocol.ClientKind_Cli
+	s.taskHandler.clientKinds[cliCID] = protocol.ClientKind_Cli
 
 	// Unidentified conn
 	_ = addActiveConn(s, "ws:127.0.0.1:9200-6", now)
@@ -289,9 +289,9 @@ func TestHandleListConns_StreamPattern(t *testing.T) {
 	// Add one identified CLI conn.
 	cliCID := addActiveConn(s, "ws:127.0.0.1:9300-1", now)
 	if s.taskHandler.clientKinds == nil {
-		s.taskHandler.clientKinds = make(map[string]protocol.ClientKind)
+		s.taskHandler.clientKinds = make(map[objproto.ConnectionID]protocol.ClientKind)
 	}
-	s.taskHandler.clientKinds[cliCID.String()] = protocol.ClientKind_Cli
+	s.taskHandler.clientKinds[cliCID] = protocol.ClientKind_Cli
 
 	// Wire ConnListFn (normally done by Server.New; makeTestServer does it too).
 
@@ -362,14 +362,15 @@ func copyHexToID(t *testing.T, hexStr string, out *protocol.TaskID) {
 }
 
 func recordAgent(s *Server, cidStr string, principal protocol.TaskID) {
+	cid := objproto.MustParseConnectionID(cidStr)
 	if s.taskHandler.clientKinds == nil {
-		s.taskHandler.clientKinds = make(map[string]protocol.ClientKind)
+		s.taskHandler.clientKinds = make(map[objproto.ConnectionID]protocol.ClientKind)
 	}
-	s.taskHandler.clientKinds[cidStr] = protocol.ClientKind_Agent
+	s.taskHandler.clientKinds[cid] = protocol.ClientKind_Agent
 	if s.taskHandler.principals == nil {
-		s.taskHandler.principals = make(map[string]protocol.TaskID)
+		s.taskHandler.principals = make(map[objproto.ConnectionID]protocol.TaskID)
 	}
-	s.taskHandler.principals[cidStr] = principal
+	s.taskHandler.principals[cid] = principal
 }
 
 // A runner conn names WHICH RUNNER PROCESS it belongs to, and that value is the
@@ -402,8 +403,8 @@ func TestConnList_RunnerConnCarriesItsIdentityAndJoinsToAssignedTasks(t *testing
 	// A non-runner conn, to pin that the field is absent rather than defaulted
 	// to whatever runner happens to be registered.
 	cliCID := addActiveConn(s, "ws:127.0.0.1:9200-2", now)
-	s.taskHandler.clientKinds = map[string]protocol.ClientKind{
-		cliCID.String(): protocol.ClientKind_Cli,
+	s.taskHandler.clientKinds = map[objproto.ConnectionID]protocol.ClientKind{
+		cliCID: protocol.ClientKind_Cli,
 	}
 
 	taskID := s.tasks.Create("/repo", "work", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,

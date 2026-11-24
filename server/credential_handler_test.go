@@ -32,13 +32,13 @@ func credAgent(t *testing.T, h *TaskHandler, g authority.Grant) (*fakeConn, stri
 	id := h.Tasks.Create("/r", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Cli, protocol.TaskID{}, "",
 		protocol.RunnerSelector{}, nil, g, "claude")
 	conn := credTestConn()
-	cid := conn.ConnectionID().String()
+	cid := conn.ConnectionID()
 	h.clientKindsMu.Lock()
 	if h.principals == nil {
-		h.principals = map[string]protocol.TaskID{}
+		h.principals = map[objproto.ConnectionID]protocol.TaskID{}
 	}
 	if h.clientKinds == nil {
-		h.clientKinds = map[string]protocol.ClientKind{}
+		h.clientKinds = map[objproto.ConnectionID]protocol.ClientKind{}
 	}
 	h.principals[cid] = taskIDFromHex(id)
 	h.clientKinds[cid] = protocol.ClientKind_Agent
@@ -375,7 +375,7 @@ func TestCredentialRekeyGatedAsIssue(t *testing.T) {
 	if len(dropped) != 1 || dropped[0] != cred {
 		t.Fatalf("connections dropped for %v, want the credential's", dropped)
 	}
-	if caps := h.callerCaps(oldConn.ConnectionID().String()); caps != protocol.Capability_None {
+	if caps := h.callerCaps(oldConn.ConnectionID()); caps != protocol.Capability_None {
 		t.Fatalf("the old key's connection still holds %v", caps)
 	}
 
@@ -420,7 +420,7 @@ func TestCredentialRekeyByNonAncestorRefused(t *testing.T) {
 	g, gID := credAgent(t, h, authority.Grant{Caps: protocol.Capability_CredentialIssue | bits,
 		Scope:        authority.Scope{Base: protocol.ScopeBase_Subtree, IDs: []string{cred}},
 		DelegateCaps: protocol.Capability_All, DelegateScope: authority.Scope{Base: protocol.ScopeBase_Global}})
-	gCID := g.ConnectionID().String()
+	gCID := g.ConnectionID()
 	if !h.inScope(gCID, protocol.Capability_CredentialIssue, cred) {
 		t.Fatal("setup: the caller does not reach the credential through its scope")
 	}
@@ -438,11 +438,11 @@ func TestCredentialRekeyByNonAncestorRefused(t *testing.T) {
 	}
 	// The key the caller would hold proves nothing, so D stays out of its reach.
 	stray := credTestConn()
-	if st := h.RecordCredentialIdentity(stray.ConnectionID().String(), stray, taskIDFromHex(cred), newPub); st == protocol.ClientHelloStatus_Ok {
+	if st := h.RecordCredentialIdentity(stray.ConnectionID(), stray, taskIDFromHex(cred), newPub); st == protocol.ClientHelloStatus_Ok {
 		t.Fatal("the caller's key authenticates as the credential")
 	}
 	for _, bit := range []protocol.Capability{protocol.Capability_Cancel, protocol.Capability_FileRead} {
-		if h.inScope(stray.ConnectionID().String(), bit, child) {
+		if h.inScope(stray.ConnectionID(), bit, child) {
 			t.Fatalf("C's child is in reach for %v through the caller's key", bit)
 		}
 	}
@@ -535,7 +535,7 @@ func TestResumePathsRefuseCredential(t *testing.T) {
 	for _, id := range []string{live, revoked} {
 		fg := foregroundResume(id)
 		fg.SetDetached(false)
-		resp, _ := h.handleOpenInteractive("", nil, fg, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All, "")
+		resp, _ := h.handleOpenInteractive(objproto.ConnectionID{}, nil, fg, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All, "")
 		wantRefusal("foreground open", id, resp)
 		wantRefusal("detached foreground open", id, openBG(h, foregroundResume(id), ""))
 		wantRefusal("background open", id, openBG(h, resumeReq(id, bgOpen("claude")), "go"))
@@ -565,21 +565,21 @@ func TestScheduleBindRefusesCredential(t *testing.T) {
 		t.Fatal(err)
 	}
 	op := schedOpConn()
-	r := e.create(t, op.ConnectionID().String(), bindSpec(t, createSpec(), cred), "p")
+	r := e.create(t, op.ConnectionID(), bindSpec(t, createSpec(), cred), "p")
 	if r.Status != protocol.ScheduleStatus_KindUnsupported || !strings.Contains(string(r.Message), "credential") {
 		t.Fatalf("bind of a credential at create: %v %q, want kind_unsupported naming the kind", r.Status, r.Message)
 	}
 	if len(e.store.List()) != 0 {
 		t.Fatal("a refused bind stored a schedule")
 	}
-	created := e.create(t, op.ConnectionID().String(), createSpec(), "p")
+	created := e.create(t, op.ConnectionID(), createSpec(), "p")
 	if created.Status != protocol.ScheduleStatus_Ok {
 		t.Fatalf("plain create: %v %s", created.Status, created.Message)
 	}
 	sp := &protocol.ScheduleSpec{}
 	sp.SetTaskPresent(true)
 	sp.SetTaskId(taskIDFromHex(cred))
-	r = e.edit(t, op.ConnectionID().String(), schedIDHex(created.Id), sp, "")
+	r = e.edit(t, op.ConnectionID(), schedIDHex(created.Id), sp, "")
 	if r.Status != protocol.ScheduleStatus_KindUnsupported || !strings.Contains(string(r.Message), "credential") {
 		t.Fatalf("bind of a credential at edit: %v %q, want kind_unsupported naming the kind", r.Status, r.Message)
 	}
@@ -631,7 +631,7 @@ func TestSpawnFromCredentialCarriesNoMaskedBit(t *testing.T) {
 	cred := mustCreateCredential(t, h.Tasks, protocol.TaskID{}, protocol.Capability_All, pub, time.Now().Add(time.Hour))
 	h.Tasks.SetCaps(cred, GrantUpdate{DelegateCaps: true, To: authority.Grant{DelegateCaps: protocol.Capability_All}}, AuthorityWrite{})
 	conn := recordCredentialConn(t, h, taskIDFromHex(cred), pub, 9510)
-	cid := conn.ConnectionID().String()
+	cid := conn.ConnectionID()
 	child := h.granter(cid, h.callerCaps(cid)).ChildCaps(protocol.Capability_All)
 	if child&CredentialMaskedCaps != 0 || child&protocol.Capability_Spawn == 0 {
 		t.Fatalf("a credential's child would hold %v", child)
@@ -649,7 +649,7 @@ func TestControlSeatOfReplacedCredentialKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	conn := recordCredentialConn(t, h, taskIDFromHex(cred), oldPub, 9520)
-	cid := conn.ConnectionID().String()
+	cid := conn.ConnectionID()
 	if !h.controlSeatAllowed(cid, "") {
 		t.Fatal("a live credential with a subtree scope has no seat for a new child")
 	}

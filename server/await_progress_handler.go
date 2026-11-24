@@ -11,6 +11,7 @@ import (
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // handleAwaitProgress arms a one-shot watcher on a task's next progress write.
@@ -39,7 +40,7 @@ func (h *TaskHandler) handleAwaitProgress(conn ConnHandle, req *protocol.TaskCon
 		respond(protocol.AwaitProgressStatus_BadRequest, 0, "", 0)
 		return
 	}
-	connID := conn.ConnectionID().String()
+	connID := conn.ConnectionID()
 	taskIDHex := hex.EncodeToString(ap.TaskId.Id[:])
 	if _, ok := h.Tasks.Get(taskIDHex); !ok || !h.inScope(connID, protocol.Capability_None, taskIDHex) {
 		respond(protocol.AwaitProgressStatus_NotFound, 0, "", 0)
@@ -145,7 +146,7 @@ func (h *TaskHandler) fireProgressWatchers(taskHex string, status protocol.Await
 // fireProgressNotify delivers through the notify path, both legs, as
 // fireIdleNotify does. Origin=external: the server wrote this text around the
 // task's line, the task did not send it.
-func (h *TaskHandler) fireProgressNotify(taskIDHex, requesterConnID string, status protocol.AwaitProgressStatus, text string) {
+func (h *TaskHandler) fireProgressNotify(taskIDHex string, requesterConnID objproto.ConnectionID, status protocol.AwaitProgressStatus, text string) {
 	short := taskIDHex
 	if len(short) > 8 {
 		short = short[:8]
@@ -166,7 +167,7 @@ func (h *TaskHandler) fireProgressNotify(taskIDHex, requesterConnID string, stat
 		Origin: protocol.NotifyOrigin_External.String(),
 		Title:  "await-progress",
 		Text:   body,
-		ConnID: requesterConnID,
+		ConnID: requesterConnID.String(),
 		Ts:     ts,
 		TaskID: taskIDHex,
 	})

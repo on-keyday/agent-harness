@@ -11,6 +11,7 @@ import (
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // storeDirs remembers each test board's store directory, for tests that
@@ -54,7 +55,7 @@ func retainHandler(t *testing.T, caps *protocol.Capability) (*TaskHandler, *fake
 		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: *caps, Scope: authority.Scope{}},
 		"bash")
 	tid := hexToTaskID(t, idHex)
-	h.principals = map[string]protocol.TaskID{conn.ConnectionID().String(): tid}
+	h.principals = map[objproto.ConnectionID]protocol.TaskID{conn.ConnectionID(): tid}
 	return h, conn, tid
 }
 

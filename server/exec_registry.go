@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/objtrsf/trsf"
 )
 
@@ -31,7 +32,7 @@ type execRun struct {
 	argv       []string
 	startedAt  time.Time
 	control    trsf.SendStream
-	clientCID  string
+	clientCID  objproto.ConnectionID
 	clientKind protocol.ClientKind
 	// pty: the exec runs under a terminal (ExecRunRequest.pty). Fixed at open;
 	// the listing reports it so a row whose stderr stays 0 says why.
@@ -78,7 +79,7 @@ type execRegistry struct {
 	// DropExecRunsForConn — and a registration then would leave the child
 	// running with nothing left to stop it. Kept only as long as an open can
 	// be in flight; see goneTTL.
-	gone map[string]time.Time
+	gone map[objproto.ConnectionID]time.Time
 }
 
 // goneTTL is how long a dropped connection is remembered. An open in flight
@@ -87,12 +88,12 @@ type execRegistry struct {
 const goneTTL = time.Minute
 
 func newExecRegistry() *execRegistry {
-	return &execRegistry{m: map[uint64]*execRun{}, gone: map[string]time.Time{}}
+	return &execRegistry{m: map[uint64]*execRun{}, gone: map[objproto.ConnectionID]time.Time{}}
 }
 
 // markConnGone records that connID's execs have been dropped, so a later add
 // for it is refused. It also forgets entries older than goneTTL.
-func (r *execRegistry) markConnGone(connID string) {
+func (r *execRegistry) markConnGone(connID objproto.ConnectionID) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	now := time.Now()
@@ -122,7 +123,7 @@ func (h *TaskHandler) execs() *execRegistry {
 func (r *execRegistry) add(e *execRun) uint64 {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if _, gone := r.gone[e.clientCID]; gone && e.clientCID != "" {
+	if _, gone := r.gone[e.clientCID]; gone && e.clientCID != (objproto.ConnectionID{}) {
 		return 0
 	}
 	r.next++

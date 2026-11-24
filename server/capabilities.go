@@ -7,6 +7,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // requiredCentral is the bit the central gate checked for kind, for a handler
@@ -47,7 +48,7 @@ func resumeRequestBits(exact bool) []protocol.Capability {
 // resume bit is a grant the operator writes separately, and each grant's scope
 // is what the operator wrote for it. The cost: narrowing a task that holds both
 // bits takes narrowing both scopes, since either admits a target.
-func (h *TaskHandler) resumeTargetAllowed(cid string, exact bool, targetHex string) bool {
+func (h *TaskHandler) resumeTargetAllowed(cid objproto.ConnectionID, exact bool, targetHex string) bool {
 	held := h.callerCaps(cid)
 	for _, resumeBit := range resumeRequestBits(exact) {
 		if hasCap(held, resumeBit) && h.inScope(cid, resumeBit, targetHex) {
@@ -61,7 +62,7 @@ func (h *TaskHandler) resumeTargetAllowed(cid string, exact bool, targetHex stri
 // the session's control seat, so the task must be inside its exec_control
 // scope, as for an attach --control. resumeHex is "" for a fresh open, whose
 // task does not exist yet. The bit half is checked in the dispatch case.
-func (h *TaskHandler) controlSeatAllowed(cid, resumeHex string) bool {
+func (h *TaskHandler) controlSeatAllowed(cid objproto.ConnectionID, resumeHex string) bool {
 	pid := h.lookupPrincipal(cid)
 	if pid.Id == ([16]byte{}) {
 		return true // operator: global
@@ -80,7 +81,7 @@ func (h *TaskHandler) controlSeatAllowed(cid, resumeHex string) bool {
 // It used to read the bit alone, so the attach's scope bounded it and
 // `--scope-for exec_resize=…` was accepted and changed nothing; "may drive A
 // and B, may resize only A" was not grantable.
-func (h *TaskHandler) resizeAllowed(cid, targetHex string) bool {
+func (h *TaskHandler) resizeAllowed(cid objproto.ConnectionID, targetHex string) bool {
 	return hasCap(h.callerCaps(cid), authority.ResizeCap) &&
 		h.inScope(cid, authority.ResizeCap, targetHex)
 }
@@ -101,7 +102,7 @@ func hasCap(have, want protocol.Capability) bool {
 // capability set. Operator connections (no principal task → zero TaskID) are
 // the trusted root and receive the full set. A principal that holds nothing
 // (principalRecord) receives none.
-func (h *TaskHandler) callerCaps(connID string) protocol.Capability {
+func (h *TaskHandler) callerCaps(connID objproto.ConnectionID) protocol.Capability {
 	pid := h.lookupPrincipal(connID)
 	if pid.Id == ([16]byte{}) {
 		return protocol.Capability_All
@@ -127,7 +128,7 @@ func (h *TaskHandler) callerCaps(connID string) protocol.Capability {
 // keep its authority until something closed it. A connection that proved no
 // credential key (zero) never matches. Other kinds are not asked — their
 // authority is unchanged by this.
-func (h *TaskHandler) principalRecord(connID, idHex string) (TaskEntry, bool) {
+func (h *TaskHandler) principalRecord(connID objproto.ConnectionID, idHex string) (TaskEntry, bool) {
 	t, ok := h.Tasks.Get(idHex)
 	if !ok {
 		return TaskEntry{}, false
@@ -209,7 +210,7 @@ func walChildIndex(base map[string][]string, events []WALEvent) map[string][]str
 // two became the visibility rank and the third became board_observe. The
 // reasoning survives the split unchanged, which is why it is restated rather
 // than deleted.
-func (h *TaskHandler) scopeSet(connID string, want protocol.Capability) (all bool, allowed map[string]bool) {
+func (h *TaskHandler) scopeSet(connID objproto.ConnectionID, want protocol.Capability) (all bool, allowed map[string]bool) {
 	return h.scopeSetWith(connID, want, h.childIndex())
 }
 
@@ -222,7 +223,7 @@ func (h *TaskHandler) scopeSet(connID string, want protocol.Capability) (all boo
 // base, exclude_self, explicit ids, the subtree walk. A second scope
 // implementation reading the WAL is the drift shape this file exists to
 // prevent.
-func (h *TaskHandler) scopeSetWith(connID string, want protocol.Capability, children map[string][]string) (all bool, allowed map[string]bool) {
+func (h *TaskHandler) scopeSetWith(connID objproto.ConnectionID, want protocol.Capability, children map[string][]string) (all bool, allowed map[string]bool) {
 	pid := h.lookupPrincipal(connID)
 	if pid.Id == ([16]byte{}) {
 		// Operator: unrestricted.
@@ -272,7 +273,7 @@ func (h *TaskHandler) visibilitySet(callerHex string, scope authority.Scope) (al
 // particular task), while an OUT-OF-SCOPE TARGET is the kind's own "no such
 // task" (a missing-capability answer about something the caller cannot see is
 // an existence oracle).
-func (h *TaskHandler) inScope(connID string, want protocol.Capability, targetHex string) bool {
+func (h *TaskHandler) inScope(connID objproto.ConnectionID, want protocol.Capability, targetHex string) bool {
 	all, allowed := h.scopeSet(connID, want)
 	return all || allowed[targetHex]
 }
@@ -283,7 +284,7 @@ func (h *TaskHandler) inScope(connID string, want protocol.Capability, targetHex
 // Callers that fail it answer with the kind's own "no such task" status rather
 // than permission_denied — a missing-capability answer about something the
 // caller cannot see is an existence oracle.
-func (h *TaskHandler) authorize(connID string, want protocol.Capability, targetHex string) bool {
+func (h *TaskHandler) authorize(connID objproto.ConnectionID, want protocol.Capability, targetHex string) bool {
 	if !hasCap(h.callerCaps(connID), want) {
 		return false
 	}
@@ -295,7 +296,7 @@ func (h *TaskHandler) authorize(connID string, want protocol.Capability, targetH
 // holds. A principal that holds nothing (principalRecord: its record is gone,
 // or a credential that is not live) keeps callerCaps but reaches and
 // delegates nothing.
-func (h *TaskHandler) granter(cid string, callerCaps protocol.Capability) *authority.Granter {
+func (h *TaskHandler) granter(cid objproto.ConnectionID, callerCaps protocol.Capability) *authority.Granter {
 	pid := h.lookupPrincipal(cid)
 	if pid.Id == ([16]byte{}) {
 		return nil
@@ -325,7 +326,7 @@ func (h *TaskHandler) resumedCaps(idHex string, override bool, g *authority.Gran
 // Capability_BoardObserve. ls, the port-forward list and the conns
 // filter call it exactly as before and inherit the scope with no change of
 // their own.
-func (h *TaskHandler) visibleToCaller(connID string) (all bool, allowed map[string]bool) {
+func (h *TaskHandler) visibleToCaller(connID objproto.ConnectionID) (all bool, allowed map[string]bool) {
 	if h.lookupPrincipal(connID).Id == ([16]byte{}) {
 		return true, nil
 	}
@@ -355,7 +356,7 @@ func (h *TaskHandler) visibleToCaller(connID string) (all bool, allowed map[stri
 // everything anyway),
 // operator-created tasks (zero creator), and a creator no longer in the store.
 // The row itself is redacted by the caller — see redactParentTaskInfo.
-func (h *TaskHandler) listVisibleToCaller(connID string) (all bool, allowed map[string]bool, parentHex string) {
+func (h *TaskHandler) listVisibleToCaller(connID objproto.ConnectionID) (all bool, allowed map[string]bool, parentHex string) {
 	all, allowed = h.visibleToCaller(connID)
 	if all {
 		return true, nil, ""

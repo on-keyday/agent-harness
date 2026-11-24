@@ -441,7 +441,7 @@ func TestPSKDispatchIdentity_OperatorClientKindsSet(t *testing.T) {
 
 	// TaskHandler must have recorded the ClientKind.
 	th.clientKindsMu.Lock()
-	kind := th.clientKinds[connIDStr]
+	kind := th.clientKinds[conn.ConnectionID()]
 	th.clientKindsMu.Unlock()
 
 	if kind != protocol.ClientKind_Cli {
@@ -499,7 +499,7 @@ func TestPSKDispatchIdentity_AgentPrincipalSet(t *testing.T) {
 
 	// principals must be set.
 	th.clientKindsMu.Lock()
-	principal := th.principals[connIDStr]
+	principal := th.principals[conn.ConnectionID()]
 	th.clientKindsMu.Unlock()
 
 	if principal.Id != protoTID.Id {
@@ -621,7 +621,7 @@ func TestPSKDispatchIdentity_ClientReceivesNoTaskControlResponse(t *testing.T) {
 
 	// Identity must still be recorded.
 	th.clientKindsMu.Lock()
-	kind := th.clientKinds[connIDStr]
+	kind := th.clientKinds[conn.ConnectionID()]
 	th.clientKindsMu.Unlock()
 	if kind != protocol.ClientKind_Cli {
 		t.Errorf("clientKind: got %v, want Cli", kind)

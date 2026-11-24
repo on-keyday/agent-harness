@@ -246,7 +246,7 @@ func TestPortForwardInfoMapsEveryField(t *testing.T) {
 		direction:  protocol.PortForwardDirection_Remote,
 		taskIDHex:  "00112233445566778899aabbccddeeff",
 		runnerID:   testRunnerID("ws:127.0.0.1:8539-1"),
-		clientCID:  "ws:127.0.0.1:9-1",
+		clientCID:  objproto.MustParseConnectionID("ws:127.0.0.1:9-1"),
 		clientKind: protocol.ClientKind_Cli,
 		bindAddr:   "127.0.0.1",
 		bindPort:   8080,
@@ -347,7 +347,7 @@ func TestWhoamiResponseMapsEveryField(t *testing.T) {
 		hexToTaskID(t, child), "", protocol.RunnerSelector{}, nil, authority.Grant{}, "")
 
 	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9960-1")}
-	if st := h.RecordCredentialIdentity(conn.ConnectionID().String(), conn, hexToTaskID(t, child), pub); st != protocol.ClientHelloStatus_Ok {
+	if st := h.RecordCredentialIdentity(conn.ConnectionID(), conn, hexToTaskID(t, child), pub); st != protocol.ClientHelloStatus_Ok {
 		t.Fatalf("RecordCredentialIdentity: %v", st)
 	}
 	// The server's build, which a test binary does not carry: `go test` stamps
@@ -378,7 +378,7 @@ func TestExecRunInfoMapsEveryField(t *testing.T) {
 		execID:     4,
 		taskIDHex:  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		argv:       []string{"cat"},
-		clientCID:  "ws:127.0.0.1:1-1",
+		clientCID:  objproto.MustParseConnectionID("ws:127.0.0.1:1-1"),
 		clientKind: protocol.ClientKind_Tui,
 		pty:        true,
 	}

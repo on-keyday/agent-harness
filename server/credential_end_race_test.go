@@ -25,7 +25,7 @@ func TestCredentialEndAfterRekeyKeepsTheNewHolder(t *testing.T) {
 	s.beforeCredentialEndRevoke = func() {
 		s.beforeCredentialEndRevoke = nil
 		_, newPub := newCredentialKey(t)
-		r := s.taskHandler.credentialRekey("ws:127.0.0.1:9648-1",
+		r := s.taskHandler.credentialRekey(tcid("ws:127.0.0.1:9648-1"),
 			&protocol.CredentialRekeyRequest{TaskId: tid, Pubkey: newPub, TtlMs: uint64(time.Hour / time.Millisecond)}, time.Now())
 		if r.Status != protocol.CredentialStatus_Ok {
 			t.Fatalf("re-key: %v", r.Status)

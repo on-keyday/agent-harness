@@ -31,9 +31,9 @@ func TestPruneIsScopedToTheCaller(t *testing.T) {
 
 	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9950-1")}
 	if h.principals == nil {
-		h.principals = make(map[string]protocol.TaskID)
+		h.principals = make(map[objproto.ConnectionID]protocol.TaskID)
 	}
-	h.principals[conn.ConnectionID().String()] = hexToTaskID(t, c)
+	h.principals[conn.ConnectionID()] = hexToTaskID(t, c)
 
 	t.Run("by ids", func(t *testing.T) {
 		req := protocol.PruneTasksRequest{TaskIdsLen: 2, TaskIds: []protocol.TaskID{

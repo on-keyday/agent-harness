@@ -45,6 +45,6 @@ func (s *Server) authorizeJoin(role protocol.AuthRole, cid objproto.ConnectionID
 // seesEverything is `ls`'s test for showing runners: an operator, or a caller
 // whose visibility rank is global.
 func (s *Server) seesEverything(cid objproto.ConnectionID) bool {
-	all, _ := s.taskHandler.visibleToCaller(cid.String())
+	all, _ := s.taskHandler.visibleToCaller(cid)
 	return all
 }

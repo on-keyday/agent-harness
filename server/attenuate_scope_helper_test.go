@@ -6,6 +6,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // attenuateScope is the OWN-scope half of a grant from the connection cid:
@@ -16,7 +17,7 @@ import (
 //
 // It returns the offending id (or the "invalid scope: …" text) as the
 // pre-bound helper did.
-func (h *TaskHandler) attenuateScope(cid string, req authority.Scope, childCaps protocol.Capability) (authority.Scope, string, bool) {
+func (h *TaskHandler) attenuateScope(cid objproto.ConnectionID, req authority.Scope, childCaps protocol.Capability) (authority.Scope, string, bool) {
 	var g *authority.Granter
 	if pid := h.lookupPrincipal(cid); pid.Id != ([16]byte{}) {
 		id := hex.EncodeToString(pid.Id[:])

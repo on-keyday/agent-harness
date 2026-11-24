@@ -56,7 +56,7 @@ func TestPtyResolvedPerMode(t *testing.T) {
 			if c.pty != nil {
 				withPty(oi, *c.pty)
 			}
-			resp, _ := h.handleOpenInteractive("", nil, oi, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All, "p")
+			resp, _ := h.handleOpenInteractive(objproto.ConnectionID{}, nil, oi, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All, "p")
 			if resp.Status != protocol.OpenInteractiveStatus_Ok {
 				t.Fatalf("status %v %q", resp.Status, resp.ErrorMsg)
 			}
@@ -80,7 +80,7 @@ func TestPtyWithStreamRefused(t *testing.T) {
 	fg := withPty(detachedOpen(40, 120), true)
 	fg.SetAgentProfile([]byte("claude"))
 	fg.SetEventStream(true)
-	if resp, _ := h.handleOpenInteractive("", nil, fg, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All, "p"); resp.Status != protocol.OpenInteractiveStatus_PtyStream {
+	if resp, _ := h.handleOpenInteractive(objproto.ConnectionID{}, nil, fg, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All, "p"); resp.Status != protocol.OpenInteractiveStatus_PtyStream {
 		t.Fatalf("foreground: %v", resp.Status)
 	}
 	bg := withPty(bgOpen("claude"), true)
@@ -201,7 +201,7 @@ func TestPlainResumeTakesModeDefault(t *testing.T) {
 	oi.SetInitialRows(40)
 	oi.SetInitialCols(120)
 	oi.SetAgentProfile([]byte("claude"))
-	if resp, _ := h.handleOpenInteractive("", nil, oi, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All, ""); resp.Status != protocol.OpenInteractiveStatus_Ok {
+	if resp, _ := h.handleOpenInteractive(objproto.ConnectionID{}, nil, oi, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All, ""); resp.Status != protocol.OpenInteractiveStatus_Ok {
 		t.Fatalf("status %v %q", resp.Status, resp.ErrorMsg)
 	}
 	if oer := sentOpenExec(t, rc); oer.NoPty() {
@@ -367,7 +367,7 @@ func TestSessionStartGivesTheMuxItsPipeMode(t *testing.T) {
 			rc.nextBidi = newFakeStream(t) // a stream that stays open, so the mux outlives the open
 			oi := withPty(detachedOpen(40, 120), !noPTY)
 			oi.SetAgentProfile([]byte("claude"))
-			resp, _ := h.handleOpenInteractive("", nil, oi, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All, "p")
+			resp, _ := h.handleOpenInteractive(objproto.ConnectionID{}, nil, oi, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All, "p")
 			if resp.Status != protocol.OpenInteractiveStatus_Ok {
 				t.Fatalf("status %v %q", resp.Status, resp.ErrorMsg)
 			}

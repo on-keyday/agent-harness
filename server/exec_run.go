@@ -8,6 +8,7 @@ import (
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/objtrsf/trsf"
 )
 
@@ -118,8 +119,8 @@ func (h *TaskHandler) openExecRun(conn ConnHandle, req *protocol.ExecRunRequest,
 		runnerID:   task.AssignedTo,
 		argv:       execArgvStrings(body.Argv),
 		control:    ctrlStream,
-		clientCID:  conn.ConnectionID().String(),
-		clientKind: h.lookupClientKind(conn.ConnectionID().String()),
+		clientCID:  conn.ConnectionID(),
+		clientKind: h.lookupClientKind(conn.ConnectionID()),
 		pty:        req.Pty(),
 	}
 	execID := h.execs().add(e)
@@ -314,7 +315,7 @@ func writeExecEvent(e *execRun, kind protocol.ExecEventKind, code int32, detail 
 // The rows travel on their own send stream rather than inline, as
 // ListPortForwards' and ls' do: a listing whose rows carry whole argvs has no
 // bound that fits a UDP path MTU.
-func (h *TaskHandler) handleExecRunList(conn ConnHandle, requestID uint32, connID string, filter protocol.TaskID) {
+func (h *TaskHandler) handleExecRunList(conn ConnHandle, requestID uint32, connID objproto.ConnectionID, filter protocol.TaskID) {
 	respond := func(streamID uint64) {
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_ExecRunList, RequestId: requestID}
 		resp.SetExecRunList(protocol.ExecRunListResponse{StreamId: streamID})
@@ -357,7 +358,7 @@ func (h *TaskHandler) handleExecRunList(conn ConnHandle, requestID uint32, connI
 // visiblePortForwards — and for the reason await_idle needs no cap either:
 // gating a fact `ls` already hands out would make the direct path cost more
 // authority than polling for the same thing.
-func (h *TaskHandler) visibleExecRuns(connID string, filter protocol.TaskID) []protocol.ExecRunInfo {
+func (h *TaskHandler) visibleExecRuns(connID objproto.ConnectionID, filter protocol.TaskID) []protocol.ExecRunInfo {
 	taskFilter := ""
 	if filter.Id != ([16]byte{}) {
 		taskFilter = hex.EncodeToString(filter.Id[:])
@@ -376,7 +377,7 @@ func (h *TaskHandler) visibleExecRuns(connID string, filter protocol.TaskID) []p
 // so execs.status gates delivery with the SAME predicate — a subscriber must
 // not be told about an exec the listing would deny, which is the rule
 // publishConnEvent already states for conns.
-func (h *TaskHandler) execVisibleTo(connID string, e *execRun) bool {
+func (h *TaskHandler) execVisibleTo(connID objproto.ConnectionID, e *execRun) bool {
 	all, allowed := h.visibleToCaller(connID)
 	return all || allowed[e.taskIDHex]
 }
@@ -399,7 +400,7 @@ func execRunInfo(e *execRun) protocol.ExecRunInfo {
 	}
 	argv.ArgvLen = uint16(len(argv.Argv))
 	info.Argv = argv
-	info.SetOriginCid([]byte(e.clientCID))
+	info.SetOriginCid([]byte(e.clientCID.String()))
 	info.StdinBytes, info.StdoutBytes, info.StderrBytes, info.LastActivityUnixMs = e.counters()
 	info.Taps = e.tapCount()
 	info.SetPty(e.pty)
@@ -413,7 +414,7 @@ func execRunInfo(e *execRun) protocol.ExecRunInfo {
 // requiring `cancel` instead would leave a holder able to start what it cannot
 // stop. An out-of-scope target is reported as absent, because answering
 // "denied" would confirm that an exec the caller may not see exists.
-func (h *TaskHandler) handleExecRunKill(connID string, req *protocol.ExecRunKillRequest) protocol.ExecRunKillResponse {
+func (h *TaskHandler) handleExecRunKill(connID objproto.ConnectionID, req *protocol.ExecRunKillRequest) protocol.ExecRunKillResponse {
 	e, ok := h.execs().get(req.ExecId)
 	if !ok {
 		return protocol.ExecRunKillResponse{Status: protocol.ExecRunStatus_NotFound}
@@ -468,7 +469,7 @@ func (h *TaskHandler) stopExecOnRunner(e *execRun, why string) {
 //
 // No outcome is written back: the stream it would go on belongs to the
 // connection that just died.
-func (h *TaskHandler) DropExecRunsForConn(connID string) {
+func (h *TaskHandler) DropExecRunsForConn(connID objproto.ConnectionID) {
 	// Marked FIRST: an open still in flight for this connection registers
 	// after this point only to be refused, and one that registered before it
 	// is in the list below.

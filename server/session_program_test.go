@@ -74,7 +74,7 @@ func TestList_ProgramStatusFromLiveMux(t *testing.T) {
 	}
 
 	child := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9742-1"), nextSendStreamID: 10}
-	h.principals = map[string]protocol.TaskID{child.ConnectionID().String(): hexToTaskID(t, cHex)}
+	h.principals = map[objproto.ConnectionID]protocol.TaskID{child.ConnectionID(): hexToTaskID(t, cHex)}
 	hop, ok := listRowAs(t, h, child, pHex)
 	if !ok || hop.ProgramState != protocol.ProgramState_Blocked || hop.ProgramKind != protocol.ProgramKind_Permission || len(hop.ProgramMsg) != 0 {
 		t.Fatalf("parent-hop row program = %v/%v %q; want state/kind kept, msg emptied", hop.ProgramState, hop.ProgramKind, hop.ProgramMsg)

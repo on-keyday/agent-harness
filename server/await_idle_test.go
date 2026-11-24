@@ -237,9 +237,9 @@ func TestHandleAwaitIdle_NotifySinkRequiresNotifyCap(t *testing.T) {
 
 	callerConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9601-1")}
 	if h.principals == nil {
-		h.principals = make(map[string]protocol.TaskID)
+		h.principals = make(map[objproto.ConnectionID]protocol.TaskID)
 	}
-	h.principals[callerConn.ConnectionID().String()] = hexToTaskID(t, pidHex)
+	h.principals[callerConn.ConnectionID()] = hexToTaskID(t, pidHex)
 
 	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_AwaitIdle, RequestId: 7}}
 	nreq := protocol.AwaitIdleRequest{TaskId: target, Sink: protocol.AwaitSink_Notify}

@@ -5,6 +5,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // S-D17a: a schedule verb also needs the power it exercises.
@@ -129,7 +130,7 @@ func TestSchedulePowerRun(t *testing.T) {
 	task := e.terminal(t, protocol.RunMode_Background, "")
 	schedOnly, _ := e.agent(t, powerGrant(0, protocol.ScopeBase_Global))
 	sid := e.connIDOf(schedOnly)
-	run := func(cid, id string) (protocol.ScheduleResponse, protocol.Capability) {
+	run := func(cid objproto.ConnectionID, id string) (protocol.ScheduleResponse, protocol.Capability) {
 		return e.h.scheduleRun(cid, schedHexID(t, id))
 	}
 	bound := e.seed(t, 1, protocol.ScheduleTaskState_Bound, task, "")

@@ -8,6 +8,7 @@ import (
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // handleSessionMode switches a running session task between foreground and
@@ -15,7 +16,7 @@ import (
 // (authority.CentralCap); the target is gated here, as the cancel handler gates it: an
 // out-of-scope task answers not_found. A task may not switch its own run mode
 // (below).
-func (h *TaskHandler) handleSessionMode(cid string, conn ConnHandle, req *protocol.TaskControlRequest) {
+func (h *TaskHandler) handleSessionMode(cid objproto.ConnectionID, conn ConnHandle, req *protocol.TaskControlRequest) {
 	respond := func(st protocol.SessionModeStatus, msg string) {
 		r := protocol.SessionModeResponse{Status: st}
 		if msg != "" {

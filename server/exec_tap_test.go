@@ -7,6 +7,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 type execChanSink struct {
@@ -65,7 +66,7 @@ func TestOpenExecTapRefusalsAreOneAnswer(t *testing.T) {
 	cid := bindPrincipal(t, h, c)
 
 	for name, id := range map[string]uint64{"unknown": 999, "zero": 0, "invisible": e.execID} {
-		conn := tapConn("ws:127.0.0.1:9980-1")
+		conn := tapConn(objproto.MustParseConnectionID("ws:127.0.0.1:9980-1"))
 		got := h.handleOpenExecTap(conn, &protocol.OpenExecTapRequest{ExecId: id}, cid)
 		if got.Status != protocol.OpenExecTapStatus_NoSuchExec || got.StreamId != 0 {
 			t.Fatalf("%s: status %v stream %d", name, got.Status, got.StreamId)
@@ -75,7 +76,7 @@ func TestOpenExecTapRefusalsAreOneAnswer(t *testing.T) {
 		Base:    protocol.ScopeBase_None,
 		VisBase: protocol.ScopeBase_Global, VisBasePresent: true,
 	})
-	conn := tapConn("ws:127.0.0.1:9981-1")
+	conn := tapConn(objproto.MustParseConnectionID("ws:127.0.0.1:9981-1"))
 	if got := h.handleOpenExecTap(conn, &protocol.OpenExecTapRequest{ExecId: e.execID}, cid); got.Status != protocol.OpenExecTapStatus_NoSuchExec {
 		t.Fatalf("visible but out of action scope: %v", got.Status)
 	}
@@ -87,12 +88,12 @@ func TestOpenExecTapRefusalsAreOneAnswer(t *testing.T) {
 func TestOpenExecTapAttachesAndIsCountedOnTheListing(t *testing.T) {
 	h, p, _, _, _ := scopeFixture(t)
 	e := registerTapTestExec(t, h, p)
-	conn := tapConn("ws:127.0.0.1:9982-1")
+	conn := tapConn(objproto.MustParseConnectionID("ws:127.0.0.1:9982-1"))
 	// A stream that stays open, as a real tapper's does (see the forward
 	// sibling's comment on why noopBidiStream would race this test).
 	conn.nextBidi = newRecordingBidiStream(78)
 
-	got := h.handleOpenExecTap(conn, &protocol.OpenExecTapRequest{ExecId: e.execID}, conn.ConnectionID().String())
+	got := h.handleOpenExecTap(conn, &protocol.OpenExecTapRequest{ExecId: e.execID}, conn.ConnectionID())
 	if got.Status != protocol.OpenExecTapStatus_Ok {
 		t.Fatalf("status %v", got.Status)
 	}
@@ -114,7 +115,7 @@ func TestEveryRemovalPathEndsTheTapsWithItsOutcome(t *testing.T) {
 			h.onExecRunFinished(&protocol.ExecRunFinished{ExecId: e.execID, ExitCode: 3, Kind: protocol.ExecEventKind_Exited})
 		}, protocol.ExecEventKind_Exited, 3},
 		{"killed", func(h *TaskHandler, e *execRun) {
-			h.handleExecRunKill("", &protocol.ExecRunKillRequest{ExecId: e.execID})
+			h.handleExecRunKill(objproto.ConnectionID{}, &protocol.ExecRunKillRequest{ExecId: e.execID})
 		}, protocol.ExecEventKind_Killed, -1},
 		{"client gone", func(h *TaskHandler, e *execRun) { h.DropExecRunsForConn(e.clientCID) },
 			protocol.ExecEventKind_Killed, -1},
@@ -128,7 +129,7 @@ func TestEveryRemovalPathEndsTheTapsWithItsOutcome(t *testing.T) {
 			// authorize builds the creator index from the store before it
 			// notices the caller is the operator.
 			h := &TaskHandler{Tasks: NewTaskStore(), Registry: NewRegistry()}
-			e := &execRun{taskIDHex: "aaaa", clientCID: "c-" + tc.name, control: newRecordingBidiStream(1)}
+			e := &execRun{taskIDHex: "aaaa", clientCID: tcid("c-" + tc.name), control: newRecordingBidiStream(1)}
 			h.execs().add(e)
 			sink := &execChanSink{out: make(chan *protocol.ExecTapRecord, 8)}
 			tap := newExecTap(sink, protocol.ExecTapFilter_All, 0)
@@ -160,10 +161,10 @@ func TestEveryRemovalPathEndsTheTapsWithItsOutcome(t *testing.T) {
 func TestExecTapStreamEndsWhenTheExecEnds(t *testing.T) {
 	h, p, _, _, _ := scopeFixture(t)
 	e := registerTapTestExec(t, h, p)
-	conn := tapConn("ws:127.0.0.1:9983-1")
+	conn := tapConn(objproto.MustParseConnectionID("ws:127.0.0.1:9983-1"))
 	st := newRecordingBidiStream(79)
 	conn.nextBidi = st
-	if got := h.handleOpenExecTap(conn, &protocol.OpenExecTapRequest{ExecId: e.execID}, conn.ConnectionID().String()); got.Status != protocol.OpenExecTapStatus_Ok {
+	if got := h.handleOpenExecTap(conn, &protocol.OpenExecTapRequest{ExecId: e.execID}, conn.ConnectionID()); got.Status != protocol.OpenExecTapStatus_Ok {
 		t.Fatalf("status %v", got.Status)
 	}
 	h.onExecRunFinished(&protocol.ExecRunFinished{ExecId: e.execID, Kind: protocol.ExecEventKind_Exited})
@@ -182,10 +183,10 @@ func TestExecTapStreamEndsWhenTheExecEnds(t *testing.T) {
 func TestExecTapIsReapedWhenTheReaderLeavesAQuietExec(t *testing.T) {
 	h, p, _, _, _ := scopeFixture(t)
 	e := registerTapTestExec(t, h, p)
-	conn := tapConn("ws:127.0.0.1:9984-1")
+	conn := tapConn(objproto.MustParseConnectionID("ws:127.0.0.1:9984-1"))
 	st := newRecordingBidiStream(80)
 	conn.nextBidi = st
-	h.handleOpenExecTap(conn, &protocol.OpenExecTapRequest{ExecId: e.execID}, conn.ConnectionID().String())
+	h.handleOpenExecTap(conn, &protocol.OpenExecTapRequest{ExecId: e.execID}, conn.ConnectionID())
 	if e.tapCount() != 1 {
 		t.Fatal("tap not attached")
 	}

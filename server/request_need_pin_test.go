@@ -23,9 +23,9 @@ func pinCaller(t *testing.T, h *TaskHandler, g authority.Grant, port string) (*f
 		protocol.RunnerSelector{}, nil, g, "")
 	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:" + port + "-1")}
 	if h.principals == nil {
-		h.principals = make(map[string]protocol.TaskID)
+		h.principals = make(map[objproto.ConnectionID]protocol.TaskID)
 	}
-	h.principals[conn.ConnectionID().String()] = hexToTaskID(t, id)
+	h.principals[conn.ConnectionID()] = hexToTaskID(t, id)
 	return conn, id
 }
 
@@ -94,7 +94,7 @@ func TestPinExecRunKillWithoutTheBitIsNotFound(t *testing.T) {
 	h := newTestHandler(t)
 	target := h.Tasks.Create("repo", "t", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli, protocol.TaskID{}, "",
 		protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All}, "")
-	e := &execRun{taskIDHex: target, clientCID: "c-pin", control: newRecordingBidiStream(1)}
+	e := &execRun{taskIDHex: target, clientCID: tcid("c-pin"), control: newRecordingBidiStream(1)}
 	h.execs().add(e)
 	conn, _ := pinCaller(t, h, authority.Grant{Caps: protocol.Capability_Cancel,
 		Scope: authority.Scope{Base: protocol.ScopeBase_Global}}, "9802")

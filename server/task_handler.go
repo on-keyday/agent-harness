@@ -292,17 +292,17 @@ type TaskHandler struct {
 	// connection that never sent ClientHello get ClientKind_Unspecified
 	// (the zero value of a missing map entry).
 	clientKindsMu sync.Mutex
-	clientKinds   map[string]protocol.ClientKind
+	clientKinds   map[objproto.ConnectionID]protocol.ClientKind
 	// principals maps connection ID → the TaskID of the principal for
 	// kind=agent connections (populated at ClientHello) and kind=credential
 	// ones (RecordCredentialIdentity). Every cap and scope check resolves the
 	// caller through it, and Create records it as CreatorTaskID.
-	principals map[string]protocol.TaskID
+	principals map[objproto.ConnectionID]protocol.TaskID
 	// credentialKeys maps connection ID → the public key a kind=credential
 	// connection proved at its handshake. principalRecord holds the
 	// connection to it: once the credential's stored key is another, the
 	// connection holds nothing. Same lifetime as principals.
-	credentialKeys map[string][32]byte
+	credentialKeys map[objproto.ConnectionID][32]byte
 
 	// credentialMu serialises the transitions of a credential's identity, so
 	// the board state a connection attaches to always belongs to the key it
@@ -345,7 +345,7 @@ type TaskHandler struct {
 
 // lookupCredentialKey is the key connID's credential handshake proved; zero
 // for any other connection.
-func (h *TaskHandler) lookupCredentialKey(connID string) [32]byte {
+func (h *TaskHandler) lookupCredentialKey(connID objproto.ConnectionID) [32]byte {
 	h.clientKindsMu.Lock()
 	defer h.clientKindsMu.Unlock()
 	return h.credentialKeys[connID]
@@ -353,7 +353,7 @@ func (h *TaskHandler) lookupCredentialKey(connID string) [32]byte {
 
 // lookupClientKind returns the ClientKind associated with connID.
 // Unknown connections return ClientKind_Unspecified (zero value).
-func (h *TaskHandler) lookupClientKind(connID string) protocol.ClientKind {
+func (h *TaskHandler) lookupClientKind(connID objproto.ConnectionID) protocol.ClientKind {
 	h.clientKindsMu.Lock()
 	defer h.clientKindsMu.Unlock()
 	return h.clientKinds[connID]
@@ -362,7 +362,7 @@ func (h *TaskHandler) lookupClientKind(connID string) protocol.ClientKind {
 // lookupPrincipal returns the principal TaskID associated with connID: the
 // task of an agent or credential connection. Unknown connections and operator
 // connections return a zero TaskID.
-func (h *TaskHandler) lookupPrincipal(connID string) protocol.TaskID {
+func (h *TaskHandler) lookupPrincipal(connID objproto.ConnectionID) protocol.TaskID {
 	h.clientKindsMu.Lock()
 	defer h.clientKindsMu.Unlock()
 	return h.principals[connID]
@@ -378,7 +378,7 @@ func (h *TaskHandler) lookupPrincipal(connID string) protocol.TaskID {
 // The standalone ClientHello path calls it then sends a TaskControlResponse.
 // The merged-PSK gate path calls it directly (no response — the gate's own
 // PskAuthResponse is the sole client handshake ack).
-func (h *TaskHandler) RecordClientIdentity(cid string, conn ConnHandle, hello *protocol.ClientHello) protocol.ClientHelloStatus {
+func (h *TaskHandler) RecordClientIdentity(cid objproto.ConnectionID, conn ConnHandle, hello *protocol.ClientHello) protocol.ClientHelloStatus {
 	status := protocol.ClientHelloStatus_Ok
 	// S-D18: ClientKind.schedule is the server's own mark on what a schedule
 	// started (resumed_by_kind / origin_kind); no connection may claim it.
@@ -399,7 +399,7 @@ func (h *TaskHandler) RecordClientIdentity(cid string, conn ConnHandle, hello *p
 	if status == protocol.ClientHelloStatus_Ok {
 		h.clientKindsMu.Lock()
 		if h.clientKinds == nil {
-			h.clientKinds = make(map[string]protocol.ClientKind)
+			h.clientKinds = make(map[objproto.ConnectionID]protocol.ClientKind)
 		}
 		h.clientKinds[cid] = hello.Kind
 		// For agent connections, record the principal TaskID so that
@@ -407,7 +407,7 @@ func (h *TaskHandler) RecordClientIdentity(cid string, conn ConnHandle, hello *p
 		if hello.Kind == protocol.ClientKind_Agent {
 			if info := hello.AgentInfo(); info != nil {
 				if h.principals == nil {
-					h.principals = make(map[string]protocol.TaskID)
+					h.principals = make(map[objproto.ConnectionID]protocol.TaskID)
 				}
 				h.principals[cid] = info.TaskId
 			}
@@ -444,19 +444,19 @@ func (h *TaskHandler) RecordClientIdentity(cid string, conn ConnHandle, hello *p
 // Only an accepted connection gets a board identity (OnCredentialHello), and
 // the re-check and that attach hold credentialMu, so no re-key or end lands
 // between them.
-func (h *TaskHandler) RecordCredentialIdentity(cid string, conn ConnHandle, tid protocol.TaskID, pub [32]byte) protocol.ClientHelloStatus {
+func (h *TaskHandler) RecordCredentialIdentity(cid objproto.ConnectionID, conn ConnHandle, tid protocol.TaskID, pub [32]byte) protocol.ClientHelloStatus {
 	if tid.Id == ([16]byte{}) || pub == ([32]byte{}) {
 		return protocol.ClientHelloStatus_NotPermitted
 	}
 	h.clientKindsMu.Lock()
 	if h.clientKinds == nil {
-		h.clientKinds = make(map[string]protocol.ClientKind)
+		h.clientKinds = make(map[objproto.ConnectionID]protocol.ClientKind)
 	}
 	if h.principals == nil {
-		h.principals = make(map[string]protocol.TaskID)
+		h.principals = make(map[objproto.ConnectionID]protocol.TaskID)
 	}
 	if h.credentialKeys == nil {
-		h.credentialKeys = make(map[string][32]byte)
+		h.credentialKeys = make(map[objproto.ConnectionID][32]byte)
 	}
 	h.clientKinds[cid] = protocol.ClientKind_Credential
 	h.principals[cid] = tid
@@ -521,7 +521,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		return
 	}
 
-	cid := conn.ConnectionID().String()
+	cid := conn.ConnectionID()
 	if want, gated := authority.CentralCap(req.Header.Kind); gated {
 		if !hasCap(h.callerCaps(cid), want) {
 			h.denyTaskControl(conn, req.Header.Kind, req.Header.RequestId, want)
@@ -978,7 +978,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("TaskHandler: ClientHello variant is nil")
 			return
 		}
-		cid := conn.ConnectionID().String()
+		cid := conn.ConnectionID()
 		slog.Info("client hello", "kind", hello.Kind.String(), "cid", cid)
 
 		status := h.RecordClientIdentity(cid, conn, hello)
@@ -1695,7 +1695,7 @@ func isZeroTaskID(t protocol.TaskID) bool {
 // does not pick it up for a parallel AssignTask. The runner finalizes the task
 // lifecycle by sending TaskStarted (worktree dir filled in) and TaskFinished
 // (exit code from claude) over the regular RunnerControl path.
-func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req *protocol.OpenInteractiveRequest, origin protocol.ClientKind, creator protocol.TaskID, creatorCaps protocol.Capability, prompt string) (protocol.OpenInteractiveResponse, *protocol.RunnerCandidatesBody) {
+func (h *TaskHandler) handleOpenInteractive(cid objproto.ConnectionID, tuiConn ConnHandle, req *protocol.OpenInteractiveRequest, origin protocol.ClientKind, creator protocol.TaskID, creatorCaps protocol.Capability, prompt string) (protocol.OpenInteractiveResponse, *protocol.RunnerCandidatesBody) {
 	// repo is the one the runner search uses: req.RepoPath on a fresh open,
 	// the task's recorded repo on a resume (whose request carries none). The
 	// log names it once it is known, so a resume refusal does not read repo="".
@@ -2205,7 +2205,7 @@ func (h *TaskHandler) handleAttachSession(conn ConnHandle, req *protocol.AttachS
 	// here because this is the only point the principal is known — the frames
 	// themselves carry no identity. A CONTROL attach needs no bit: owning the
 	// PTY size is what control means.
-	allowResize := h.resizeAllowed(conn.ConnectionID().String(), idHex)
+	allowResize := h.resizeAllowed(conn.ConnectionID(), idHex)
 	attach := mux.Attach
 	switch req.Mode {
 	case protocol.AttachMode_View:
@@ -2306,7 +2306,7 @@ func (h *TaskHandler) sessionMux(taskID string) *SessionMux {
 // handleList's finished is ListQuery.finished_limit: the bound is on history,
 // because with --task-retain unset nothing is forgotten and every client
 // lists on a poll. Which rows it keeps is listRows.
-func (h *TaskHandler) handleList(conn ConnHandle, requestID uint32, connID string, finished uint32) {
+func (h *TaskHandler) handleList(conn ConnHandle, requestID uint32, connID objproto.ConnectionID, finished uint32) {
 	respond := func(streamID uint64) {
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_List, RequestId: requestID}
 		resp.SetList(protocol.ListResult{StreamId: streamID})
@@ -2464,7 +2464,7 @@ func (h *TaskHandler) handleList(conn ConnHandle, requestID uint32, connID strin
 //
 // When ConnListFn is nil (test stubs that don't wire the server), the response
 // carries StreamId=0 (client treats as error).
-func (h *TaskHandler) handleListConns(conn ConnHandle, requestID uint32, connID string) {
+func (h *TaskHandler) handleListConns(conn ConnHandle, requestID uint32, connID objproto.ConnectionID) {
 	respond := func(streamID uint64) {
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_ListConns, RequestId: requestID}
 		resp.SetListConns(protocol.ConnListResult{StreamId: streamID})
@@ -2724,7 +2724,7 @@ func redactParentTaskInfo(info *protocol.TaskInfo) {
 // it from HARNESS_HOSTNAME and nothing checks it. false for a connection with
 // no principal (an operator), whose notify is external.
 func (h *TaskHandler) notifyWorkerInfo(conn ConnHandle) (protocol.WorkerInfo, bool) {
-	pid := h.lookupPrincipal(conn.ConnectionID().String())
+	pid := h.lookupPrincipal(conn.ConnectionID())
 	if pid.Id == ([16]byte{}) {
 		return protocol.WorkerInfo{}, false
 	}
@@ -2756,7 +2756,7 @@ func (h *TaskHandler) handleNotify(conn ConnHandle, req *protocol.TaskControlReq
 		slog.Error("TaskHandler: Notify variant is nil")
 		return
 	}
-	cid := conn.ConnectionID().String()
+	cid := conn.ConnectionID()
 	ck := h.lookupClientKind(cid)
 
 	ts := time.Now().Unix()
@@ -2785,7 +2785,7 @@ func (h *TaskHandler) handleNotify(conn ConnHandle, req *protocol.TaskControlReq
 		Origin: ev.Origin.String(),
 		Title:  string(nr.Title),
 		Text:   string(nr.Text),
-		ConnID: cid,
+		ConnID: cid.String(),
 		Ts:     ts,
 	}
 	if isWorker {

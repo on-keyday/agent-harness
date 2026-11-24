@@ -12,6 +12,7 @@ import (
 	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // defaultAwaitIdleThreshold is the server default for AwaitIdleRequest.
@@ -71,7 +72,7 @@ func (h *TaskHandler) handleAwaitIdle(conn ConnHandle, req *protocol.TaskControl
 	// removed — the edge-triggered route costing more authority than polling
 	// for the same answer, since a narrowed exec_view would refuse here while
 	// `ls` kept answering.
-	if !h.inScope(conn.ConnectionID().String(), protocol.Capability_None, hex.EncodeToString(ai.TaskId.Id[:])) {
+	if !h.inScope(conn.ConnectionID(), protocol.Capability_None, hex.EncodeToString(ai.TaskId.Id[:])) {
 		respond(protocol.AwaitIdleStatus_NotFound, IdleFire{}, 0)
 		return
 	}
@@ -90,7 +91,7 @@ func (h *TaskHandler) handleAwaitIdle(conn ConnHandle, req *protocol.TaskControl
 		// an egress gate that depends on which RPC you arrive by is not a
 		// gate.) The board sink is a publish, so it takes the requester's
 		// board reach instead (below), as agent send does.
-		if c := authority.RequestNeed(req).Clauses[0]; !hasAnyCap(h.callerCaps(conn.ConnectionID().String()), c.AnyOf) {
+		if c := authority.RequestNeed(req).Clauses[0]; !hasAnyCap(h.callerCaps(conn.ConnectionID()), c.AnyOf) {
 			h.denyTaskControl(conn, protocol.TaskControlKind_AwaitIdle, requestID, c.Report)
 			return
 		}
@@ -104,7 +105,7 @@ func (h *TaskHandler) handleAwaitIdle(conn ConnHandle, req *protocol.TaskControl
 		// publish to itself (reach spec §2). An operator connection has no
 		// principal task and is not reach-checked, like the rest of the
 		// operator face.
-		if h.lookupPrincipal(conn.ConnectionID().String()).Id != ([16]byte{}) &&
+		if h.lookupPrincipal(conn.ConnectionID()).Id != ([16]byte{}) &&
 			!h.Board.Publishable(h.boardState(conn), topic) {
 			h.denyTaskControl(conn, protocol.TaskControlKind_AwaitIdle, requestID, authority.RequestNeed(req).Later[0].Report)
 			return
@@ -142,7 +143,7 @@ func (h *TaskHandler) handleAwaitIdle(conn ConnHandle, req *protocol.TaskControl
 
 	// Resolve the requester's identity NOW — by fire time the conn may be
 	// gone (sink=notify/board deliberately outlive the request).
-	requesterConnID := conn.ConnectionID().String()
+	requesterConnID := conn.ConnectionID()
 	requester := h.lookupPrincipal(requesterConnID)
 
 	w := &idleWatcher{
@@ -219,7 +220,7 @@ func idleNotifyText(taskIDHex string, f IdleFire) string {
 // live leg (OnNotify → ring + topic) and the egress leg (NotifyHook), same
 // two legs as a client-sent notify. Origin=external: the text was
 // synthesized by the server, not sent from inside a worker.
-func (h *TaskHandler) fireIdleNotify(taskIDHex, requesterConnID string, f IdleFire) {
+func (h *TaskHandler) fireIdleNotify(taskIDHex string, requesterConnID objproto.ConnectionID, f IdleFire) {
 	text := idleNotifyText(taskIDHex, f)
 	ts := time.Now().Unix()
 	ev := protocol.NotifyEvent{
@@ -237,7 +238,7 @@ func (h *TaskHandler) fireIdleNotify(taskIDHex, requesterConnID string, f IdleFi
 		Origin: protocol.NotifyOrigin_External.String(),
 		Title:  "await-idle",
 		Text:   text,
-		ConnID: requesterConnID,
+		ConnID: requesterConnID.String(),
 		Ts:     ts,
 		TaskID: taskIDHex,
 	})

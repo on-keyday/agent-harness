@@ -18,7 +18,7 @@ import (
 
 // enrolledBy names who enrolled a key: the caller's principal task, or the
 // operator for a connection that has none.
-func (h *TaskHandler) enrolledBy(cid string) string {
+func (h *TaskHandler) enrolledBy(cid objproto.ConnectionID) string {
 	p := h.lookupPrincipal(cid)
 	if p == (protocol.TaskID{}) {
 		return "operator"
@@ -35,7 +35,7 @@ func (h *TaskHandler) handleRunnerEnroll(conn ConnHandle, requestID uint32, r *p
 	default:
 		added, err := h.RunnerKeys.Enroll(RunnerKeyRecord{
 			Key: key, Label: string(r.Label), EnrolledAt: time.Now().UTC(),
-			EnrolledBy: h.enrolledBy(conn.ConnectionID().String()),
+			EnrolledBy: h.enrolledBy(conn.ConnectionID()),
 		})
 		if err != nil {
 			slog.Error("runner enroll: store write failed", "err", err)
@@ -44,7 +44,7 @@ func (h *TaskHandler) handleRunnerEnroll(conn ConnHandle, requestID uint32, r *p
 			status = protocol.RunnerKeyStatus_AlreadyEnrolled
 		} else {
 			slog.Info("runner key enrolled", "key", keyPrefix(key), "label", string(r.Label),
-				"by", h.enrolledBy(conn.ConnectionID().String()))
+				"by", h.enrolledBy(conn.ConnectionID()))
 		}
 	}
 	resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_RunnerEnroll, RequestId: requestID}
@@ -121,7 +121,7 @@ func (h *TaskHandler) handleRunnerUnenroll(conn ConnHandle, requestID uint32, r 
 	// to a key nothing may register with would dial forever for nothing.
 	body.SetRemovedDials(h.removeDialsOfKey(rec))
 	slog.Warn("runner key unenrolled", "key", keyPrefix(rec.Key), "label", rec.Label,
-		"by", h.enrolledBy(conn.ConnectionID().String()), "closing_runners", len(conns))
+		"by", h.enrolledBy(conn.ConnectionID()), "closing_runners", len(conns))
 	if h.KickConn != nil {
 		for _, c := range conns {
 			h.KickConn(c)

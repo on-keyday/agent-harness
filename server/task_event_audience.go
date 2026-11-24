@@ -1,6 +1,9 @@
 package server
 
-import "github.com/on-keyday/agent-harness/runner/protocol"
+import (
+	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
+)
 
 // taskAudience is what one subscriber may see of one task's status event: the
 // same answer handleList gives for that task's row.
@@ -15,7 +18,7 @@ const (
 // taskEventAudience mirrors handleList's filter (listVisibleToCaller), so a
 // tasks.status subscriber is never told about a task its own `ls` would deny,
 // and sees its parent exactly as `ls` shows it — redacted.
-func (h *TaskHandler) taskEventAudience(subCID, taskHex string) taskAudience {
+func (h *TaskHandler) taskEventAudience(subCID objproto.ConnectionID, taskHex string) taskAudience {
 	all, allowed, parentHex := h.listVisibleToCaller(subCID)
 	switch {
 	case all || allowed[taskHex]:

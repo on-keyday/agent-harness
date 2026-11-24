@@ -4,6 +4,7 @@ import (
 	"log/slog"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // handleOpenExecTap attaches a tap to one exec and answers with the stream its
@@ -20,7 +21,7 @@ import (
 //  3. Scope — an exec visible through a global visibility rank may still belong
 //     to a task outside the caller's ACTION scope. inScope rather than
 //     authorize: the hasCap half has already run in (1).
-func (h *TaskHandler) handleOpenExecTap(conn ConnHandle, req *protocol.OpenExecTapRequest, connID string) protocol.OpenExecTapResponse {
+func (h *TaskHandler) handleOpenExecTap(conn ConnHandle, req *protocol.OpenExecTapRequest, connID objproto.ConnectionID) protocol.OpenExecTapResponse {
 	errResp := func(s protocol.OpenExecTapStatus) protocol.OpenExecTapResponse {
 		return protocol.OpenExecTapResponse{Status: s}
 	}

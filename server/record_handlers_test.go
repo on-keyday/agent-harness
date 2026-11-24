@@ -39,9 +39,9 @@ func newRecFixture(t *testing.T) *recFixture {
 	// A parseable connection id: bindPrincipal's suffix is hex.
 	cid := objproto.MustParseConnectionID("ws:127.0.0.1:9171-1")
 	if h.principals == nil {
-		h.principals = make(map[string]protocol.TaskID)
+		h.principals = make(map[objproto.ConnectionID]protocol.TaskID)
 	}
-	h.principals[cid.String()] = hexToTaskID(t, f.caller)
+	h.principals[cid] = hexToTaskID(t, f.caller)
 	f.conn = &fakeConn{id: cid, autoSendStreams: true}
 	f.grant(t, protocol.Capability_ExecView, authority.Scope{Base: protocol.ScopeBase_Global})
 	return f

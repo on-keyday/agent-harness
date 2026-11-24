@@ -8,6 +8,7 @@ import (
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // handleRecord answers the five PTY-record verbs (pillar A spec, A1). Every
@@ -15,7 +16,7 @@ import (
 // scope — so an override's exclude_self keeps a task off its own record
 // (A-D22, A-D26). A missing bit answers PermissionDenied; a task out of
 // scope answers not_found, so the refusal is not an existence oracle.
-func (h *TaskHandler) handleRecord(cid string, conn ConnHandle, req *protocol.TaskControlRequest) {
+func (h *TaskHandler) handleRecord(cid objproto.ConnectionID, conn ConnHandle, req *protocol.TaskControlRequest) {
 	resp := protocol.TaskControlResponse{Kind: req.Header.Kind, RequestId: req.Header.RequestId}
 	send := func() {
 		conn.SendMessage(resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})) //nolint:errcheck

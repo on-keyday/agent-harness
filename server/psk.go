@@ -45,7 +45,7 @@ func pskDispatchIdentity(d *Dispatcher, conn ConnHandle, req *protocol.PskAuthRe
 			return false
 		}
 		if d.RecordClientIdentity != nil {
-			return d.RecordClientIdentity(conn.ConnectionID().String(), conn, hello) == protocol.ClientHelloStatus_Ok
+			return d.RecordClientIdentity(conn.ConnectionID(), conn, hello) == protocol.ClientHelloStatus_Ok
 		}
 		tcReq := protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_ClientHello}}
 		tcReq.SetClientHello(*hello)
@@ -77,7 +77,7 @@ func pskDispatchIdentity(d *Dispatcher, conn ConnHandle, req *protocol.PskAuthRe
 		if a == nil || d.RecordCredentialIdentity == nil {
 			return false
 		}
-		return d.RecordCredentialIdentity(conn.ConnectionID().String(), conn, a.TaskId, credKey) == protocol.ClientHelloStatus_Ok
+		return d.RecordCredentialIdentity(conn.ConnectionID(), conn, a.TaskId, credKey) == protocol.ClientHelloStatus_Ok
 	}
 	return false
 }

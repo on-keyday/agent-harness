@@ -11,6 +11,7 @@ import (
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // handleBoardTopics returns the agentboard topic overview (metadata only).
@@ -213,7 +214,7 @@ func (h *TaskHandler) handleBoardRetract(conn ConnHandle, requestID uint32, topi
 // topic is empty. Cap (purge) is enforced centrally; this is the target gate:
 // a task outside the caller's purge scope answers not_found, the same answer as
 // one the board holds no state for, so the reply is no existence oracle.
-func (h *TaskHandler) handleBoardContactsClear(conn ConnHandle, requestID uint32, cid string, task protocol.TaskID, topic string) {
+func (h *TaskHandler) handleBoardContactsClear(conn ConnHandle, requestID uint32, cid objproto.ConnectionID, task protocol.TaskID, topic string) {
 	out := protocol.BoardContactsClearResponse{RequestId: requestID, Status: protocol.BoardStatus_NotFound}
 	taskHex := hex.EncodeToString(task.Id[:])
 	if h.Board != nil && h.inScope(cid, requiredCentral(protocol.TaskControlKind_BoardContactsClear), taskHex) {
@@ -416,7 +417,7 @@ func (h *TaskHandler) handleBoardRetain(conn ConnHandle, requestID uint32, r *pr
 // from a missing task, as board_contacts_clear), and a join needs the caller
 // to be able to publish to the topic on its own reach, contacts excluded
 // (GrantableBy). A subscribe is bounded by the target's own reach in the board.
-func (h *TaskHandler) handleBoardMembership(conn ConnHandle, requestID uint32, cid string, r *protocol.BoardMembershipRequest) {
+func (h *TaskHandler) handleBoardMembership(conn ConnHandle, requestID uint32, cid objproto.ConnectionID, r *protocol.BoardMembershipRequest) {
 	respond := func(status protocol.BoardMembershipStatus) {
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_BoardMembership, RequestId: requestID}
 		resp.SetBoardMembership(protocol.BoardMembershipResponse{Status: status})

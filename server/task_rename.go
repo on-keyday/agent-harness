@@ -8,6 +8,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // taskNameProblem is why a display name may not be stored, "" when it may: at
@@ -54,7 +55,7 @@ func (s *TaskStore) SetName(id, name string) bool {
 // label, so a self-rename would let a task pose as another to readers who go
 // by the name. Every refusal of the gate is not_found, so the answer is no
 // existence oracle.
-func (h *TaskHandler) handleTaskRename(conn ConnHandle, requestID uint32, cid string, req *protocol.TaskRenameRequest) {
+func (h *TaskHandler) handleTaskRename(conn ConnHandle, requestID uint32, cid objproto.ConnectionID, req *protocol.TaskRenameRequest) {
 	respond := func(status protocol.TaskRenameStatus) {
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_TaskRename, RequestId: requestID}
 		resp.SetTaskRename(protocol.TaskRenameResponse{Status: status})

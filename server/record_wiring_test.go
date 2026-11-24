@@ -10,6 +10,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/exec/frame"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // The record switch on an open (pillar A spec, A-D22).
@@ -24,7 +25,7 @@ func withRecordExt(oi *protocol.OpenInteractiveRequest, on bool) *protocol.OpenI
 }
 
 func openWithCaps(h *TaskHandler, oi *protocol.OpenInteractiveRequest, caps protocol.Capability) protocol.OpenInteractiveResponse {
-	resp, _ := h.handleOpenInteractive("", nil, oi, protocol.ClientKind_Cli, protocol.TaskID{}, caps, "triage")
+	resp, _ := h.handleOpenInteractive(objproto.ConnectionID{}, nil, oi, protocol.ClientKind_Cli, protocol.TaskID{}, caps, "triage")
 	return resp
 }
 

@@ -7,6 +7,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // handleListPortForwards streams the visible port-forward snapshot over a
@@ -14,7 +15,7 @@ import (
 // TaskControlResponse{ListPortForwards} carries only the stream id, and the
 // actual PortForwardListResultBody is encoded onto the stream so the response
 // fits in any path MTU.
-func (h *TaskHandler) handleListPortForwards(conn ConnHandle, requestID uint32, connID string, filter protocol.TaskID, askEndpoints bool) {
+func (h *TaskHandler) handleListPortForwards(conn ConnHandle, requestID uint32, connID objproto.ConnectionID, filter protocol.TaskID, askEndpoints bool) {
 	if askEndpoints && h.ForwardEndpointDropsFn != nil {
 		// OFF the receive goroutine, and not as an optimisation. Filling the
 		// endpoint drops asks the forward's own CLIENT, which is very often the
@@ -28,7 +29,7 @@ func (h *TaskHandler) handleListPortForwards(conn ConnHandle, requestID uint32, 
 	h.listPortForwards(conn, requestID, connID, filter, false)
 }
 
-func (h *TaskHandler) listPortForwards(conn ConnHandle, requestID uint32, connID string, filter protocol.TaskID, askEndpoints bool) {
+func (h *TaskHandler) listPortForwards(conn ConnHandle, requestID uint32, connID objproto.ConnectionID, filter protocol.TaskID, askEndpoints bool) {
 	respond := func(streamID uint64) {
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_ListPortForwards, RequestId: requestID}
 		resp.SetListPortForwards(protocol.PortForwardListResult{StreamId: streamID})
@@ -81,7 +82,7 @@ func (h *TaskHandler) listPortForwards(conn ConnHandle, requestID uint32, connID
 // hooked into TaskStore.Finish/Cancel/MarkFailed and the runner-loss paths.
 // Intercepting a shared transition at some of its call sites is a failure mode
 // this repo has already paid for (see implementation-pitfalls Pitfall 3 / 10).
-func (h *TaskHandler) visiblePortForwards(connID string, filter protocol.TaskID) []protocol.PortForwardInfo {
+func (h *TaskHandler) visiblePortForwards(connID objproto.ConnectionID, filter protocol.TaskID) []protocol.PortForwardInfo {
 	all, allowed := h.visibleToCaller(connID)
 	filterHex := ""
 	if filter.Id != ([16]byte{}) {
@@ -118,7 +119,7 @@ func portForwardInfo(pf *portForward) protocol.PortForwardInfo {
 	info.SetTargetHost([]byte(pf.targetHost))
 	info.TargetPort = pf.targetPort
 	info.OriginKind = pf.clientKind
-	info.SetOriginCid([]byte(pf.clientCID))
+	info.SetOriginCid([]byte(pf.clientCID.String()))
 	info.ClientEndpoint = pf.clientEndpoint
 	info.Protocol = pf.protocolKind
 	info.Route = pf.route
@@ -217,7 +218,7 @@ func (h *TaskHandler) teardownPortForward(pf *portForward, reason protocol.PortF
 // terminal held it, so I closed the window" leaves exactly this ghost.
 //
 // notify=false: there is no one left to tell, and the control stream is dead.
-func (h *TaskHandler) DropPortForwardsForConn(connID string) {
+func (h *TaskHandler) DropPortForwardsForConn(connID objproto.ConnectionID) {
 	for _, pf := range h.pforwards().list() {
 		if pf.clientCID != connID {
 			continue
@@ -275,7 +276,7 @@ func (h *TaskHandler) handleForwardEnded(conn ConnHandle, msg *protocol.ForwardE
 // killPortForward closes one registration on request. An id the caller cannot see
 // answers no_such_forward, identical to an unknown id: a distinct "denied" would
 // let a confined agent probe ids to learn which forwards exist.
-func (h *TaskHandler) killPortForward(connID string, id uint64) protocol.KillPortForwardStatus {
+func (h *TaskHandler) killPortForward(connID objproto.ConnectionID, id uint64) protocol.KillPortForwardStatus {
 	pf, ok := h.pforwards().get(id)
 	if !ok {
 		return protocol.KillPortForwardStatus_NoSuchForward

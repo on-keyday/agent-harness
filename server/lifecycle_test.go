@@ -103,7 +103,7 @@ func TestLifecycleSet_SurvivesParentHopRedaction(t *testing.T) {
 	h.Tasks.SetProgress(pHex, "private", 1)
 	h.Tasks.SetLifecycle(pHex, protocol.LifecycleState_Waiting, 1, 5)
 	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9732-1"), nextSendStreamID: 10}
-	h.principals = map[string]protocol.TaskID{conn.ConnectionID().String(): hexToTaskID(t, cHex)}
+	h.principals = map[objproto.ConnectionID]protocol.TaskID{conn.ConnectionID(): hexToTaskID(t, cHex)}
 	row, ok := listRowAs(t, h, conn, pHex)
 	if !ok {
 		t.Fatal("child must see its parent's (redacted) row")

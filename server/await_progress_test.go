@@ -181,7 +181,7 @@ func TestAwaitList_ShowsCondition(t *testing.T) {
 	f.h.Handle(op, encodeTaskControlRequest(t, &idle))
 	waitFor(t, func() bool { return len(f.h.idleWatchers().list("")) == 2 })
 
-	rows := f.h.visibleIdleWatchers(op.ConnectionID().String(), protocol.TaskID{})
+	rows := f.h.visibleIdleWatchers(op.ConnectionID(), protocol.TaskID{})
 	conds := map[protocol.AwaitCondition]uint32{}
 	for _, r := range rows {
 		conds[r.Condition] = r.ThresholdMs

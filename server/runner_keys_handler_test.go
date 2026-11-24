@@ -86,9 +86,9 @@ func TestRunnerVerbsNeedRunnerEnroll(t *testing.T) {
 	tid := f.h.Tasks.Create("r", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
 		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_None}, "")
 	if f.h.principals == nil {
-		f.h.principals = map[string]protocol.TaskID{}
+		f.h.principals = map[objproto.ConnectionID]protocol.TaskID{}
 	}
-	f.h.principals[confined.ConnectionID().String()] = hexToTaskID(t, tid)
+	f.h.principals[confined.ConnectionID()] = hexToTaskID(t, tid)
 	for _, kind := range []protocol.TaskControlKind{protocol.TaskControlKind_RunnerEnroll, protocol.TaskControlKind_RunnerUnenroll, protocol.TaskControlKind_RunnerKeys} {
 		if got := requiredCapOf(kind); got != protocol.Capability_RunnerEnroll {
 			t.Errorf("%v gated on %v, want runner_enroll", kind, got)
@@ -126,9 +126,9 @@ func TestRunnerEnrollRecordsEnrolledBy(t *testing.T) {
 	tid := f.h.Tasks.Create("r", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
 		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_RunnerEnroll}, "")
 	if f.h.principals == nil {
-		f.h.principals = map[string]protocol.TaskID{}
+		f.h.principals = map[objproto.ConnectionID]protocol.TaskID{}
 	}
-	f.h.principals[agent.ConnectionID().String()] = hexToTaskID(t, tid)
+	f.h.principals[agent.ConnectionID()] = hexToTaskID(t, tid)
 	pub2, _, _ := ed25519.GenerateKey(nil)
 	if st := f.enroll(t, agent, pub2, "w"); st != protocol.RunnerKeyStatus_Ok {
 		t.Fatalf("agent enroll: %v", st)

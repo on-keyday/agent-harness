@@ -7,6 +7,7 @@ import (
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // handleSetCaps rewrites a live task's authority.
@@ -24,7 +25,7 @@ import (
 // delegation bound bound every half, so nothing here lets a task raise itself
 // or anyone outside its subtree. Every refusal of R1 is not_found, so the
 // answer is no existence oracle (R4).
-func (h *TaskHandler) handleSetCaps(conn ConnHandle, requestID uint32, cid string, req *protocol.SetCapsRequest) {
+func (h *TaskHandler) handleSetCaps(conn ConnHandle, requestID uint32, cid objproto.ConnectionID, req *protocol.SetCapsRequest) {
 	respondMsg := func(status protocol.SetCapsStatus, affected []string, connsClosed uint32, msg string) {
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_SetCaps, RequestId: requestID}
 		body := protocol.SetCapsResponse{Status: status, ConnsClosed: connsClosed}
@@ -104,7 +105,7 @@ func (h *TaskHandler) handleSetCaps(conn ConnHandle, requestID uint32, cid strin
 // operatorCapsUpdate builds the operator's update: every present half written
 // as given, after validation only (no attenuation — the operator may widen
 // past its own reach). refused reports that a response was already sent.
-func (h *TaskHandler) operatorCapsUpdate(cid string, req *protocol.SetCapsRequest,
+func (h *TaskHandler) operatorCapsUpdate(cid objproto.ConnectionID, req *protocol.SetCapsRequest,
 	respond func(protocol.SetCapsStatus, []string, uint32)) (GrantUpdate, bool) {
 	// The spawn limits are written on the target only: the cascade below
 	// never sets their bits, so no descendant's limits change (spec D13).
@@ -164,7 +165,7 @@ func setCapsGrantRequest(req *protocol.SetCapsRequest) grantRequest {
 // would let it act through that task's tree position (credential D18a) — and
 // only one inside the scope of its resume bit, the power a re-granting resume
 // already exercises. Descendants are read from the live creator index.
-func (h *TaskHandler) regrantReaches(cid, targetHex string) bool {
+func (h *TaskHandler) regrantReaches(cid objproto.ConnectionID, targetHex string) bool {
 	callerHex := h.principalHex(cid)
 	if callerHex == "" || callerHex == targetHex || !h.resumeTargetAllowed(cid, false, targetHex) {
 		return false

@@ -42,7 +42,7 @@ func TestCallerCaps(t *testing.T) {
 	h := newTestHandler(t)
 
 	// Operator (no principal entry for this connID) → Capability_All.
-	if got := h.callerCaps("operator-conn"); got != protocol.Capability_All {
+	if got := h.callerCaps(tcid("operator-conn")); got != protocol.Capability_All {
 		t.Fatalf("operator caps = %#x, want All (%#x)", got, protocol.Capability_All)
 	}
 
@@ -58,19 +58,19 @@ func TestCallerCaps(t *testing.T) {
 
 	// Set the principal directly on the map (white-box; same package).
 	if h.principals == nil {
-		h.principals = make(map[string]protocol.TaskID)
+		h.principals = make(map[objproto.ConnectionID]protocol.TaskID)
 	}
-	h.principals["agent-conn"] = tid
+	h.principals[tcid("agent-conn")] = tid
 
-	if got := h.callerCaps("agent-conn"); got != parentCaps {
+	if got := h.callerCaps(tcid("agent-conn")); got != parentCaps {
 		t.Fatalf("agent caps = %#x, want %#x", got, parentCaps)
 	}
 
 	// Agent principal whose task is missing → Capability_None.
 	var missingTID protocol.TaskID
 	missingTID.Id[0] = 0xFF // non-zero so it's not treated as operator
-	h.principals["ghost-conn"] = missingTID
-	if got := h.callerCaps("ghost-conn"); got != protocol.Capability_None {
+	h.principals[tcid("ghost-conn")] = missingTID
+	if got := h.callerCaps(tcid("ghost-conn")); got != protocol.Capability_None {
 		t.Fatalf("ghost caps = %#x, want None (%#x)", got, protocol.Capability_None)
 	}
 }
@@ -108,11 +108,11 @@ func TestSpawnAttenuation(t *testing.T) {
 
 	// Wire the parent as the principal on "agent-conn".
 	if h.principals == nil {
-		h.principals = make(map[string]protocol.TaskID)
+		h.principals = make(map[objproto.ConnectionID]protocol.TaskID)
 	}
-	h.principals["agent-conn"] = ptid
+	h.principals[tcid("agent-conn")] = ptid
 
-	open := func(name, cid string, creator protocol.TaskID, requested protocol.Capability) TaskEntry {
+	open := func(name string, cid objproto.ConnectionID, creator protocol.TaskID, requested protocol.Capability) TaskEntry {
 		t.Helper()
 		req := detachedOpen(0, 0)
 		req.SetRepoPath([]byte("/x/repo"))
@@ -125,17 +125,17 @@ func TestSpawnAttenuation(t *testing.T) {
 	}
 
 	// Case 1: request Capability_All from a limited parent → child gets parent's set.
-	if c := open("case1", "agent-conn", ptid, protocol.Capability_All).Capabilities; c != parentCaps {
+	if c := open("case1", tcid("agent-conn"), ptid, protocol.Capability_All).Capabilities; c != parentCaps {
 		t.Fatalf("child1 caps = %#x, want parent caps %#x", c, parentCaps)
 	}
 
 	// Case 2: request a cap the parent does NOT hold → child does not get it.
-	if c := open("case2", "agent-conn", ptid, protocol.Capability_FileWrite).Capabilities; c != protocol.Capability_None {
+	if c := open("case2", tcid("agent-conn"), ptid, protocol.Capability_FileWrite).Capabilities; c != protocol.Capability_None {
 		t.Fatalf("child2 caps = %#x, want None (parent lacks FileWrite)", c)
 	}
 
 	// Case 3: operator (connID not in principals) → child inherits full set.
-	if c := open("case3", "", protocol.TaskID{}, protocol.Capability_All).Capabilities; c != protocol.Capability_All {
+	if c := open("case3", objproto.ConnectionID{}, protocol.TaskID{}, protocol.Capability_All).Capabilities; c != protocol.Capability_All {
 		t.Fatalf("child3 caps = %#x, want All (operator creator)", c)
 	}
 }
@@ -179,9 +179,9 @@ func TestHandleDeniesWithoutCap(t *testing.T) {
 
 	// Wire a caller conn with a distinct CID.
 	callerConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9600-1")}
-	callerCID := callerConn.ConnectionID().String()
+	callerCID := callerConn.ConnectionID()
 	if h.principals == nil {
-		h.principals = make(map[string]protocol.TaskID)
+		h.principals = make(map[objproto.ConnectionID]protocol.TaskID)
 	}
 	h.principals[callerCID] = ptid
 
@@ -286,9 +286,9 @@ func makeAgentConn(t *testing.T, caps protocol.Capability) (*TaskHandler, *fakeC
 	ptid := hexToTaskID(t, parentIDHex)
 	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9700-1")}
 	if h.principals == nil {
-		h.principals = make(map[string]protocol.TaskID)
+		h.principals = make(map[objproto.ConnectionID]protocol.TaskID)
 	}
-	h.principals[conn.ConnectionID().String()] = ptid
+	h.principals[conn.ConnectionID()] = ptid
 	return h, conn
 }
 
@@ -437,7 +437,7 @@ func TestDirectionGate(t *testing.T) {
 	// "visible but under-capped" half of that split.
 	t.Run("kill_local_no_cap_denied", func(t *testing.T) {
 		h, conn := makeAgentConn(t, protocol.Capability_FileRead) // has FileRead only
-		ownTID := h.lookupPrincipal(conn.ConnectionID().String())
+		ownTID := h.lookupPrincipal(conn.ConnectionID())
 		ownHex := hex.EncodeToString(ownTID.Id[:])
 		id := h.pforwards().add(&portForward{direction: protocol.PortForwardDirection_Local, taskIDHex: ownHex})
 		req := &protocol.TaskControlRequest{
@@ -452,7 +452,7 @@ func TestDirectionGate(t *testing.T) {
 	// denied (RequiredCap=ForwardRemote).
 	t.Run("kill_remote_only_local_denied", func(t *testing.T) {
 		h, conn := makeAgentConn(t, protocol.Capability_ForwardLocal) // has ForwardLocal but not ForwardRemote
-		ownTID := h.lookupPrincipal(conn.ConnectionID().String())
+		ownTID := h.lookupPrincipal(conn.ConnectionID())
 		ownHex := hex.EncodeToString(ownTID.Id[:])
 		id := h.pforwards().add(&portForward{direction: protocol.PortForwardDirection_Remote, taskIDHex: ownHex})
 		req := &protocol.TaskControlRequest{
@@ -483,7 +483,7 @@ func TestDirectionGate(t *testing.T) {
 	// Kill needs the bit create needs.
 	t.Run("kill_link_with_both_forward_bits_denied", func(t *testing.T) {
 		h, conn := makeAgentConn(t, protocol.Capability_ForwardLocal|protocol.Capability_ForwardRemote)
-		ownTID := h.lookupPrincipal(conn.ConnectionID().String())
+		ownTID := h.lookupPrincipal(conn.ConnectionID())
 		ownHex := hex.EncodeToString(ownTID.Id[:])
 		id := h.pforwards().add(&portForward{direction: protocol.PortForwardDirection_Link,
 			protocolKind: protocol.ForwardProtocol_Ip, taskIDHex: ownHex})
@@ -500,7 +500,7 @@ func TestDirectionGate(t *testing.T) {
 	// rather than passing because some earlier branch silently swallowed it.
 	t.Run("kill_local_with_cap_not_denied", func(t *testing.T) {
 		h, conn := makeAgentConn(t, protocol.Capability_ForwardLocal)
-		ownTID := h.lookupPrincipal(conn.ConnectionID().String())
+		ownTID := h.lookupPrincipal(conn.ConnectionID())
 		ownHex := hex.EncodeToString(ownTID.Id[:])
 		id := h.pforwards().add(&portForward{direction: protocol.PortForwardDirection_Local, taskIDHex: ownHex})
 		req := &protocol.TaskControlRequest{
@@ -571,12 +571,12 @@ func TestVisibleSubtree(t *testing.T) {
 		"")
 
 	if h.principals == nil {
-		h.principals = make(map[string]protocol.TaskID)
+		h.principals = make(map[objproto.ConnectionID]protocol.TaskID)
 	}
-	h.principals["b-conn"] = bTID
+	h.principals[tcid("b-conn")] = bTID
 
 	// B lacks InfoGlobal → subtree only.
-	all, allowed := h.visibleToCaller("b-conn")
+	all, allowed := h.visibleToCaller(tcid("b-conn"))
 	if all {
 		t.Fatal("B lacks InfoGlobal; all should be false")
 	}
@@ -599,7 +599,7 @@ func TestVisibleSubtree(t *testing.T) {
 	}
 	h.Tasks.mu.Unlock()
 
-	all2, _ := h.visibleToCaller("b-conn")
+	all2, _ := h.visibleToCaller(tcid("b-conn"))
 	if !all2 {
 		t.Fatal("B with vis_base=global should have all=true")
 	}
@@ -626,7 +626,7 @@ func TestListFilteredToSubtree(t *testing.T) {
 		"")
 
 	if h.principals == nil {
-		h.principals = make(map[string]protocol.TaskID)
+		h.principals = make(map[objproto.ConnectionID]protocol.TaskID)
 	}
 
 	// -- Case 1: confined caller (task A, no InfoGlobal) ---
@@ -634,7 +634,7 @@ func TestListFilteredToSubtree(t *testing.T) {
 		id:               objproto.MustParseConnectionID("ws:127.0.0.1:9810-1"),
 		nextSendStreamID: 10,
 	}
-	h.principals[callerConn.ConnectionID().String()] = aTID
+	h.principals[callerConn.ConnectionID()] = aTID
 
 	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_List}}
 	req.SetList(defaultListQuery())
@@ -710,13 +710,13 @@ func TestListIncludesRedactedParent(t *testing.T) {
 	h.Tasks.mu.Unlock()
 
 	if h.principals == nil {
-		h.principals = make(map[string]protocol.TaskID)
+		h.principals = make(map[objproto.ConnectionID]protocol.TaskID)
 	}
 	callerConn := &fakeConn{
 		id:               objproto.MustParseConnectionID("ws:127.0.0.1:9830-1"),
 		nextSendStreamID: 10,
 	}
-	h.principals[callerConn.ConnectionID().String()] = hexToTaskID(t, cHex)
+	h.principals[callerConn.ConnectionID()] = hexToTaskID(t, cHex)
 
 	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_List}}
 	req.SetList(defaultListQuery())
@@ -802,7 +802,7 @@ func TestListIncludesRedactedParent(t *testing.T) {
 
 	// ACCESS scope unchanged: the caller holds exec_view, so this is the
 	// SCOPE refusing the parent the list row made visible.
-	if h.authorize(callerConn.ConnectionID().String(), protocol.Capability_ExecView, bHex) {
+	if h.authorize(callerConn.ConnectionID(), protocol.Capability_ExecView, bHex) {
 		t.Error("the parent row's visibility widened the caller's exec_view scope to the parent")
 	}
 }
@@ -839,7 +839,7 @@ func TestListRunnersGatedByInfoGlobal(t *testing.T) {
 
 	aTID := hexToTaskID(t, aHex)
 	if h.principals == nil {
-		h.principals = make(map[string]protocol.TaskID)
+		h.principals = make(map[objproto.ConnectionID]protocol.TaskID)
 	}
 
 	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_List}}
@@ -850,7 +850,7 @@ func TestListRunnersGatedByInfoGlobal(t *testing.T) {
 		id:               objproto.MustParseConnectionID("ws:127.0.0.1:9820-1"),
 		nextSendStreamID: 10,
 	}
-	h.principals[confinedConn.ConnectionID().String()] = aTID
+	h.principals[confinedConn.ConnectionID()] = aTID
 	h.Handle(confinedConn, encodeTaskControlRequest(t, req))
 	if len(confinedConn.sendStreams) != 1 {
 		t.Fatalf("confined caller: expected 1 send stream, got %d", len(confinedConn.sendStreams))
@@ -881,7 +881,7 @@ func TestListRunnersGatedByInfoGlobal(t *testing.T) {
 		id:               objproto.MustParseConnectionID("ws:127.0.0.1:9820-3"),
 		nextSendStreamID: 12,
 	}
-	h.principals[igConn.ConnectionID().String()] = aTID
+	h.principals[igConn.ConnectionID()] = aTID
 	h.Handle(igConn, encodeTaskControlRequest(t, req))
 	igBody := decodeListBody(t, igConn.sendStreams[0].bytes)
 	if igBody.RunnersLen != 2 {
@@ -1134,9 +1134,9 @@ func TestResumeCapsOverride(t *testing.T) {
 
 		// Wire the agent as a principal on a distinct conn.
 		if h.principals == nil {
-			h.principals = make(map[string]protocol.TaskID)
+			h.principals = make(map[objproto.ConnectionID]protocol.TaskID)
 		}
-		const agentConnID = "ws:127.0.0.1:9900-1"
+		agentConnID := objproto.MustParseConnectionID("ws:127.0.0.1:9900-1")
 		h.principals[agentConnID] = agentTID
 
 		// Agent requests All caps with override=true.
@@ -1205,11 +1205,11 @@ func scopeFixture(t *testing.T) (h *TaskHandler, p, c, g, u string) {
 }
 
 // bindPrincipal points a fake connection id at a task and returns the conn id.
-func bindPrincipal(t *testing.T, h *TaskHandler, taskHex string) string {
+func bindPrincipal(t *testing.T, h *TaskHandler, taskHex string) objproto.ConnectionID {
 	t.Helper()
-	cid := "ws:127.0.0.1:9999-" + taskHex[:4]
+	cid := tcid("ws:127.0.0.1:9999-" + taskHex[:4])
 	if h.principals == nil {
-		h.principals = make(map[string]protocol.TaskID)
+		h.principals = make(map[objproto.ConnectionID]protocol.TaskID)
 	}
 	h.principals[cid] = hexToTaskID(t, taskHex)
 	return cid
@@ -1279,7 +1279,7 @@ func TestAuthorizeRequiresBothCapAndScope(t *testing.T) {
 		t.Error("denied a self-target with the cap held")
 	}
 	// Operator: no principal, everything.
-	if !h.authorize("ws:127.0.0.1:1-0", protocol.Capability_Cancel, u) {
+	if !h.authorize(objproto.MustParseConnectionID("ws:127.0.0.1:1-0"), protocol.Capability_Cancel, u) {
 		t.Error("denied an operator")
 	}
 }

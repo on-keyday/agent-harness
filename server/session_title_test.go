@@ -96,7 +96,7 @@ func TestList_ParentHopRowHasNoTitle(t *testing.T) {
 
 	h.Sessions.Add(pHex, titledMux(t, "parent's private title"))
 	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9734-1"), nextSendStreamID: 10}
-	h.principals = map[string]protocol.TaskID{conn.ConnectionID().String(): hexToTaskID(t, cHex)}
+	h.principals = map[objproto.ConnectionID]protocol.TaskID{conn.ConnectionID(): hexToTaskID(t, cHex)}
 	row, ok := listRowAs(t, h, conn, pHex)
 	if !ok {
 		t.Fatal("child must see its parent's row")

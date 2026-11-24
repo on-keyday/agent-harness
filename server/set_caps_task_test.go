@@ -18,15 +18,15 @@ var taskCallerSeq int
 func taskCaller(t *testing.T, h *TaskHandler, taskHex string, dcaps protocol.Capability) *fakeConn {
 	t.Helper()
 	taskCallerSeq++
-	cid := fmt.Sprintf("ws:127.0.0.1:9800-%d", taskCallerSeq)
+	cid := objproto.MustParseConnectionID(fmt.Sprintf("ws:127.0.0.1:9800-%d", taskCallerSeq))
 	if h.principals == nil {
-		h.principals = make(map[string]protocol.TaskID)
+		h.principals = make(map[objproto.ConnectionID]protocol.TaskID)
 	}
 	h.principals[cid] = hexToTaskID(t, taskHex)
 	if _, ok := h.Tasks.SetCaps(taskHex, GrantUpdate{DelegateCaps: true, To: authority.Grant{DelegateCaps: dcaps}}, AuthorityWrite{}); !ok {
 		t.Fatalf("set bound on %s", taskHex)
 	}
-	return &fakeConn{id: objproto.MustParseConnectionID(cid)}
+	return &fakeConn{id: cid}
 }
 
 func capsReq(t *testing.T, target string, caps protocol.Capability) protocol.SetCapsRequest {
@@ -44,7 +44,7 @@ func TestTaskSetCapsMatchesResumeRegrant(t *testing.T) {
 	conn := taskCaller(t, h, c, protocol.Capability_FileRead|protocol.Capability_Cancel)
 	requested := protocol.Capability_FileRead | protocol.Capability_Spawn
 
-	cid := conn.ConnectionID().String()
+	cid := conn.ConnectionID()
 	want, err := h.grantFor(h.granter(cid, h.callerCaps(cid)),
 		grantRequest{Caps: requested, CapsPresent: true}, g)
 	if err != nil {

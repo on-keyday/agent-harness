@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // kindSpec is createSpec with the kind set.
@@ -21,7 +22,7 @@ func kindSpec(k protocol.TaskKind) *protocol.ScheduleSpec {
 func TestScheduleCreateStreamKind(t *testing.T) {
 	e := newSchedEnv(t)
 	e.addCandidate("claude")
-	r := e.create(t, "", kindSpec(protocol.TaskKind_Stream), "p")
+	r := e.create(t, objproto.ConnectionID{}, kindSpec(protocol.TaskKind_Stream), "p")
 	if r.Status != protocol.ScheduleStatus_Ok {
 		t.Fatalf("%v %s", r.Status, r.Message)
 	}
@@ -30,7 +31,7 @@ func TestScheduleCreateStreamKind(t *testing.T) {
 		t.Errorf("kind %v noPTY %v turn-end %v", sc.Kind, sc.Run.NoPTY, sc.Run.Cond.TurnEnd)
 	}
 	// No kind on a create is interactive.
-	r = e.create(t, "", createSpec(), "p")
+	r = e.create(t, objproto.ConnectionID{}, createSpec(), "p")
 	if sc := e.stored(t, schedIDHex(r.Id)); sc.Kind != protocol.TaskKind_Interactive {
 		t.Errorf("default kind %v", sc.Kind)
 	}
@@ -40,7 +41,7 @@ func TestScheduleKindUnsupported(t *testing.T) {
 	e := newSchedEnv(t)
 	e.addCandidate("claude")
 	for _, k := range []protocol.TaskKind{protocol.TaskKind_Oneshot, protocol.TaskKind(99)} {
-		if r := e.create(t, "", kindSpec(k), "p"); r.Status != protocol.ScheduleStatus_KindUnsupported {
+		if r := e.create(t, objproto.ConnectionID{}, kindSpec(k), "p"); r.Status != protocol.ScheduleStatus_KindUnsupported {
 			t.Errorf("kind %v: %v %s", k, r.Status, r.Message)
 		}
 	}
@@ -52,13 +53,13 @@ func TestScheduleCreateStreamWithOneshotOrPtyRefused(t *testing.T) {
 	sp := kindSpec(protocol.TaskKind_Stream)
 	sp.SetOneshotSet(true)
 	sp.SetOneshot(true)
-	if r := e.create(t, "", sp, "p"); r.Status != protocol.ScheduleStatus_OneshotStream {
+	if r := e.create(t, objproto.ConnectionID{}, sp, "p"); r.Status != protocol.ScheduleStatus_OneshotStream {
 		t.Errorf("stream+oneshot: %v %s", r.Status, r.Message)
 	}
 	sp = kindSpec(protocol.TaskKind_Stream)
 	sp.SetPtySet(true)
 	sp.SetPty(true)
-	if r := e.create(t, "", sp, "p"); r.Status != protocol.ScheduleStatus_PtyStream {
+	if r := e.create(t, objproto.ConnectionID{}, sp, "p"); r.Status != protocol.ScheduleStatus_PtyStream {
 		t.Errorf("stream+pty: %v %s", r.Status, r.Message)
 	}
 }
@@ -71,12 +72,12 @@ func TestScheduleEditStreamOverOneshotRefused(t *testing.T) {
 	sp := createSpec()
 	sp.SetOneshotSet(true)
 	sp.SetOneshot(true)
-	r := e.create(t, "", sp, "p")
+	r := e.create(t, objproto.ConnectionID{}, sp, "p")
 	id := schedIDHex(r.Id)
 	edit := &protocol.ScheduleSpec{}
 	edit.SetKindPresent(true)
 	edit.SetKind(protocol.TaskKind_Stream)
-	if r := e.edit(t, "", id, edit, ""); r.Status != protocol.ScheduleStatus_OneshotStream {
+	if r := e.edit(t, objproto.ConnectionID{}, id, edit, ""); r.Status != protocol.ScheduleStatus_OneshotStream {
 		t.Errorf("%v %s", r.Status, r.Message)
 	}
 	if sc := e.stored(t, id); sc.Kind != protocol.TaskKind_Interactive || !sc.Run.Oneshot {
@@ -92,7 +93,7 @@ func TestScheduleEditStreamKeepsCheckingConditions(t *testing.T) {
 	sp := createSpec()
 	sp.SetTurnEndPresent(true)
 	sp.SetTurnEnd(protocol.TurnEndSignal_Program)
-	r := e.create(t, "", sp, "p")
+	r := e.create(t, objproto.ConnectionID{}, sp, "p")
 	if r.Status != protocol.ScheduleStatus_Ok {
 		t.Fatalf("%v %s", r.Status, r.Message)
 	}
@@ -100,7 +101,7 @@ func TestScheduleEditStreamKeepsCheckingConditions(t *testing.T) {
 	edit := &protocol.ScheduleSpec{}
 	edit.SetKindPresent(true)
 	edit.SetKind(protocol.TaskKind_Stream)
-	if r := e.edit(t, "", id, edit, ""); r.Status != protocol.ScheduleStatus_TurnEndUnsupported {
+	if r := e.edit(t, objproto.ConnectionID{}, id, edit, ""); r.Status != protocol.ScheduleStatus_TurnEndUnsupported {
 		t.Errorf("%v %s", r.Status, r.Message)
 	}
 	if sc := e.stored(t, id); sc.Kind != protocol.TaskKind_Interactive {
@@ -111,12 +112,12 @@ func TestScheduleEditStreamKeepsCheckingConditions(t *testing.T) {
 func TestScheduleEditKindBack(t *testing.T) {
 	e := newSchedEnv(t)
 	e.addCandidate("claude")
-	r := e.create(t, "", kindSpec(protocol.TaskKind_Stream), "p")
+	r := e.create(t, objproto.ConnectionID{}, kindSpec(protocol.TaskKind_Stream), "p")
 	id := schedIDHex(r.Id)
 	edit := &protocol.ScheduleSpec{}
 	edit.SetKindPresent(true)
 	edit.SetKind(protocol.TaskKind_Interactive)
-	if r := e.edit(t, "", id, edit, ""); r.Status != protocol.ScheduleStatus_Ok {
+	if r := e.edit(t, objproto.ConnectionID{}, id, edit, ""); r.Status != protocol.ScheduleStatus_Ok {
 		t.Fatalf("%v %s", r.Status, r.Message)
 	}
 	if sc := e.stored(t, id); sc.Kind != protocol.TaskKind_Interactive {
@@ -204,8 +205,8 @@ func TestScheduleFiresStreamKind(t *testing.T) {
 func TestScheduleDetailCarriesKind(t *testing.T) {
 	e := newSchedEnv(t)
 	e.addCandidate("claude")
-	r := e.create(t, "", kindSpec(protocol.TaskKind_Stream), "p")
-	d, refusal := e.h.scheduleDetail("", r.Id)
+	r := e.create(t, objproto.ConnectionID{}, kindSpec(protocol.TaskKind_Stream), "p")
+	d, refusal := e.h.scheduleDetail(objproto.ConnectionID{}, r.Id)
 	if refusal != nil {
 		t.Fatalf("%v %s", refusal.Status, refusal.Message)
 	}
@@ -222,7 +223,7 @@ func TestScheduleKindRoundTripKeepsInteractiveSettings(t *testing.T) {
 	sp := createSpec()
 	sp.SetPtySet(true)
 	sp.SetPty(false)
-	r := e.create(t, "", sp, "p")
+	r := e.create(t, objproto.ConnectionID{}, sp, "p")
 	id := schedIDHex(r.Id)
 	before := e.stored(t, id)
 	if !before.Run.NoPTY || before.Run.Cond.TurnEnd != protocol.TurnEndSignal_Any {
@@ -233,7 +234,7 @@ func TestScheduleKindRoundTripKeepsInteractiveSettings(t *testing.T) {
 		ed := &protocol.ScheduleSpec{}
 		ed.SetKindPresent(true)
 		ed.SetKind(k)
-		if r := e.edit(t, "", id, ed, ""); r.Status != protocol.ScheduleStatus_Ok {
+		if r := e.edit(t, objproto.ConnectionID{}, id, ed, ""); r.Status != protocol.ScheduleStatus_Ok {
 			t.Fatalf("%v %s", r.Status, r.Message)
 		}
 	}

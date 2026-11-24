@@ -15,7 +15,7 @@ func TestBoardContactsClearIsScopeGated(t *testing.T) {
 	h, _, c, g, u := scopeFixture(t)
 	h.Board = newTestBoard(t)
 	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9702-1")}
-	h.principals = map[string]protocol.TaskID{conn.ConnectionID().String(): hexToTaskID(t, c)}
+	h.principals = map[objproto.ConnectionID]protocol.TaskID{conn.ConnectionID(): hexToTaskID(t, c)}
 
 	var peerA, peerB protocol.TaskID
 	peerA.Id[0], peerB.Id[0] = 0xA1, 0xB2

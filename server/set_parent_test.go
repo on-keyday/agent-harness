@@ -27,9 +27,9 @@ func TestSetParentRejectsNonOperator(t *testing.T) {
 	h, p, c, _, u := scopeFixture(t)
 	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9910-1")}
 	if h.principals == nil {
-		h.principals = make(map[string]protocol.TaskID)
+		h.principals = make(map[objproto.ConnectionID]protocol.TaskID)
 	}
-	h.principals[conn.ConnectionID().String()] = hexToTaskID(t, c)
+	h.principals[conn.ConnectionID()] = hexToTaskID(t, c)
 
 	got := sendSetParent(t, h, conn, protocol.SetParentRequest{
 		TaskId: hexToTaskID(t, u), ParentId: hexToTaskID(t, c),

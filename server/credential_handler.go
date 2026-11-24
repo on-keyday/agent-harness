@@ -10,6 +10,7 @@ import (
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // The credential verbs (docs/superpowers/specs/2026-11-21-credential-tasks-design.md):
@@ -17,11 +18,11 @@ import (
 // new key and expiry on one (D18). Both need credential_issue, checked
 // centrally (authority.CentralCap); the attenuation and the target gates are here.
 
-func (h *TaskHandler) handleCredentialIssue(conn ConnHandle, requestID uint32, cid string, req *protocol.CredentialIssueRequest) {
+func (h *TaskHandler) handleCredentialIssue(conn ConnHandle, requestID uint32, cid objproto.ConnectionID, req *protocol.CredentialIssueRequest) {
 	h.sendCredential(conn, protocol.TaskControlKind_CredentialIssue, requestID, h.credentialIssue(cid, req, time.Now()))
 }
 
-func (h *TaskHandler) handleCredentialRekey(conn ConnHandle, requestID uint32, cid string, req *protocol.CredentialRekeyRequest) {
+func (h *TaskHandler) handleCredentialRekey(conn ConnHandle, requestID uint32, cid objproto.ConnectionID, req *protocol.CredentialRekeyRequest) {
 	h.sendCredential(conn, protocol.TaskControlKind_CredentialRekey, requestID, h.credentialRekey(cid, req, time.Now()))
 }
 
@@ -126,7 +127,7 @@ func credentialOK(id string, expiresAt time.Time) protocol.CredentialResponse {
 // (D13): a child of the caller, holding at most what the caller may delegate
 // within its scope, counted against its spawn limits. The expiry is the
 // server's clock plus the ttl, never a client's absolute time.
-func (h *TaskHandler) credentialIssue(cid string, req *protocol.CredentialIssueRequest, now time.Time) protocol.CredentialResponse {
+func (h *TaskHandler) credentialIssue(cid objproto.ConnectionID, req *protocol.CredentialIssueRequest, now time.Time) protocol.CredentialResponse {
 	ttl, refusal := credentialTTL(req.TtlMs)
 	if refusal != nil {
 		return *refusal
@@ -160,7 +161,7 @@ func (h *TaskHandler) credentialIssue(cid string, req *protocol.CredentialIssueR
 // creator-tree ancestor (rekeyReaches), and must be able to issue the
 // credential's authority now — the recorded grant, or the narrowed one the
 // request writes — so a re-key confers nothing a fresh issue would not.
-func (h *TaskHandler) credentialRekey(cid string, req *protocol.CredentialRekeyRequest, now time.Time) protocol.CredentialResponse {
+func (h *TaskHandler) credentialRekey(cid objproto.ConnectionID, req *protocol.CredentialRekeyRequest, now time.Time) protocol.CredentialResponse {
 	idHex := hex.EncodeToString(req.TaskId.Id[:])
 	if !h.inScope(cid, requiredCentral(protocol.TaskControlKind_CredentialRekey), idHex) || !h.rekeyReaches(cid, idHex) {
 		return credentialRefusal(protocol.CredentialStatus_NoSuchTask, "")
@@ -290,7 +291,7 @@ func (h *TaskHandler) rekeyLocked(idHex string, pub [32]byte, expiresAt time.Tim
 //
 // Out of reach answers no_such_task, as an id outside the scope does: an
 // answer saying "exists, but not yours" would be an existence oracle.
-func (h *TaskHandler) rekeyReaches(cid, idHex string) bool {
+func (h *TaskHandler) rekeyReaches(cid objproto.ConnectionID, idHex string) bool {
 	pid := h.lookupPrincipal(cid)
 	if pid.Id == ([16]byte{}) {
 		return true

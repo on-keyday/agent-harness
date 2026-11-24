@@ -20,10 +20,10 @@ func restoreCaller(t *testing.T, h *TaskHandler, caps protocol.Capability, port 
 
 	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:" + port + "-1")}
 	if h.principals == nil {
-		h.principals = make(map[string]protocol.TaskID)
+		h.principals = make(map[objproto.ConnectionID]protocol.TaskID)
 	}
 	tid := hexToTaskID(t, idHex)
-	h.principals[conn.ConnectionID().String()] = tid
+	h.principals[conn.ConnectionID()] = tid
 	return conn, tid
 }
 

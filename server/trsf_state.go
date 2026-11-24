@@ -8,6 +8,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // trsfConnStates is the ONE walk of this process's connections. SIGUSR1's dump
@@ -58,7 +59,7 @@ func (s *Server) trsfConnStates(allowed map[string]bool, globalView bool) ([]pro
 // connection a runner holds is either its shared server connection -- which has
 // no principal task to project from, and whose counters are the sum over every
 // task on that runner -- or a data-plane one.
-func (h *TaskHandler) handleTrsfState(conn ConnHandle, requestID uint32, cid string, req *protocol.TrsfStateRequest) {
+func (h *TaskHandler) handleTrsfState(conn ConnHandle, requestID uint32, cid objproto.ConnectionID, req *protocol.TrsfStateRequest) {
 	// The rows go on a stream and the response carries only its id, exactly as
 	// handleListConns does. Inline they do not fit: ten rows is 1229 bytes
 	// against udp's 1200 path MTU, objproto does not split an application

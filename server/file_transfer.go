@@ -230,7 +230,7 @@ func (h *TaskHandler) openDataPlane(
 	// under who asked as well as under its target: the requester's authority
 	// ending (a narrowing caps change, a credential's revoke, expiry or re-key)
 	// must withdraw what it minted.
-	slot, err := h.SetupDataPlane(ctx, clientCID, runner, grant, direct, h.principalHex(clientCID.String()))
+	slot, err := h.SetupDataPlane(ctx, clientCID, runner, grant, direct, h.principalHex(clientCID))
 	if err != nil {
 		return nil, fmt.Errorf("route %v: %w", route, err)
 	}

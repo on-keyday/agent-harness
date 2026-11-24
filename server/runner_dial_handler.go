@@ -60,7 +60,7 @@ func (h *TaskHandler) runnerDialAdd(conn ConnHandle, r *protocol.RunnerDialAddRe
 			return protocol.RunnerDialStatus_DuplicateCandidate, 0
 		}
 	}
-	by := h.enrolledBy(conn.ConnectionID().String())
+	by := h.enrolledBy(conn.ConnectionID())
 	rec, err := h.RunnerDials.Add(RunnerDialRecord{Candidates: cands, Key: key.Key,
 		Label: string(r.Label), AddedAt: time.Now().UTC(), AddedBy: by})
 	if err != nil {
@@ -100,7 +100,7 @@ func (h *TaskHandler) handleRunnerDialRemove(conn ConnHandle, requestID uint32, 
 			h.Dials.Stop(r.Id)
 		}
 		slog.Info("dial record removed", "record", FormatDialRecordID(r.Id),
-			"by", h.enrolledBy(conn.ConnectionID().String()))
+			"by", h.enrolledBy(conn.ConnectionID()))
 	}
 	resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_RunnerDialRemove, RequestId: requestID}
 	resp.SetRunnerDialRemove(protocol.RunnerDialRemoveResponse{Status: status})

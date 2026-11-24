@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // The control stream double is port_forward_test.go's recordingBidiStream: it
@@ -47,12 +48,12 @@ func TestExecRunFinishedPushesEventAndDrops(t *testing.T) {
 // `harness-cli exec` left its row in `exec ls` and its `sleep` on the runner.
 func TestDropExecRunsForConnDropsOnlyThatConnection(t *testing.T) {
 	h := &TaskHandler{Registry: NewRegistry()}
-	mine := h.execs().add(&execRun{taskIDHex: "aaaa", clientCID: "ws:1.2.3.4:1-1",
+	mine := h.execs().add(&execRun{taskIDHex: "aaaa", clientCID: objproto.MustParseConnectionID("ws:1.2.3.4:1-1"),
 		control: newRecordingBidiStream(1)})
-	theirs := h.execs().add(&execRun{taskIDHex: "aaaa", clientCID: "ws:5.6.7.8:2-2",
+	theirs := h.execs().add(&execRun{taskIDHex: "aaaa", clientCID: objproto.MustParseConnectionID("ws:5.6.7.8:2-2"),
 		control: newRecordingBidiStream(2)})
 
-	h.DropExecRunsForConn("ws:1.2.3.4:1-1")
+	h.DropExecRunsForConn(objproto.MustParseConnectionID("ws:1.2.3.4:1-1"))
 
 	if _, ok := h.execs().get(mine); ok {
 		t.Error("an exec whose client connection died must be dropped")
@@ -70,10 +71,10 @@ func TestDropExecRunsForConnDropsOnlyThatConnection(t *testing.T) {
 // that nothing can still be running.
 func TestDropExecRunsForConnWithNoRunner(t *testing.T) {
 	h := &TaskHandler{Registry: NewRegistry()}
-	id := h.execs().add(&execRun{taskIDHex: "bbbb", runnerID: testRunnerID("gone"), clientCID: "c"})
+	id := h.execs().add(&execRun{taskIDHex: "bbbb", runnerID: testRunnerID("gone"), clientCID: tcid("c")})
 
-	h.DropExecRunsForConn("c")
-	h.DropExecRunsForConn("c")
+	h.DropExecRunsForConn(tcid("c"))
+	h.DropExecRunsForConn(tcid("c"))
 
 	if _, ok := h.execs().get(id); ok {
 		t.Error("the registration must be gone even when the runner is unreachable")
@@ -180,7 +181,7 @@ func TestExecRunInfoCarriesOrigin(t *testing.T) {
 		execID:     3,
 		taskIDHex:  "00112233445566778899aabbccddeeff",
 		argv:       []string{"make", "test"},
-		clientCID:  "ws:127.0.0.1:8539-7",
+		clientCID:  objproto.MustParseConnectionID("ws:127.0.0.1:8539-7"),
 		clientKind: protocol.ClientKind_Tui,
 	}
 	info := execRunInfo(e)

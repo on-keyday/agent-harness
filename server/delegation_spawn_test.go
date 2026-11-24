@@ -8,6 +8,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 const delegHeld = protocol.Capability_Spawn | protocol.Capability_FileRead | protocol.Capability_Cancel |
@@ -17,7 +18,7 @@ const delegHeld = protocol.Capability_Spawn | protocol.Capability_FileRead | pro
 // the operator, holding spawn,file_read,cancel and both resume bits over scope) carrying bound
 // dcaps / dscope. It returns P's id, its connection id, and R — a terminal
 // child of P to resume.
-func delegFixture(t *testing.T, scope authority.Scope, dcaps protocol.Capability, dscope authority.Scope) (h *TaskHandler, p, cid, r string) {
+func delegFixture(t *testing.T, scope authority.Scope, dcaps protocol.Capability, dscope authority.Scope) (h *TaskHandler, p string, cid objproto.ConnectionID, r string) {
 	t.Helper()
 	h = newTestHandler(t)
 	openRunner(t, h)
@@ -36,7 +37,7 @@ func delegFixture(t *testing.T, scope authority.Scope, dcaps protocol.Capability
 // the record of the task it wrote plus the refusal text, if any.
 type spawnSite struct {
 	name string
-	do   func(t *testing.T, h *TaskHandler, cid, r string, creatorCaps protocol.Capability, a delegReq) (TaskEntry, string, bool)
+	do   func(t *testing.T, h *TaskHandler, cid objproto.ConnectionID, r string, creatorCaps protocol.Capability, a delegReq) (TaskEntry, string, bool)
 }
 
 type delegReq struct {
@@ -70,14 +71,14 @@ func openReq(a delegReq) *protocol.OpenInteractiveRequest {
 }
 
 var spawnSites = []spawnSite{
-	{"open", func(t *testing.T, h *TaskHandler, cid, _ string, cc protocol.Capability, a delegReq) (TaskEntry, string, bool) {
+	{"open", func(t *testing.T, h *TaskHandler, cid objproto.ConnectionID, _ string, cc protocol.Capability, a delegReq) (TaskEntry, string, bool) {
 		resp, _ := h.handleOpenInteractive(cid, nil, openReq(a), protocol.ClientKind_Agent, h.lookupPrincipal(cid), cc, "")
 		if resp.Status != protocol.OpenInteractiveStatus_Ok {
 			return TaskEntry{}, string(resp.ErrorMsg), false
 		}
 		return entryOf(t, h, resp.TaskId), "", true
 	}},
-	{"open resume", func(t *testing.T, h *TaskHandler, cid, r string, cc protocol.Capability, a delegReq) (TaskEntry, string, bool) {
+	{"open resume", func(t *testing.T, h *TaskHandler, cid objproto.ConnectionID, r string, cc protocol.Capability, a delegReq) (TaskEntry, string, bool) {
 		req := openReq(a)
 		req.ResumeTaskId = hexToTaskID(t, r)
 		resp, _ := h.handleOpenInteractive(cid, nil, req, protocol.ClientKind_Agent, h.lookupPrincipal(cid), cc, "")
@@ -108,7 +109,7 @@ func TestSpawnCapsThroughBound(t *testing.T) {
 				h, _, cid, r := delegFixture(t, authority.Scope{}, g.bound, authority.Scope{})
 				cc := delegHeld
 				if g.operator {
-					cid, cc = "", protocol.Capability_All
+					cid, cc = objproto.ConnectionID{}, protocol.Capability_All
 				}
 				e, msg, ok := site.do(t, h, cid, r, cc, delegReq{caps: req, capsPresent: true})
 				if !ok {

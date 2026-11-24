@@ -620,7 +620,7 @@ func New(cfg Config) *Server {
 		redactTaskStatusEvent(&red)
 		redPayload := red.MustAppend(nil)
 		pick := func(subCID objproto.ConnectionID) []byte {
-			switch s.taskHandler.taskEventAudience(subCID.String(), taskID) {
+			switch s.taskHandler.taskEventAudience(subCID, taskID) {
 			case audienceFull:
 				return payload
 			case audienceParentHop:
@@ -737,8 +737,7 @@ func New(cfg Config) *Server {
 			// conn the list would deny. visibleToCaller already answers
 			// all=true for an operator and for a global visibility rank, so
 			// neither case needs its own branch here any more.
-			subCIDStr := subCID.String()
-			all, allowed := s.taskHandler.visibleToCaller(subCIDStr)
+			all, allowed := s.taskHandler.visibleToCaller(subCID)
 			if all {
 				return true
 			}
@@ -877,13 +876,13 @@ func New(cfg Config) *Server {
 	s.taskHandler.OnForwardEvent = func(kind protocol.StatusEventKind, pf *portForward) {
 		payload := forwardStatusPayload(kind, pf)
 		s.pubsub.PublishFiltered("server", topics.ForwardsStatus(), payload, func(subCID objproto.ConnectionID) bool {
-			return s.taskHandler.forwardVisibleTo(subCID.String(), pf)
+			return s.taskHandler.forwardVisibleTo(subCID, pf)
 		})
 	}
 	s.taskHandler.OnExecEvent = func(kind protocol.StatusEventKind, e *execRun) {
 		payload := execStatusPayload(kind, e)
 		s.pubsub.PublishFiltered("server", topics.ExecsStatus(), payload, func(subCID objproto.ConnectionID) bool {
-			return s.taskHandler.execVisibleTo(subCID.String(), e)
+			return s.taskHandler.execVisibleTo(subCID, e)
 		})
 	}
 
@@ -1367,7 +1366,7 @@ func (s *Server) serve(ctx context.Context, ep objproto.Endpoint, mux *http.Serv
 // running and simply finds its next harness-cli call reconnecting under the
 // new authority.
 func (s *Server) dropConnsForPrincipal(taskIDHex string) int {
-	return s.dropConnsOf(taskIDHex, func(string) bool { return true })
+	return s.dropConnsOf(taskIDHex, func(objproto.ConnectionID) bool { return true })
 }
 
 // dropStaleCredentialConns is TaskHandler.DropStaleCredentialConns: the
@@ -1375,7 +1374,7 @@ func (s *Server) dropConnsForPrincipal(taskIDHex string) int {
 // key replaced, or the credential ended). One that proved the current key of
 // a live credential is left open: after a re-key it is the new holder's.
 func (s *Server) dropStaleCredentialConns(taskIDHex string) int {
-	return s.dropConnsOf(taskIDHex, func(cid string) bool {
+	return s.dropConnsOf(taskIDHex, func(cid objproto.ConnectionID) bool {
 		_, holds := s.taskHandler.principalRecord(cid, taskIDHex)
 		return !holds
 	})
@@ -1383,11 +1382,11 @@ func (s *Server) dropStaleCredentialConns(taskIDHex string) int {
 
 // dropConnsOf closes the connections whose principal is taskIDHex and that
 // victim selects.
-func (s *Server) dropConnsOf(taskIDHex string, victim func(cid string) bool) int {
+func (s *Server) dropConnsOf(taskIDHex string, victim func(cid objproto.ConnectionID) bool) int {
 	var victims []streamingConn
 	s.activeConnsMu.Lock()
 	for cid, sc := range s.activeConns {
-		p := s.taskHandler.lookupPrincipal(cid.String())
+		p := s.taskHandler.lookupPrincipal(cid)
 		if p.Id != ([16]byte{}) && hex.EncodeToString(p.Id[:]) == taskIDHex {
 			victims = append(victims, sc)
 		}
@@ -1395,7 +1394,7 @@ func (s *Server) dropConnsOf(taskIDHex string, victim func(cid string) bool) int
 	s.activeConnsMu.Unlock()
 	kept := victims[:0]
 	for _, sc := range victims {
-		if victim(sc.ConnectionID().String()) {
+		if victim(sc.ConnectionID()) {
 			kept = append(kept, sc)
 		}
 	}
@@ -1592,12 +1591,12 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 		// end-of-input while the child runs on. Without this a Ctrl-C'd `exec`
 		// left its row in `exec ls` and its process on the runner.
 		if s.taskHandler != nil {
-			s.taskHandler.DropPortForwardsForConn(session.ConnectionID().String())
+			s.taskHandler.DropPortForwardsForConn(session.ConnectionID())
 			// The other side of the same fact: a RUNNER connection ending takes
 			// its session's forward state with it (RunHandle.Close).
 			s.taskHandler.DropRunnerStateForwards(session.ConnectionID().String())
-			s.taskHandler.DropExecRunsForConn(session.ConnectionID().String())
-			s.taskHandler.DropIdleWatchersForConn(session.ConnectionID().String())
+			s.taskHandler.DropExecRunsForConn(session.ConnectionID())
+			s.taskHandler.DropIdleWatchersForConn(session.ConnectionID())
 		}
 	}()
 
@@ -1791,7 +1790,6 @@ func (s *Server) ConnList(viewerTaskID protocol.TaskID, globalView bool) []proto
 // Returns nil when the connection is not visible to the caller.
 func (s *Server) connInfoFor(sc streamingConn, allowed map[string]bool, globalView bool) *protocol.ConnInfo {
 	cid := sc.ConnectionID()
-	cidStr := cid.String()
 
 	// Derive role + principal from identity map and runner registry.
 	var role protocol.ConnRole
@@ -1810,7 +1808,7 @@ func (s *Server) connInfoFor(sc streamingConn, allowed map[string]bool, globalVi
 		// that owns it -- including TaskInfo.assigned_to, which is an identity.
 		principalRunner = entry.Identity
 	} else if s.taskHandler != nil {
-		kind := s.taskHandler.lookupClientKind(cidStr)
+		kind := s.taskHandler.lookupClientKind(cid)
 		// The mapping is shared with the client that reports about itself, so
 		// one connection cannot be given two roles by the two ends.
 		role = protocol.ConnRoleForClientKind(kind)
@@ -1821,7 +1819,7 @@ func (s *Server) connInfoFor(sc streamingConn, allowed map[string]bool, globalVi
 		// (credential-tasks D6), so its row names it and confined callers see
 		// it exactly when they see that task.
 		if kind == protocol.ClientKind_Agent || kind == protocol.ClientKind_Credential {
-			principal = s.taskHandler.lookupPrincipal(cidStr)
+			principal = s.taskHandler.lookupPrincipal(cid)
 		}
 	}
 
@@ -1843,7 +1841,7 @@ func (s *Server) connInfoFor(sc streamingConn, allowed map[string]bool, globalVi
 		PrincipalRunner: principalRunner,
 	}
 	info.SetIdentified(identified)
-	info.SetCid([]byte(cidStr))
+	info.SetCid([]byte(cid.String()))
 	return info
 }
 

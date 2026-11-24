@@ -135,7 +135,7 @@ func TestKickNeedsRunnerEnroll(t *testing.T) {
 	agent := keyVerbConn()
 	tid := f.h.Tasks.Create("r", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
 		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_RunnerAdmin}, "")
-	f.h.principals = map[string]protocol.TaskID{agent.ConnectionID().String(): hexToTaskID(t, tid)}
+	f.h.principals = map[objproto.ConnectionID]protocol.TaskID{agent.ConnectionID(): hexToTaskID(t, tid)}
 	r := protocol.RunnerKickRequest{}
 	r.SetPrefix([]byte(e.Identity.Hex()))
 	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_RunnerKick, RequestId: 1}}

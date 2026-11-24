@@ -38,7 +38,7 @@ func TestHandleNotify_IdentityFromPrincipalNotClient(t *testing.T) {
 	h.OnNotify = func(ev protocol.NotifyEvent) { got = append(got, ev) }
 
 	agent := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9702-1")}
-	h.principals = map[string]protocol.TaskID{agent.ConnectionID().String(): tid}
+	h.principals = map[objproto.ConnectionID]protocol.TaskID{agent.ConnectionID(): tid}
 	sendNotify(t, h, agent)
 
 	if len(got) != 1 {

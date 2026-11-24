@@ -20,7 +20,7 @@ func TestResizeAllowedFollowsItsOwnScope(t *testing.T) {
 		{Caps: protocol.Capability_ExecResize, Base: protocol.ScopeBase_None, IDs: []string{a}},
 	}
 	f.h.Tasks.mu.Unlock()
-	cid := f.conn.ConnectionID().String()
+	cid := f.conn.ConnectionID()
 	if !f.h.resizeAllowed(cid, a) {
 		t.Fatal("A is inside exec_resize's scope but resize was refused")
 	}
@@ -32,14 +32,14 @@ func TestResizeAllowedFollowsItsOwnScope(t *testing.T) {
 func TestResizeNeedsTheBit(t *testing.T) {
 	f := newResumeFixture(t, protocol.Capability_ExecCowrite, authority.Scope{Base: protocol.ScopeBase_Global})
 	a := f.terminalTask(t, false)
-	if f.h.resizeAllowed(f.conn.ConnectionID().String(), a) {
+	if f.h.resizeAllowed(f.conn.ConnectionID(), a) {
 		t.Fatal("resize allowed without exec_resize")
 	}
 }
 
 func TestOperatorMayResizeAnywhere(t *testing.T) {
 	h := newTestHandler(t)
-	if !h.resizeAllowed("operator-conn", "ee000000000000000000000000000000") {
+	if !h.resizeAllowed(tcid("operator-conn"), "ee000000000000000000000000000000") {
 		t.Fatal("an operator connection was refused a resize")
 	}
 }

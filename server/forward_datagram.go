@@ -5,6 +5,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/objtrsf/trsf"
 )
 
@@ -23,7 +24,7 @@ import (
 // path is fail-closed for the same reason, and a second path that was not would
 // simply be the hole with extra steps.
 func (s *Server) pumpForwardDatagrams(ctx context.Context, sc streamingConn, tr trsf.Transport, authed func() bool) {
-	cid := sc.ConnectionID().String()
+	cid := sc.ConnectionID()
 	for {
 		b, err := tr.ReceiveDatagram(ctx)
 		if err != nil {
@@ -60,7 +61,7 @@ func (s *Server) pumpForwardDatagrams(ctx context.Context, sc streamingConn, tr 
 // Every datagram that belongs to the forward is offered to its taps with what
 // became of it. One refused before that point (an unknown sender, a forward
 // that carries no datagrams) never belonged to it and is not offered.
-func (s *Server) relayForwardDatagram(from streamingConn, cid string, dg *protocol.ForwardDatagram, raw []byte) {
+func (s *Server) relayForwardDatagram(from streamingConn, cid objproto.ConnectionID, dg *protocol.ForwardDatagram, raw []byte) {
 	if s.taskHandler == nil {
 		return
 	}
@@ -91,7 +92,7 @@ func (s *Server) relayForwardDatagram(from streamingConn, cid string, dg *protoc
 		to = runner.Conn
 	default:
 		runner, rok := s.registry.GetByIdentity(pf.runnerID)
-		if !rok || runner.Conn == nil || runner.Conn.ConnectionID().String() != cid {
+		if !rok || runner.Conn == nil || runner.Conn.ConnectionID() != cid {
 			// Neither endpoint of this registration. Refused rather than
 			// relayed: a forward_id is an identifier, not an authorisation, and
 			// treating it as one would let any connected peer inject into

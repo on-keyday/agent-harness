@@ -20,7 +20,7 @@ type agentConn struct {
 	helloed bool
 	// cid is the connection this entry belongs to, for the principal gate
 	// (agentCallerCaps → principalRecord) that is per connection.
-	cid string
+	cid objproto.ConnectionID
 }
 
 func (s *Server) getOrCreateAgentConn(conn ConnHandle) *agentConn {
@@ -32,7 +32,7 @@ func (s *Server) getOrCreateAgentConn(conn ConnHandle) *agentConn {
 	cid := conn.ConnectionID()
 	ac, ok := s.agentConns[cid]
 	if !ok {
-		ac = &agentConn{cid: cid.String()}
+		ac = &agentConn{cid: cid}
 		s.agentConns[cid] = ac
 	}
 	return ac

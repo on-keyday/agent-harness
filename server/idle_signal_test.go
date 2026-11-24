@@ -181,7 +181,7 @@ func TestAwaitIdleSignal_NeverReportingSourceEndsOnStop(t *testing.T) {
 	if len(ws) != 2 {
 		t.Fatalf("armed watchers = %d, want 2", len(ws))
 	}
-	if r := f.h.handleAwaitIdleKill(killed.ConnectionID().String(), &protocol.AwaitIdleKillRequest{WatcherId: ws[0].id}); r.Status != protocol.AwaitIdleKillStatus_Ok {
+	if r := f.h.handleAwaitIdleKill(killed.ConnectionID(), &protocol.AwaitIdleKillRequest{WatcherId: ws[0].id}); r.Status != protocol.AwaitIdleKillStatus_Ok {
 		t.Fatalf("kill = %v", r.Status)
 	}
 	waitFor(t, func() bool { return len(killed.Sent()) == 1 })
@@ -248,7 +248,7 @@ func TestAwaitIdleList_ShowsSignal(t *testing.T) {
 	conn := &fakeConn{}
 	f.arm(t, conn, protocol.AwaitIdleSignal_Lifecycle, protocol.AwaitSink_Board, "chat.deadbeef")
 	waitFor(t, func() bool { return len(conn.Sent()) == 1 })
-	rows := f.h.visibleIdleWatchers(conn.ConnectionID().String(), protocol.TaskID{})
+	rows := f.h.visibleIdleWatchers(conn.ConnectionID(), protocol.TaskID{})
 	if len(rows) != 1 || rows[0].Signal != protocol.AwaitIdleSignal_Lifecycle {
 		t.Fatalf("rows = %+v, want one lifecycle row", rows)
 	}

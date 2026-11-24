@@ -33,7 +33,7 @@ func TestAttenuateScopeClampsBase(t *testing.T) {
 		t.Errorf("subtree under a none parent = %v ok=%v, want none", got.Base, ok)
 	}
 	// An operator may ask for anything.
-	if got, _, ok = h.attenuateScope("ws:127.0.0.1:1-0", authority.Scope{Base: protocol.ScopeBase_Global}, protocol.Capability_All); !ok || got.Base != protocol.ScopeBase_Global {
+	if got, _, ok = h.attenuateScope(objproto.MustParseConnectionID("ws:127.0.0.1:1-0"), authority.Scope{Base: protocol.ScopeBase_Global}, protocol.Capability_All); !ok || got.Base != protocol.ScopeBase_Global {
 		t.Errorf("operator global = %v ok=%v", got.Base, ok)
 	}
 }
@@ -232,9 +232,9 @@ func TestOpenRejectsUnpermittedScope(t *testing.T) {
 	h.Registry = NewRegistry()
 	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9800-1")}
 	if h.principals == nil {
-		h.principals = make(map[string]protocol.TaskID)
+		h.principals = make(map[objproto.ConnectionID]protocol.TaskID)
 	}
-	h.principals[conn.ConnectionID().String()] = hexToTaskID(t, c)
+	h.principals[conn.ConnectionID()] = hexToTaskID(t, c)
 
 	oi := detachedOpen(40, 120)
 	oi.SetRepoPath([]byte("/r"))
@@ -262,9 +262,9 @@ func TestResumeOfOutOfScopeTaskIsNotFound(t *testing.T) {
 	h.Registry = NewRegistry()
 	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9801-1")}
 	if h.principals == nil {
-		h.principals = make(map[string]protocol.TaskID)
+		h.principals = make(map[objproto.ConnectionID]protocol.TaskID)
 	}
-	h.principals[conn.ConnectionID().String()] = hexToTaskID(t, c)
+	h.principals[conn.ConnectionID()] = hexToTaskID(t, c)
 
 	// Make u terminal so a missing gate really would resume it.
 	h.Tasks.Assign(u, testRunnerID("runner-x"), "/wt/u", false)

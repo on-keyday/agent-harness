@@ -45,7 +45,7 @@ func (h *TaskHandler) boardState(conn ConnHandle) *agentboard.ConnState {
 	if h.BoardConnState == nil {
 		return nil
 	}
-	cid := conn.ConnectionID().String()
+	cid := conn.ConnectionID()
 	if h.lookupClientKind(cid) == protocol.ClientKind_Credential {
 		pid := h.lookupPrincipal(cid)
 		if _, ok := h.principalRecord(cid, hex.EncodeToString(pid.Id[:])); !ok {
@@ -147,7 +147,7 @@ func (h *TaskHandler) handleAgentSend(conn ConnHandle, requestID uint32, r *prot
 	streamID := r.PayloadStreamId
 	// A credential's publish says so (credential-tasks D10): it is answered
 	// like an agent's, but no process stands behind it.
-	credential := h.lookupClientKind(conn.ConnectionID().String()) == protocol.ClientKind_Credential
+	credential := h.lookupClientKind(conn.ConnectionID()) == protocol.ClientKind_Credential
 
 	go func() {
 		payload, err := readAgentPayloadStream(conn, streamID, h.Board.MaxPayload())
