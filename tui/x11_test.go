@@ -349,7 +349,8 @@ func TestTuiSessionNewX11KeepsItsRunner(t *testing.T) {
 	}
 }
 
-func TestWithUnpinnedRetry(t *testing.T) {
+func TestWithResumeRetry(t *testing.T) {
+	noPause := func(int) bool { return true }
 	pinned := cli.SelectorOpts{Runner: "07000000000000000000000000000000"}
 	var tried []cli.SelectorOpts
 	open := func(o cli.SelectorOpts) error {
@@ -359,17 +360,47 @@ func TestWithUnpinnedRetry(t *testing.T) {
 		}
 		return nil
 	}
-	if err := withUnpinnedRetry(pinned, true, open); err != nil || len(tried) != 2 || tried[1] != (cli.SelectorOpts{}) {
+	if err := withResumeRetry(pinned, true, open, noPause); err != nil || len(tried) != 2 || tried[1] != (cli.SelectorOpts{}) {
 		t.Fatalf("retry=true: err=%v tried=%v; want a second, unpinned try that succeeds", err, tried)
 	}
 	tried = nil
-	if err := withUnpinnedRetry(pinned, false, open); !errors.Is(err, cli.ErrPinnedNotFound) || len(tried) != 1 {
+	if err := withResumeRetry(pinned, false, open, noPause); !errors.Is(err, cli.ErrPinnedNotFound) || len(tried) != 1 {
 		t.Fatalf("retry=false: err=%v tried=%v; want the pinned failure, no second try", err, tried)
 	}
 	tried = nil
 	other := func(o cli.SelectorOpts) error { tried = append(tried, o); return errors.New("refused") }
-	if err := withUnpinnedRetry(pinned, true, other); err == nil || len(tried) != 1 {
+	if err := withResumeRetry(pinned, true, other, noPause); err == nil || len(tried) != 1 {
 		t.Fatalf("another error: err=%v tried=%v; want no retry", err, tried)
+	}
+}
+
+// D resumes the moment its cancel shows the task finished, and the server
+// refuses that while the previous run is still stopping on its runner ("retry
+// in a few seconds"). D retries it, paused between tries, until the pause
+// gives up; r's operator did that by hand without noticing.
+func TestWithResumeRetryWaitsOutAStoppingRun(t *testing.T) {
+	stopping := fmt.Errorf("open: %w", cli.ErrResumeNotTerminal)
+	tries, pauses := 0, 0
+	open := func(cli.SelectorOpts) error {
+		tries++
+		if tries < 3 {
+			return stopping
+		}
+		return nil
+	}
+	pause := func(int) bool { pauses++; return true }
+	if err := withResumeRetry(cli.SelectorOpts{}, true, open, pause); err != nil || tries != 3 || pauses != 2 {
+		t.Fatalf("err=%v tries=%d pauses=%d; want success on the third try after two pauses", err, tries, pauses)
+	}
+	tries = 0
+	always := func(cli.SelectorOpts) error { tries++; return stopping }
+	giveUp := func(attempt int) bool { return attempt < 3 }
+	if err := withResumeRetry(cli.SelectorOpts{}, true, always, giveUp); !errors.Is(err, cli.ErrResumeNotTerminal) || tries != 3 {
+		t.Fatalf("err=%v tries=%d; want the stopping refusal once the pause gives up after 3 tries", err, tries)
+	}
+	tries = 0
+	if err := withResumeRetry(cli.SelectorOpts{}, false, always, giveUp); tries != 1 || err == nil {
+		t.Fatalf("retry=false: tries=%d err=%v; want no retry", tries, err)
 	}
 }
 

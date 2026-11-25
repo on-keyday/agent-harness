@@ -25,6 +25,14 @@ import (
 // selector (e.g. Any) via errors.Is, instead of string-matching the message.
 var ErrPinnedNotFound = errors.New("pinned runner not found")
 
+// ErrResumeNotTerminal mirrors the native build's (open_interactive_native.go).
+var ErrResumeNotTerminal = errors.New("resume target not terminal")
+
+type resumeNotTerminalError struct{ msg string }
+
+func (e *resumeNotTerminalError) Error() string        { return e.msg }
+func (e *resumeNotTerminalError) Is(target error) bool { return target == ErrResumeNotTerminal }
+
 // InteractiveSession holds the state of an active wasm-side interactive PTY
 // session: the bidirectional stream with the runner, the recv goroutine
 // cancel hook, and a closed flag guarded by mu.
@@ -187,7 +195,7 @@ func (c *Client) Interactive(ctx context.Context, repo string, opts SessionOpts)
 	case protocol.OpenInteractiveStatus_ResumeNotFound:
 		return "", fmt.Errorf("resume_not_found: the specified resume task id is unknown")
 	case protocol.OpenInteractiveStatus_ResumeNotTerminal:
-		return "", fmt.Errorf("resume_not_terminal: the resume target is still queued/running (or another resume is already in flight)")
+		return "", &resumeNotTerminalError{"resume_not_terminal: the resume target is still queued/running (or another resume is already in flight)"}
 	case protocol.OpenInteractiveStatus_ResumeExactMismatch:
 		return "", fmt.Errorf("resume_exact_mismatch: an exact resume takes the task's recorded settings and kind")
 	case protocol.OpenInteractiveStatus_ScopeNotPermitted:

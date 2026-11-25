@@ -20,6 +20,19 @@ import (
 // selector (e.g. Any) via errors.Is, instead of string-matching the message.
 var ErrPinnedNotFound = errors.New("pinned runner not found")
 
+// ErrResumeNotTerminal is what an OpenInteractiveStatus_ResumeNotTerminal
+// error Is: the resume target is still running, or its previous run is still
+// stopping on its runner (the server says "retry in a few seconds"). A caller
+// that resumes straight after its own cancel (the TUI's D) retries on it.
+var ErrResumeNotTerminal = errors.New("resume target not terminal")
+
+// resumeNotTerminalError keeps the refusal's words, the server's when it gave
+// some, while answering errors.Is(err, ErrResumeNotTerminal).
+type resumeNotTerminalError struct{ msg string }
+
+func (e *resumeNotTerminalError) Error() string        { return e.msg }
+func (e *resumeNotTerminalError) Is(target error) bool { return target == ErrResumeNotTerminal }
+
 // OpenInteractive asks the server to allocate an interactive PTY claude
 // session in repoPath on an idle runner, splices the per-side streams, and
 // returns a CommandExecutionStream wired to the client end. taskIDHex is
@@ -127,7 +140,11 @@ func (c *Client) roundTripOpen(ctx context.Context, repoPath string, opts Sessio
 // below cannot.
 func openInteractiveStatusError(repo, agentProfile string, status protocol.OpenInteractiveStatus, serverMsg []byte) error {
 	if len(serverMsg) != 0 && status != protocol.OpenInteractiveStatus_Ok {
-		return fmt.Errorf("interactive %s: %s", status, serverMsg)
+		msg := fmt.Sprintf("interactive %s: %s", status, serverMsg)
+		if status == protocol.OpenInteractiveStatus_ResumeNotTerminal {
+			return &resumeNotTerminalError{msg}
+		}
+		return errors.New(msg)
 	}
 	if err := runModeStatusError(status); err != nil {
 		return err
@@ -151,7 +168,7 @@ func openInteractiveStatusError(repo, agentProfile string, status protocol.OpenI
 	case protocol.OpenInteractiveStatus_ResumeNotFound:
 		return fmt.Errorf("interactive resume_not_found: the specified resume task id is unknown (was it pruned, or is the kind a mismatch?)")
 	case protocol.OpenInteractiveStatus_ResumeNotTerminal:
-		return fmt.Errorf("interactive resume_not_terminal: the resume target is still queued/running (or another resume is already in flight)")
+		return &resumeNotTerminalError{"interactive resume_not_terminal: the resume target is still queued/running (or another resume is already in flight)"}
 	case protocol.OpenInteractiveStatus_ResumeExactMismatch:
 		return fmt.Errorf("interactive resume_exact_mismatch: an exact resume takes the task's recorded settings and kind; drop the setting flags (or --stream to match the task) or drop --exact")
 	case protocol.OpenInteractiveStatus_ScopeNotPermitted:

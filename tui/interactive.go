@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/on-keyday/agent-harness/cli"
@@ -170,16 +171,47 @@ func openResumeWithRetry(c *cli.Client, opts cli.SelectorOpts, req sessionReques
 	return stream, taskID, err
 }
 
-// withUnpinnedRetry calls open with opts and, when retry is set, opts pins a
-// runner, and that runner is gone (cli.ErrPinnedNotFound), once more with the
-// Any selector. The rule openResumeWithRetry applies, for opens that build
-// their own request.
-func withUnpinnedRetry(opts cli.SelectorOpts, retry bool, open func(cli.SelectorOpts) error) error {
+// withResumeRetry calls open with opts and, when retry is set, retries the
+// two refusals a person pressing r again would get past by hand:
+//
+//   - the pinned runner is gone (cli.ErrPinnedNotFound): once more with the
+//     Any selector, the rule openResumeWithRetry applies — a runner that
+//     restarted has a new RunnerID;
+//   - the previous run is still stopping on its runner
+//     (cli.ErrResumeNotTerminal, "retry in a few seconds"): D resumes the
+//     moment its cancel shows the task finished, which is before the runner
+//     has let go. pause(attempt) waits before the next try and reports false
+//     to give up, which returns that refusal.
+//
+// Any other error returns at once.
+func withResumeRetry(opts cli.SelectorOpts, retry bool, open func(cli.SelectorOpts) error, pause func(attempt int) bool) error {
 	err := open(opts)
-	if retry && opts.Runner != "" && errors.Is(err, cli.ErrPinnedNotFound) {
-		err = open(cli.SelectorOpts{})
+	for attempt := 1; retry && err != nil; attempt++ {
+		switch {
+		case opts.Runner != "" && errors.Is(err, cli.ErrPinnedNotFound):
+			opts = cli.SelectorOpts{}
+		case errors.Is(err, cli.ErrResumeNotTerminal):
+			if !pause(attempt) {
+				return err
+			}
+		default:
+			return err
+		}
+		err = open(opts)
 	}
 	return err
+}
+
+// resumeStoppingPause is D's pause between tries while the previous run is
+// still stopping: one second, for at most resumeStoppingWait in all.
+const resumeStoppingWait = 20 * time.Second
+
+func resumeStoppingPause(attempt int) bool {
+	if time.Duration(attempt)*time.Second > resumeStoppingWait {
+		return false
+	}
+	time.Sleep(time.Second)
+	return true
 }
 
 // workspaceResumeOpts picks the selector for a workspace resume: the task's own
@@ -232,13 +264,13 @@ func DoResumeSessionDetached(c *cli.Client, assignedTo protocol.RunnerID, unpinn
 // the resumer's caps rather than keeping the persisted caps of the resumed task.
 // Ignored (no-op) when resumeTaskID is empty (fresh session).
 //
-// retryUnpinned retries once with the Any selector when a pinned open reports
-// its runner gone, as openResumeWithRetry does for r: a runner that restarted
-// has a new RunnerID, so the pin fails on exactly the tasks a restart left to
-// resume. Only D's resume asks for it; a typed --runner is never widened.
-// The retry happens inside this cmd, so the display reservation lasts until
-// the one InteractiveReadyMsg that ends it.
-func DoOpenX11Session(c *cli.Client, repo string, selOpts cli.SelectorOpts, retryUnpinned bool, extraArgs []string, resumeTaskID string, displayN int, forwardID int, program *tea.Program, auth Authority, resumeCapsOverride bool, resumeConversation bool, exact bool, agentProfile string, runMode cli.RunModeFlags) tea.Cmd {
+// retryResume retries what a person pressing r again would get past by hand
+// (withResumeRetry): a pinned runner that is gone, and a previous run still
+// stopping on its runner. Only D's resume asks for it; a typed --runner is
+// never widened and a typed open answers at once. The retry happens inside
+// this cmd, off the UI loop, so the display reservation lasts until the one
+// InteractiveReadyMsg that ends it.
+func DoOpenX11Session(c *cli.Client, repo string, selOpts cli.SelectorOpts, retryResume bool, extraArgs []string, resumeTaskID string, displayN int, forwardID int, program *tea.Program, auth Authority, resumeCapsOverride bool, resumeConversation bool, exact bool, agentProfile string, runMode cli.RunModeFlags) tea.Cmd {
 	return func() tea.Msg {
 		var (
 			stream *agentexec.CommandExecutionStream
@@ -246,7 +278,7 @@ func DoOpenX11Session(c *cli.Client, repo string, selOpts cli.SelectorOpts, retr
 			sp     cli.RemoteForwardSpec
 			warn   string
 		)
-		err := withUnpinnedRetry(selOpts, retryUnpinned, func(o cli.SelectorOpts) error {
+		err := withResumeRetry(selOpts, retryResume, func(o cli.SelectorOpts) error {
 			sel, err := cli.BuildSelector(o)
 			if err != nil {
 				return fmt.Errorf("selector: %w", err)
@@ -259,7 +291,7 @@ func DoOpenX11Session(c *cli.Client, repo string, selOpts cli.SelectorOpts, retr
 				RunMode:     runMode,
 			}), displayN)
 			return err
-		})
+		}, resumeStoppingPause)
 		if err != nil {
 			return InteractiveReadyMsg{Stream: stream, TaskID: taskID, X11Display: displayN, Err: err}
 		}

@@ -121,6 +121,13 @@ an in-flight turn is never hidden behind a single unconfirmed key.
   wait reads task statuses as they land (snapshot and tasks.status), bounded
   at 30s, after which the restart is given up and said so; a refused resume
   shows the ordinary open-failure line and releases its display number.
+  The operator saw a D restart fail on the Windows client as a timing
+  problem; the code path that fits (read, the error text itself was not
+  seen): a finished status lands before the runner has let go of the run,
+  and the server refuses that resume (`previousRunStopping`,
+  resume_not_terminal). D's resume now retries that
+  refusal every second for up to 20s (`withResumeRetry`, which also does
+  r's fallback to any runner); a typed open still answers at once.
 - On the TUI command line, `--x11-display N` is the lowest number the TUI may
   take, not the exact one (the CLI still uses N exactly). The cmdresult line
   `forward started: <id> --x11 :N -> <DISPLAY>` names the number used.

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -83,5 +84,26 @@ func TestStatusErrorsNameTheFix(t *testing.T) {
 func TestSetCapsInvalidScopeNamesSpawn(t *testing.T) {
 	if err := setCapsStatusError(protocol.SetCapsStatus_InvalidScope, ""); err == nil || !strings.Contains(err.Error(), "spawn") {
 		t.Fatalf("invalid_scope: %v, want it to name the spawn override", err)
+	}
+}
+
+// A resume that races the previous run's teardown is refused resume_not_terminal
+// with the server's "still stopping; retry in a few seconds". A caller that
+// retries (the TUI's D) must recognise it without matching the text, and the
+// text must stay what the server said.
+func TestResumeNotTerminalIsRecognisable(t *testing.T) {
+	msg := []byte("task 0123abcd's previous run is still stopping on its runner; retry in a few seconds")
+	err := openInteractiveStatusError("/r", "", protocol.OpenInteractiveStatus_ResumeNotTerminal, msg)
+	if !errors.Is(err, ErrResumeNotTerminal) {
+		t.Fatalf("server-worded refusal: %v is not ErrResumeNotTerminal", err)
+	}
+	if !strings.Contains(err.Error(), string(msg)) {
+		t.Fatalf("the server's words were lost: %v", err)
+	}
+	if err := openInteractiveStatusError("/r", "", protocol.OpenInteractiveStatus_ResumeNotTerminal, nil); !errors.Is(err, ErrResumeNotTerminal) {
+		t.Fatalf("fixed-sentence refusal: %v is not ErrResumeNotTerminal", err)
+	}
+	if err := openInteractiveStatusError("/r", "", protocol.OpenInteractiveStatus_RunnerBusy, []byte("x")); errors.Is(err, ErrResumeNotTerminal) {
+		t.Fatalf("runner_busy reads as ErrResumeNotTerminal: %v", err)
 	}
 }

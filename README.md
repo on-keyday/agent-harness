@@ -923,7 +923,9 @@ exits. **`D`** on a task row gives that task X11:
 - a finished task: resume it with X11, conversation kept;
 - a live session without one: after a y/n, cancel it and resume it with X11
   once it has finished, conversation kept (a running agent cannot gain
-  `DISPLAY`; a turn in flight is lost).
+  `DISPLAY`; a turn in flight is lost). While the runner is still stopping the
+  old run the server refuses the resume ("retry in a few seconds"); `D` retries
+  every second for up to 20 seconds, then shows that refusal.
 
 Before a resume or a restart, `D` connects to the X server it would use, so
 nothing is cancelled when no X server answers. With `$DISPLAY` unset on
