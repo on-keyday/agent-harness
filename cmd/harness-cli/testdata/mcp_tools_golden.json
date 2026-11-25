@@ -1436,6 +1436,12 @@
           "default": false,
           "type": "boolean"
         },
+        "grant-condition": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "host": {
           "default": "",
           "type": "string"
@@ -2101,6 +2107,12 @@
         "delegate-scope": {
           "default": "",
           "type": "string"
+        },
+        "grant-condition": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "keep-conns": {
           "default": false,
@@ -2839,6 +2851,12 @@
           "default": "",
           "type": "string"
         },
+        "grant-condition": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "host": {
           "default": "",
           "type": "string"
@@ -2981,6 +2999,12 @@
         "delegate-scope": {
           "default": "",
           "type": "string"
+        },
+        "grant-condition": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "host": {
           "default": "",
@@ -3231,6 +3255,12 @@
           "default": "",
           "type": "string"
         },
+        "grant-condition": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "max-descendants": {
           "default": "",
           "type": "string"
@@ -3293,6 +3323,12 @@
         "delegate-scope": {
           "default": "",
           "type": "string"
+        },
+        "grant-condition": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "max-descendants": {
           "default": "",
