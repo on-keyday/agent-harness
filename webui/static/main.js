@@ -1464,13 +1464,17 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   let taskAllFinished = false;
   const takeSnapshot = () => window.harness.snapshot({ allFinished: taskAllFinished });
   const taskHistoryNote = document.getElementById("task-history-note");
-  // renderTaskHistoryNote says what the bound leaves out, with the button that
-  // changes it. Hidden only when nothing is left out and the bound is on:
-  // there is then nothing to say and nothing to change.
+  // taskHistoryOmitted is the last snapshot's finishedOmitted: non-zero means
+  // the list is cut, so a task it does not hold may still exist.
+  let taskHistoryOmitted = 0;
+  // renderTaskHistoryNote says which bound the list is under and what it
+  // leaves out, with the button that changes it. Shown with nothing left out
+  // too: "none left out" is what tells the reader the list is the whole
+  // history, and the bound is there before the history outgrows it.
   function renderTaskHistoryNote(omitted) {
+    taskHistoryOmitted = omitted;
     if (!taskHistoryNote) return;
-    taskHistoryNote.hidden = !taskAllFinished && !omitted;
-    if (taskHistoryNote.hidden) return;
+    taskHistoryNote.hidden = false;
     const text = document.createElement("span");
     const btn = document.createElement("button");
     btn.type = "button";
@@ -1478,8 +1482,11 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     if (taskAllFinished) {
       text.textContent = "終了したタスクをすべて表示中";
       btn.textContent = "新しい 100 件だけにする";
-    } else {
+    } else if (omitted) {
       text.textContent = `古い終了タスク ${omitted} 件は一覧にありません`;
+      btn.textContent = "すべて表示";
+    } else {
+      text.textContent = "終了したタスクは新しい 100 件まで表示（省いたものなし）";
       btn.textContent = "すべて表示";
     }
     btn.addEventListener("click", () => setTaskAllFinished(!taskAllFinished));
@@ -6142,7 +6149,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   const openTaskByIdInput = async () => {
     let r = resolveTaskIdInput(taskIdOpen.value, lastTasks);
     taskIdOpenNote.textContent = "";
-    if (r.kind === "none" && !taskAllFinished && taskHistoryNote && !taskHistoryNote.hidden) {
+    if (r.kind === "none" && !taskAllFinished && taskHistoryOmitted > 0) {
       // The list is cut, so "not listed" is not "no such task": look again
       // with every finished task. The note under the list shows the switch.
       await setTaskAllFinished(true);

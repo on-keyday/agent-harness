@@ -78,7 +78,7 @@ func TestRefreshTasksTable_AgesIdleNotBusy(t *testing.T) {
 
 	a.refreshTasksTable()
 
-	rows := a.tasks.rowTasks
+	rows := a.tasks.Rows()
 	if len(rows) != 2 {
 		t.Fatalf("rows = %d, want 2", len(rows))
 	}

@@ -832,7 +832,7 @@ func TestHangingScheduleListDoesNotDelayTheSnapshot(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("the snapshot waited on the schedule list")
 	}
-	if len(a.tasks.table.Rows()) != 1 {
+	if len(a.tasks.Rows()) != 1 {
 		t.Error("the snapshot was not applied")
 	}
 	src, _ := os.ReadFile("client.go")

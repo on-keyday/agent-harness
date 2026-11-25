@@ -129,7 +129,8 @@ func TestTasksDefaultOrderIsCreatedNewestFirst(t *testing.T) {
 	if string(ids) != "cba" {
 		t.Errorf("rows = %q, want cba", ids)
 	}
-	if strings.Contains(stripANSI(a.tasks.View()), "──  ") {
+	// The history note is the one header row created mode draws.
+	if strings.Contains(strings.Replace(stripANSI(a.tasks.View()), a.tasks.finishedNote, "", 1), "──  ") {
 		t.Errorf("created mode drew a header")
 	}
 }
@@ -219,5 +220,18 @@ func TestTasksTableNamesWhatTheCutLeavesOutAndHListsIt(t *testing.T) {
 	a.refreshTasksTable()
 	if got := len(a.tasks.Rows()); got != 102 || !strings.Contains(a.tasks.finishedNote, "every finished task") {
 		t.Fatalf("after H: %d rows, note %q; want all 102 and a note naming the way back", got, a.tasks.finishedNote)
+	}
+}
+
+// With nothing left out the row is still there, as `ls`'s last line is:
+// it is what says the table is the whole history, under a bound.
+func TestTasksTableSaysNothingIsLeftOut(t *testing.T) {
+	a := New(Config{})
+	a.width, a.height = 160, 40
+	f := tuiTask(10, 0, 100)
+	f.Status = protocol.TaskStatus_Succeeded
+	setAuditTasks(a, f)
+	if !strings.Contains(a.tasks.finishedNote, "none older left out") {
+		t.Fatalf("note = %q, want it to say nothing is left out", a.tasks.finishedNote)
 	}
 }

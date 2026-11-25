@@ -2553,9 +2553,11 @@ func (a *App) snapshotFinished() uint32 {
 // is showing.
 func (a *App) refreshSnapshot() tea.Cmd { return RefreshSnapshot(a.client, a.snapshotFinished()) }
 
-// finishedNote is the task table's last row: what the history cut leaves out
-// (omitted, finished tasks) and what H does about it. None when nothing is
-// left out and H is off, since there is then nothing to say or change.
+// finishedNote is the task table's last row: which bound the table is under,
+// what it leaves out (omitted, finished tasks) and what H does about it.
+// Present with nothing left out too, as `ls`'s last line is: "none left out"
+// is what says the table is the whole history, and the bound is there before
+// the history outgrows it.
 func finishedNote(all bool, omitted uint32) string {
 	switch {
 	case all:
@@ -2563,7 +2565,7 @@ func finishedNote(all bool, omitted uint32) string {
 	case omitted > 0:
 		return fmt.Sprintf("── %d older finished task(s) not listed (%s lists them) ──", omitted, mainKeys.FinishedAll)
 	}
-	return ""
+	return fmt.Sprintf("── newest %d finished tasks kept, none older left out (%s: every one) ──", verb.FinishedDefault, mainKeys.FinishedAll)
 }
 
 // gridPaneTasks is the current, locally aged row of each task the grid shows.
