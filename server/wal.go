@@ -27,10 +27,23 @@ import (
 // mask so a capability RENAME never invalidates a record — the same reason
 // Kind and OriginKind are numbers rather than names.
 type WALScopeOverride struct {
-	Caps        uint64   `json:"caps"`
-	Base        uint8    `json:"base,omitempty"`
-	ExcludeSelf bool     `json:"exclude_self,omitempty"`
-	IDs         []string `json:"ids,omitempty"`
+	Caps        uint64        `json:"caps"`
+	Base        uint8         `json:"base,omitempty"`
+	ExcludeSelf bool          `json:"exclude_self,omitempty"`
+	IDs         []string      `json:"ids,omitempty"`
+	Cond        *WALCondition `json:"cond,omitempty"`
+}
+
+// WALCondition is an override's grant condition in JSON (grant conditions
+// C6): native fields, not encoded wire bytes, so a later .bgn change cannot
+// reinterpret a stored record. Kind is the numeric ConditionKind; Actions are
+// action-id hex; Spans are inclusive [lo, hi] pairs. Absent = unconditioned. A
+// record this build cannot read replays as reaching nothing (C7), never as
+// unconditioned — see conditionFromWAL.
+type WALCondition struct {
+	Kind    uint8       `json:"kind,omitempty"`
+	Actions []string    `json:"actions,omitempty"`
+	Spans   [][2]uint16 `json:"spans,omitempty"`
 }
 
 type WALEvent struct {

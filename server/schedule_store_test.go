@@ -405,7 +405,7 @@ const schedulesFixtureV1 = `{
           "exclude_self": true,
           "vis_ids": ["efefefefefefefefefefefefefefefef"],
           "overrides": [
-            {"caps": 8, "base": 1, "exclude_self": true, "ids": ["01010101010101010101010101010101"]}
+            {"caps": 8, "base": 1, "exclude_self": true, "ids": ["01010101010101010101010101010101"], "cond": {"kind": 2, "spans": [[8000, 8100]]}}
           ]
         },
         "delegate_caps": 8,
@@ -417,7 +417,7 @@ const schedulesFixtureV1 = `{
           "exclude_self": true,
           "vis_ids": ["67676767676767676767676767676767"],
           "overrides": [
-            {"caps": 16, "base": 2, "exclude_self": true, "ids": ["89898989898989898989898989898989"]}
+            {"caps": 16, "base": 2, "exclude_self": true, "ids": ["89898989898989898989898989898989"], "cond": {"kind": 1, "actions": ["0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"]}}
           ]
         },
         "spawn_depth": {"limited": true, "value": 3},
@@ -489,11 +489,15 @@ func TestScheduleFileFixtureV1(t *testing.T) {
 			Caps: protocol.Capability_FileRead | protocol.Capability_ScheduleEdit,
 			Scope: authority.Scope{Base: protocol.ScopeBase_Global, IDs: []string{cid("cd")},
 				VisBase: protocol.ScopeBase_None, VisBasePresent: true, ExcludeSelf: true, VisIDs: []string{cid("ef")},
-				Overrides: []authority.ScopeOverride{{Caps: protocol.Capability_FileRead, Base: protocol.ScopeBase_None, ExcludeSelf: true, IDs: []string{cid("01")}}}},
+				Overrides: []authority.ScopeOverride{{Caps: protocol.Capability_FileRead, Base: protocol.ScopeBase_None, ExcludeSelf: true, IDs: []string{cid("01")},
+					// The file is read without Validate: the fixture pins keys, not
+					// which bits a kind applies to.
+					Cond: &authority.Condition{Kind: protocol.ConditionKind_PortRange, Spans: []authority.PortSpan{{Lo: 8000, Hi: 8100}}}}}},
 			DelegateCaps: protocol.Capability_FileRead,
 			DelegateScope: authority.Scope{Base: protocol.ScopeBase_Global, IDs: []string{cid("23")},
 				VisBase: protocol.ScopeBase_Global, VisBasePresent: true, ExcludeSelf: true, VisIDs: []string{cid("67")},
-				Overrides: []authority.ScopeOverride{{Caps: 16, Base: protocol.ScopeBase_Global, ExcludeSelf: true, IDs: []string{cid("89")}}}},
+				Overrides: []authority.ScopeOverride{{Caps: 16, Base: protocol.ScopeBase_Global, ExcludeSelf: true, IDs: []string{cid("89")},
+					Cond: &authority.Condition{Kind: protocol.ConditionKind_ActionSet, Actions: [][16]byte{{10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10}}}}}},
 			SpawnDepth: authority.LimitOf(3), MaxDescendants: authority.LimitOf(7),
 		},
 		Creator: cid("45"), CreatedAt: base, EditedAt: base.Add(time.Minute), EditedBy: "operator", EditedByKind: protocol.ClientKind_Tui, NextAt: base.Add(2 * time.Minute),

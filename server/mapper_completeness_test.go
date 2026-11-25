@@ -107,6 +107,9 @@ func TestToTaskInfoMapsEveryField(t *testing.T) {
 			ExcludeSelf: true, VisIDs: []string{"aabbccddeeff00112233445566778899"},
 			Overrides: []authority.ScopeOverride{{
 				Caps: protocol.Capability_Cancel, Base: protocol.ScopeBase_None,
+			}, {
+				Caps: protocol.Capability_ForwardLocal, Base: protocol.ScopeBase_Global,
+				Cond: &authority.Condition{Kind: protocol.ConditionKind_PortRange, Spans: []authority.PortSpan{{Lo: 22, Hi: 22}}},
 			}},
 		},
 		DelegateCaps:    protocol.Capability_FileRead,
@@ -200,6 +203,14 @@ func TestToTaskInfoMapsEveryField(t *testing.T) {
 	}
 	if !info.NoPty() {
 		t.Error("TaskInfo.NoPty is false after mapping NoPTY:true — the mapper forgot it")
+	}
+	// The conditioned marker is a bit inside an override, out of the sweep's
+	// reach; the body travels beside it (grant conditions C6).
+	if len(info.Overrides) != 2 || info.Overrides[0].Conditioned() || !info.Overrides[1].Conditioned() {
+		t.Errorf("TaskInfo override markers wrong: %+v", info.Overrides)
+	}
+	if len(info.GrantConditions) != 1 || info.GrantConditions[0].Caps != protocol.Capability_ForwardLocal {
+		t.Errorf("TaskInfo.GrantConditions = %+v, want the forward_local body", info.GrantConditions)
 	}
 }
 
@@ -334,8 +345,11 @@ func TestWhoamiResponseMapsEveryField(t *testing.T) {
 		Base: protocol.ScopeBase_None,
 
 		VisBase: protocol.ScopeBase_Global, VisBasePresent: true, ExcludeSelf: true,
-		VisIDs:    []string{"aabbccddeeff00112233445566778899"},
-		Overrides: []authority.ScopeOverride{{Caps: protocol.Capability_Spawn, Base: protocol.ScopeBase_None}},
+		VisIDs: []string{"aabbccddeeff00112233445566778899"},
+		Overrides: []authority.ScopeOverride{{Caps: protocol.Capability_Spawn, Base: protocol.ScopeBase_None}, {
+			Caps: protocol.Capability_ForwardLocal, Base: protocol.ScopeBase_Global,
+			Cond: &authority.Condition{Kind: protocol.ConditionKind_PortRange, Spans: []authority.PortSpan{{Lo: 22, Hi: 22}}},
+		}},
 	}, DelegateCaps: protocol.Capability_FileRead, DelegateScope: authority.Scope{Base: protocol.ScopeBase_None},
 		SpawnDepth: authority.LimitOf(2), MaxDescendants: authority.LimitOf(5)},
 		pub, time.Now().Add(time.Hour), "")
@@ -368,6 +382,11 @@ func TestWhoamiResponseMapsEveryField(t *testing.T) {
 		t.Fatalf("no whoami response (kind %v)", resp.Kind)
 	}
 	assertNoZeroFields(t, *w, map[string]string{})
+	// Marker only: whoami is an inline datagram, so the body never rides it
+	// (grant conditions C6).
+	if len(w.Overrides) != 2 || !w.Overrides[1].Conditioned() {
+		t.Errorf("whoami override markers = %+v, want the forward_local override marked", w.Overrides)
+	}
 }
 
 // ExecRunInfo is built by hand in execRunInfo, the same exposure as

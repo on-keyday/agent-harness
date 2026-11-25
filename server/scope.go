@@ -1,6 +1,8 @@
 package server
 
 import (
+	"encoding/hex"
+
 	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
@@ -24,6 +26,7 @@ func applyScopeToWAL(s authority.Scope, ev *WALEvent) {
 	for _, o := range s.Overrides {
 		ev.ScopeOverrides = append(ev.ScopeOverrides, WALScopeOverride{
 			Caps: uint64(o.Caps), Base: uint8(o.Base), ExcludeSelf: o.ExcludeSelf, IDs: o.IDs,
+			Cond: conditionToWAL(o.Cond),
 		})
 	}
 }
@@ -53,6 +56,7 @@ func scopeFromWAL(ev WALEvent) authority.Scope {
 		s.Overrides = append(s.Overrides, authority.ScopeOverride{
 			Caps: protocol.Capability(o.Caps), Base: protocol.ScopeBase(o.Base),
 			ExcludeSelf: o.ExcludeSelf, IDs: authority.NormalizeIDs(o.IDs),
+			Cond: conditionFromWAL(o.Cond),
 		})
 	}
 	if !s.VisBasePresent && protocol.Capability(ev.Capabilities)&protocol.Capability_BoardObserve != 0 {
@@ -60,6 +64,51 @@ func scopeFromWAL(ev WALEvent) authority.Scope {
 		s.VisBase = protocol.ScopeBase_Global
 	}
 	return s
+}
+
+// conditionToWAL / conditionFromWAL are the stored form of a grant condition,
+// shared by the WAL and the schedule store.
+func conditionToWAL(c *authority.Condition) *WALCondition {
+	if c == nil {
+		return nil
+	}
+	w := &WALCondition{Kind: uint8(c.Kind)}
+	for _, a := range c.Actions {
+		w.Actions = append(w.Actions, hex.EncodeToString(a[:]))
+	}
+	for _, s := range c.Spans {
+		w.Spans = append(w.Spans, [2]uint16{s.Lo, s.Hi})
+	}
+	return w
+}
+
+// conditionFromWAL reads a stored condition back. Anything it cannot read —
+// an unknown kind, no kind, a malformed id, a backwards span, a list over the
+// limit — is kind 0, which reaches nothing (C7): a stored condition never
+// replays as unconditioned.
+func conditionFromWAL(w *WALCondition) *authority.Condition {
+	if w == nil {
+		return nil
+	}
+	var acts [][16]byte
+	for _, h := range w.Actions {
+		raw, err := hex.DecodeString(h)
+		if err != nil || len(raw) != 16 {
+			return &authority.Condition{}
+		}
+		var id [16]byte
+		copy(id[:], raw)
+		acts = append(acts, id)
+	}
+	var spans []authority.PortSpan
+	for _, s := range w.Spans {
+		spans = append(spans, authority.PortSpan{Lo: s[0], Hi: s[1]})
+	}
+	c, err := authority.NewCondition(protocol.ConditionKind(w.Kind), acts, spans)
+	if err != nil {
+		return &authority.Condition{}
+	}
+	return c
 }
 
 // applyDelegationToWAL / delegationFromWAL are the same projection for the

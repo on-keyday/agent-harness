@@ -169,6 +169,8 @@ func TestWALEventJSONRoundTripCopiesEveryField(t *testing.T) {
 		ScopeOverrides: []WALScopeOverride{{
 			Caps: uint64(protocol.Capability_Cancel), Base: uint8(protocol.ScopeBase_None),
 			ExcludeSelf: true, IDs: []string{"00112233445566778899aabbccddeeff"},
+			Cond: &WALCondition{Kind: uint8(protocol.ConditionKind_ActionSet), Actions: []string{"0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"},
+				Spans: [][2]uint16{{1, 2}}},
 		}},
 		AgentProfile:                "codex",
 		ResumeConversation:          true,
@@ -249,6 +251,11 @@ func TestWALEventJSONRoundTripCopiesEveryField(t *testing.T) {
 	}
 	if got.ScopeBase != uint8(protocol.ScopeBase_None) || len(got.ScopeIDs) != 1 {
 		t.Errorf("scope = base %d ids %v, want none + one id", got.ScopeBase, got.ScopeIDs)
+	}
+	// The reflect sweep stops at the top level; the override's condition is
+	// one level down.
+	if !reflect.DeepEqual(got.ScopeOverrides, in.ScopeOverrides) {
+		t.Errorf("scope overrides = %+v, want %+v", got.ScopeOverrides, in.ScopeOverrides)
 	}
 }
 

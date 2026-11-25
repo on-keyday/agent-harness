@@ -2594,6 +2594,9 @@ func toTaskInfo(t TaskEntry) protocol.TaskInfo {
 		OverridesLen:   uint8(len(t.Scope.Overrides)),
 		CreatedAt:      uint64(t.CreatedAt.UnixNano()),
 	}
+	// The bodies of the conditioned overrides (grant conditions C6): TaskInfo
+	// travels on the list stream, never in a datagram.
+	info.SetGrantConditions(t.Scope.ConditionsToWire())
 	info.SetRepoPath([]byte(t.RepoPath))
 	info.SetWorktreeDir([]byte(t.WorktreeDir))
 	info.SetPrompt([]byte(t.Prompt))

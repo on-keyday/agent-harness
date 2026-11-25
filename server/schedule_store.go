@@ -485,6 +485,7 @@ func cloneScope(sc authority.Scope) authority.Scope {
 			if v.IDs != nil {
 				v.IDs = append([]string(nil), v.IDs...)
 			}
+			v.Cond = v.Cond.Clone()
 			o[i] = v
 		}
 		sc.Overrides = o
@@ -514,6 +515,9 @@ type scopeOverrideJSON struct {
 	Base        protocol.ScopeBase  `json:"base"`
 	ExcludeSelf bool                `json:"exclude_self"`
 	IDs         []string            `json:"ids"`
+	// The WAL's form (conditionToWAL / conditionFromWAL). Absent =
+	// unconditioned: every file from before grant conditions.
+	Cond *WALCondition `json:"cond,omitempty"`
 }
 
 type scopeJSON struct {
@@ -604,7 +608,7 @@ func scopeToJSON(s authority.Scope) scopeJSON {
 	j := scopeJSON{Base: s.Base, IDs: s.IDs, VisBase: s.VisBase, VisBasePresent: s.VisBasePresent,
 		ExcludeSelf: s.ExcludeSelf, VisIDs: s.VisIDs}
 	for _, o := range s.Overrides {
-		j.Overrides = append(j.Overrides, scopeOverrideJSON{Caps: o.Caps, Base: o.Base, ExcludeSelf: o.ExcludeSelf, IDs: o.IDs})
+		j.Overrides = append(j.Overrides, scopeOverrideJSON{Caps: o.Caps, Base: o.Base, ExcludeSelf: o.ExcludeSelf, IDs: o.IDs, Cond: conditionToWAL(o.Cond)})
 	}
 	return j
 }
@@ -613,7 +617,7 @@ func scopeFromJSON(j scopeJSON) authority.Scope {
 	s := authority.Scope{Base: j.Base, IDs: j.IDs, VisBase: j.VisBase, VisBasePresent: j.VisBasePresent,
 		ExcludeSelf: j.ExcludeSelf, VisIDs: j.VisIDs}
 	for _, o := range j.Overrides {
-		s.Overrides = append(s.Overrides, authority.ScopeOverride{Caps: o.Caps, Base: o.Base, ExcludeSelf: o.ExcludeSelf, IDs: o.IDs})
+		s.Overrides = append(s.Overrides, authority.ScopeOverride{Caps: o.Caps, Base: o.Base, ExcludeSelf: o.ExcludeSelf, IDs: o.IDs, Cond: conditionFromWAL(o.Cond)})
 	}
 	return s
 }

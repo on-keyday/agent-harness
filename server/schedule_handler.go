@@ -1200,6 +1200,7 @@ func (h *TaskHandler) scheduleDetail(cid objproto.ConnectionID, id protocol.Sche
 		d.SetPrompt([]byte(sc.Prompt))
 	}
 	d.SetOverrides(sc.Grant.Scope.OverridesToWire())
+	d.SetGrantConditions(sc.Grant.Scope.ConditionsToWire())
 	hist := make([]protocol.ScheduleHistoryEntry, 0, len(sc.History))
 	for _, e := range sc.History {
 		hist = append(hist, historyEntryWire(e))
