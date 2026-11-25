@@ -146,3 +146,54 @@ func TestModes_IsPreambleWithoutTheScreenHead(t *testing.T) {
 		t.Fatalf("Modes with nothing tracked = %q, want nil", got)
 	}
 }
+
+// The kitty keyboard protocol is a stack an app pushes onto (ESC[>flags u) and
+// pops (ESC[<n u). A detaching client empties it on its own terminal (objtrsf
+// InputModeReset), so a reattach must push the app's current flags again or
+// the app loses its key reporting for the rest of the session.
+func TestKittyKeyboard_PushIsReplayed(t *testing.T) {
+	tr := New()
+	tr.Feed([]byte("\x1b[>5u"))
+	if got := tr.Preamble(); !bytes.Equal(got, []byte("\x1b[>5u")) {
+		t.Fatalf("preamble = %q, want ESC[>5u", got)
+	}
+	if got := tr.Modes(); !bytes.Equal(got, []byte("\x1b[>5u")) {
+		t.Fatalf("modes (the repaint path) = %q, want ESC[>5u", got)
+	}
+}
+
+func TestKittyKeyboard_StackFollowsPushPopSet(t *testing.T) {
+	for _, tc := range []struct {
+		name, feed, want string
+	}{
+		{"popped", "\x1b[>5u\x1b[<u", ""},
+		{"nested, inner popped", "\x1b[>1u\x1b[>5u\x1b[<u", "\x1b[>1u"},
+		{"pop more than pushed", "\x1b[>1u\x1b[>5u\x1b[<9u", ""},
+		{"set or-bits on top", "\x1b[>1u\x1b[=4;2u", "\x1b[>5u"},
+		{"set reset-bits on top", "\x1b[>5u\x1b[=1;3u", "\x1b[>4u"},
+		{"set replaces on top", "\x1b[>5u\x1b[=0;1u", ""},
+		{"set with no push", "\x1b[=1u", "\x1b[=1;1u"},
+		{"query is not a change", "\x1b[>1u\x1b[?u", "\x1b[>1u"},
+		{"modifyOtherKeys is not kitty", "\x1b[>4;1m", ""},
+		{"split across feeds", "\x1b[>|5u", "\x1b[>5u"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tr := New()
+			for _, part := range strings.Split(tc.feed, "|") {
+				tr.Feed([]byte(part))
+			}
+			if got := tr.Preamble(); string(got) != tc.want {
+				t.Fatalf("preamble = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// DEC modes keep their place; the kitty push comes after them.
+func TestKittyKeyboard_AfterDECModes(t *testing.T) {
+	tr := New()
+	tr.Feed([]byte("\x1b[?2004h\x1b[>1u"))
+	if got := tr.Preamble(); !bytes.Equal(got, []byte("\x1b[?2004h\x1b[>1u")) {
+		t.Fatalf("preamble = %q", got)
+	}
+}

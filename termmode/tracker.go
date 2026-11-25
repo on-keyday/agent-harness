@@ -1,5 +1,5 @@
-// Package termmode follows the DEC private modes a terminal program sets in its
-// output. It is shared by the two places that have to know them without being a
+// Package termmode follows the DEC private modes, and the kitty keyboard
+// protocol's flag stack, a terminal program sets in its output. It is shared by the two places that have to know them without being a
 // terminal: the server, which replays a session to a client that starts from
 // defaults, and the runner, which types into an agent and has to know how the
 // agent wants input delivered.
@@ -36,10 +36,23 @@ type Tracker struct {
 	mu    sync.Mutex
 	modes map[int]bool // private mode number -> last seen value (true = set/h)
 
+	// kitty is the kitty keyboard protocol's flag stack (ESC[>f u pushes,
+	// ESC[<n u pops, ESC[=f;m u changes the top), and kittyBase the flags an
+	// ESC[=…u set while the stack was empty. Unlike the DEC modes this is not
+	// a set of bits a reset can express: a detaching client empties the stack
+	// on its own terminal (objtrsf InputModeReset), and the app pushed once at
+	// startup, so a reattach that did not push again would leave the app
+	// without the key reporting it asked for. One stack for both screens: the
+	// protocol keeps one per screen, and an app that pushes on the alternate
+	// screen pops there before leaving it.
+	kitty     []int
+	kittyBase int
+
 	// Incremental parser state. It persists across Feed calls so a sequence
 	// split across two frames is still recognised at the boundary.
 	st     parseState
 	params []byte
+	intro  byte // '>', '<' or '=' for a kitty keyboard sequence in stCSIKitty
 }
 
 type parseState int
@@ -50,6 +63,7 @@ const (
 	stCSI
 	stCSIIgnore
 	stCSIPrivate
+	stCSIKitty // after ESC [ > / < / =: collecting params for a possible kitty 'u'
 )
 
 // maxModeParams caps the accumulated parameter bytes; malformed/oversized input
@@ -101,6 +115,10 @@ func (t *Tracker) Feed(payload []byte) {
 			case b == '?':
 				t.st = stCSIPrivate
 				t.params = t.params[:0]
+			case b == '>' || b == '<' || b == '=':
+				t.st = stCSIKitty
+				t.intro = b
+				t.params = t.params[:0]
 			case b >= 0x40 && b <= 0x7e:
 				t.st = stNormal // a parameterless non-private CSI ended
 			default:
@@ -109,6 +127,26 @@ func (t *Tracker) Feed(payload []byte) {
 		case stCSIIgnore:
 			if b >= 0x40 && b <= 0x7e {
 				t.st = stNormal
+			}
+		case stCSIKitty:
+			switch {
+			case (b >= '0' && b <= '9') || b == ';':
+				if len(t.params) >= maxModeParams {
+					t.st = stNormal
+					t.params = t.params[:0]
+				} else {
+					t.params = append(t.params, b)
+				}
+			case b == 'u':
+				t.applyKitty()
+				t.st = stNormal
+				t.params = t.params[:0]
+			case b >= 0x40 && b <= 0x7e: // another final (ESC[>4;1m modifyOtherKeys, ESC[>c …)
+				t.st = stNormal
+				t.params = t.params[:0]
+			default:
+				t.st = stCSIIgnore
+				t.params = t.params[:0]
 			}
 		case stCSIPrivate:
 			switch {
@@ -143,6 +181,56 @@ func (t *Tracker) applyParams(set bool) {
 				}
 			}
 			start = i + 1
+		}
+	}
+}
+
+// applyKitty applies one kitty keyboard sequence, t.intro + t.params + 'u'.
+// Caller holds t.mu.
+func (t *Tracker) applyKitty() {
+	var nums []int
+	start := 0
+	for i := 0; i <= len(t.params); i++ {
+		if i == len(t.params) || t.params[i] == ';' {
+			n := -1 // absent: the sequence's own default applies
+			if i > start {
+				if v, err := strconv.Atoi(string(t.params[start:i])); err == nil {
+					n = v
+				}
+			}
+			nums = append(nums, n)
+			start = i + 1
+		}
+	}
+	arg := func(i, def int) int {
+		if i < len(nums) && nums[i] >= 0 {
+			return nums[i]
+		}
+		return def
+	}
+	switch t.intro {
+	case '>':
+		t.kitty = append(t.kitty, arg(0, 0))
+	case '<':
+		n := arg(0, 1)
+		if n >= len(t.kitty) {
+			t.kitty = t.kitty[:0]
+		} else {
+			t.kitty = t.kitty[:len(t.kitty)-n]
+		}
+	case '=':
+		cur := &t.kittyBase
+		if len(t.kitty) > 0 {
+			cur = &t.kitty[len(t.kitty)-1]
+		}
+		flags := arg(0, 0)
+		switch arg(1, 1) {
+		case 1:
+			*cur = flags
+		case 2:
+			*cur |= flags
+		case 3:
+			*cur &^= flags
 		}
 	}
 }
@@ -260,6 +348,15 @@ func (t *Tracker) appendModesLocked(out []byte) []byte {
 	sort.Ints(keys)
 	for _, m := range keys {
 		out = appendMode(out, m, t.modes[m])
+	}
+	// The kitty keyboard flags last, on whichever screen the head selected:
+	// the protocol keeps one stack per screen, and the client's was emptied
+	// when it last detached. One push restores the app's current flags.
+	switch {
+	case len(t.kitty) > 0 && t.kitty[len(t.kitty)-1] != 0:
+		out = append(out, "\x1b[>"+strconv.Itoa(t.kitty[len(t.kitty)-1])+"u"...)
+	case len(t.kitty) == 0 && t.kittyBase != 0:
+		out = append(out, "\x1b[="+strconv.Itoa(t.kittyBase)+";1u"...)
 	}
 	return out
 }
