@@ -106,3 +106,17 @@ func TestLocalX11Display(t *testing.T) {
 		t.Fatal("a DISPLAY without a display number was accepted")
 	}
 }
+
+// Windows has no /tmp/.X11-unix: a bare ":0" there passed the check and
+// then failed to dial, after the TUI had already restarted the agent for it.
+func TestLocalX11DisplayForWindowsNeedsAHost(t *testing.T) {
+	if _, err := localX11DisplayFor(":0", "windows"); err == nil || !strings.Contains(err.Error(), "localhost:0") {
+		t.Fatalf(":0 on windows: err = %v; want a refusal naming localhost:0", err)
+	}
+	if d, err := localX11DisplayFor("localhost:0", "windows"); err != nil || d != "localhost:0" {
+		t.Fatalf("localhost:0 on windows: %q, %v", d, err)
+	}
+	if _, err := localX11DisplayFor(":0", "linux"); err != nil {
+		t.Fatalf(":0 on linux: %v", err)
+	}
+}
