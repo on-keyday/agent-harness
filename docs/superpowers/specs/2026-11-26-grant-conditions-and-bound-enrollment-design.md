@@ -2,7 +2,7 @@
 
 Date: 2026-11-26. Line references are to `main` at `3b1dc6e7`.
 
-**Status: DESIGN, approved by the operator 2026-11-26.** Nothing here is implemented. Planned as four plans, one per part: response size guard, grant conditions, bound enrollment, actions. It is a prerequisite of
+**Status: DESIGN, approved by the operator 2026-11-26.** Nothing here is implemented. Planned as three plans, one per part: grant conditions, bound enrollment, actions. It is a prerequisite of
 pillar D (ephemeral runners, `2026-11-12-run-modes-and-records-grand-design.md`
 § Pillar D), not pillar D itself.
 
@@ -28,17 +28,6 @@ pillar D (ephemeral runners, `2026-11-12-run-modes-and-records-grand-design.md`
   argv in the target's worktree, `forward_local` / `forward_remote` reach any
   port. Running exactly one command on another host (the motivating case: a
   `deploy` command), or opening one port, needs the whole bit.
-- **P4 — server responses are not size-checked.** Every control message is one
-  datagram; over UDP an oversized one is dropped with no error to either end.
-  Client task-control requests (`cli/client.go:385`) and server
-  `RunnerRequest`s (`server/runner_send.go:27`) go through
-  `protocol.CheckControlMessage`; task-control responses do not. They are sent
-  from `respondAgent` (`server/agent_taskcontrol.go:61`, 31 callers) and from 50
-  other sites that append `AppKind_TaskControl` and call `SendMessage` directly
-  (`grep -rn 'AppKind_TaskControl)' server --include=*.go`, non-test, counted
-  2026-11-26). `WhoAmIResponse` carries the caller's overrides inline
-  (`message.bgn:2870`, `:2875-2876`). Anything this spec adds to a grant makes
-  that worse unless the response path is guarded.
 
 ## Intent
 
@@ -73,7 +62,7 @@ the author chose it while writing; those rows are the ones to check.
 | C16 | **An action id is 16 random bytes (`ActionID`), not a counter.** The action store is its own file, outside the WAL (as the runner-key store is, `server/runnerkeys.go:39-41`), while grants naming action ids are in the WAL. If the file were lost or restored from an older copy, a counter would restart and a new action would take an old id — every grant still naming it would silently run the new command. A random 128-bit id is not re-issued in practice (the same odds TaskID relies on); a grant naming a lost id fails closed (C7). Replaces the `u32` id of the first draft | this spec; approved by the operator |
 | C17 | **Code-level shape of actions** (§ Actions): `argv[0]` is always a literal, so no parameter chooses the program; a create and an edit are one request kind, discriminated by a zero id as `OpenInteractiveRequest.resume_task_id` is; an edit names the revision it edits and is refused on a mismatch, so two editors cannot overwrite each other unseen; an action run forces `pty = 0`, `shell_line = 0` and `stdin_enabled = 0`; an invocation does not pin a revision (the exec list records which ran) | this spec; approved by the operator |
 | C18 | **The second half of P2 — T placed on an existing runner while its provisioned one boots — is the controller's to prevent, with an existing selector.** The controller creates T pinned to the runner it is about to provision, e.g. `RunnerSelector.by_hostname` naming the hostname it gives the VM; a pinned task waits in the queue until a matching runner appears (G26). No server rule reserves T for its bound key. Accepted: a hostname is the runner's own claim, so a static runner already reporting that name would take T — an accident, which is the threat model (enrollment spec). A server-side reservation was weighed and not taken for now: it needs a task→key index across `Candidates`, the wait reason and the picker, and still leaves the window between creating T and enrolling its key | operator (for now) |
-| C15 | **Task-control responses get a size guard.** All of them are sent through one function that runs `CheckControlMessage` against the connection's transport and datagram budget; over budget, it sends a new `response_too_large` answer for the same request id instead. A test fails if any other server code appends `AppKind_TaskControl` to a response and sends it. `WhoAmIResponse` stays inline | operator (guard, no move to a stream), this spec (one function + test) |
+| C15 | **Withdrawn (operator, 2026-11-26).** Was: a size guard on task-control responses, answering `response_too_large` over budget. The guard treats one case of a transport property — a control message is one unacknowledged, unfragmented datagram — while the operator accepts control-message loss for now; and C6 keeps this spec's additions off every inline response, so nothing here needs it. Recorded in `docs/backlog.md` ("An oversized task-control response is dropped every time, silently") with the root-level options | operator |
 
 ## Anti-goals
 
@@ -432,16 +421,6 @@ harness-cli exec <task> --action <id|name> [--value env=prod --value ref=v1.2]
 A name resolves to an id client-side through `action_list`; every wire request
 carries the id.
 
-### Response size guard (C15)
-
-- One function, e.g. `sendTaskControl(conn, resp)`, replaces `respondAgent` and
-  the 50 direct sites. Over budget it logs the kind and size and sends
-  `TaskControlKind.response_too_large` with the same `request_id` and the
-  original kind. The client maps it to an error naming both.
-- A test parses `server/` and fails on any non-test `SendMessage` of a buffer
-  that `TaskControlResponse.MustAppend` / `Append` produced outside that
-  function. The negative control: the test is red before the sites move.
-
 ## Surfaces
 
 Every new input and display goes on the CLI, TUI and WebUI; walk
@@ -463,7 +442,7 @@ Appended fields and arms only: `ScopeOverride.conditioned`,
 `conditions_stream_id` on the five grant-writing formats, `GrantCondition`
 lists on `TaskInfo` and `ScheduleDetail` (both already on streams),
 `RunnerEnrollRequest.bound`,
-`ExecRunBody`'s action variant, the action verbs, `response_too_large`. The
+`ExecRunBody`'s action variant, the action verbs. The
 WAL gains condition bodies; the key store gains `bound_tasks`; the action store
 is new. Run `scripts/wire-skew-check.sh`. `RunnerHello` and every
 runner-decoded format are unchanged (C8), so a runner does not need a restart.
@@ -504,9 +483,6 @@ loads as unbound, so no transition window is needed.
   U and keeps T.
 - C11 holders: an edit is refused when a finished task holds the action and
   the editor cannot re-grant it, and when the editor itself holds it.
-- C15: a response encoded over the budget arrives as `response_too_large` over
-  UDP. Demonstrated red first: an oversized `whoami` over `scripts/netem-lab`
-  hangs before the guard.
 - C6 request path: for each of the five grant-writing requests, an unreadable
   conditions stream, an undecodable or over-limit body, a body naming a mask
   that is not an override, and a `conditioned` override with no body are each

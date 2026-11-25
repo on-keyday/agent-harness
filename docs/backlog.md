@@ -515,3 +515,55 @@ dialog.
 
 **Why deferred.** The operator judged it not needed yet (2026-11-24). Nothing
 is blocked on it: the re-grant dialog does the same thing by hand.
+
+---
+
+## An oversized task-control response is dropped every time, silently
+
+**What.** A control message is one objproto application message, which over UDP
+is one datagram. objproto neither fragments nor retransmits application
+messages (operator, 2026-11-26), and a datagram larger than the path is dropped
+with no error at either end. Loss in general is accepted for now (operator,
+2026-11-26). An oversized response differs from loss in one way: it is dropped
+on every retry, and nothing logs it, so the waiting client hangs with no clue.
+
+**Evidence** (2026-11-26):
+
+- Size checks exist on two send paths only: a client's task-control request
+  (`cli/client.go:385`) and the server's `RunnerRequest`
+  (`server/runner_send.go:27`), both through `protocol.CheckControlMessage`.
+- Task-control responses are sent from `respondAgent`
+  (`server/agent_taskcontrol.go:61`) and from 48 other sites:
+  `grep -rn 'AppKind_TaskControl)' server --include=*.go | grep -v _test`
+  lists 50 lines, one of them `respondAgent` itself and one a request
+  (`server/psk.go:52`).
+- `WhoAmIResponse` carries the caller's scope overrides inline, each with up to
+  `u16` task ids of 16 bytes, so a task whose overrides name about 70 ids
+  answers `whoami` with more than the ~1170-byte floor. Not reproduced.
+- Past incidents of the same property, each fixed per format: exec's inline
+  argv (2026-10-10) and board list responses (2026-10-16), both moved to
+  streams.
+
+**Shapes considered** (2026-11-26):
+
+- **Control messages on a reliable stream.** One trsf stream per connection
+  carries control; streams already segment and retransmit. Fixes size and loss
+  for every control message in both directions. Costs: an objtrsf change, the
+  handshake and runner registration ride it (a transition window, Pitfall 10),
+  head-of-line blocking between control messages, and every receive path moves
+  from a message callback to stream framing.
+- **Fragmentation in objproto.** Split an application message larger than the
+  path, reassemble at the peer. Keeps the API; still loses the whole message
+  when one fragment is lost.
+- **A guard on responses.** One server function checks every response with
+  `CheckControlMessage` and answers a new `response_too_large` over budget,
+  plus a line-scan test like `TestRunnerRequestsAreSentOnlyThroughSendRunnerRequest`.
+  Planned and withdrawn: it adds wire to treat one case of the property above.
+  A cheaper form logs on the server and changes no wire.
+
+**Why deferred.** Withdrawn from the grant conditions spec
+(`2026-11-26-grant-conditions-and-bound-enrollment-design.md`, C15) before
+implementation: that spec keeps its own additions off inline responses (C6),
+and the operator accepts control-message loss for now. Revisit when a hang is
+traced to an oversized response, or when control-message loss stops being
+acceptable — the stream shape answers both.
