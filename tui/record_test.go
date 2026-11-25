@@ -105,7 +105,7 @@ func TestAttachedSessionNewCarriesTheRecordSwitch(t *testing.T) {
 		got = append(got, rm)
 		return nil
 	}
-	openX11Session = func(c *cli.Client, repo string, sel cli.SelectorOpts, extraArgs []string, resumeTaskID string, displayN int, program *tea.Program, auth Authority, capsOverride, conv, exact bool, agent string, rm cli.RunModeFlags) tea.Cmd {
+	openX11Session = func(c *cli.Client, repo string, sel cli.SelectorOpts, extraArgs []string, resumeTaskID string, displayN int, forwardID int, program *tea.Program, auth Authority, capsOverride, conv, exact bool, agent string, rm cli.RunModeFlags) tea.Cmd {
 		got = append(got, rm)
 		return nil
 	}

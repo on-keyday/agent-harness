@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/on-keyday/agent-harness/cli"
@@ -22,10 +23,11 @@ type InteractiveReadyMsg struct {
 	TaskID string
 	Err    error
 
-	// X11Cancel cancels the background -R forward goroutine when set (X11
-	// sessions only). Non-x11 paths leave it nil; the Done handler calls it
-	// when present so the forward stops with the session.
-	X11Cancel context.CancelFunc
+	// X11Display is the display number an X11 open used (0 for any other
+	// open), set on success and on failure alike: the Ready handler releases
+	// its reservation (pickX11Display) either way. The forward itself is in
+	// App.activeForwards by then (DoOpenX11Session sends its Started first).
+	X11Display int
 	// X11Warn is non-empty when forwarding WITHOUT authentication (no cookie);
 	// the Ready handler surfaces it as a status line (stderr would corrupt the
 	// alt-screen). Non-x11 paths leave it "".
@@ -202,22 +204,26 @@ func DoResumeSessionDetached(c *cli.Client, assignedTo protocol.RunnerID, unpinn
 
 // DoOpenX11Session opens a new detachable interactive session with X11
 // forwarding (equivalent to `harness-cli session new --x11`). It mirrors
-// DoOpenDetachableSession but, on success, spawns a background goroutine that
-// runs the -R remote forward (runner 127.0.0.1:6000+displayN -> the client's
-// local X server) for the session's lifetime, then posts InteractiveReadyMsg so
-// App.Update's existing handover path drives the PTY. The forward goroutine uses
-// the BUFFERED forwardStatusLogf so it never waits on the UI to make progress.
-// program MUST be App's *tea.Program. The returned InteractiveReadyMsg carries
-// X11Cancel (stops the forward; App stores it and calls it on InteractiveDoneMsg)
-// and X11Warn (non-empty => forwarding without authentication).
+// DoOpenDetachableSession and then opens the -R forward (runner
+// 127.0.0.1:6000+displayN -> the client's local X server) as a ForwardX11
+// entry of the App's forward registry, under registry id forwardID. The
+// forward is the registry's, not the attach's: a detach leaves it running, and
+// it stops when the runner closes it (task ended), when it is killed from the
+// forwards pane, or when the TUI exits. Started is sent before the serve
+// goroutine runs, as DoStartRemoteForward does, so a fast stop cannot arrive
+// first. A forward that fails to open is reported and the session is handed
+// over anyway: the session exists, only its X is missing.
+// program MUST be App's *tea.Program. The returned InteractiveReadyMsg
+// carries X11Display (released by the Ready handler) and X11Warn (non-empty
+// => forwarding without authentication).
 // resumeCapsOverride, when true, signals the server to re-grant caps from
 // the resumer's caps rather than keeping the persisted caps of the resumed task.
 // Ignored (no-op) when resumeTaskID is empty (fresh session).
-func DoOpenX11Session(c *cli.Client, repo string, selOpts cli.SelectorOpts, extraArgs []string, resumeTaskID string, displayN int, program *tea.Program, auth Authority, resumeCapsOverride bool, resumeConversation bool, exact bool, agentProfile string, runMode cli.RunModeFlags) tea.Cmd {
+func DoOpenX11Session(c *cli.Client, repo string, selOpts cli.SelectorOpts, extraArgs []string, resumeTaskID string, displayN int, forwardID int, program *tea.Program, auth Authority, resumeCapsOverride bool, resumeConversation bool, exact bool, agentProfile string, runMode cli.RunModeFlags) tea.Cmd {
 	return func() tea.Msg {
 		sel, err := cli.BuildSelector(selOpts)
 		if err != nil {
-			return InteractiveReadyMsg{Err: fmt.Errorf("selector: %w", err)}
+			return InteractiveReadyMsg{X11Display: displayN, Err: fmt.Errorf("selector: %w", err)}
 		}
 		stream, taskID, sp, warn, err := c.OpenInteractiveX11(context.Background(), repo, auth.opts(sessionRequest{
 			Selector: sel, ExtraArgs: extraArgs, ResumeTaskID: resumeTaskID,
@@ -227,19 +233,23 @@ func DoOpenX11Session(c *cli.Client, repo string, selOpts cli.SelectorOpts, extr
 			RunMode:     runMode,
 		}), displayN)
 		if err != nil {
-			return InteractiveReadyMsg{Stream: stream, TaskID: taskID, Err: err}
+			return InteractiveReadyMsg{Stream: stream, TaskID: taskID, X11Display: displayN, Err: err}
 		}
-		fctx, cancel := context.WithCancel(context.Background())
-		go func() {
-			logf := forwardStatusLogf(fctx, program)
-			_ = cli.RunRemoteForward(fctx, c, taskID, []cli.RemoteForwardSpec{sp}, logf)
-			// The teardown line goes through the SAME buffered sink as the status
-			// lines, for the same reason: RunRemoteForward can return mid-session
-			// (`forward kill` on this registration), and a raw program.Send here
-			// would park this goroutine on whatever the UI is doing.
-			logf("x11 forward stopped: " + pfShortID(taskID))
-		}()
-		return InteractiveReadyMsg{Stream: stream, TaskID: taskID, X11Cancel: cancel, X11Warn: warn}
+		ctx, cancel := context.WithCancel(context.Background())
+		ctrl, fid, err := c.OpenRemoteForward(ctx, taskID, sp)
+		if err != nil {
+			cancel()
+			program.Send(PortForwardStatusMsg{Line: forwardFailLine(taskID, fmt.Errorf("x11: %w", err))})
+		} else {
+			program.Send(PortForwardStartedMsg{ID: forwardID, TaskID: taskID, Direction: ForwardX11,
+				Spec:   fmt.Sprintf(":%d -> %s", displayN, os.Getenv("DISPLAY")),
+				Cancel: cancel, ForwardID: fid, X11Display: displayN})
+			go func() {
+				c.ServeRemoteForward(ctx, sp, ctrl, fid, forwardStatusLogf(ctx, program))
+				program.Send(PortForwardStoppedMsg{ID: forwardID, TaskID: taskID})
+			}()
+		}
+		return InteractiveReadyMsg{Stream: stream, TaskID: taskID, X11Display: displayN, X11Warn: warn}
 	}
 }
 

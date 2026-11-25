@@ -273,11 +273,6 @@ type App struct {
 	// RestoreTerminal do not nest.
 	termReleased bool
 
-	// x11Cancel stops the background -R forward of the current X11 interactive
-	// session. Set when InteractiveReadyMsg carries one; called and cleared on
-	// InteractiveDoneMsg so the forward stops with the session.
-	x11Cancel context.CancelFunc
-
 	// sessionCaps is the default capability mask applied to every spawn
 	// (session new, --oneshot included) issued from this TUI session.
 	// Controlled by the `caps` command; defaults to Capability_None.
@@ -1631,9 +1626,6 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// first ended. Update keeps running now, so refuse explicitly
 			// rather than let two children fight over stdin.
 			a.cmdresult.Append(WarnStyle.Render("terminal is busy with another session; detach it first"))
-			if msg.X11Cancel != nil {
-				msg.X11Cancel()
-			}
 			if msg.Stream != nil {
 				_ = msg.Stream.Close()
 			}
@@ -1641,10 +1633,6 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.X11Warn != "" {
 			a.cmdresult.Append(WarnStyle.Render("x11: " + msg.X11Warn))
-		}
-		a.x11Cancel = msg.X11Cancel
-		if msg.X11Cancel != nil {
-			a.cmdresult.Append(OKStyle.Render("x11 forward started: ") + pfShortID(msg.TaskID))
 		}
 		short := msg.TaskID
 		if len(short) > 12 {
@@ -1696,10 +1684,6 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case InteractiveDoneMsg:
 		a.termReleased = false
-		if a.x11Cancel != nil {
-			a.x11Cancel()
-			a.x11Cancel = nil
-		}
 		short := msg.TaskID
 		if len(short) > 12 {
 			short = short[:12]
@@ -1738,7 +1722,7 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case PortForwardStartedMsg:
-		a.activeForwards[msg.ID] = &PortForwardSession{ID: msg.ID, TaskID: msg.TaskID, Direction: msg.Direction, Spec: msg.Spec, Cancel: msg.Cancel, ForwardID: msg.ForwardID, FromWorkspace: msg.FromWorkspace}
+		a.activeForwards[msg.ID] = &PortForwardSession{ID: msg.ID, TaskID: msg.TaskID, Direction: msg.Direction, Spec: msg.Spec, Cancel: msg.Cancel, ForwardID: msg.ForwardID, FromWorkspace: msg.FromWorkspace, X11Display: msg.X11Display}
 		a.cmdresult.Append(OKStyle.Render("forward started: ") + pfShortID(msg.TaskID) + "  " + msg.Direction.flag() + " " + msg.Spec)
 		if msg.ForwardID != 0 { // -R: the bind is confirmed and the id known now
 			a.finishPendingKeep(msg.ID)

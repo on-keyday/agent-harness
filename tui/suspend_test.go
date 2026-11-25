@@ -16,11 +16,10 @@ func TestInteractiveReadyMsg_RefusedWhileTerminalReleased(t *testing.T) {
 	a := New(Config{})
 	a.termReleased = true
 
-	x11Cancelled := false
-	m, cmd := a.Update(InteractiveReadyMsg{
-		TaskID:    "0123456789abcdef",
-		X11Cancel: func() { x11Cancelled = true },
-	})
+	// A refused handover leaves its session detached, and an X11 session's
+	// tunnel is a registry forward (DoOpenX11Session): it stays, as it would
+	// after a Ctrl+] detach, so a reattach finds X still working.
+	m, cmd := a.Update(InteractiveReadyMsg{TaskID: "0123456789abcdef", X11Display: 10})
 	a = m.(*App)
 
 	if cmd != nil {
@@ -28,12 +27,6 @@ func TestInteractiveReadyMsg_RefusedWhileTerminalReleased(t *testing.T) {
 	}
 	if !a.termReleased {
 		t.Error("the in-progress handover's flag was cleared by the refused one")
-	}
-	if !x11Cancelled {
-		t.Error("the refused session's X11 forward goroutine was leaked (X11Cancel not called)")
-	}
-	if a.x11Cancel != nil {
-		t.Error("the refused session overwrote the live session's x11Cancel")
 	}
 	found := false
 	for _, line := range a.cmdresult.lines {

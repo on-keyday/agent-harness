@@ -14,7 +14,7 @@ type forwardPlan struct {
 // Direction holds the flag, so both go in: matching the spec alone would let a
 // -R satisfy a declared -L. An ip link is never a declarable forward.
 func sessionIdentity(s *PortForwardSession) (workspace.ForwardKey, bool) {
-	if s.Direction == ForwardLink {
+	if s.Direction == ForwardLink || s.Direction == ForwardX11 {
 		return workspace.ForwardKey{}, false
 	}
 	k, err := workspace.ForwardIdentity(s.Direction.flag() + " " + s.Spec)

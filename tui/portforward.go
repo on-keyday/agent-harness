@@ -25,6 +25,11 @@ const (
 	// ForwardLink is an ip link: a tun device here and one on the runner. This
 	// TUI process holds its end, so the link ends with the TUI.
 	ForwardLink
+	// ForwardX11 is the -R tunnel of an X11 session (runner 127.0.0.1:6000+N
+	// to this client's X server). It lives here, not with the attach, so a
+	// detach does not close the windows the session has open; the runner
+	// closes it when the task ends.
+	ForwardX11
 )
 
 func (d ForwardDirection) flag() string {
@@ -33,6 +38,8 @@ func (d ForwardDirection) flag() string {
 		return "-R"
 	case ForwardLink:
 		return "--ip"
+	case ForwardX11:
+		return "--x11"
 	}
 	return "-L"
 }
@@ -163,6 +170,9 @@ type PortForwardSession struct {
 	// bookkeeping — the server-side registry has no notion of a workspace, and
 	// giving it one would mean a wire field.
 	FromWorkspace bool
+	// X11Display is N of an X11 forward's DISPLAY=127.0.0.1:N; 0 for every
+	// other direction. pickX11Display reads it to hand out a free N.
+	X11Display int
 }
 
 // selectForwards returns the active sessions for a task in one direction, sorted
@@ -238,6 +248,7 @@ type PortForwardStartedMsg struct {
 	Cancel        context.CancelFunc
 	ForwardID     uint64
 	FromWorkspace bool
+	X11Display    int
 }
 
 // PortForwardRegisteredMsg backfills the server-assigned forward id onto a
