@@ -2,6 +2,7 @@ package tui
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -105,7 +106,7 @@ func TestTuiSessionNewX11UsesAFreeDisplay(t *testing.T) {
 	var got []int
 	old := openX11Session
 	defer func() { openX11Session = old }()
-	openX11Session = func(c *cli.Client, repo string, sel cli.SelectorOpts, extraArgs []string, resumeTaskID string, displayN int, forwardID int, program *tea.Program, auth Authority, capsOverride, conv, exact bool, agent string, rm cli.RunModeFlags) tea.Cmd {
+	openX11Session = func(c *cli.Client, repo string, sel cli.SelectorOpts, retryUnpinned bool, extraArgs []string, resumeTaskID string, displayN int, forwardID int, program *tea.Program, auth Authority, capsOverride, conv, exact bool, agent string, rm cli.RunModeFlags) tea.Cmd {
 		got = append(got, displayN)
 		return nil
 	}
@@ -123,6 +124,7 @@ type x11Open struct {
 	conv    bool
 	sel     cli.SelectorOpts
 	fwdID   int
+	retry   bool
 }
 
 // stubX11Open records what reaches the X11 open seam.
@@ -130,8 +132,8 @@ func stubX11Open(t *testing.T) *[]x11Open {
 	var got []x11Open
 	old := openX11Session
 	t.Cleanup(func() { openX11Session = old })
-	openX11Session = func(c *cli.Client, repo string, sel cli.SelectorOpts, extraArgs []string, resumeTaskID string, displayN int, forwardID int, program *tea.Program, auth Authority, capsOverride, conv, exact bool, agent string, rm cli.RunModeFlags) tea.Cmd {
-		got = append(got, x11Open{resume: resumeTaskID, display: displayN, conv: conv, sel: sel, fwdID: forwardID})
+	openX11Session = func(c *cli.Client, repo string, sel cli.SelectorOpts, retryUnpinned bool, extraArgs []string, resumeTaskID string, displayN int, forwardID int, program *tea.Program, auth Authority, capsOverride, conv, exact bool, agent string, rm cli.RunModeFlags) tea.Cmd {
+		got = append(got, x11Open{resume: resumeTaskID, display: displayN, conv: conv, sel: sel, fwdID: forwardID, retry: retryUnpinned})
 		return nil
 	}
 	return &got
@@ -169,7 +171,10 @@ func TestDResumesAFinishedTaskWithX11(t *testing.T) {
 	got := stubX11Open(t)
 	a, ti := x11App(t, protocol.TaskStatus_Cancelled)
 	a.Update(runeKey('D'))
-	want := x11Open{resume: FormatTaskID(ti.Id), display: 10, conv: true, sel: resumeSelectorOpts(ti.AssignedTo), fwdID: (*got)[0].fwdID}
+	// retry: a runner that restarted has a new RunnerID, so the pin fails on
+	// exactly the tasks a restart left to resume; r falls back to Any, and so
+	// does D.
+	want := x11Open{resume: FormatTaskID(ti.Id), display: 10, conv: true, sel: resumeSelectorOpts(ti.AssignedTo), fwdID: (*got)[0].fwdID, retry: true}
 	if len(*got) != 1 || (*got)[0] != want {
 		t.Fatalf("opens = %+v; want [%+v]", *got, want)
 	}
@@ -277,5 +282,40 @@ func TestX11ForwardIDDoesNotReuseAModalForwardsID(t *testing.T) {
 	a.Update(runeKey('D'))
 	if len(*got) != 1 || (*got)[0].fwdID == 5 {
 		t.Fatalf("the X11 open took registry id %v, which the modal forward holds", *got)
+	}
+}
+
+// The typed line names its runner on purpose; widening it silently would
+// spawn somewhere the operator did not ask for.
+func TestTuiSessionNewX11KeepsItsRunner(t *testing.T) {
+	got := stubX11Open(t)
+	a := New(Config{DefaultRepo: "/r"})
+	_ = (tuiVerbs{a}).SessionNew(verb.SpawnAction{Repo: "/r", X11: true, X11Display: 10, Runner: "abc"})
+	if len(*got) != 1 || (*got)[0].retry {
+		t.Fatalf("opens = %+v; want one without the unpinned retry", *got)
+	}
+}
+
+func TestWithUnpinnedRetry(t *testing.T) {
+	pinned := cli.SelectorOpts{Runner: "07000000000000000000000000000000"}
+	var tried []cli.SelectorOpts
+	open := func(o cli.SelectorOpts) error {
+		tried = append(tried, o)
+		if o.Runner != "" {
+			return fmt.Errorf("open: %w", cli.ErrPinnedNotFound)
+		}
+		return nil
+	}
+	if err := withUnpinnedRetry(pinned, true, open); err != nil || len(tried) != 2 || tried[1] != (cli.SelectorOpts{}) {
+		t.Fatalf("retry=true: err=%v tried=%v; want a second, unpinned try that succeeds", err, tried)
+	}
+	tried = nil
+	if err := withUnpinnedRetry(pinned, false, open); !errors.Is(err, cli.ErrPinnedNotFound) || len(tried) != 1 {
+		t.Fatalf("retry=false: err=%v tried=%v; want the pinned failure, no second try", err, tried)
+	}
+	tried = nil
+	other := func(o cli.SelectorOpts) error { tried = append(tried, o); return errors.New("refused") }
+	if err := withUnpinnedRetry(pinned, true, other); err == nil || len(tried) != 1 {
+		t.Fatalf("another error: err=%v tried=%v; want no retry", err, tried)
 	}
 }

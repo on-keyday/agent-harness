@@ -539,7 +539,7 @@ func (h tuiVerbs) SessionNew(v verb.SpawnAction) tea.Cmd {
 			return nil
 		}
 		fid := a.allocForwardID()
-		return openX11Session(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, n, fid, a.program, auth, capsOverride, v.ResumeConversation, v.Exact, v.Agent, spawnRunMode(v))
+		return openX11Session(a.client, repo, sel, false, v.ExtraArgs, v.ResumeTaskID, n, fid, a.program, auth, capsOverride, v.ResumeConversation, v.Exact, v.Agent, spawnRunMode(v))
 	}
 	if v.Detach || v.Background {
 		return startDetachedWithRetry(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Exact, v.Agent, TermSize{Rows: uint16(a.height), Cols: uint16(a.width)}, v.Stream, spawnRunMode(v))

@@ -170,6 +170,18 @@ func openResumeWithRetry(c *cli.Client, opts cli.SelectorOpts, req sessionReques
 	return stream, taskID, err
 }
 
+// withUnpinnedRetry calls open with opts and, when retry is set, opts pins a
+// runner, and that runner is gone (cli.ErrPinnedNotFound), once more with the
+// Any selector. The rule openResumeWithRetry applies, for opens that build
+// their own request.
+func withUnpinnedRetry(opts cli.SelectorOpts, retry bool, open func(cli.SelectorOpts) error) error {
+	err := open(opts)
+	if retry && opts.Runner != "" && errors.Is(err, cli.ErrPinnedNotFound) {
+		err = open(cli.SelectorOpts{})
+	}
+	return err
+}
+
 // workspaceResumeOpts picks the selector for a workspace resume: the task's own
 // runner for `runner = assigned`, the Any selector for `runner = any`. Same
 // split as r/R versus u/U.
@@ -219,19 +231,35 @@ func DoResumeSessionDetached(c *cli.Client, assignedTo protocol.RunnerID, unpinn
 // resumeCapsOverride, when true, signals the server to re-grant caps from
 // the resumer's caps rather than keeping the persisted caps of the resumed task.
 // Ignored (no-op) when resumeTaskID is empty (fresh session).
-func DoOpenX11Session(c *cli.Client, repo string, selOpts cli.SelectorOpts, extraArgs []string, resumeTaskID string, displayN int, forwardID int, program *tea.Program, auth Authority, resumeCapsOverride bool, resumeConversation bool, exact bool, agentProfile string, runMode cli.RunModeFlags) tea.Cmd {
+//
+// retryUnpinned retries once with the Any selector when a pinned open reports
+// its runner gone, as openResumeWithRetry does for r: a runner that restarted
+// has a new RunnerID, so the pin fails on exactly the tasks a restart left to
+// resume. Only D's resume asks for it; a typed --runner is never widened.
+// The retry happens inside this cmd, so the display reservation lasts until
+// the one InteractiveReadyMsg that ends it.
+func DoOpenX11Session(c *cli.Client, repo string, selOpts cli.SelectorOpts, retryUnpinned bool, extraArgs []string, resumeTaskID string, displayN int, forwardID int, program *tea.Program, auth Authority, resumeCapsOverride bool, resumeConversation bool, exact bool, agentProfile string, runMode cli.RunModeFlags) tea.Cmd {
 	return func() tea.Msg {
-		sel, err := cli.BuildSelector(selOpts)
-		if err != nil {
-			return InteractiveReadyMsg{X11Display: displayN, Err: fmt.Errorf("selector: %w", err)}
-		}
-		stream, taskID, sp, warn, err := c.OpenInteractiveX11(context.Background(), repo, auth.opts(sessionRequest{
-			Selector: sel, ExtraArgs: extraArgs, ResumeTaskID: resumeTaskID,
-			ResumeCapsOverride: resumeCapsOverride,
-			ResumeConversation: resumeConversation, AgentProfile: agentProfile,
-			ResumeExact: exact,
-			RunMode:     runMode,
-		}), displayN)
+		var (
+			stream *agentexec.CommandExecutionStream
+			taskID string
+			sp     cli.RemoteForwardSpec
+			warn   string
+		)
+		err := withUnpinnedRetry(selOpts, retryUnpinned, func(o cli.SelectorOpts) error {
+			sel, err := cli.BuildSelector(o)
+			if err != nil {
+				return fmt.Errorf("selector: %w", err)
+			}
+			stream, taskID, sp, warn, err = c.OpenInteractiveX11(context.Background(), repo, auth.opts(sessionRequest{
+				Selector: sel, ExtraArgs: extraArgs, ResumeTaskID: resumeTaskID,
+				ResumeCapsOverride: resumeCapsOverride,
+				ResumeConversation: resumeConversation, AgentProfile: agentProfile,
+				ResumeExact: exact,
+				RunMode:     runMode,
+			}), displayN)
+			return err
+		})
 		if err != nil {
 			return InteractiveReadyMsg{Stream: stream, TaskID: taskID, X11Display: displayN, Err: err}
 		}

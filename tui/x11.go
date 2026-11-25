@@ -101,6 +101,6 @@ func (a *App) openX11Resume(t protocol.TaskInfo) tea.Cmd {
 		return nil
 	}
 	fid := a.allocForwardID()
-	return openX11Session(a.client, "", resumeSelectorOpts(t.AssignedTo), nil, FormatTaskID(t.Id), n, fid, a.program,
+	return openX11Session(a.client, "", resumeSelectorOpts(t.AssignedTo), true, nil, FormatTaskID(t.Id), n, fid, a.program,
 		a.authority(), false, true, false, string(t.AgentProfile), cli.RunModeFlags{})
 }
