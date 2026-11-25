@@ -61,7 +61,7 @@ the author chose it while writing; those rows are the ones to check.
 | C3 | **No re-grant migration.** On 2026-11-26 `harness-cli ls --json --finished all` listed 39 tasks (`finished_omitted: 0`, caller scope `global/global`); exactly one held `runner_enroll`, with `runner_enroll: global` in `scope_by_cap`. A task later brought back by `restore` keeps the scope it was recorded with; if that is not global it can no longer enroll an unbound key, and is re-granted by hand | operator (confirmed the holder), this spec (restore note) |
 | C4 | **A grant condition bounds the object a bit reaches inside a target.** It attaches to one `ScopeOverride` and applies to every bit in that override's mask. A condition kind is applicable only to the bits listed for it (C9); attaching it to any other bit is refused | operator (one general mechanism), this spec (per override) |
 | C5 | **Attenuation is by containment (IAM-style), not by appended caveats.** A child's condition must be contained in the granter's for the same bit. Every condition kind must have a cheap, exact containment test (set inclusion, range inclusion, equality). **Regular expressions and globs are not condition kinds**: a mistake in one widens the grant silently (a missing anchor matches more), containment between them is expensive, and the result is unreadable on the three surfaces | operator |
-| C6 | **Condition bodies are not inline in any unguarded datagram.** The body is stored on the `TaskEntry` (persisted in the task WAL with the override). A response carries only a one-bit marker per override (`conditioned`, from `ScopeOverride.reserved`); the body is read on a stream. Grant-writing *requests* carry bodies inline, bounded per kind, because requests already pass `CheckControlMessage` and fail loudly | operator (body apart from the inline grant, fixed-size marker inline), this spec (store on the `TaskEntry`; marker is one bit) |
+| C6 | **Condition bodies never travel inline in a control message, in either direction.** Inline, an override carries only a one-bit marker (`conditioned`, from `ScopeOverride.reserved`). Grant-writing requests send the bodies on a client-created stream; reads receive them on a stream. The body is stored on the `TaskEntry` (persisted in the task WAL with the override). *Correction of the first draft of this spec*, which carried bodies inline in requests because requests pass `CheckControlMessage`: that narrowed the agreed property to "no body in an *unguarded* datagram", and put a worst case of 1128 bytes of bodies against a ~1170-byte floor | operator (bodies on streams, fixed-size marker inline), this spec (store on the `TaskEntry`; marker is one bit) |
 | C7 | **Fail-closed.** A bit whose override is marked conditioned reaches nothing through `inScope` / `authorize` / `scopeSet`; only an object-aware gate that evaluates the condition can pass it. A marker with no readable body (a corrupt WAL record, a client that did not fetch it) is shown and enforced as "reaches nothing", never as unconditioned | operator (fail-closed), this spec (where) |
 | C8 | **Actions are defined on the server.** An action is a named, immutable command template; a grant names which actions it may run. The runner is not told about actions: the server resolves an invocation to an argv and sends the existing `RunnerExecRunRequest`, so no runner-decoded format changes | operator (server-side, central), this spec (runner unchanged) |
 | C9 | **Two condition kinds in this round.** `ActionSet` (a set of action ids) is applicable to `exec_run`; `PortRange` (a list of inclusive port ranges) is applicable to `forward_local` and `forward_remote`. Enrollment is not a condition kind: C1/C2 express it with the ordinary task scope | operator (`PortRange` and actions first; enrollment through scope), this spec (which bits) |
@@ -154,7 +154,7 @@ the author chose it while writing; those rows are the ones to check.
 
   | Format | Kind | Change |
   | --- | --- | --- |
-  | `OpenInteractiveRequest`, `CredentialIssueRequest`, `CredentialRekeyRequest`, `SetCapsRequest`, `ScheduleSpec` | writes a grant; request, guarded by `CheckControlMessage` | gains `conditions :[n ≤ 8]GrantCondition` |
+  | `OpenInteractiveRequest`, `CredentialIssueRequest`, `CredentialRekeyRequest`, `SetCapsRequest`, `ScheduleSpec` | writes a grant | gains `conditions_stream_id :u64` (0 = no conditions); the bodies (`GrantConditions { n ≤ 8, GrantCondition… }`) are read from that stream before the request is processed |
   | `TaskInfo` (in `ListResultBody`), `ScheduleDetail` | read; travels on a stream | gains the bodies |
   | `WhoAmIResponse` | read; inline, unguarded today | marker only; `whoami` on the CLI fetches the caller's own row through the list path to print the bodies |
   | `SubmitRequest` | retired verb (pillar A, G7); the server answers it as retired | unchanged |
@@ -162,12 +162,16 @@ the author chose it while writing; those rows are the ones to check.
   A schedule carries its own authority and writes it onto its task at each
   firing (grand design G36, G38), so its conditions are stored and written
   the same way.
-- Request size: the worst case of the bodies alone is
-  8 × (8 + 1 + 4 + 32 × 4) = 1128 bytes, near the ~1170-byte floor. So the
-  count and per-kind limits are checked by a test that encodes the worst case
-  of each grant-writing request together with its other variable fields, and
-  the limits are lowered until it fits. A request over the budget is refused by
-  the client's `CheckControlMessage`, not dropped.
+- Request path: the client creates a send stream, writes the encoded
+  `GrantConditions`, and names it in `conditions_stream_id`. The server reads it
+  as `readExecBody` reads an exec body (`server/exec_run.go:39`, the stream named
+  by `ExecRunRequest.payload_stream_id`). The request is refused whole, and no
+  grant is written, when: the stream cannot be read; the body fails to decode
+  or exceeds the limits (8 conditions, 32 action ids, 8 port ranges); a
+  condition names a mask that is not one of the request's overrides; or an
+  override the client marked `conditioned` has no body. A request never
+  produces an unconditioned grant in place of a conditioned one it could not
+  read. The inline size of the five requests grows by 8 bytes each.
 - Storage: the bodies live on the `TaskEntry` beside the overrides and in the
   WAL beside `scope_overrides` (`server/wal.go:76`, `:216`); a schedule's live
   in the schedule store beside its overrides. Old records have no bodies and
@@ -230,8 +234,9 @@ Every new input and display goes on the CLI, TUI and WebUI; walk
 
 ## Wire and disk
 
-Appended fields and arms only: `ScopeOverride.conditioned`, `GrantCondition`
-lists on the five grant-writing formats, `TaskInfo` and `ScheduleDetail`,
+Appended fields and arms only: `ScopeOverride.conditioned`,
+`conditions_stream_id` on the five grant-writing formats, `GrantCondition`
+lists on `TaskInfo` and `ScheduleDetail` (both already on streams),
 `RunnerEnrollRequest.bound`,
 `ExecRunBody`'s action variant, the action verbs, `response_too_large`. The
 WAL gains condition bodies; the key store gains `bound_tasks`; the action store
@@ -263,8 +268,10 @@ loads as unbound, so no transition window is needed.
 - C15: a response encoded over the budget arrives as `response_too_large` over
   UDP. Demonstrated red first: an oversized `whoami` over `scripts/netem-lab`
   hangs before the guard.
-- Request bounds: the worst case of each grant-writing request fits the
-  1170-byte floor.
+- C6 request path: for each of the five grant-writing requests, an unreadable
+  conditions stream, an undecodable or over-limit body, a body naming a mask
+  that is not an override, and a `conditioned` override with no body are each
+  refused, and the task / credential / schedule is unchanged afterwards.
 - Dummy-harness E2E: issue a credential holding `runner_enroll` over one task T;
   from it, enroll a key bound to T; start a runner with that key; see T placed
   on it and another background task for the same repo not placed; run an
