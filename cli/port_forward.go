@@ -136,16 +136,8 @@ func (c *Client) OpenPortForward(ctx context.Context, taskIDHex, remoteHost stri
 	if r == nil {
 		return nil, errors.New("forward: response variant missing")
 	}
-	switch r.Status {
-	case protocol.OpenPortForwardStatus_Ok:
-	case protocol.OpenPortForwardStatus_NoSuchTask:
-		return nil, errors.New("forward: no such task (id unknown or task not running)")
-	case protocol.OpenPortForwardStatus_RunnerOffline:
-		return nil, errors.New("forward: runner offline")
-	case protocol.OpenPortForwardStatus_NoSuchForward:
-		return nil, errors.New("forward: registration is gone (killed, or its task ended)")
-	default:
-		return nil, fmt.Errorf("forward: server error (status=%d)", r.Status)
+	if err := openResponseError(r); err != nil {
+		return nil, err
 	}
 	st := peer.WaitForBidirectionalStream(ctx, c.Transport(), trsf.StreamID(r.StreamId))
 	if st == nil {
@@ -482,6 +474,29 @@ func (c *Client) RegisterPortForward(ctx context.Context, taskIDHex string, dir 
 	return c.registerForward(ctx, body)
 }
 
+// errOutsideCondition is outside_condition on any forward request: the bit
+// reaches the task, but its PortRange grant condition (grant conditions C14)
+// does not admit this port.
+var errOutsideCondition = errors.New("forward: the port is outside the grant condition on your forward bit (whoami: conditions=)")
+
+// openResponseError maps a refused per-connection open to the error a caller
+// prints; nil for Ok.
+func openResponseError(r *protocol.OpenPortForwardResponse) error {
+	switch r.Status {
+	case protocol.OpenPortForwardStatus_Ok:
+		return nil
+	case protocol.OpenPortForwardStatus_NoSuchTask:
+		return errors.New("forward: no such task (id unknown or task not running)")
+	case protocol.OpenPortForwardStatus_RunnerOffline:
+		return errors.New("forward: runner offline")
+	case protocol.OpenPortForwardStatus_NoSuchForward:
+		return errors.New("forward: registration is gone (killed, or its task ended)")
+	case protocol.OpenPortForwardStatus_OutsideCondition:
+		return errOutsideCondition
+	}
+	return fmt.Errorf("forward: server error (status=%d)", r.Status)
+}
+
 // registerResponseError maps a refused registration to the error a caller
 // prints, with the server's detail -- usually the runner's own reason -- after
 // the status. nil for Ok.
@@ -503,6 +518,8 @@ func registerResponseError(r *protocol.RegisterPortForwardResponse) error {
 		return withDetail("forward: runner failed to bind the listen port")
 	case protocol.OpenPortForwardStatus_LinkFailed:
 		return withDetail("forward: ip link failed")
+	case protocol.OpenPortForwardStatus_OutsideCondition:
+		return errOutsideCondition
 	}
 	if len(r.Detail) > 0 {
 		return errors.New("forward: server refused: " + string(r.Detail))

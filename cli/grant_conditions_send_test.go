@@ -281,3 +281,18 @@ func TestGrantConditionSpecsRoundTrip(t *testing.T) {
 		t.Fatalf("an unknown body %v parsed; a re-grant would send it unconditioned", unknown)
 	}
 }
+
+// A port outside a PortRange is answered outside_condition on all three
+// forward requests; each says so in words, not as a status number (found live
+// on a dummy, 2026-11-26: "server error (status=8)").
+func TestForwardOutsideConditionIsNamed(t *testing.T) {
+	for name, err := range map[string]error{
+		"register": registerResponseError(&protocol.RegisterPortForwardResponse{Status: protocol.OpenPortForwardStatus_OutsideCondition}),
+		"open":     openResponseError(&protocol.OpenPortForwardResponse{Status: protocol.OpenPortForwardStatus_OutsideCondition}),
+		"kill":     killStatusError(protocol.KillPortForwardStatus_OutsideCondition, 3),
+	} {
+		if err == nil || !strings.Contains(err.Error(), "grant condition") || strings.Contains(err.Error(), "status=") {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}

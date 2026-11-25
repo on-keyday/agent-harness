@@ -2278,7 +2278,9 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"whoami"}, CmdlineSurfaces: CLI,
-		MCP: &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_Whoami},
+		// List: the caller's own row, for the bodies of its grant conditions,
+		// which the whoami answer carries only as markers (grant conditions C6).
+		MCP: &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_Whoami, protocol.TaskControlKind_List},
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"show THIS connection's own principal + server-enforced caps and scope (no cap required)",

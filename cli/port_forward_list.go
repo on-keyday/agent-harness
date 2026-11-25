@@ -112,14 +112,20 @@ func (c *Client) KillPortForwardWith(ctx context.Context, id uint64) error {
 	if kr == nil {
 		return fmt.Errorf("expected KillPortForward response, got kind=%v", resp.Kind)
 	}
-	switch kr.Status {
+	return killStatusError(kr.Status, id)
+}
+
+// killStatusError maps a kill answer to the error a caller prints; nil for Ok.
+func killStatusError(s protocol.KillPortForwardStatus, id uint64) error {
+	switch s {
 	case protocol.KillPortForwardStatus_Ok:
 		return nil
 	case protocol.KillPortForwardStatus_NoSuchForward:
 		return fmt.Errorf("forward kill: no such forward %d", id)
-	default:
-		return fmt.Errorf("forward kill: server error (status=%d)", kr.Status)
+	case protocol.KillPortForwardStatus_OutsideCondition:
+		return fmt.Errorf("forward kill: forward %d's port is outside the grant condition on your forward bit (whoami: conditions=)", id)
 	}
+	return fmt.Errorf("forward kill: server error (status=%d)", s)
 }
 
 // KillPortForward is the short-lived-CLI form of KillPortForwardWith.

@@ -56,25 +56,26 @@ func WhoAmI(ctx context.Context, serverCID objproto.ConnectionID) (protocol.WhoA
 // conditions through the list path (the whoami answer carries only markers,
 // grant conditions C6). nil when no override is marked, for the operator, or
 // when the caller's own row is not in the listing; the markers then render as
-// "(condition unknown)".
-func SelfGrantConditions(ctx context.Context, c *Client, resp protocol.WhoAmIResponse) []protocol.GrantCondition {
+// "(condition unknown)". A listing that fails is returned as the error, so
+// the caller can say why the bodies are missing.
+func SelfGrantConditions(ctx context.Context, c *Client, resp protocol.WhoAmIResponse) ([]protocol.GrantCondition, error) {
 	marked := false
 	for _, o := range resp.Overrides {
 		marked = marked || o.Conditioned()
 	}
 	if !marked || isZeroTaskID(resp.PrincipalTaskId) {
-		return nil
+		return nil, nil
 	}
 	lr, err := c.Snapshot(ctx)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("grant condition bodies: %w", err)
 	}
 	for _, t := range lr.Tasks {
 		if t.Id == resp.PrincipalTaskId {
-			return t.GrantConditions
+			return t.GrantConditions, nil
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 // isZeroTaskID reports whether a TaskID is all-zero (the operator / no-creator

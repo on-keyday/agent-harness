@@ -367,8 +367,13 @@ func (h cliVerbs) Whoami(a verb.CatalogAction) error {
 		return err
 	}
 	// The answer carries each grant condition's marker only; the bodies come
-	// from the caller's own row (grant conditions C6).
-	return cli.WriteWhoAmIWith(h.stdout(), resp, cli.SelfGrantConditions(h.ctx, c, resp), a.JSON)
+	// from the caller's own row (grant conditions C6). Without them the
+	// markers print "(condition unknown)", and stderr says why.
+	conds, cerr := cli.SelfGrantConditions(h.ctx, c, resp)
+	if cerr != nil {
+		fmt.Fprintf(h.stderr(), "whoami: %v\n", cerr)
+	}
+	return cli.WriteWhoAmIWith(h.stdout(), resp, conds, a.JSON)
 }
 
 func (h cliVerbs) Version(a verb.CatalogAction) error {
