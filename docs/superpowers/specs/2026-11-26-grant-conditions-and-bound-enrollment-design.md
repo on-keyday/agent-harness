@@ -2,7 +2,7 @@
 
 Date: 2026-11-26. Line references are to `main` at `3b1dc6e7`.
 
-**Status: DESIGN.** Nothing here is implemented. It is a prerequisite of
+**Status: DESIGN, approved by the operator 2026-11-26.** Nothing here is implemented. Planned as four plans, one per part: response size guard, grant conditions, bound enrollment, actions. It is a prerequisite of
 pillar D (ephemeral runners, `2026-11-12-run-modes-and-records-grand-design.md`
 § Pillar D), not pillar D itself.
 
