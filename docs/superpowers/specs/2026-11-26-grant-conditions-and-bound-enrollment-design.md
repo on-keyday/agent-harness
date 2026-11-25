@@ -70,6 +70,8 @@ the author chose it while writing; those rows are the ones to check.
 | C12 | **Action parameters are typed, never free text.** A template element is a literal or a parameter reference; a parameter value always becomes one whole argv element. Types: `choice` (one of a fixed list of literals in the definition) and `token` (1–128 bytes of `[0-9A-Za-z._-]`, not starting with `-`). The `token` check is fixed code, not a pattern supplied by anyone. `shell_line` is always 0 and stdin is always `/dev/null` for an action run | this spec |
 | C13 | **Defining, editing and deleting actions needs a new grantable bit, `action_admin`** (scope none); an edit additionally passes C11's per-holder gate. Listing actions needs `action_admin` or `exec_run`. Not operator-only (operator-only is reserved for re-grant authority) | this spec |
 | C14 | **`PortRange` bounds the port only, not the host.** For `forward_local` it bounds `target_port`; for `forward_remote` it bounds `bind_port` (`RegisterPortForwardRequest`, `message.bgn:5286-5294`). An `ip` forward (`forward_link`) is not a `PortRange` bit. Host bounds are left out: `localhost`, `127.0.0.1` and `::1` are one host under three spellings, so a host condition needs a canonicalisation design of its own | this spec |
+| C16 | **An action id is 16 random bytes (`ActionID`), not a counter.** The action store is its own file, outside the WAL (as the runner-key store is, `server/runnerkeys.go:39-41`), while grants naming action ids are in the WAL. If the file were lost or restored from an older copy, a counter would restart and a new action would take an old id — every grant still naming it would silently run the new command. A random 128-bit id is not re-issued in practice (the same odds TaskID relies on); a grant naming a lost id fails closed (C7). Replaces the `u32` id of the first draft | this spec |
+| C17 | **Code-level shape of actions** (§ Actions): `argv[0]` is always a literal, so no parameter chooses the program; a create and an edit are one request kind, discriminated by a zero id as `OpenInteractiveRequest.resume_task_id` is; an edit names the revision it edits and is refused on a mismatch, so two editors cannot overwrite each other unseen; an action run forces `pty = 0`, `shell_line = 0` and `stdin_enabled = 0`; an invocation does not pin a revision (the exec list records which ran) | this spec |
 | C15 | **Task-control responses get a size guard.** All of them are sent through one function that runs `CheckControlMessage` against the connection's transport and datagram budget; over budget, it sends a new `response_too_large` answer for the same request id instead. A test fails if any other server code appends `AppKind_TaskControl` to a response and sends it. `WhoAmIResponse` stays inline | operator (guard, no move to a stream), this spec (one function + test) |
 
 ## Anti-goals
@@ -146,7 +148,7 @@ the author chose it while writing; those rows are the ones to check.
       caps :Capability            # the override's mask
       kind :ConditionKind
       match kind:
-          action_set => actions :[n ≤ 32]u32
+          action_set => actions :[n ≤ 32]ActionID   # C16
           port_range => ranges  :[n ≤ 8]{lo :u16, hi :u16}
   ```
 
@@ -189,30 +191,193 @@ the author chose it while writing; those rows are the ones to check.
   `ClampDescendant` does for scope. An unconditioned bit contains every
   condition.
 
-### Actions (C8, C10–C13)
+### Actions (C8, C10–C13, C16, C17)
 
-- Store: its own JSON file beside the runner key and dial-record stores
-  (`server/runnerkeys.go`, `server/runnerdials.go`). Each action has `id :u32`
-  (never reused), `name`, `template` (elements: literal or parameter index),
-  `params` (name and type per C12), `created_at` and `created_by`.
-- Verbs: `action new` and `action edit <id>` (body on a stream, the
-  `payload_stream_id` pattern of `ExecRunRequest`), `action ls`,
-  `action show <id>`, `action rm <id>`. Gates per C11 and C13.
-- Edit: the server collects every holder — tasks in the task store and
-  schedules in the schedule store whose stored conditions name the action id —
-  and applies C11's gate to each before writing anything. A refused edit names
-  how many holders it could not re-grant, not which, since a holder outside the
-  editor's reach must not be disclosed. `ExecRunInfo` records the action's
-  revision (a counter bumped per edit) beside the resolved argv, so an exec
-  list shows which version ran.
-- Invocation: `ExecRunBody` (`message.bgn:6087`) gains a variant: argv as
-  today, or `action_id` plus parameter values. With an action, the server
-  checks the values against the types, builds the argv, forces
-  `shell_line = 0` and `stdin_enabled = 0`, gates with
-  `authorizeObject(cid, exec_run, task, action_id)`, and continues as
-  `openExecRun` does today (`server/exec_run.go:69`). A raw argv against a bit
-  conditioned by `ActionSet` is refused by the same gate. `ExecRunInfo` and the
-  exec list show the action name next to the resolved argv.
+#### Wire (`runner/protocol/message.bgn`)
+
+```
+format ActionID:
+    id :[16]u8                         # random (C16); all-zero = "new" in ActionPut
+
+enum ActionParamType:
+    :u8
+    choice = 1                         # one of the definition's literals
+    token  = 2                         # 1-128 bytes of [0-9A-Za-z._-], no leading '-'
+
+format ActionLiteral:                  # one argv element, as written
+    len   :u16                         # 1..4096
+    bytes :[len]u8                     # no NUL
+
+format ActionParam:
+    name_len :u8
+    name     :[name_len]u8             # [a-z][a-z0-9_]{0,31}, unique in the definition
+    type     :ActionParamType
+    match type:
+        ActionParamType.choice => choices_len :u8                    # 1..32
+                                  choices :[choices_len]ActionLiteral
+        ActionParamType.token  => ..
+
+enum ActionElementKind:
+    :u8
+    literal = 1
+    param   = 2
+
+format ActionElement:
+    kind :ActionElementKind
+    match kind:
+        ActionElementKind.literal => literal :ActionLiteral
+        ActionElementKind.param   => param_index :u8                 # into params
+
+format ActionDefinition:               # what a client writes
+    name_len        :u8
+    name            :[name_len]u8      # [a-z0-9][a-z0-9._-]{0,63}, unique across the store
+    params_len      :u8                # 0..16
+    params          :[params_len]ActionParam
+    template_len    :u8                # 1..64
+    template        :[template_len]ActionElement   # [0] is a literal (C17)
+    description_len :u16
+    description     :[description_len]u8           # 0..1024, display only
+
+format ActionRecord:                   # what the server reports
+    id            :ActionID
+    revision      :u32                 # 1 at create, +1 per edit
+    definition    :ActionDefinition
+    created_at_ms :u64
+    edited_at_ms  :u64                 # = created_at_ms until the first edit
+    created_by_len :u8
+    created_by     :[created_by_len]u8 # "operator" | "task:<32 hex>", as RunnerKeyRecord.EnrolledBy
+    edited_by_len  :u8
+    edited_by      :[edited_by_len]u8
+
+format ActionValue:                    # one parameter value at invocation
+    len   :u8
+    bytes :[len]u8
+
+format ActionInvocation:
+    id         :ActionID
+    values_len :u8
+    values     :[values_len]ActionValue    # one per param, in params order
+```
+
+`TaskControlKind` gains `action_put`, `action_remove`, `action_list`
+(appended), with these arms:
+
+```
+format ActionPutRequest:
+    id                :ActionID        # zero = create
+    expect_revision   :u32             # edit: must equal the current revision; create: 0
+    payload_stream_id :u64             # client send stream carrying one ActionDefinition
+
+enum ActionStatus:
+    :u8
+    ok
+    not_found              # unknown id, or one the caller may not see
+    invalid_definition     # message says which rule
+    name_taken
+    stale_revision         # edit: expect_revision is not current
+    holders_unreachable    # edit: C11 refused; holders_refused says how many
+    body_too_large
+    bad_body
+
+format ActionPutResponse:
+    status          :ActionStatus
+    id              :ActionID          # the new or edited action on ok
+    revision        :u32
+    holders_refused :u32               # holders_unreachable only
+    message_len     :u16
+    message         :[message_len]u8
+
+format ActionRemoveRequest:
+    id :ActionID
+
+format ActionRemoveResponse:
+    status :ActionStatus
+
+format ActionListRequest:
+    reserved :u8
+
+format ActionListResponse:
+    status    :ActionStatus
+    stream_id :u64                     # server send stream carrying ActionListBody
+
+format ActionListBody:
+    actions_len :u16
+    actions     :[actions_len]ActionRecord
+```
+
+`ExecRunBody` appends `action_present :u1`, `reserved :u7` and, when set,
+`action :ActionInvocation`; `argv` must then be empty. `ExecRunInfo` appends
+`action_present :u1` and, when set, `action_id :ActionID`,
+`action_revision :u32` and the action's name. `Capability` gains
+`action_admin = 0x100000000`, and `all` widens to `0x1ffffffff` (operators get
+`Capability_All` from `callerCaps`, so a narrower `all` would deny the operator
+the new bit; the comment above `all` already says so).
+
+#### Shared validation (`actiondef/`, a new package)
+
+Pure functions, imported by `server`, `cli` and the wasm build so that a client
+can refuse a bad definition before sending it and the server applies the same
+rule:
+
+```go
+// Validate reports the first rule def breaks (C12, C17, the limits above).
+func Validate(def *protocol.ActionDefinition) error
+
+// Resolve checks values against def's params and returns the argv:
+// literals as written, each param element replaced by its value as ONE element.
+func Resolve(def *protocol.ActionDefinition, values []protocol.ActionValue) ([]string, error)
+
+// ValidToken is the token rule; fixed code, no pattern from any caller.
+func ValidToken(v []byte) bool
+
+// ParseTemplate turns CLI words into elements:
+//   - a word that is exactly "{name}" for a declared param is a reference;
+//   - a word starting with "\{" is a literal with that backslash dropped;
+//   - a word that contains "{name}" for a declared param anywhere else (e.g.
+//     "--env={env}") is refused: there is no partial substitution, and
+//     passing it through as a literal would surprise whoever wrote it;
+//   - every other word is a literal.
+func ParseTemplate(words []string, params []protocol.ActionParam) ([]protocol.ActionElement, error)
+```
+
+#### Server
+
+- `server/actions.go`: `ActionStore`, the sibling of `RunnerKeyStore` —
+  `<data-dir>/actions.json`, `sync.Mutex`, `map[[16]byte]ActionRecord`,
+  `LoadActionStore` (a file that does not parse is an error),
+  `Put` / `Remove` / `Get` / `List`, `saveLocked` writing a temp file and
+  renaming it, as `RunnerKeyStore.saveLocked` does. Persisted as native JSON
+  fields (name, params, template, …), not as encoded wire bytes, so a later
+  `.bgn` change does not reinterpret the file.
+- `server/action_handler.go`: `handleActionPut`, `handleActionRemove`,
+  `handleActionList`. `action_put` with a non-zero id collects the holders
+  (tasks whose conditions name the id, from the task store; schedules, from
+  the schedule store), applies C11 to each before writing, then bumps the
+  revision.
+- `authority/need.go`: `action_put` and `action_remove` →
+  `Capability_ActionAdmin` (central); `action_list` →
+  `AnyOf: ActionAdmin | ExecRun`. `server/scope_completeness_test.go`: all
+  three `noTarget`.
+- `server/exec_run.go` `openExecRun`: when `action_present`, look the action up
+  (missing → `not_found`), `actiondef.Resolve`, gate with
+  `authorizeObject(cid, exec_run, task, action id)`, force the C17 flags, and
+  continue with the resolved argv; record id, revision and name on the
+  `execRun`. A raw argv against an `ActionSet`-conditioned `exec_run` fails the
+  same gate.
+
+#### CLI (rows in `cli/verb/table.go`, so TUI cmdline and WebUI get them)
+
+```
+harness-cli action new  --name deploy [--description TEXT] \
+    [--param env=choice:staging,prod] [--param ref=token] -- ./deploy.sh --env {env} --ref {ref}
+harness-cli action edit <id|name> --revision N [same flags] -- <template words>
+harness-cli action rm   <id|name>
+harness-cli action ls   [--json]
+harness-cli exec <task> --action <id|name> [--value env=prod --value ref=v1.2]
+```
+
+A name resolves to an id client-side through `action_list`; every wire request
+carries the id.
 
 ### Response size guard (C15)
 
