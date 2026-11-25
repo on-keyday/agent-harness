@@ -122,7 +122,7 @@ func TestNoBitKinds(t *testing.T) {
 			protocol.TaskControlKind_ScheduleList,
 			protocol.TaskControlKind_ScheduleShow,
 		},
-		NeedRetired:    {protocol.TaskControlKind_Submit, protocol.TaskControlKind_GetTaskLog},
+		NeedRetired:    {protocol.TaskControlKind_RetiredSubmit, protocol.TaskControlKind_RetiredGetTaskLog},
 		NeedNotRequest: {protocol.TaskControlKind_ClientHello, protocol.TaskControlKind_PermissionDenied},
 		NeedIdentity:   {protocol.TaskControlKind_SetCaps, protocol.TaskControlKind_SetParent, protocol.TaskControlKind_TaskRename},
 	}

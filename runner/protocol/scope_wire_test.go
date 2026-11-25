@@ -7,15 +7,11 @@ import "testing"
 // buffer and leftover bytes. These tests assert that skew is a hard, visible
 // failure rather than a silent misparse, in both directions.
 
-// A pre-scope SubmitRequest payload is one TaskScope short. An empty TaskScope
-// encodes as base(1) + vis_base(1) + flags(1) + vis_ids_len(2) + ids_len(2) =
-// seven bytes, plus the overrides_len(1) that rides beside it — so trimming
-// eight reproduces what a client from before the per-capability change sends.
-// (It was three bytes when TaskScope was base + ids_len alone.)
-func TestSubmitRequestRejectsPreScopePayload(t *testing.T) {
-	var req SubmitRequest
+// A payload cut short — what a client from before an appended field sends —
+// is refused, not misparsed.
+func TestOpenInteractiveRequestRejectsShortPayload(t *testing.T) {
+	var req OpenInteractiveRequest
 	req.SetRepoPath([]byte("/r"))
-	req.SetPrompt([]byte("p"))
 	buf, err := req.Append(nil)
 	if err != nil {
 		t.Fatalf("append: %v", err)
@@ -23,23 +19,22 @@ func TestSubmitRequestRejectsPreScopePayload(t *testing.T) {
 	if len(buf) < 9 {
 		t.Fatalf("encoded payload is implausibly short (%d bytes)", len(buf))
 	}
-	var got SubmitRequest
+	var got OpenInteractiveRequest
 	if err := got.DecodeExact(buf[:len(buf)-8]); err == nil {
-		t.Fatal("a pre-scope payload decoded; want a short-buffer error")
+		t.Fatal("a short payload decoded; want a short-buffer error")
 	}
 }
 
 // The other direction: a new payload reaching an older decoder leaves bytes
 // over. DecodeExact's leftover check is what makes that loud.
-func TestSubmitRequestRejectsTrailingBytes(t *testing.T) {
-	var req SubmitRequest
+func TestOpenInteractiveRequestRejectsTrailingBytes(t *testing.T) {
+	var req OpenInteractiveRequest
 	req.SetRepoPath([]byte("/r"))
-	req.SetPrompt([]byte("p"))
 	buf, err := req.Append(nil)
 	if err != nil {
 		t.Fatalf("append: %v", err)
 	}
-	var got SubmitRequest
+	var got OpenInteractiveRequest
 	if err := got.DecodeExact(append(buf, 0, 0, 0)); err == nil {
 		t.Fatal("trailing bytes accepted; want an exact-length error")
 	}
@@ -49,22 +44,19 @@ func TestSubmitRequestRejectsTrailingBytes(t *testing.T) {
 // byte with no is_defined check, and String falls back to the numeric form. An
 // old client receiving scope_not_permitted therefore renders it, not fails.
 func TestUnknownStatusValuesDecodeAndRender(t *testing.T) {
-	if got := SubmitStatus(200).String(); got != "SubmitStatus(200)" {
-		t.Errorf("SubmitStatus(200).String() = %q, want the numeric fallback", got)
-	}
 	if got := OpenInteractiveStatus(200).String(); got != "OpenInteractiveStatus(200)" {
 		t.Errorf("OpenInteractiveStatus(200).String() = %q, want the numeric fallback", got)
 	}
-	resp := SubmitResponse{Status: SubmitStatus_ScopeNotPermitted}
+	resp := OpenInteractiveResponse{Status: OpenInteractiveStatus_ScopeNotPermitted}
 	buf, err := resp.Append(nil)
 	if err != nil {
 		t.Fatalf("append: %v", err)
 	}
-	var got SubmitResponse
+	var got OpenInteractiveResponse
 	if err := got.DecodeExact(buf); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if got.Status != SubmitStatus_ScopeNotPermitted {
+	if got.Status != OpenInteractiveStatus_ScopeNotPermitted {
 		t.Errorf("status = %v, want scope_not_permitted", got.Status)
 	}
 }
@@ -188,10 +180,9 @@ func TestScopeOverrideCarriesAMask(t *testing.T) {
 }
 
 // The override list rides beside the scope on every format that carries one.
-func TestSubmitRequestCarriesOverrides(t *testing.T) {
-	var req SubmitRequest
+func TestOpenInteractiveRequestCarriesOverrides(t *testing.T) {
+	var req OpenInteractiveRequest
 	req.SetRepoPath([]byte("/r"))
-	req.SetPrompt([]byte("p"))
 	req.Scope = TaskScope{Base: ScopeBase_Subtree}
 	req.Overrides = []ScopeOverride{{Caps: Capability_Cancel, Base: ScopeBase_None}}
 	req.OverridesLen = uint8(len(req.Overrides))
@@ -200,7 +191,7 @@ func TestSubmitRequestCarriesOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatalf("append: %v", err)
 	}
-	var got SubmitRequest
+	var got OpenInteractiveRequest
 	if err := got.DecodeExact(buf); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -236,9 +227,8 @@ func TestTaskScopeIDsRoundTrip(t *testing.T) {
 // them: an override list that violates either still decodes cleanly, and the
 // gate is the handler.
 func TestScopeOverrideDisjointnessIsNotAWireConcern(t *testing.T) {
-	in := SubmitRequest{}
+	in := OpenInteractiveRequest{}
 	in.SetRepoPath([]byte("/r"))
-	in.SetPrompt([]byte("p"))
 	in.Overrides = []ScopeOverride{
 		{Caps: Capability_Cancel | Capability_BoardPurge},
 		{Caps: Capability_BoardPurge}, // intersects the first
@@ -250,7 +240,7 @@ func TestScopeOverrideDisjointnessIsNotAWireConcern(t *testing.T) {
 	if err != nil {
 		t.Fatalf("append: %v", err)
 	}
-	var got SubmitRequest
+	var got OpenInteractiveRequest
 	if err := got.DecodeExact(buf); err != nil {
 		t.Fatalf("decode: %v — the wire must carry what it is given; the REJECTION "+
 			"belongs to the handler, which can name the offending bit", err)

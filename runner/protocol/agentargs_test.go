@@ -58,20 +58,17 @@ func TestAssignTaskBodyRoundTripWithExtraArgs(t *testing.T) {
 	}
 }
 
-func TestSubmitRequestEmptyExtraArgs(t *testing.T) {
+func TestOpenInteractiveRequestEmptyExtraArgs(t *testing.T) {
 	// Verify that an empty extra-args list encodes to a single u16(0) length
 	// prefix and round-trips cleanly — the common case for callers that
 	// don't supply --agent-arg.
-	orig := SubmitRequest{
-		PromptLen: 4,
-		Prompt:    []byte("test"),
-	}
+	var orig OpenInteractiveRequest
 	orig.SetRepoPath([]byte("/r"))
 	orig.Selector = RunnerSelector{Kind: RunnerSelectorKind_Any}
 
 	wire := orig.MustAppend(nil)
 
-	var got SubmitRequest
+	var got OpenInteractiveRequest
 	if err := got.DecodeExact(wire); err != nil {
 		t.Fatalf("DecodeExact: %v", err)
 	}

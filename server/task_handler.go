@@ -535,15 +535,6 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 	}
 
 	switch req.Header.Kind {
-	case protocol.TaskControlKind_Submit:
-		// Retired (A3, A-D31): an older client's submit is answered with the
-		// verb that replaces it rather than dropped.
-		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_Submit, RequestId: req.Header.RequestId}
-		sr := protocol.SubmitResponse{Status: protocol.SubmitStatus_InternalError}
-		sr.SetErrorMsg([]byte("submit is retired: use session new --oneshot (with --background --deadline D --agent A to queue it while every runner is busy)"))
-		resp.SetSubmit(sr)
-		conn.SendMessage(resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})) //nolint:errcheck
-
 	case protocol.TaskControlKind_List:
 		var finished uint32
 		if q := req.List(); q != nil {
@@ -607,15 +598,6 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 
 		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
-
-	case protocol.TaskControlKind_GetTaskLog:
-		// Retired in A3 (A-D30): the server keeps no task log. An older
-		// `harness-cli logs` is answered as for a task with no log rather than
-		// left waiting; the answer is the same for every id, so it needs no
-		// capability and reveals nothing.
-		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_GetTaskLog, RequestId: req.Header.RequestId}
-		resp.SetGetLog(protocol.GetTaskLogResponse{})
-		conn.SendMessage(resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})) //nolint:errcheck
 
 	case protocol.TaskControlKind_OpenInteractive:
 		oi := req.OpenInteractive()

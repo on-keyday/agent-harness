@@ -35,7 +35,7 @@ func (f *fakePermDeniedClient) RoundTripTaskControl(_ context.Context, req *prot
 // response.
 func TestPermissionDeniedRecognition(t *testing.T) {
 	fake := &fakePermDeniedClient{
-		requestedKind: protocol.TaskControlKind_Submit,
+		requestedKind: protocol.TaskControlKind_OpenInteractive,
 		requiredCap:   protocol.Capability_Spawn,
 	}
 
@@ -49,7 +49,7 @@ func TestPermissionDeniedRecognition(t *testing.T) {
 	// does with the PermissionDenied guard — but without a live peer.Conn.
 	// The guard logic is self-contained in client.go, so we exercise it by
 	// calling roundTripWithFake which replicates the guard path.
-	_, err := roundTripWithFake(context.Background(), fake, protocol.TaskControlKind_Submit)
+	_, err := roundTripWithFake(context.Background(), fake, protocol.TaskControlKind_OpenInteractive)
 	if err == nil {
 		t.Fatal("expected CapabilityDeniedError, got nil")
 	}
@@ -58,8 +58,8 @@ func TestPermissionDeniedRecognition(t *testing.T) {
 	if !errors.As(err, &capErr) {
 		t.Fatalf("err type = %T, want *CapabilityDeniedError; err = %v", err, err)
 	}
-	if capErr.RequestedKind != protocol.TaskControlKind_Submit {
-		t.Errorf("RequestedKind = %v, want Submit", capErr.RequestedKind)
+	if capErr.RequestedKind != protocol.TaskControlKind_OpenInteractive {
+		t.Errorf("RequestedKind = %v, want OpenInteractive", capErr.RequestedKind)
 	}
 	if capErr.RequiredCap != protocol.Capability_Spawn {
 		t.Errorf("RequiredCap = %v, want Spawn", capErr.RequiredCap)
@@ -97,12 +97,12 @@ func roundTripWithFake(ctx context.Context, c taskControlClient, kind protocol.T
 // TestCapabilityDeniedErrorMessage verifies the error message format.
 func TestCapabilityDeniedErrorMessage(t *testing.T) {
 	err := &CapabilityDeniedError{
-		RequestedKind: protocol.TaskControlKind_Submit,
+		RequestedKind: protocol.TaskControlKind_OpenInteractive,
 		RequiredCap:   protocol.Capability_Spawn,
 	}
 	msg := err.Error()
 	// Must mention "permission denied", the kind, and the required capability.
-	for _, want := range []string{"permission denied", "Submit", "spawn"} {
+	for _, want := range []string{"permission denied", "OpenInteractive", "spawn"} {
 		if !containsSubstring(msg, want) {
 			t.Errorf("error message %q does not contain %q", msg, want)
 		}
@@ -147,7 +147,7 @@ func TestCapabilityDeniedNamesEveryAlternativeInAMask(t *testing.T) {
 // read as though something were being withheld.
 func TestCapabilityDeniedKeepsTheSingularForOneBit(t *testing.T) {
 	err := &CapabilityDeniedError{
-		RequestedKind: protocol.TaskControlKind_Submit,
+		RequestedKind: protocol.TaskControlKind_OpenInteractive,
 		RequiredCap:   protocol.Capability_Spawn,
 	}
 	msg := err.Error()
@@ -161,11 +161,10 @@ func TestCapabilityDeniedKeepsTheSingularForOneBit(t *testing.T) {
 
 // The builders' capability default is pinned in session_opts_test.go
 // (TestSessionOptsCapsResolution), which runs the real
-// buildSubmitRequest / buildOpenInteractiveRequest. A
-// TestBuilderDefaultsToCapabilityAll used to sit here asserting the opposite
-// default, and it could never have caught a regression either way: it
-// assigned Capability_All to a bare protocol.SubmitRequest and then asserted
-// that same literal back, without calling a builder at all.
+// buildOpenInteractiveRequest. A TestBuilderDefaultsToCapabilityAll used to
+// sit here asserting the opposite default, and it could never have caught a
+// regression either way: it assigned Capability_All to a bare request struct
+// and then asserted that same literal back, without calling a builder at all.
 
 func containsSubstring(s, sub string) bool {
 	if len(sub) == 0 {

@@ -53,7 +53,7 @@ const (
 	// NeedIdentity: decided by who is calling (the operator, or a task holding
 	// resume over a strict descendant), not by a bit.
 	NeedIdentity
-	// NeedRetired: answered with an error or nothing, whoever asks.
+	// NeedRetired: a held ordinal with no arm; nothing decodes to it.
 	NeedRetired
 	// NeedNotRequest: not a kind a client sends (the handshake, a response).
 	NeedNotRequest
@@ -91,8 +91,7 @@ type Need struct {
 // OpenFileTransfer / ListFiles are direction-dependent, RegisterPortForward is
 // direction-dependent (its gate moved off OpenPortForward, which is now
 // unconditionally ForwardLocal); List / ListPortForwards is INFO-scoped
-// (visibleToCaller, not a single cap); GetTaskLog is retired (A3) and answers
-// "no log" to everyone; KillPortForward is direction-dependent AND the
+// (visibleToCaller, not a single cap); KillPortForward is direction-dependent AND the
 // direction is only known after the registry lookup, so its gate lives inline
 // in the dispatch case, after the registry lookup.
 //
@@ -107,8 +106,7 @@ type Need struct {
 //
 // OpenInteractive is absent because its bit depends on the request: a zero
 // resume_task_id creates a task (spawn), a non-zero one resumes (resume, or
-// resume_exact when the exact flag is set). Submit is absent because it is
-// retired (A3): it is answered with an error and creates nothing.
+// resume_exact when the exact flag is set).
 //
 // AttachSession is absent because its cap depends on the requested AttachMode,
 // which this map cannot see (AttachModeCap). AwaitIdle is absent because it
@@ -258,10 +256,11 @@ var classOnly = map[protocol.TaskControlKind]NeedClass{
 	protocol.TaskControlKind_ScheduleList: NeedNone,
 	protocol.TaskControlKind_ScheduleShow: NeedNone,
 
-	// Retired in A3: submit is answered with an error naming its replacement,
-	// get_task_log with "no log" for every id. Both reveal nothing.
-	protocol.TaskControlKind_Submit:     NeedRetired,
-	protocol.TaskControlKind_GetTaskLog: NeedRetired,
+	// Retired in A3 (F34): ordinals held, no arm, so a request for either does
+	// not decode and is never dispatched. Classified so every ordinal has a
+	// class.
+	protocol.TaskControlKind_RetiredSubmit:     NeedRetired,
+	protocol.TaskControlKind_RetiredGetTaskLog: NeedRetired,
 
 	// The handshake, and a RESPONSE kind that never arrives as a request.
 	protocol.TaskControlKind_ClientHello:      NeedNotRequest,

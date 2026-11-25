@@ -2,7 +2,6 @@ package server
 
 import (
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/on-keyday/agent-harness/authority"
@@ -60,23 +59,28 @@ func TestReplayRetiresQueuedAndHeldOneshots(t *testing.T) {
 	}
 }
 
-// An old client's submit is answered, not dropped: with the verb to use.
-func TestSubmitIsRetired(t *testing.T) {
-	h := newTestHandler(t)
-	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9180-1"), nextStreamID: 100}
-	var sub protocol.SubmitRequest
-	sub.SetRepoPath([]byte("/r"))
-	sub.SetPrompt([]byte("p"))
-	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_Submit, RequestId: 9}}
-	req.SetSubmit(sub)
-	h.Handle(conn, encodeTaskControlRequest(t, req))
-	resp := lastTaskControlResponse(t, conn)
-	r := resp.Submit()
-	if r == nil || r.Status != protocol.SubmitStatus_InternalError || !strings.Contains(string(r.ErrorMsg), "session new --oneshot") ||
-		!strings.Contains(string(r.ErrorMsg), "--background") {
-		t.Fatalf("submit answered %+v, want internal_error naming session new --oneshot", r)
-	}
-	if n := len(h.Tasks.List(0)); n != 0 {
-		t.Fatalf("%d tasks created", n)
+// The retired kinds hold their ordinals and have no arm (F34). What an older
+// client sends for one — a header plus the old body — does not decode, gets
+// no answer, and creates nothing.
+func TestRetiredKindsGetNoAnswer(t *testing.T) {
+	for _, kind := range []protocol.TaskControlKind{
+		protocol.TaskControlKind_RetiredSubmit,
+		protocol.TaskControlKind_RetiredGetTaskLog,
+	} {
+		h := newTestHandler(t)
+		conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9180-1"), nextStreamID: 100}
+		hdr := protocol.TaskControlRequestHeader{Kind: kind, RequestId: 9}
+		payload := append(hdr.MustAppend(nil), make([]byte, 16)...) // an old body: a task id or a repo path
+		var req protocol.TaskControlRequest
+		if err := req.DecodeExact(payload); err == nil {
+			t.Errorf("%v: an old request decoded; the kind has an arm again", kind)
+		}
+		h.Handle(conn, payload)
+		if n := len(conn.Sent()); n != 0 {
+			t.Errorf("%v: %d messages sent, want none", kind, n)
+		}
+		if n := len(h.Tasks.List(0)); n != 0 {
+			t.Errorf("%v: %d tasks created", kind, n)
+		}
 	}
 }

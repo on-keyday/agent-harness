@@ -332,7 +332,7 @@ format AssignTaskBody:
     extra_args :AgentArgs
     resume_conversation :u1
     reserved :u7
-    # agent_profile: same semantics as SubmitRequest.agent_profile.
+    # agent_profile: same semantics as OpenInteractiveRequest.agent_profile.
     agent_profile_len :u8
     agent_profile :[agent_profile_len]u8
 
@@ -553,13 +553,18 @@ format LeaveRequest:
     by_len :u8
     by :[by_len]u8   # at most 64 bytes
 
+# retired_submit (0) and retired_get_task_log (4) were the oneshot submit and
+# the task log, retired in A3 (2026-11-13-pillar-a-run-modes-design.md F34).
+# Neither has an arm in TaskControlRequest or TaskControlResponse: an older
+# client's request for one does not decode, gets no answer, and the server logs
+# its kind and request id. Kept only to hold the ordinals; do not reuse them.
 enum TaskControlKind:
     :u8
-    submit
+    retired_submit
     list
     cancel
     prune_tasks
-    get_task_log
+    retired_get_task_log
     open_interactive
     client_hello
     attach_session
@@ -1058,7 +1063,7 @@ enum TaskStatus:
     Active
 
 # TaskKind distinguishes how the task was requested.
-#  - oneshot:     submitted via SubmitRequest, claude ran with -p prompt and
+#  - oneshot:     submitted by the retired submit verb, claude ran with -p prompt and
 #                 exited. Retired in A3: nothing creates one, and it stays
 #                 value 0 so a WAL written before A3 replays and displays.
 #                 `session new --oneshot` is an interactive task.
@@ -1337,11 +1342,11 @@ format TaskInfo:
     authority_actor  :TaskID
     authority_at     :u64
     authority_age_ms :u64
-    # The task's delegation bound (SubmitRequest.delegate_caps): what it may
+    # The task's delegation bound (OpenInteractiveRequest.delegate_caps): what it may
     # write onto the tasks it grants to.
     delegate_caps  :Capability
     delegate_scope :TaskScope
-    # The task's spawn limits (SubmitRequest.spawn_depth / max_descendants),
+    # The task's spawn limits (OpenInteractiveRequest.spawn_depth / max_descendants),
     # and descendants: the records in its subtree now, itself excluded, under
     # the current parent links -- every record, whatever its status, including
     # ones the reader cannot see (a number, never an id).
@@ -1436,8 +1441,8 @@ format IPAddr:
     addr_len == 4 || addr_len == 16
     addr :[addr_len]u8
 
-# RunnerSelector is the tagged union embedded in SubmitRequest and
-# OpenInteractiveRequest that lets a client pin a task to a specific runner.
+# RunnerSelector is the tagged union embedded in OpenInteractiveRequest (and
+# ScheduleSpec) that lets a client pin a task to a specific runner.
 format RunnerSelector:
     kind :RunnerSelectorKind
     match kind:
@@ -1446,130 +1451,6 @@ format RunnerSelector:
         RunnerSelectorKind.by_hostname  => hostname  :Hostname
         RunnerSelectorKind.by_ip        => ip_addr   :IPAddr
         RunnerSelectorKind.by_conn_id   => conn_id   :ConnID
-
-# Retired in A3: a current server answers a submit with an error naming
-# `session new --oneshot`. Kept so an older client's request still decodes;
-# OpenInteractiveRequest's fields still point here for their semantics.
-format SubmitRequest:
-    repo_path_len :u16
-    repo_path :[repo_path_len]u8
-    selector :RunnerSelector
-    prompt_len :u32
-    prompt :[prompt_len]u8
-    extra_args :AgentArgs
-    # requested_caps is a Capability bitmask the spawning principal requests for
-    # this task. The server computes caps_child = caps_creator ∩ requested_caps.
-    # The server computes caps_child = caps_creator ∩ delegate_caps_creator ∩
-    # requested_caps, so Capability.all (0x7fffff) means "everything the
-    # creator may delegate", not the creator's full set. A zero value grants
-    # nothing.
-    requested_caps :Capability
-    # resume only: 1 = set caps to caps_resumer ∩ requested_caps on resume; 0 = keep persisted. Ignored on create.
-    resume_caps_override :u1
-    # resume only: 1 = ask the runner to resume the agent's own conversation
-    # state in addition to reusing the harness task/worktree. The runner maps
-    # this intent to the configured agent CLI (for Claude Code, --continue).
-    resume_conversation :u1
-    # resume only: 1 = write scope onto the resumed task (attenuated); 0 =
-    # keep its persisted scope. Independent of resume_caps_override — the two
-    # halves of authority re-grant separately, same shape as SetCapsRequest's
-    # caps_present/scope_present. Ignored on create (scope always applies to
-    # a fresh task; its zero value IS the subtree default).
-    scope_present :u1
-    # resume only: 1 = take every setting from the task's record. The request
-    # must carry none (empty prompt / extra_args / agent_profile, both override
-    # bits 0), else resume_exact_mismatch. Satisfied by resume_exact or resume.
-    resume_exact :u1
-    # resume only: 1 = write delegate_caps / delegate_scope onto the resumed
-    # task (bounded by the resumer's own bound); 0 = keep the recorded one.
-    # Ignored on create, where both always apply and their zero is the default
-    # bound. Independent of each other and of the caps / scope bits.
-    delegate_caps_present  :u1
-    delegate_scope_present :u1
-    # resume only: 1 = write spawn_depth / max_descendants onto the resumed
-    # task; 0 = keep the recorded one. Ignored on create, where both always
-    # apply and their zero is unbounded.
-    spawn_depth_present     :u1
-    max_descendants_present :u1
-    # resume_task_id, when all-zero, means "create a new task". When non-zero,
-    # the server looks up that TaskID, validates it is in a terminal state
-    # (Succeeded / Failed / Cancelled), and re-queues it under the SAME id so
-    # the runner re-attaches its worktree to the retained `harness/<id>` branch
-    # — claude's project key (~/.claude/projects/<cwd-hash>/) therefore lines
-    # up with the previous run, which is what makes `--agent-arg --resume
-    # <session-uuid>` actually work after the 2.1.123 picker regression.
-    resume_task_id :TaskID
-    # agent_profile selects a named agent profile advertised by the target
-    # runner (see AgentProfileName / RunnerHello.agent_profiles). Empty =
-    # runner default (--agent-bin).
-    agent_profile_len :u8
-    agent_profile :[agent_profile_len]u8
-    # scope bounds which tasks this task's capabilities may target; see
-    # TaskScope. Omitted (zero) = subtree. Never inherit-the-creator: an
-    # operator is global, so an inheriting default would hand global to every
-    # task the operator spawns.
-    scope :TaskScope
-    overrides_len :u8   # per-capability scope overrides; masks pairwise disjoint
-    overrides     :[overrides_len]ScopeOverride
-    # The delegation bound written onto the new task: the caps it may put into
-    # the tasks IT grants to, and the most scope it may give them (read as a
-    # ceiling on the ranks, and as a scope around the task for the ids it may
-    # name). Bounded by the creator's own bound. The zero values are the
-    # default bound, which delegates no bits; no overrides — the bound is one
-    # ceiling for every capability.
-    delegate_caps  :Capability
-    delegate_scope :TaskScope
-    # The spawn limits written onto the new task. spawn_depth: how many more
-    # generations may be created below it; the task gets min(this, the
-    # creator's spawn_depth - 1). max_descendants: how many records its
-    # subtree may hold, itself excluded; written as requested. Both are checked
-    # against the creator and its ancestors when a task is created.
-    spawn_depth     :SpawnLimit
-    max_descendants :SpawnLimit
-
-# SubmitStatus indicates the outcome of a SubmitRequest.
-enum SubmitStatus:
-    :u8
-    ok                  = "ok"
-    no_runner           = "no_runner"
-    ambiguous_runner    = "ambiguous_runner"
-    pinned_not_found    = "pinned_not_found"
-    internal_error      = "internal_error"
-    # resume_not_found / resume_not_terminal are returned when resume_task_id
-    # is set but the target either doesn't exist or is still active (Queued /
-    # Running / already mid-resume). Concurrent resume attempts on the same
-    # ID land here — the second caller sees resume_not_terminal because the
-    # first transitioned the status back to Queued under TaskStore.mu.
-    resume_not_found    = "resume_not_found"
-    resume_not_terminal = "resume_not_terminal"
-    # requested agent_profile is not among the target runner's advertised
-    # AgentProfileName list.
-    profile_unavailable = "profile_unavailable"
-    # requested scope is not a subset of the spawner's effective scope. Named
-    # rather than silently clamped: a task whose scope differs from the one the
-    # caller wrote, with nothing saying so, is the failure mode this rejects.
-    scope_not_permitted = "scope_not_permitted"
-    # resume_exact was set and the request also carried a setting, or the
-    # recorded kind is not the one this path opens, or there was no
-    # resume_task_id. error_msg names which.
-    resume_exact_mismatch = "resume_exact_mismatch"
-    # A spawn limit refused the creation: the creator's spawn_depth is 0, or
-    # an ancestor's max_descendants is reached. error_msg names which.
-    spawn_limit         = "spawn_limit"
-    # resume_task_id names a background task: a submit resume would turn it
-    # into a oneshot with no session to watch (A-D1).
-    mode_mismatch       = "mode_mismatch"
-
-# SubmitResponse replaces the old bare task_id with a status + optional error.
-format SubmitResponse:
-    status :SubmitStatus
-    task_id :TaskID        # zero when status != ok
-    error_msg_len :u16
-    error_msg :[error_msg_len]u8
-    # Same as OpenInteractiveResponse: the candidates of an ambiguous spawn,
-    # on a stream.
-    if status == SubmitStatus.ambiguous_runner:
-        candidates_stream_id :u64
 
 format PruneTasksRequest:
     before_ts :u64    # unix nano cutoff; terminal tasks with EndedAt < this are removed
@@ -1630,17 +1511,6 @@ format PruneTasksResponse:
     removed :u32
     skipped_active :u32    # id-mode only: tasks not pruned because still active and force=0
     skipped_missing :u32   # id-mode only: ids that were not present in the server's task store
-
-# Retired in A3 with the task log: a current server answers found=0.
-format GetTaskLogRequest:
-    task_id :TaskID
-
-format GetTaskLogResponse:
-    found :u8         # 0 = no log file on server, 1 = found
-    stream_id :u64    # 0 if !found; otherwise the unidirectional send-stream
-                      # the server creates and writes the file content into
-                      # (closed with EOF when complete). Client reads via
-                      # trsf.Transport.GetReceiveStream.
 
 enum BoardStatus:
     :u8
@@ -2590,10 +2460,12 @@ format OpenInteractiveRequest:
     repo_path :[repo_path_len]u8
     selector :RunnerSelector
     extra_args :AgentArgs
-    # requested_caps: same semantics as SubmitRequest.requested_caps.
+    # requested_caps is a Capability bitmask the spawning principal requests for
+    # this task. The server computes caps_child = caps_creator ∩
+    # delegate_caps_creator ∩ requested_caps, so Capability.all means
+    # "everything the creator may delegate", not the creator's full set. A zero
+    # value grants nothing.
     requested_caps :Capability
-    # See SubmitRequest.resume_task_id — same semantics, applied to the
-    # interactive path.
     # Every interactive open is a detachable session (detach on disconnect,
     # reattach from any operator client) — the legacy kill-on-disconnect
     # variant was removed along with its wire bit.
@@ -2606,7 +2478,11 @@ format OpenInteractiveRequest:
     # state in addition to reusing the harness task/worktree. The runner maps
     # this intent to the configured agent CLI (for Claude Code, --continue).
     resume_conversation :u1
-    # resume only: same semantics as SubmitRequest.scope_present.
+    # resume only: 1 = write scope onto the resumed task (attenuated); 0 =
+    # keep its persisted scope. Independent of resume_caps_override — the two
+    # halves of authority re-grant separately, same shape as SetCapsRequest's
+    # caps_present/scope_present. Ignored on create (scope always applies to
+    # a fresh task; its zero value IS the subtree default).
     scope_present :u1
     # 1 = open this session as TaskKind.stream: the runner spawns the profile's
     # stream adapter instead of the agent under a PTY, and the frames carry
@@ -2614,34 +2490,65 @@ format OpenInteractiveRequest:
     # because everything else about opening a session — caps, scope, the
     # server-allocated stream, the session mux that owns it — is identical.
     event_stream :u1
-    # Same as SubmitRequest.resume_exact; event_stream must match the recorded
-    # kind (0 = interactive, 1 = stream).
+    # resume only: 1 = take every setting from the task's record. The request
+    # must carry none — no prompt, extra_args, agent_profile or ext.oneshot,
+    # and resume_caps_override, scope_present, delegate_caps_present,
+    # delegate_scope_present, spawn_depth_present and max_descendants_present
+    # all 0 — else
+    # resume_exact_mismatch (exactMismatch, server/task_handler.go). Satisfied
+    # by resume_exact or resume. event_stream must match the recorded kind
+    # (0 = interactive, 1 = stream).
     resume_exact :u1
     # 1 = open without attaching the requester: no client stream is created and
     # the response carries no stream_id. 0 = the requester takes the control
     # seat, which requires exec_control over the target.
     detached :u1
-    # resume only: same semantics as SubmitRequest.delegate_caps_present. Its
+    # resume only: 1 = write delegate_caps / delegate_scope onto the resumed
+    # task (bounded by the resumer's own bound); 0 = keep the recorded one.
+    # Ignored on create, where both always apply and their zero is the default
+    # bound. Independent of each other and of the caps / scope bits. Its
     # sibling delegate_scope_present lives in the byte after delegate_scope:
     # this byte had one bit left.
     delegate_caps_present :u1
+    # resume_task_id, when all-zero, means "create a new task". When non-zero,
+    # the server looks up that TaskID, validates it is in a terminal state
+    # (Succeeded / Failed / Cancelled), and re-opens it under the SAME id so
+    # the runner re-attaches its worktree to the retained `harness/<id>` branch
+    # — the agent's per-directory session store therefore lines up with the
+    # previous run.
     resume_task_id :TaskID
-    # agent_profile: same semantics as SubmitRequest.agent_profile.
+    # agent_profile selects a named agent profile advertised by the target
+    # runner (see AgentProfileName / RunnerHello.agent_profiles). Empty =
+    # runner default (--agent-bin).
     agent_profile_len :u8
     agent_profile :[agent_profile_len]u8
-    # scope: same semantics as SubmitRequest.scope.
+    # scope bounds which tasks this task's capabilities may target; see
+    # TaskScope. Omitted (zero) = subtree. Never inherit-the-creator: an
+    # operator is global, so an inheriting default would hand global to every
+    # task the operator spawns.
     scope :TaskScope
     overrides_len :u8   # per-capability scope overrides; masks pairwise disjoint
     overrides     :[overrides_len]ScopeOverride
-    # delegate_caps / delegate_scope: same semantics as SubmitRequest's.
+    # The delegation bound written onto the new task: the caps it may put into
+    # the tasks IT grants to, and the most scope it may give them (read as a
+    # ceiling on the ranks, and as a scope around the task for the ids it may
+    # name). Bounded by the creator's own bound. The zero values are the
+    # default bound, which delegates no bits; no overrides — the bound is one
+    # ceiling for every capability.
     delegate_caps  :Capability
     delegate_scope :TaskScope
-    # spawn_depth / max_descendants: same semantics as SubmitRequest's.
+    # The spawn limits written onto the new task. spawn_depth: how many more
+    # generations may be created below it; the task gets min(this, the
+    # creator's spawn_depth - 1). max_descendants: how many records its
+    # subtree may hold, itself excluded; written as requested. Both are checked
+    # against the creator and its ancestors when a task is created.
     spawn_depth     :SpawnLimit
     max_descendants :SpawnLimit
-    # resume only: same semantics as SubmitRequest.delegate_scope_present.
+    # resume only: see delegate_caps_present.
     delegate_scope_present :u1
-    # resume only: same semantics as SubmitRequest's.
+    # resume only: 1 = write spawn_depth / max_descendants onto the resumed
+    # task; 0 = keep the recorded one. Ignored on create, where both always
+    # apply and their zero is unbounded.
     spawn_depth_present     :u1
     max_descendants_present :u1
     # 1 = background names the run mode; 0 = a create opens foreground and a
@@ -2700,21 +2607,30 @@ enum OpenInteractiveStatus:
     ambiguous_runner    = "ambiguous_runner"
     pinned_not_found    = "pinned_not_found"
     # A requested/resolved agent profile is advertised by no runner serving the
-    # repo (mirrors SubmitStatus.profile_unavailable on the oneshot path).
+    # repo.
     profile_unavailable = "profile_unavailable"
     internal_error      = "internal_error"
-    # See SubmitStatus — same resume semantics for the interactive path.
+    # resume_not_found / resume_not_terminal are returned when resume_task_id
+    # is set but the target either doesn't exist or is still active.
+    # Concurrent resume attempts on the same ID land here — the second caller
+    # sees resume_not_terminal because the first already moved it out of its
+    # terminal state under TaskStore.mu.
     resume_not_found    = "resume_not_found"
     resume_not_terminal = "resume_not_terminal"
-    # See SubmitStatus.scope_not_permitted; error_msg names the refused id and
-    # which bound refused it.
+    # The requested scope is not a subset of the spawner's effective scope.
+    # Named rather than silently clamped: a task whose scope differs from the
+    # one the caller wrote, with nothing saying so, is the failure mode this
+    # rejects. error_msg names the refused id and which bound refused it.
     scope_not_permitted = "scope_not_permitted"
-    # See SubmitStatus.resume_exact_mismatch.
+    # resume_exact was set and the request also carried a setting, or the
+    # recorded kind is not the one this path opens, or there was no
+    # resume_task_id. error_msg names which.
     resume_exact_mismatch = "resume_exact_mismatch"
     # The caller may open this task but may not hold its control seat: the
     # target is outside its exec_control scope. Open with detached = 1.
     detach_required       = "detach_required"
-    # See SubmitStatus.spawn_limit; error_msg names which limit.
+    # A spawn limit refused the creation: the creator's spawn_depth is 0, or
+    # an ancestor's max_descendants is reached. error_msg names which.
     spawn_limit           = "spawn_limit"
     # A background open is missing what it cannot run without (A-D5, A-D6,
     # A-D7): a deadline, an agent profile on a create, a prompt.
@@ -2795,9 +2711,9 @@ format OpenInteractiveResponse:
                        # via RunnerRequest{open_exec, task_id, stream_id} and
                        # feeds it to exec.ExecuteCommand for an interactive
                        # PTY claude session.
-    # Why the request was refused, as SubmitResponse.error_msg: set on
-    # scope_not_permitted so the refused id and which bound refused it reach
-    # the client. Empty otherwise; a client prints its fixed text then.
+    # Why the request was refused: set on scope_not_permitted so the refused
+    # id and which bound refused it reach the client. Empty otherwise; a
+    # client prints its fixed text then.
     error_msg_len :u16
     error_msg :[error_msg_len]u8
     # Populated ONLY when status == ambiguous_runner: the stream carrying a
@@ -3132,7 +3048,8 @@ enum RecordStatus:
     :u8
     ok             = "ok"
     # No such task or run, or the task is outside the caller's scope for the
-    # bit the request needs: the two are one answer, as for GetTaskLog.
+    # bit the request needs: the two are one answer, so the status is no
+    # existence oracle.
     not_found      = "not_found"
     # record_switch on a task with no live interactive session: the stream
     # kind is never recorded (A-D21), and a finished run has nothing to record.
@@ -3284,11 +3201,9 @@ TaskControlRequestHeaderSize ::= sizeof(TaskControlRequestHeader)
 format TaskControlRequest:
     header :TaskControlRequestHeader
     match header.kind:
-        TaskControlKind.submit => submit :SubmitRequest
         TaskControlKind.list => list :ListQuery
         TaskControlKind.cancel => cancel :CancelTask
         TaskControlKind.prune_tasks => prune :PruneTasksRequest
-        TaskControlKind.get_task_log => get_log :GetTaskLogRequest
         TaskControlKind.open_interactive => open_interactive :OpenInteractiveRequest
         TaskControlKind.client_hello => client_hello :ClientHello
         TaskControlKind.attach_session => attach :AttachSessionRequest
@@ -3390,7 +3305,7 @@ format CredentialIssueRequest:
     ttl_ms :u64
     name_len :u8
     name :[name_len]u8
-    # requested_caps: same semantics as SubmitRequest.requested_caps. The
+    # requested_caps: same semantics as OpenInteractiveRequest.requested_caps. The
     # credential_issue and schedule_edit bits are refused (D14).
     requested_caps :Capability
     scope :TaskScope
@@ -3488,11 +3403,9 @@ format TaskControlResponse:
     kind :TaskControlKind
     request_id :u32
     match kind:
-        TaskControlKind.submit => submit :SubmitResponse
         TaskControlKind.list => list :ListResult
         TaskControlKind.cancel => cancel :CancelStatus
         TaskControlKind.prune_tasks => prune :PruneTasksResponse
-        TaskControlKind.get_task_log => get_log :GetTaskLogResponse
         TaskControlKind.open_interactive => open_interactive :OpenInteractiveResponse
         TaskControlKind.client_hello => client_hello :ClientHelloResponse
         TaskControlKind.attach_session => attach :AttachSessionResponse
@@ -3779,7 +3692,7 @@ enum SetCapsStatus:
 # neighbouring scope field. caps = 0 is
 # Capability.none and scope{subtree, []} is a real scope, so neither field has
 # a spare value meaning "leave this one alone" — the same reason
-# SubmitRequest.resume_caps_override exists.
+# OpenInteractiveRequest.resume_caps_override exists.
 format SetCapsRequest:
     task_id    :TaskID
     caps       :Capability
@@ -3800,11 +3713,11 @@ format SetCapsRequest:
     spawn_depth_present     :u1  # 1 = write spawn_depth on the target only;
     max_descendants_present :u1  # 1 = write max_descendants on the target only.
                                  # A cascade never changes either limit.
-    # The delegation bound to write (SubmitRequest.delegate_caps). No
+    # The delegation bound to write (OpenInteractiveRequest.delegate_caps). No
     # attenuation: the operator may grant any bound.
     delegate_caps  :Capability
     delegate_scope :TaskScope
-    # The spawn limits to write (SubmitRequest.spawn_depth).
+    # The spawn limits to write (OpenInteractiveRequest.spawn_depth).
     spawn_depth     :SpawnLimit
     max_descendants :SpawnLimit
 
@@ -4941,7 +4854,7 @@ enum ClientEndpointKind:
 enum Capability:
     :u64
     none           = 0x000, "none"
-    # spawn authorizes CREATING a task (submit / open_interactive with a zero
+    # spawn authorizes CREATING a task (open_interactive with a zero
     # resume_task_id). It does not authorize a resume: that is resume /
     # resume_exact, which spawn does not imply. Creation names no existing
     # task, so no scope bounds this bit and an override naming it is refused.
@@ -5082,7 +4995,7 @@ enum Capability:
     # caps, which may exceed the resumer's. Default-off, appended.
     resume         = 0x100000, "resume"
     # resume_exact authorizes the same re-queue with every setting taken from
-    # the task's record (SubmitRequest / OpenInteractiveRequest.resume_exact):
+    # the task's record (OpenInteractiveRequest.resume_exact):
     # the caller picks only the runner, resume_conversation, x11, detached and
     # the initial size. Implied by resume. Default-off, appended.
     resume_exact   = 0x200000, "resume_exact"

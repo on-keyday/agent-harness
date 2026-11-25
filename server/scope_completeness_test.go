@@ -31,10 +31,11 @@ const (
 )
 
 var kindTargetClass = map[protocol.TaskControlKind]targetClass{
-	// Spawn paths carry resume_task_id, which names an EXISTING task to take
-	// over — see scope_attenuation_test.go for that gate.
-	protocol.TaskControlKind_Submit:          targetGated,
+	// The spawn path carries resume_task_id, which names an EXISTING task to
+	// take over — see scope_attenuation_test.go for that gate.
 	protocol.TaskControlKind_OpenInteractive: targetGated,
+	// Held ordinals with no arm (F34): nothing decodes to them.
+	protocol.TaskControlKind_RetiredSubmit: noTarget,
 
 	protocol.TaskControlKind_Cancel:              targetGated,
 	protocol.TaskControlKind_AttachSession:       targetGated,
@@ -103,8 +104,8 @@ var kindTargetClass = map[protocol.TaskControlKind]targetClass{
 	protocol.TaskControlKind_Notify:      noTarget,
 	protocol.TaskControlKind_DialRunner:  noTarget, // names a runner, not a task
 	protocol.TaskControlKind_Whoami:      noTarget, // the caller's own identity
-	// Retired in A3: its task id is read by nothing; every id answers "no log".
-	protocol.TaskControlKind_GetTaskLog: noTarget,
+	// Held ordinal with no arm (F34): nothing decodes to it.
+	protocol.TaskControlKind_RetiredGetTaskLog: noTarget,
 	// Agentboard kinds address topics, not tasks. Topics have no owner, so
 	// scope does not apply; board_observe / purge remain their gates.
 	protocol.TaskControlKind_BoardTopics:      noTarget,

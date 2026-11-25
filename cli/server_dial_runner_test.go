@@ -19,7 +19,7 @@ type fakeTaskControlClient struct {
 	responseErr    error
 	// forceKind, when non-nil, overrides the response Kind on the reply
 	// (used to verify unexpected-kind error paths). Pointer-typed because
-	// TaskControlKind_Submit == 0 collides with the zero value.
+	// TaskControlKind_RetiredSubmit == 0 collides with the zero value.
 	forceKind *protocol.TaskControlKind
 	// dropDialRunner forces a response with no DialRunner variant set.
 	dropDialRunner bool
@@ -109,7 +109,7 @@ func TestServerDialRunnerPropagatesRoundTripErr(t *testing.T) {
 }
 
 func TestServerDialRunnerRejectsUnexpectedKind(t *testing.T) {
-	kind := protocol.TaskControlKind_Submit
+	kind := protocol.TaskControlKind_List
 	fc := &fakeTaskControlClient{forceKind: &kind}
 	_, err := ServerDialRunnerWith(context.Background(), fc, makeTestTarget(t), protocol.RunnerID{})
 	if err == nil {

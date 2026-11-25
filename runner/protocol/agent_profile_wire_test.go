@@ -59,13 +59,13 @@ func TestRunnerHelloAgentProfilesRoundTrip(t *testing.T) {
 	}
 }
 
-// TestSubmitRequestAgentProfileRoundTrip verifies SubmitRequest.AgentProfile
+// TestOpenInteractiveRequestAgentProfileRoundTrip verifies
+// OpenInteractiveRequest.AgentProfile
 // (the client-requested agent profile name) survives a round-trip.
-func TestSubmitRequestAgentProfileRoundTrip(t *testing.T) {
-	var s SubmitRequest
+func TestOpenInteractiveRequestAgentProfileRoundTrip(t *testing.T) {
+	var s OpenInteractiveRequest
 	s.SetRepoPath([]byte("/r"))
 	s.Selector = RunnerSelector{Kind: RunnerSelectorKind_Any}
-	s.SetPrompt([]byte("hi"))
 	if !s.SetAgentProfile([]byte("codex")) {
 		t.Fatal("SetAgentProfile failed")
 	}
@@ -74,7 +74,7 @@ func TestSubmitRequestAgentProfileRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Append: %v", err)
 	}
-	var got SubmitRequest
+	var got OpenInteractiveRequest
 	if _, err := got.Decode(buf); err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
@@ -83,21 +83,21 @@ func TestSubmitRequestAgentProfileRoundTrip(t *testing.T) {
 	}
 }
 
-// TestSubmitStatusProfileUnavailableRoundTrip verifies the new
-// SubmitStatus_ProfileUnavailable enum value round-trips like its siblings
-// (see psk_handshake_test.go's TestPskAuthResponseRoundTrip for the same
-// per-enum-value pattern).
-func TestSubmitStatusProfileUnavailableRoundTrip(t *testing.T) {
-	orig := SubmitResponse{Status: SubmitStatus_ProfileUnavailable}
+// TestOpenInteractiveStatusProfileUnavailableRoundTrip verifies the
+// OpenInteractiveStatus_ProfileUnavailable enum value round-trips like its
+// siblings (see psk_handshake_test.go's TestPskAuthResponseRoundTrip for the
+// same per-enum-value pattern).
+func TestOpenInteractiveStatusProfileUnavailableRoundTrip(t *testing.T) {
+	orig := OpenInteractiveResponse{Status: OpenInteractiveStatus_ProfileUnavailable}
 	buf, err := orig.Append(nil)
 	if err != nil {
 		t.Fatalf("Append: %v", err)
 	}
-	var got SubmitResponse
+	var got OpenInteractiveResponse
 	if _, err := got.Decode(buf); err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
-	if got.Status != SubmitStatus_ProfileUnavailable {
-		t.Errorf("Status: got %v, want SubmitStatus_ProfileUnavailable", got.Status)
+	if got.Status != OpenInteractiveStatus_ProfileUnavailable {
+		t.Errorf("Status: got %v, want OpenInteractiveStatus_ProfileUnavailable", got.Status)
 	}
 }

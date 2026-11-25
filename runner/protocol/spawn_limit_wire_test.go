@@ -17,20 +17,6 @@ func sameLimit(a, b SpawnLimit) bool { return a.Limited() == b.Limited() && a.Va
 func TestSpawnLimitWireRoundTrip(t *testing.T) {
 	depth, max := limitN(2), limitN(7)
 
-	t.Run("SubmitRequest", func(t *testing.T) {
-		var in SubmitRequest
-		in.SpawnDepth, in.MaxDescendants = depth, max
-		in.SetSpawnDepthPresent(true)
-		in.SetMaxDescendantsPresent(true)
-		var got SubmitRequest
-		if err := got.DecodeExact(in.MustAppend(nil)); err != nil {
-			t.Fatal(err)
-		}
-		if !sameLimit(got.SpawnDepth, depth) || !sameLimit(got.MaxDescendants, max) ||
-			!got.SpawnDepthPresent() || !got.MaxDescendantsPresent() {
-			t.Errorf("round trip lost the limits: %+v", got)
-		}
-	})
 	t.Run("OpenInteractiveRequest", func(t *testing.T) {
 		var in OpenInteractiveRequest
 		in.SpawnDepth, in.MaxDescendants = depth, max
@@ -87,7 +73,7 @@ func TestSpawnLimitWireRoundTrip(t *testing.T) {
 		}
 	})
 	t.Run("statuses", func(t *testing.T) {
-		if SubmitStatus_SpawnLimit.String() != "spawn_limit" || OpenInteractiveStatus_SpawnLimit.String() != "spawn_limit" {
+		if OpenInteractiveStatus_SpawnLimit.String() != "spawn_limit" {
 			t.Error("spawn_limit status missing")
 		}
 	})

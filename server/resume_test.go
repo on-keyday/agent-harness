@@ -127,14 +127,13 @@ func TestResumeConcurrentSingleWinner(t *testing.T) {
 	}
 }
 
-// TestSubmitRequestResumeRoundTrip verifies the wire format carries
+// TestOpenInteractiveRequestResumeRoundTrip verifies the wire format carries
 // resume_task_id end-to-end and AsStrings() works on the embedded extra args.
-func TestSubmitRequestResumeRoundTrip(t *testing.T) {
-	orig := protocol.SubmitRequest{
+func TestOpenInteractiveRequestResumeRoundTrip(t *testing.T) {
+	orig := protocol.OpenInteractiveRequest{
 		Selector: protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any},
 	}
 	orig.SetRepoPath([]byte("/r"))
-	orig.SetPrompt([]byte("p"))
 	orig.ExtraArgs = protocol.AgentArgsFromStrings([]string{"--resume", "uuid-1"})
 	var resumeID protocol.TaskID
 	for i := range resumeID.Id {
@@ -143,7 +142,7 @@ func TestSubmitRequestResumeRoundTrip(t *testing.T) {
 	orig.ResumeTaskId = resumeID
 
 	wire := orig.MustAppend(nil)
-	var got protocol.SubmitRequest
+	var got protocol.OpenInteractiveRequest
 	if err := got.DecodeExact(wire); err != nil {
 		t.Fatalf("DecodeExact: %v", err)
 	}

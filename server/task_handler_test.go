@@ -234,7 +234,7 @@ func TestCancelMarksTaskCancelled(t *testing.T) {
 }
 
 // TestMalformedPayloadIsIgnoredTask passes garbage bytes.
-// bgn-generated code makes it impossible to construct a Submit-without-payload
+// bgn-generated code makes it impossible to construct a request without its payload
 // (the encoder returns "invalid union type for encoding" and the variant internal
 // type asserts fail), so we test the malformed-payload path instead.
 func TestMalformedPayloadIsIgnoredTask(t *testing.T) {

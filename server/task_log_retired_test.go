@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
-	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // TestPruneLeavesOldLogFilesAlone: the task log was retired in A3 (A-D30),
@@ -43,34 +42,5 @@ func TestPruneLeavesOldLogFilesAlone(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(logs, id+".log")); err != nil {
 			t.Errorf("%s.log after prune: %v (nothing deletes old logs)", id, err)
 		}
-	}
-}
-
-// TestGetTaskLogAnswersNoLog: get_task_log stays a valid kind after A3, so an
-// older `harness-cli logs` gets an answer instead of silence: "no log", for
-// every caller and every id.
-func TestGetTaskLogAnswersNoLog(t *testing.T) {
-	h := newTestHandler(t)
-	id := runNumberTask(t, h.Tasks)
-	var tid protocol.TaskID
-	raw, _ := hex.DecodeString(id)
-	copy(tid.Id[:], raw)
-
-	// No principal: an operator, which every gate would admit. A stream id is
-	// available, so a found=1 answer could be built if the handler tried.
-	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9840-1"), nextSendStreamID: 3}
-	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_GetTaskLog, RequestId: 9}}
-	req.SetGetLog(protocol.GetTaskLogRequest{TaskId: tid})
-	h.Handle(conn, encodeTaskControlRequest(t, req))
-
-	resp := lastTaskControlResponse(t, conn)
-	if resp.Kind != protocol.TaskControlKind_GetTaskLog || resp.RequestId != 9 {
-		t.Fatalf("answered kind=%v request=%d, want get_task_log for request 9", resp.Kind, resp.RequestId)
-	}
-	if gl := resp.GetLog(); gl == nil || gl.Found != 0 || gl.StreamId != 0 {
-		t.Fatalf("get_task_log answered %+v, want found=0 stream=0", gl)
-	}
-	if len(conn.sendStreams) != 0 {
-		t.Errorf("get_task_log opened %d streams, want none", len(conn.sendStreams))
 	}
 }

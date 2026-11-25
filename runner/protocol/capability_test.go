@@ -62,10 +62,10 @@ func TestForwardLinkBit(t *testing.T) {
 }
 
 func TestRequestedCapsRoundTrip(t *testing.T) {
-	in := SubmitRequest{}
+	in := OpenInteractiveRequest{}
 	in.RequestedCaps = Capability_Spawn | Capability_FileRead // 0x9, not a single member
 	b := in.MustAppend(nil)
-	var out SubmitRequest
+	var out OpenInteractiveRequest
 	if err := out.DecodeExact(b); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -89,11 +89,11 @@ func TestTaskInfoCapabilitiesRoundTrip(t *testing.T) {
 
 func TestResumeCapsOverrideRoundTrip(t *testing.T) {
 	// override = true: bit survives encode/decode
-	in := SubmitRequest{}
+	in := OpenInteractiveRequest{}
 	in.SetResumeCapsOverride(true)
 	in.RequestedCaps = Capability_Spawn
 	b := in.MustAppend(nil)
-	var out SubmitRequest
+	var out OpenInteractiveRequest
 	if err := out.DecodeExact(b); err != nil {
 		t.Fatal(err)
 	}
@@ -102,10 +102,10 @@ func TestResumeCapsOverrideRoundTrip(t *testing.T) {
 	}
 
 	// override = false (zero value): bit is clear after round-trip
-	in2 := SubmitRequest{}
+	in2 := OpenInteractiveRequest{}
 	in2.RequestedCaps = Capability_Spawn
 	b2 := in2.MustAppend(nil)
-	var out2 SubmitRequest
+	var out2 OpenInteractiveRequest
 	if err := out2.DecodeExact(b2); err != nil {
 		t.Fatal(err)
 	}
@@ -115,21 +115,6 @@ func TestResumeCapsOverrideRoundTrip(t *testing.T) {
 }
 
 func TestResumeConversationRoundTrip(t *testing.T) {
-	submit := SubmitRequest{}
-	submit.SetResumeCapsOverride(true)
-	submit.SetResumeConversation(true)
-	submitBytes := submit.MustAppend(nil)
-	var submitOut SubmitRequest
-	if err := submitOut.DecodeExact(submitBytes); err != nil {
-		t.Fatal(err)
-	}
-	if !submitOut.ResumeCapsOverride() {
-		t.Fatalf("SubmitRequest.ResumeCapsOverride = false, want true")
-	}
-	if !submitOut.ResumeConversation() {
-		t.Fatalf("SubmitRequest.ResumeConversation = false, want true")
-	}
-
 	open := OpenInteractiveRequest{}
 	open.SetX11Enabled(true)
 	open.SetResumeCapsOverride(true)

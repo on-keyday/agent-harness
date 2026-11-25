@@ -24,21 +24,6 @@ func sameScope(a, b TaskScope) bool {
 // response that reports it, and the interactive request carries it BEFORE
 // its conditional x11 / detached blocks.
 func TestDelegationWireRoundTrip(t *testing.T) {
-	t.Run("SubmitRequest", func(t *testing.T) {
-		var in SubmitRequest
-		in.DelegateCaps = Capability_FileRead
-		in.DelegateScope = delegScope()
-		in.SetDelegateCapsPresent(true)
-		in.SetDelegateScopePresent(true)
-		var got SubmitRequest
-		if err := got.DecodeExact(in.MustAppend(nil)); err != nil {
-			t.Fatal(err)
-		}
-		if got.DelegateCaps != Capability_FileRead || !sameScope(got.DelegateScope, in.DelegateScope) ||
-			!got.DelegateCapsPresent() || !got.DelegateScopePresent() {
-			t.Errorf("round trip lost the bound: %+v", got)
-		}
-	})
 	t.Run("OpenInteractiveRequest", func(t *testing.T) {
 		var in OpenInteractiveRequest
 		in.DelegateCaps = Capability_Cancel

@@ -48,23 +48,15 @@ func TestAmbiguousResponsesAreFixedSize(t *testing.T) {
 	if !oi.SetCandidatesStreamId(7) {
 		t.Fatal("SetCandidatesStreamId on OpenInteractiveResponse")
 	}
-	var sub SubmitResponse
-	sub.Status = SubmitStatus_AmbiguousRunner
-	if !sub.SetCandidatesStreamId(7) {
-		t.Fatal("SetCandidatesStreamId on SubmitResponse")
+	raw, err := oi.EncodeCopy(nil)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for name, enc := range map[string]interface{ EncodeCopy([]byte) ([]byte, error) }{"open": &oi, "submit": &sub} {
-		raw, err := enc.EncodeCopy(nil)
-		if err != nil {
-			t.Fatalf("%s: %v", name, err)
-		}
-		if len(raw) > 64 {
-			t.Fatalf("%s ambiguous response is %d bytes; want fixed and small", name, len(raw))
-		}
+	if len(raw) > 64 {
+		t.Fatalf("ambiguous response is %d bytes; want fixed and small", len(raw))
 	}
-	var back SubmitResponse
-	raw, _ := sub.EncodeCopy(nil)
+	var back OpenInteractiveResponse
 	if _, err := back.Decode(raw); err != nil || back.CandidatesStreamId() == nil || *back.CandidatesStreamId() != 7 {
-		t.Fatalf("submit stream id did not round-trip: %v %+v", err, back)
+		t.Fatalf("stream id did not round-trip: %v %+v", err, back)
 	}
 }
