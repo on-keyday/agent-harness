@@ -181,7 +181,7 @@ of 2026-11-26.
 
   | Format | Kind | Change |
   | --- | --- | --- |
-  | `OpenInteractiveRequest`, `CredentialIssueRequest`, `CredentialRekeyRequest`, `SetCapsRequest`, `ScheduleSpec` | writes a grant | gains `conditions_stream_id :u64` (0 = no conditions); the bodies (`GrantConditions { n ≤ 8, GrantCondition… }`) are read from that stream before the request is processed |
+  | `OpenInteractiveRequest`, `CredentialIssueRequest`, `CredentialRekeyRequest`, `SetCapsRequest`, `ScheduleSpec` | writes a grant | gains `grant_conditions_stream_id :u64` (0 = no conditions; on the open it sits in `OpenInteractiveExt` behind `grant_conditions_present`); the bodies (`GrantConditions { n ≤ 8, GrantCondition… }`) are read from that stream before the request is processed |
   | `TaskInfo` (in `ListResultBody`), `ScheduleDetail` | read; travels on a stream | gains the bodies |
   | `WhoAmIResponse` | read; inline, unguarded today | marker only; `whoami` on the CLI fetches the caller's own row through the list path to print the bodies |
 
@@ -189,7 +189,9 @@ of 2026-11-26.
   firing (grand design G36, G38), so its conditions are stored and written
   the same way.
 - Request path: the client creates a send stream, writes the encoded
-  `GrantConditions`, and names it in `conditions_stream_id`. The server reads it
+  `GrantConditions`, and names it in `grant_conditions_stream_id` — "grant"
+  because `OpenInteractiveRequest` already has `conditions` /
+  `conditions_present` for a background run's end conditions. The server reads it
   as `readExecBody` reads an exec body (`server/exec_run.go:39`, the stream named
   by `ExecRunRequest.payload_stream_id`). The request is refused whole, and no
   grant is written, when: the stream cannot be read; the body fails to decode
@@ -439,7 +441,7 @@ Every new input and display goes on the CLI, TUI and WebUI; walk
 ## Wire and disk
 
 Appended fields and arms only: `ScopeOverride.conditioned`,
-`conditions_stream_id` on the five grant-writing formats, `GrantCondition`
+`grant_conditions_stream_id` on the five grant-writing formats, `GrantCondition`
 lists on `TaskInfo` and `ScheduleDetail` (both already on streams),
 `RunnerEnrollRequest.bound`,
 `ExecRunBody`'s action variant, the action verbs. The

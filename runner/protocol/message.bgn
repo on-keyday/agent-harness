@@ -1392,6 +1392,11 @@ format TaskInfo:
     # from_name.
     name_len :u8
     name :[name_len]u8
+    # Appended (grant conditions C6): one body per override marked
+    # conditioned. TaskInfo travels on the list stream, so a body here is never
+    # in a datagram. A marked override with no body here reaches nothing (C7).
+    grant_conditions_len :u8
+    grant_conditions     :[grant_conditions_len]GrantCondition
 
 format ListResult:
     # Server-initiated send-stream id; client reads ListResultBody bytes
@@ -2597,7 +2602,12 @@ format OpenInteractiveExt:
     # with pty_set == 1: --pty (1) or --no-pty (0) (A-D33).
     pty_set :u1
     pty :u1
-    reserved :u3
+    # 1 = the client writes a GrantConditions body on the send stream named
+    # below, for the overrides it marked conditioned (grant conditions C6).
+    grant_conditions_present :u1
+    reserved :u2
+    if grant_conditions_present == 1:
+        grant_conditions_stream_id :u64
 
 enum OpenInteractiveStatus:
     :u8
@@ -2662,6 +2672,11 @@ enum OpenInteractiveStatus:
     # --pty (ext.pty_set and ext.pty) with event_stream: a stream session has
     # no PTY (A-D33). Appended.
     pty_stream = "pty_stream"
+    # The grant-conditions body could not be read or decoded, exceeds a limit,
+    # names a mask that is not a conditioned override of the request, leaves a
+    # conditioned override without a body, or puts a kind on a bit it does not
+    # apply to (grant conditions C6, C9). Nothing is created. Appended.
+    bad_grant_conditions = "bad_grant_conditions"
 
 # One RUNNER offered when a spawn is ambiguous: more than one (runner, agent
 # profile) choice matched. profiles lists the agents the caller may pick on
@@ -3315,6 +3330,9 @@ format CredentialIssueRequest:
     delegate_scope :TaskScope
     spawn_depth     :SpawnLimit
     max_descendants :SpawnLimit
+    # Appended (grant conditions C6): a client send stream carrying the
+    # GrantConditions for the overrides marked conditioned. 0 = none.
+    grant_conditions_stream_id :u64
 
 # CredentialRekeyRequest registers a new public key and expiry on an existing
 # credential task (D18); the old key stops working at once. Gated as issue (D13
@@ -3340,6 +3358,9 @@ format CredentialRekeyRequest:
     delegate_scope :TaskScope
     spawn_depth     :SpawnLimit
     max_descendants :SpawnLimit
+    # Appended: as CredentialIssueRequest.grant_conditions_stream_id; read only
+    # with scope_present.
+    grant_conditions_stream_id :u64
 
 enum CredentialStatus:
     :u8
@@ -3353,6 +3374,7 @@ enum CredentialStatus:
     no_such_task        = "no_such_task"         # rekey: unknown, or outside the caller's reach
     masked_cap          = "masked_cap"           # the grant names credential_issue or schedule_edit (D14)
     bad_name            = "bad_name"             # issue: name over 64 bytes, not UTF-8, or holding a control character
+    bad_grant_conditions = "bad_grant_conditions" # as OpenInteractiveStatus.bad_grant_conditions; nothing written. Appended.
 
 # CredentialResponse answers issue and rekey. task_id is the credential task
 # (new at issue, the same one at rekey); expires_at is unix nanos on the SERVER
@@ -3681,6 +3703,9 @@ enum SetCapsStatus:
     # The grant would give a credential task a bit no credential may hold
     # (credential_issue or schedule_edit, credential-tasks D14). Appended.
     masked_cap     = "masked_cap"
+    # As OpenInteractiveStatus.bad_grant_conditions; the grant is unchanged.
+    # Appended.
+    bad_grant_conditions = "bad_grant_conditions"
 
 # SetCapsRequest rewrites a live task's authority. Unlike a resume-time
 # re-grant it has no terminal-state precondition: the point is to change a task
@@ -3720,6 +3745,10 @@ format SetCapsRequest:
     # The spawn limits to write (OpenInteractiveRequest.spawn_depth).
     spawn_depth     :SpawnLimit
     max_descendants :SpawnLimit
+    # Appended (grant conditions C6): a client send stream carrying the
+    # GrantConditions for the overrides marked conditioned; read only with
+    # scope_present. 0 = none.
+    grant_conditions_stream_id :u64
 
 format SetCapsResponse:
     status       :SetCapsStatus
@@ -5163,9 +5192,65 @@ format ScopeOverride:
     caps         :Capability
     base         :ScopeBase
     exclude_self :u1
-    reserved     :u7
+    # 1 = a grant condition bounds which object these bits reach inside a
+    # target (grant conditions spec C4). The body is never inline (C6): it is
+    # stored with the task and travels on a stream (a GrantCondition whose caps
+    # equal this mask). A marked override whose body is unknown reaches nothing
+    # (C7), never "unconditioned". Taken from reserved, so the size is unchanged
+    # and every record from before the marker reads 0.
+    conditioned  :u1
+    reserved     :u6
     ids_len      :u16
     ids          :[ids_len]TaskID
+
+# --- Grant conditions (docs/superpowers/specs/2026-11-26-grant-conditions-and-bound-enrollment-design.md, C4-C7, C9, C14) ---
+# Named "grant" conditions on the wire because OpenInteractiveRequest's
+# conditions / conditions_present are a background run's end conditions.
+
+# ActionID names a server-defined action (C16): 16 random bytes, never a
+# counter, so a lost or restored action store cannot hand an old id to a new
+# command.
+format ActionID:
+    id :[16]u8
+
+# Which object a condition bounds. Each kind applies to fixed bits only (C9);
+# the server refuses any other pairing at write.
+enum ConditionKind:
+    :u8
+    action_set = 1, "action_set"   # exec_run: which actions it may run
+    port_range = 2, "port_range"   # forward_local (target_port) / forward_remote (bind_port), C14
+
+# One inclusive port range, lo <= hi.
+format PortSpan:
+    lo :u16
+    hi :u16
+
+# At most 32 ids (C6); the server refuses more.
+format ActionSetCondition:
+    actions_len :u8
+    actions     :[actions_len]ActionID
+
+# At most 8 spans (C6); the server refuses more.
+format PortRangeCondition:
+    spans_len :u8
+    spans     :[spans_len]PortSpan
+
+# One condition: the body of the override whose mask is exactly caps.
+format GrantCondition:
+    caps :Capability
+    kind :ConditionKind
+    match kind:
+        ConditionKind.action_set => action_set :ActionSetCondition
+        ConditionKind.port_range => port_range :PortRangeCondition
+        .. => error("Unexpected condition kind")
+
+# What a grant-writing request's grant_conditions_stream_id carries: at most 8
+# (C6). Refused whole when unreadable, over a limit, naming a mask that is not a
+# conditioned override of the request, or leaving a conditioned override
+# without a body.
+format GrantConditions:
+    conditions_len :u8
+    conditions     :[conditions_len]GrantCondition
 
 enum OpenPortForwardStatus:
     :u8
@@ -6317,6 +6402,10 @@ format ScheduleSpec:
         initial_cols :u16
     if kind_present == 1:
         kind :TaskKind
+    # Appended (grant conditions C6): a client send stream carrying the
+    # GrantConditions for the overrides marked conditioned; read only with
+    # scope_present. 0 = none.
+    grant_conditions_stream_id :u64
 
 format ScheduleCreateRequest:
     spec :ScheduleSpec
@@ -6361,6 +6450,8 @@ enum ScheduleStatus:
     kind_unsupported        # kind other than interactive / stream
     oneshot_stream          # stream with --oneshot (after an edit's overlay too)
     pty_stream              # stream with --pty
+    # appended (grant conditions C6): as OpenInteractiveStatus.bad_grant_conditions.
+    bad_grant_conditions
 
 # message: why, for the statuses that have more to say. stream_id is non-zero
 # for list and show (a ScheduleRow list / a ScheduleDetail on that stream).
@@ -6467,3 +6558,7 @@ format ScheduleDetail:
     edited_by :TaskID
     count :u8
     history :[count]ScheduleHistoryEntry
+    # Appended (grant conditions C6): the bodies of the stored authority's
+    # conditioned overrides, as TaskInfo.grant_conditions.
+    grant_conditions_len :u8
+    grant_conditions     :[grant_conditions_len]GrantCondition
