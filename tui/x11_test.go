@@ -319,3 +319,17 @@ func TestWithUnpinnedRetry(t *testing.T) {
 		t.Fatalf("another error: err=%v tried=%v; want no retry", err, tried)
 	}
 }
+
+// A forward the runner or server closed ends its serve goroutine, but the
+// ctx it was started under, and the status drainer on it, stayed open until
+// the TUI exited. An X11 tunnel now ends that way once per session.
+func TestStoppedForwardReleasesItsContext(t *testing.T) {
+	a := New(Config{})
+	cancelled := false
+	a.activeForwards[7] = &PortForwardSession{ID: 7, TaskID: x11TaskID, Direction: ForwardX11, X11Display: 10,
+		Cancel: func() { cancelled = true }}
+	a.Update(PortForwardStoppedMsg{ID: 7, TaskID: x11TaskID})
+	if !cancelled {
+		t.Fatal("the stopped forward's context was left open")
+	}
+}

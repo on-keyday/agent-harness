@@ -1770,7 +1770,12 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// already removed (e.g. the user killed it via the picker), this is a
 		// no-op and we skip the duplicate log.
 		delete(a.pendingKeep, msg.ID) // never registered: nothing to keep
-		if _, ok := a.activeForwards[msg.ID]; ok {
+		if s, ok := a.activeForwards[msg.ID]; ok {
+			// A forward the runner or server closed ends its serve goroutine
+			// but not the ctx it ran under, nor the status drainer on it.
+			if s.Cancel != nil {
+				s.Cancel()
+			}
 			delete(a.activeForwards, msg.ID)
 			a.cmdresult.Append("forward stopped: " + pfShortID(msg.TaskID))
 		}
