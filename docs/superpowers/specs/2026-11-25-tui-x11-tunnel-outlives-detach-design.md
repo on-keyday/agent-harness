@@ -1,7 +1,6 @@
 # TUI: the X11 tunnel outlives a detach, and one key reopens a task with X11
 
-Status: draft, awaiting the operator's approval (2026-11-25). Small change;
-TUI only.
+Status: approved (operator, 2026-11-25). Small change; TUI only.
 
 ## Why
 
@@ -52,17 +51,24 @@ Ctrl+] is an everyday keystroke:
 
 ### Tunnel ownership
 
-- `App.x11Cancel` (one field) becomes a map keyed by task id. A detach
-  (`InteractiveDoneMsg`) no longer cancels the forward.
-- A forward stops when its task leaves the live states (the tasks table
-  already receives the status), when its forward reports closed (the runner's
-  `TaskGone` / `RunnerGone`, or `x` in the `f` forwards pane), or when the TUI
-  exits.
+- The X11 forward joins the TUI's existing forward registry
+  (`App.activeForwards`, where `b`/`p`/`L` forwards already live as long as
+  the TUI does) as a new direction, `ForwardX11`. `App.x11Cancel` and
+  `InteractiveReadyMsg.X11Cancel` go; a detach (`InteractiveDoneMsg`) no
+  longer touches the forward.
+- It stops the way every registry forward stops: the runner closes it when
+  the task ends (`TaskGone` / `RunnerGone`, which makes the serve goroutine
+  send `PortForwardStoppedMsg`), `x` in the `f` forwards pane kills it, or the
+  TUI exits. A workspace never owns it (`sessionIdentity` answers false, as
+  for `ForwardLink`).
 - The display number: today every `--x11` open defaults to 10, so a second
   X11 task on the same runner cannot bind `6010`. The TUI picks the lowest N
-  from 10 that none of its own live tunnels on that runner uses. Another
-  client's tunnel on the same runner is not visible to it; a bind failure is
-  reported in the cmdresult, not retried.
+  at or above the requested one (default 10) that none of its own X11
+  forwards or in-flight opens uses, on any runner (simpler than per-runner,
+  and 90 numbers is plenty). Another client's tunnel is not visible to it; a
+  bind failure is reported in the cmdresult, not retried.
+- `$DISPLAY` is checked before anything is cancelled: a restart that cannot
+  open X11 afterwards must not kill the agent first.
 
 ### The key: `D` (DISPLAY), tasks scope
 
@@ -99,3 +105,8 @@ an in-flight turn is never hidden behind a single unconfirmed key.
   connection is still up. The key on a live non-X11 session: confirm, the
   task restarts with DISPLAY set and the conversation kept. A real GUI
   program (xclock) needs an X server, e.g. Xvfb, which is not installed here.
+- After landing, once, on the operator's Windows client with VcXsrv (XLaunch,
+  access control disabled since Windows has no `xauth`): `DISPLAY` must name a
+  host (`localhost:0`); a bare `:0` resolves to a unix socket
+  (`localXServerDialSpec`). `D` on a task, `xclock &`, Ctrl+], reattach: the
+  clock is still there.
