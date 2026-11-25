@@ -24,6 +24,11 @@ func AuthorityTasks(tasks []protocol.TaskInfo) []authority.Task {
 			DelegateScope: authority.ScopeFromWire(t.DelegateScope, nil),
 			SpawnDepth:    t.SpawnDepth, MaxDescendants: t.MaxDescendants,
 		}
+		// The bodies of the conditioned overrides, so a comparison of two
+		// conditions compares bodies (grant conditions C5). A marker the
+		// listing has no body for stays kind 0, which reaches nothing — the
+		// correct reading of an unknown condition — so the error is dropped.
+		_ = authority.ConditionsFromWire(protocol.GrantConditions{Conditions: t.GrantConditions}, &at.Scope)
 		if t.CreatorTaskId.Id != ([16]byte{}) {
 			at.Creator = hex.EncodeToString(t.CreatorTaskId.Id[:])
 		}
@@ -35,6 +40,10 @@ func AuthorityTasks(tasks []protocol.TaskInfo) []authority.Task {
 // ReachLine is one entry of a reach report: a capability, or view / delegate.
 type ReachLine struct {
 	Cap string
+	// Condition is the bit's grant condition in --grant-condition's spelling,
+	// "" when unconditioned: the line's targets are reached only for the
+	// objects it admits, and a line without it would read as unconditioned.
+	Condition string
 	authority.ReachResult
 }
 
@@ -97,11 +106,12 @@ func BuildReachReport(tasks []protocol.TaskInfo, id string, focus protocol.Capab
 	if complete {
 		r.Wider = WiderOf(view, id)
 	}
+	conds := ConditionsByCap(info.Capabilities, info.Overrides, info.GrantConditions)
 	for _, c := range ReachBits(info.Capabilities) {
 		if focus != 0 && c != focus {
 			continue
 		}
-		r.Bits = append(r.Bits, ReachLine{Cap: c.String(), ReachResult: authority.ReachOf(view, id, c)})
+		r.Bits = append(r.Bits, ReachLine{Cap: c.String(), Condition: conds[c.String()], ReachResult: authority.ReachOf(view, id, c)})
 	}
 	for _, c := range verb.AuditOrder() {
 		if info.Capabilities&c != 0 && verb.CapScopeKindOf(c) == verb.ScopeNone {
@@ -216,10 +226,12 @@ type reachLineJSON struct {
 	SeeAll bool     `json:"see_all"`
 	See    []string `json:"see"`
 	Caps   string   `json:"caps,omitempty"`
+	// Condition: the bit's grant condition, "" when unconditioned.
+	Condition string `json:"condition"`
 }
 
 func lineJSON(l ReachLine) reachLineJSON {
-	j := reachLineJSON{Cap: l.Cap, ActAll: l.ActAll, Act: l.Act, SeeAll: l.SeeAll, See: l.See}
+	j := reachLineJSON{Cap: l.Cap, Condition: l.Condition, ActAll: l.ActAll, Act: l.Act, SeeAll: l.SeeAll, See: l.See}
 	if j.Act == nil {
 		j.Act = []string{}
 	}
@@ -275,7 +287,11 @@ func WriteReachReport(w io.Writer, r ReachReport, f ReachFormat) error {
 	var b strings.Builder
 	fmt.Fprintf(&b, "caps reach %s  granter=%s\n", shortID(r.TaskID), r.Granter)
 	for _, l := range r.Bits {
-		b.WriteString(row(l.Cap, reachBody(l.ReachResult, true)))
+		body := reachBody(l.ReachResult, true)
+		if l.Condition != "" {
+			body += "  if " + l.Condition
+		}
+		b.WriteString(row(l.Cap, body))
 	}
 	if r.FocusNote != "" {
 		b.WriteString(row(r.Focus, r.FocusNote))

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/hex"
 	"strings"
 	"testing"
 
@@ -294,5 +295,72 @@ func TestForwardOutsideConditionIsNamed(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "grant condition") || strings.Contains(err.Error(), "status=") {
 			t.Errorf("%s: %v", name, err)
 		}
+	}
+}
+
+// reachTask is a listing row holding forward_local|forward_remote with a
+// forward_local override, conditioned when cond is non-empty.
+func reachTask(t *testing.T, id, creator byte, cond string) protocol.TaskInfo {
+	t.Helper()
+	ti := protocol.TaskInfo{Id: protocol.TaskID{Id: [16]byte{id}}, Status: protocol.TaskStatus_Running,
+		Capabilities: protocol.Capability_ForwardLocal | protocol.Capability_ForwardRemote,
+		Scope:        protocol.TaskScope{Base: protocol.ScopeBase_Global}}
+	if creator != 0 {
+		ti.CreatorTaskId = protocol.TaskID{Id: [16]byte{creator}}
+	}
+	_, ov, _ := verb.ParseScopeFor("forward_local=global")
+	ovs := []protocol.ScopeOverride{ov}
+	if cond != "" {
+		c := mustGrantCondition(t, "forward_local="+cond)
+		ovs, _ = verb.MarkGrantConditions(ovs, []protocol.GrantCondition{c})
+		ti.SetGrantConditions([]protocol.GrantCondition{c})
+	}
+	ti.SetOverrides(ovs)
+	return ti
+}
+
+// A child that inherited its parent's condition is not wider than it; one
+// that dropped the condition is (final review, Important 1).
+func TestReachInheritedConditionIsNotWider(t *testing.T) {
+	parent := reachTask(t, 1, 0, "ports:8000-8100")
+	same := reachTask(t, 2, 1, "ports:8000-8100")
+	r, err := BuildReachReport([]protocol.TaskInfo{parent, same}, hex.EncodeToString(same.Id.Id[:]), 0, true)
+	if err != nil || r.Wider.Bits != 0 {
+		t.Fatalf("inherited condition: wider %s (%v)", CapsLabel(r.Wider.Bits), err)
+	}
+	none := reachTask(t, 3, 1, "")
+	r, _ = BuildReachReport([]protocol.TaskInfo{parent, none}, hex.EncodeToString(none.Id.Id[:]), 0, true)
+	if r.Wider.Bits != protocol.Capability_ForwardLocal {
+		t.Fatalf("dropped condition: wider %s, want forward_local", CapsLabel(r.Wider.Bits))
+	}
+}
+
+// The reach report qualifies a conditioned bit's line with its condition, in
+// text and JSON (final review, Important 2).
+func TestReachReportShowsCondition(t *testing.T) {
+	task := reachTask(t, 1, 0, "ports:8000-8100")
+	r, err := BuildReachReport([]protocol.TaskInfo{task}, hex.EncodeToString(task.Id.Id[:]), 0, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var text, js strings.Builder
+	if err := WriteReachReport(&text, r, ReachText); err != nil {
+		t.Fatal(err)
+	}
+	var local, remote string
+	for _, l := range strings.Split(text.String(), "\n") {
+		f := strings.Fields(l)
+		if len(f) > 0 && f[0] == "forward_local" {
+			local = l
+		}
+		if len(f) > 0 && f[0] == "forward_remote" {
+			remote = l
+		}
+	}
+	if !strings.Contains(local, "if ports:8000-8100") || strings.Contains(remote, " if ") {
+		t.Fatalf("text:\n%s", text.String())
+	}
+	if err := WriteReachReport(&js, r, ReachJSON); err != nil || !strings.Contains(js.String(), `"condition":"ports:8000-8100"`) {
+		t.Fatalf("json: %s %v", js.String(), err)
 	}
 }
