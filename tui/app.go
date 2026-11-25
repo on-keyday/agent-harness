@@ -238,6 +238,10 @@ type App struct {
 	// modal's keep will write into once that forward registers.
 	pendingKeep   map[int]string
 	nextForwardID int
+	// x11Reserved holds the display numbers handed to an X11 open whose
+	// InteractiveReadyMsg has not arrived yet; the number then lives on its
+	// ForwardX11 entry instead. See pickX11Display.
+	x11Reserved map[int]bool
 
 	// rawModal is the third way to start a forward (`t`), alongside p/-L and
 	// b/-R: a live host:port connection whose client-side endpoint is this
@@ -450,6 +454,7 @@ func New(cfg Config) *App {
 		lifecycleRecvAt:   map[string]time.Time{},
 		authorityRecvAt:   map[string]time.Time{},
 		activeForwards:    map[int]*PortForwardSession{},
+		x11Reserved:       map[int]bool{},
 		pendingKeep:       map[int]string{},
 		sessionCaps:       protocol.Capability_None,
 		sessionScope:      protocol.TaskScope{Base: protocol.ScopeBase_Subtree},
@@ -1608,6 +1613,9 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case InteractiveReadyMsg:
+		// The open is over, whatever its outcome: a number it was handed is
+		// either on its ForwardX11 entry now (Started is sent first) or free.
+		delete(a.x11Reserved, msg.X11Display)
 		// Only the opens that offer a picker (`S` and the r/R/u/U resumes)
 		// stamp a Retry on their result; every other path keeps an ambiguous
 		// answer a flat error.
@@ -2922,4 +2930,30 @@ func (a *App) resolveSchedulePrefix(prefix string) (string, string) {
 	default:
 		return "", fmt.Sprintf("ambiguous prefix %q matches %d schedules", prefix, len(matches))
 	}
+}
+
+// x11DisplayMax is the highest display number an X11 open may take; the verb
+// table refuses --x11-display above it too (cli/verb/spawn.go).
+const x11DisplayMax = 99
+
+// pickX11Display hands out the lowest display number from preferred to
+// x11DisplayMax that none of this TUI's X11 forwards holds and no open in
+// flight was handed, and reserves it. Every number used to default to 10, so
+// once a tunnel outlived its attach, a second X11 task on the same runner
+// could not bind 6010. Another client's tunnels are invisible here; their
+// collision is a bind failure, reported by the open.
+func (a *App) pickX11Display(preferred int) (int, bool) {
+	held := map[int]bool{}
+	for _, s := range a.activeForwards {
+		if s.Direction == ForwardX11 {
+			held[s.X11Display] = true
+		}
+	}
+	for n := preferred; n <= x11DisplayMax; n++ {
+		if !held[n] && !a.x11Reserved[n] {
+			a.x11Reserved[n] = true
+			return n, true
+		}
+	}
+	return 0, false
 }
