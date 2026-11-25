@@ -63,12 +63,12 @@ the author chose it while writing; those rows are the ones to check.
 | C5 | **Attenuation is by containment (IAM-style), not by appended caveats.** A child's condition must be contained in the granter's for the same bit. Every condition kind must have a cheap, exact containment test (set inclusion, range inclusion, equality). **Regular expressions and globs are not condition kinds**: a mistake in one widens the grant silently (a missing anchor matches more), containment between them is expensive, and the result is unreadable on the three surfaces | operator |
 | C6 | **Condition bodies never travel inline in a control message, in either direction.** Inline, an override carries only a one-bit marker (`conditioned`, from `ScopeOverride.reserved`). Grant-writing requests send the bodies on a client-created stream; reads receive them on a stream. The body is stored on the `TaskEntry` (persisted in the task WAL with the override). *Correction of the first draft of this spec*, which carried bodies inline in requests because requests pass `CheckControlMessage`: that narrowed the agreed property to "no body in an *unguarded* datagram", and put a worst case of 1128 bytes of bodies against a ~1170-byte floor | operator (bodies on streams, fixed-size marker inline), this spec (store on the `TaskEntry`; marker is one bit) |
 | C7 | **Fail-closed.** A bit whose override is marked conditioned reaches nothing through `inScope` / `authorize` / `scopeSet`; only an object-aware gate that evaluates the condition can pass it. A marker with no readable body (a corrupt WAL record, a client that did not fetch it) is shown and enforced as "reaches nothing", never as unconditioned | operator (fail-closed), this spec (where) |
-| C8 | **Actions are defined on the server.** An action is a named, immutable command template; a grant names which actions it may run. The runner is not told about actions: the server resolves an invocation to an argv and sends the existing `RunnerExecRunRequest`, so no runner-decoded format changes | operator (server-side, central), this spec (runner unchanged) |
+| C8 | **Actions are defined on the server.** An action is a named command template; a grant names which actions it may run. The runner is not told about actions: the server resolves an invocation to an argv and sends the existing `RunnerExecRunRequest`, so no runner-decoded format changes | operator (server-side, central), this spec (runner unchanged) |
 | C9 | **Two condition kinds in this round.** `ActionSet` (a set of action ids) is applicable to `exec_run`; `PortRange` (a list of inclusive port ranges) is applicable to `forward_local` and `forward_remote`. Enrollment is not a condition kind: C1/C2 express it with the ordinary task scope | operator (`PortRange` and actions first; enrollment through scope), this spec (which bits) |
 | C10 | **An action runs against a task**, the existing `exec_run` target (`ExecRunRequest.task_id`): typically a long-lived task on the host where the command lives. No runner-targeted exec path is added | operator |
-| C11 | **Actions are immutable.** Changing one is defining a new action and re-granting. *Reversal* of the position stated in the 2026-11-26 conversation that an edit is recomputed under the editor's authority (as G36 does for schedules): an editable action changes what every existing grantee runs without any grant changing, and no recomputation of the editor's authority prevents that. Deleting an action leaves grants naming it; they fail closed (C7) for that id | this spec |
+| C11 | **An action can be edited, but only by someone who could re-grant every holder of it.** Editing an action changes what every grant naming it runs, which is what `set_caps` does to one task. So an edit is gated as a `set_caps` on each holder would be (`server/set_caps_handler.go`): the operator always; a task only when, for every task holding a grant that names the action, it passes R1 (`regrantReaches`: a strict descendant inside its resume scope) and R2 (its own `exec_run`, with no `ActionSet` condition, reaches every target that holder's `exec_run` override reaches). A schedule whose stored authority names the action also needs what `schedule edit` of that schedule needs. One refusal refuses the whole edit. Deleting an action only narrows (grants naming it fail closed, C7), so it needs `action_admin` alone. *Reversal, twice*: the conversation first said an edit is recomputed under the editor's authority; the first draft then made actions immutable, on the ground that an edit changes what grantees run without any grant changing. That ground was wrong — `set_caps` does exactly that today; what differs is who may do it to whom, which this gate settles | operator (editable, gated like `set_caps`), this spec (R1/R2 per holder, schedules, delete) |
 | C12 | **Action parameters are typed, never free text.** A template element is a literal or a parameter reference; a parameter value always becomes one whole argv element. Types: `choice` (one of a fixed list of literals in the definition) and `token` (1–128 bytes of `[0-9A-Za-z._-]`, not starting with `-`). The `token` check is fixed code, not a pattern supplied by anyone. `shell_line` is always 0 and stdin is always `/dev/null` for an action run | this spec |
-| C13 | **Defining and deleting actions needs a new grantable bit, `action_admin`** (scope none). Listing actions needs `action_admin` or `exec_run`. Not operator-only (operator-only is reserved for re-grant authority) | this spec |
+| C13 | **Defining, editing and deleting actions needs a new grantable bit, `action_admin`** (scope none); an edit additionally passes C11's per-holder gate. Listing actions needs `action_admin` or `exec_run`. Not operator-only (operator-only is reserved for re-grant authority) | this spec |
 | C14 | **`PortRange` bounds the port only, not the host.** For `forward_local` it bounds `target_port`; for `forward_remote` it bounds `bind_port` (`RegisterPortForwardRequest`, `message.bgn:5286-5294`). An `ip` forward (`forward_link`) is not a `PortRange` bit. Host bounds are left out: `localhost`, `127.0.0.1` and `::1` are one host under three spellings, so a host condition needs a canonicalisation design of its own | this spec |
 | C15 | **Task-control responses get a size guard.** All of them are sent through one function that runs `CheckControlMessage` against the connection's transport and datagram budget; over budget, it sends a new `response_too_large` answer for the same request id instead. A test fails if any other server code appends `AppKind_TaskControl` to a response and sends it. `WhoAmIResponse` stays inline | operator (guard, no move to a stream), this spec (one function + test) |
 
@@ -77,7 +77,8 @@ the author chose it while writing; those rows are the ones to check.
 - **A conditioned grant that reads as unconditioned** on any path: a gate that
   forgets the object, a client that did not fetch the body, a WAL record
   missing its body (C7).
-- **An action whose meaning changes under an existing grant** (C11).
+- **An action whose meaning changes under an existing grant by someone who
+  could not have re-granted that holder** (C11).
 - **A bound runner that takes a task outside its binding** (C2), including a
   foreground open.
 
@@ -194,9 +195,16 @@ the author chose it while writing; those rows are the ones to check.
   (`server/runnerkeys.go`, `server/runnerdials.go`). Each action has `id :u32`
   (never reused), `name`, `template` (elements: literal or parameter index),
   `params` (name and type per C12), `created_at` and `created_by`.
-- Verbs: `action new` (body on a stream, the `payload_stream_id` pattern of
-  `ExecRunRequest`), `action ls`, `action show <id>`, `action rm <id>`. Gates
-  per C13.
+- Verbs: `action new` and `action edit <id>` (body on a stream, the
+  `payload_stream_id` pattern of `ExecRunRequest`), `action ls`,
+  `action show <id>`, `action rm <id>`. Gates per C11 and C13.
+- Edit: the server collects every holder — tasks in the task store and
+  schedules in the schedule store whose stored conditions name the action id —
+  and applies C11's gate to each before writing anything. A refused edit names
+  how many holders it could not re-grant, not which, since a holder outside the
+  editor's reach must not be disclosed. `ExecRunInfo` records the action's
+  revision (a counter bumped per edit) beside the resolved argv, so an exec
+  list shows which version ran.
 - Invocation: `ExecRunBody` (`message.bgn:6087`) gains a variant: argv as
   today, or `action_id` plus parameter values. With an action, the server
   checks the values against the types, builds the argv, forces
@@ -262,8 +270,13 @@ loads as unbound, so no transition window is needed.
 - C12: `token` refuses a leading `-`, an empty value, 129 bytes, and a byte
   outside the class; `choice` refuses a value not in the list; a parameter
   value is one argv element even when it contains a space.
-- C11: deleting an action makes `exec_run` of it refused for a grantee that
-  could run it before.
+- C11: an edit by the operator succeeds; by a task that `regrantReaches`
+  every holder and whose unconditioned `exec_run` covers their targets,
+  succeeds; with one holder outside its resume scope (R1), or one holder whose
+  `exec_run` target its own `exec_run` does not reach (R2), or a holding
+  schedule it may not `schedule edit`, is refused and changes nothing. After an
+  edit, a holder's next run uses the new template. Deleting an action makes
+  `exec_run` of it refused for a grantee that could run it before.
 - C15: a response encoded over the budget arrives as `response_too_large` over
   UDP. Demonstrated red first: an oversized `whoami` over `scripts/netem-lab`
   hangs before the guard.
