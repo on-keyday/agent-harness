@@ -223,11 +223,29 @@ func (h *TaskHandler) scopeSet(connID objproto.ConnectionID, want protocol.Capab
 // base, exclude_self, explicit ids, the subtree walk. A second scope
 // implementation reading the WAL is the drift shape this file exists to
 // prevent.
+//
+// A bit whose override carries a grant condition reaches NOTHING here (grant
+// conditions C7): this gate does not know which object inside the target is
+// being reached, so it cannot evaluate the condition, and answering as if
+// unconditioned is the failure the condition exists to prevent. authorizeObject
+// is the only way past a conditioned bit.
 func (h *TaskHandler) scopeSetWith(connID objproto.ConnectionID, want protocol.Capability, children map[string][]string) (all bool, allowed map[string]bool) {
+	all, allowed, cond := h.conditionedScopeSet(connID, want, children)
+	if cond != nil {
+		return false, map[string]bool{}
+	}
+	return all, allowed
+}
+
+// conditionedScopeSet is the target set for want with the condition left
+// unapplied and returned beside it: nil for an operator, for the visibility
+// branch, and for an unconditioned bit. Only scopeSetWith and authorizeObject
+// call it, and each applies the condition.
+func (h *TaskHandler) conditionedScopeSet(connID objproto.ConnectionID, want protocol.Capability, children map[string][]string) (all bool, allowed map[string]bool, cond *authority.Condition) {
 	pid := h.lookupPrincipal(connID)
 	if pid.Id == ([16]byte{}) {
 		// Operator: unrestricted.
-		return true, nil
+		return true, nil, nil
 	}
 	callerHex := hex.EncodeToString(pid.Id[:])
 
@@ -237,14 +255,16 @@ func (h *TaskHandler) scopeSetWith(connID objproto.ConnectionID, want protocol.C
 	// Reads gated by scope alone (ls, conns, task events) go dark with it.
 	t, ok := h.principalRecord(connID, callerHex)
 	if !ok {
-		return false, map[string]bool{}
+		return false, map[string]bool{}, nil
 	}
 	scope := t.Scope
 
 	if want == protocol.Capability_None {
-		return h.visibilitySet(callerHex, scope)
+		all, allowed := h.visibilitySet(callerHex, scope)
+		return all, allowed, nil
 	}
-	return authority.ActionSet(callerHex, scope, want, children)
+	all, allowed = authority.ActionSet(callerHex, scope, want, children)
+	return all, allowed, scope.CondFor(want)
 }
 
 // visibilitySet is the want == Capability_None branch of scopeSet: what the
@@ -289,6 +309,30 @@ func (h *TaskHandler) authorize(connID objproto.ConnectionID, want protocol.Capa
 		return false
 	}
 	return h.inScope(connID, want, targetHex)
+}
+
+// authorizeObject is authorize for a gate that knows the object it reaches
+// inside the target (grant conditions C7): the caller holds want, the target is
+// in its scope for want, and the bit's condition, if any, admits obj. It is the
+// only gate a conditioned bit passes. Like authorize, a false answer covers
+// both a missing bit and an out-of-scope target; a caller that needs to tell
+// "outside the condition" apart asks inScopeIgnoringCondition first.
+func (h *TaskHandler) authorizeObject(cid objproto.ConnectionID, want protocol.Capability, targetHex string, obj authority.Object) bool {
+	if !hasCap(h.callerCaps(cid), want) {
+		return false
+	}
+	all, allowed, cond := h.conditionedScopeSet(cid, want, h.childIndex())
+	return (all || allowed[targetHex]) && cond.Allows(obj)
+}
+
+// inScopeIgnoringCondition is inScope with want's grant condition left
+// unapplied. It decides nothing alone: an object-aware gate calls it to
+// answer an out-of-condition object differently from an out-of-scope target
+// (the latter is "no such task"; the former names the condition, which is no
+// oracle because the target is in reach), and still passes authorizeObject.
+func (h *TaskHandler) inScopeIgnoringCondition(cid objproto.ConnectionID, want protocol.Capability, targetHex string) bool {
+	all, allowed, _ := h.conditionedScopeSet(cid, want, h.childIndex())
+	return all || allowed[targetHex]
 }
 
 // granter is the connection's principal as the task that will write a grant:

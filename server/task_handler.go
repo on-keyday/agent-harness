@@ -840,9 +840,17 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			h.denyTaskControl(conn, req.Header.Kind, req.Header.RequestId, openNeed)
 			return
 		}
+		// The port is checked on EVERY connection's open, not only at
+		// registration: each open names its own remote_port, so a check at
+		// registration alone would let a PortRange holder register an allowed
+		// port and open any other through it (grant conditions C14).
 		presp := protocol.OpenPortForwardResponse{Status: protocol.OpenPortForwardStatus_NoSuchTask}
-		if h.inScope(cid, openNeed, hex.EncodeToString(pf.TaskId.Id[:])) {
-			presp = h.handleOpenPortForward(conn, pf)
+		if target := hex.EncodeToString(pf.TaskId.Id[:]); h.inScopeIgnoringCondition(cid, openNeed, target) {
+			if h.authorizeObject(cid, openNeed, target, forwardObject(pf.RemotePort)) {
+				presp = h.handleOpenPortForward(conn, pf)
+			} else {
+				presp.Status = protocol.OpenPortForwardStatus_OutsideCondition
+			}
 		}
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_OpenPortForward, RequestId: req.Header.RequestId}
 		resp.SetOpenPortForward(presp)
@@ -865,8 +873,12 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		}
 		// RegisterPortForwardResponse shares OpenPortForwardStatus.
 		rresp := protocol.RegisterPortForwardResponse{Status: protocol.OpenPortForwardStatus_NoSuchTask}
-		if h.inScope(cid, need, hex.EncodeToString(rf.TaskId.Id[:])) {
-			rresp = h.handleRegisterPortForward(conn, rf, cid)
+		if target := hex.EncodeToString(rf.TaskId.Id[:]); h.inScopeIgnoringCondition(cid, need, target) {
+			if h.authorizeObject(cid, need, target, forwardObject(registrationPort(rf.Direction, rf.TargetPort, rf.BindPort))) {
+				rresp = h.handleRegisterPortForward(conn, rf, cid)
+			} else {
+				rresp.Status = protocol.OpenPortForwardStatus_OutsideCondition
+			}
 		}
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_RegisterPortForward, RequestId: req.Header.RequestId}
 		resp.SetRegisterPortForward(rresp)
@@ -891,20 +903,28 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		// forward the caller cannot see would answer "exists, but not yours" —
 		// and with ids coming from a dense next++ counter, that is exactly the
 		// enumeration oracle the no_such_forward rule exists to close.
+		outside := false
 		if pf, ok := h.pforwards().get(kr.ForwardId); ok {
 			if all, allowed := h.visibleToCaller(cid); all || allowed[pf.taskIDHex] {
 				need := authority.ForwardCap(pf.direction)
 				// authorize, not hasCap: a forward VISIBLE through the caller's
 				// visibility rank may still belong to a task outside its ACTION
-				// scope, and the two are deliberately different sets.
-				if !h.authorize(cid, need, pf.taskIDHex) {
+				// scope, and the two are deliberately different sets. The
+				// object is the registration's port (grant conditions C14).
+				obj := forwardObject(registrationPort(pf.direction, pf.targetPort, pf.bindPort))
+				if !hasCap(h.callerCaps(cid), need) || !h.inScopeIgnoringCondition(cid, need, pf.taskIDHex) {
 					h.denyTaskControl(conn, req.Header.Kind, req.Header.RequestId, need)
 					return
 				}
+				outside = !h.authorizeObject(cid, need, pf.taskIDHex, obj)
 			}
 		}
+		killStatus := protocol.KillPortForwardStatus_OutsideCondition
+		if !outside {
+			killStatus = h.killPortForward(cid, kr.ForwardId)
+		}
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_KillPortForward, RequestId: req.Header.RequestId}
-		resp.SetKillPortForward(protocol.KillPortForwardResponse{Status: h.killPortForward(cid, kr.ForwardId)})
+		resp.SetKillPortForward(protocol.KillPortForwardResponse{Status: killStatus})
 		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
 

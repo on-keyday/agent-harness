@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
@@ -445,4 +446,23 @@ func (h *TaskHandler) sendUDPForwardInstruction(pf *portForward, req *protocol.R
 	body.SetRemoteHost(req.TargetHost)
 	rreq.SetOpenPortForward(body)
 	return sendRunnerRequest(runner.Conn, &rreq)
+}
+
+// forwardObject is the object a PortRange grant condition is asked about.
+func forwardObject(port uint16) authority.Object {
+	return authority.Object{Kind: protocol.ConditionKind_PortRange, Port: port}
+}
+
+// registrationPort is the port a forward registration's grant condition
+// bounds (grant conditions C14): what the runner dials for -L (target_port),
+// what the runner listens on for -R (bind_port). A link has neither and its
+// bit carries no PortRange; 0 is returned and nothing reads it.
+func registrationPort(d protocol.PortForwardDirection, targetPort, bindPort uint16) uint16 {
+	switch d {
+	case protocol.PortForwardDirection_Local:
+		return targetPort
+	case protocol.PortForwardDirection_Remote:
+		return bindPort
+	}
+	return 0
 }

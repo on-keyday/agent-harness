@@ -5272,6 +5272,12 @@ enum OpenPortForwardStatus:
     # An end could not bring up its interface; detail says which end and why.
     # Appended.
     link_failed = "link_failed"
+    # The caller's forward bit reaches the task but carries a PortRange grant
+    # condition this port is outside (grant conditions C7, C14): target_port on
+    # a -L registration, bind_port on a -R one, the connection's remote_port on
+    # a per-connection open. Not an existence oracle: the task is in reach.
+    # Appended.
+    outside_condition = "outside_condition"
 
 # RegisterPortForwardRequest: one registration, either direction. Direction
 # decides what the address pair means:
@@ -5439,6 +5445,10 @@ enum KillPortForwardStatus:
                                           # (an invisible id must not become an
                                           # existence oracle for a confined agent)
     internal_error  = "internal_error"
+    # The forward is visible and the caller's bit reaches its task, but the
+    # registration's port is outside the bit's PortRange grant condition, as
+    # OpenPortForwardStatus.outside_condition. Appended.
+    outside_condition = "outside_condition"
 
 format KillPortForwardRequest:
     forward_id :u64

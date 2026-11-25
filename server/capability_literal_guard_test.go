@@ -25,7 +25,7 @@ var capabilityLiteralAllowed = map[string]string{
 	// The empty set asks inScope for the VISIBILITY set, not an action bit.
 	"await_idle_handler.go:handleAwaitIdle:Capability_None":         "visibility query (inScope with no bit)",
 	"await_progress_handler.go:handleAwaitProgress:Capability_None": "visibility query (inScope with no bit)",
-	"capabilities.go:scopeSetWith:Capability_None":                  "the no-bit case is the visibility branch",
+	"capabilities.go:conditionedScopeSet:Capability_None":           "the no-bit case is the visibility branch",
 	"capabilities.go:visibleToCaller:Capability_None":               "visibility query (scopeSet with no bit)",
 
 	// What a caller HOLDS, not what a request needs.
