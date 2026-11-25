@@ -538,8 +538,7 @@ func (h tuiVerbs) SessionNew(v verb.SpawnAction) tea.Cmd {
 			a.cmdresult.Append(ErrorStyle.Render(fmt.Sprintf("x11: no free display number from %d to %d in this TUI", v.X11Display, x11DisplayMax)))
 			return nil
 		}
-		fid := a.nextForwardID
-		a.nextForwardID++
+		fid := a.allocForwardID()
 		return openX11Session(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, n, fid, a.program, auth, capsOverride, v.ResumeConversation, v.Exact, v.Agent, spawnRunMode(v))
 	}
 	if v.Detach || v.Background {

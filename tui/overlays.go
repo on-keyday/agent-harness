@@ -978,19 +978,19 @@ func (a *App) inPortForwardModal(msg tea.KeyMsg) tea.Cmd {
 			a.cmdresult.Append(WarnStyle.Render("forward cancelled (empty spec)"))
 			return nil
 		}
-		a.nextForwardID++
+		id := a.allocForwardID()
 		if keepIn != "" && mode != ForwardLink {
 			// Written once the forward registers, so a typo or a bind failure
 			// never reaches the file (finishPendingKeep).
-			a.pendingKeep[a.nextForwardID] = keepIn
+			a.pendingKeep[id] = keepIn
 		}
 		switch mode {
 		case ForwardRemote:
-			return DoStartRemoteForward(a.client, taskID, spec, a.nextForwardID, a.program, false)
+			return DoStartRemoteForward(a.client, taskID, spec, id, a.program, false)
 		case ForwardLink:
-			return DoStartIPLink(a.client, taskID, spec, a.nextForwardID, a.program)
+			return DoStartIPLink(a.client, taskID, spec, id, a.program)
 		}
-		return DoStartPortForward(a.client, taskID, spec, a.nextForwardID, a.program, false)
+		return DoStartPortForward(a.client, taskID, spec, id, a.program, false)
 	}
 	var pfcmd tea.Cmd
 	a.portForwardModal, pfcmd = a.portForwardModal.Update(msg)

@@ -122,6 +122,7 @@ type x11Open struct {
 	display int
 	conv    bool
 	sel     cli.SelectorOpts
+	fwdID   int
 }
 
 // stubX11Open records what reaches the X11 open seam.
@@ -130,7 +131,7 @@ func stubX11Open(t *testing.T) *[]x11Open {
 	old := openX11Session
 	t.Cleanup(func() { openX11Session = old })
 	openX11Session = func(c *cli.Client, repo string, sel cli.SelectorOpts, extraArgs []string, resumeTaskID string, displayN int, forwardID int, program *tea.Program, auth Authority, capsOverride, conv, exact bool, agent string, rm cli.RunModeFlags) tea.Cmd {
-		got = append(got, x11Open{resume: resumeTaskID, display: displayN, conv: conv, sel: sel})
+		got = append(got, x11Open{resume: resumeTaskID, display: displayN, conv: conv, sel: sel, fwdID: forwardID})
 		return nil
 	}
 	return &got
@@ -168,7 +169,7 @@ func TestDResumesAFinishedTaskWithX11(t *testing.T) {
 	got := stubX11Open(t)
 	a, ti := x11App(t, protocol.TaskStatus_Cancelled)
 	a.Update(runeKey('D'))
-	want := x11Open{resume: FormatTaskID(ti.Id), display: 10, conv: true, sel: resumeSelectorOpts(ti.AssignedTo)}
+	want := x11Open{resume: FormatTaskID(ti.Id), display: 10, conv: true, sel: resumeSelectorOpts(ti.AssignedTo), fwdID: (*got)[0].fwdID}
 	if len(*got) != 1 || (*got)[0] != want {
 		t.Fatalf("opens = %+v; want [%+v]", *got, want)
 	}
@@ -259,5 +260,22 @@ func TestDRestartGivesUpAfterTimeout(t *testing.T) {
 	a.Update(TaskEventMsg{Event: protocol.TaskStatusEvent{TaskId: ti.Id, TaskStatus: protocol.TaskStatus_Cancelled, Kind: protocol.StatusEventKind_TaskEnded}})
 	if len(*got) != 0 {
 		t.Fatal("a restart given up on still reopened the task")
+	}
+}
+
+// The start modal bumps nextForwardID and then uses it; an X11 open that used
+// the counter's current value and then bumped it took the SAME id, and the
+// second PortForwardStartedMsg overwrote the first registry entry. One
+// allocator serves every site now.
+func TestX11ForwardIDDoesNotReuseAModalForwardsID(t *testing.T) {
+	t.Setenv("DISPLAY", "localhost:0")
+	got := stubX11Open(t)
+	a, _ := x11App(t, protocol.TaskStatus_Cancelled)
+	// As the modal leaves it after starting a `b` forward: bumped to 5, used 5.
+	a.nextForwardID = 5
+	a.activeForwards[5] = &PortForwardSession{ID: 5, TaskID: x11TaskID, Direction: ForwardRemote}
+	a.Update(runeKey('D'))
+	if len(*got) != 1 || (*got)[0].fwdID == 5 {
+		t.Fatalf("the X11 open took registry id %v, which the modal forward holds", *got)
 	}
 }

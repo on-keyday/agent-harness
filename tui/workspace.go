@@ -139,8 +139,7 @@ func (a *App) applyWorkspaceForwards(wsName string, decl workspace.Task) ([]tea.
 		}
 		_, spec, _ := strings.Cut(strings.TrimSpace(value), " ")
 		spec = strings.TrimSpace(spec)
-		id := a.nextForwardID
-		a.nextForwardID++
+		id := a.allocForwardID()
 		// One call per spec: cli.RunForward aborts every spec in a call when
 		// any one of them fails to listen, so batching would let a conflict on
 		// 3000 take 8080 down with it.

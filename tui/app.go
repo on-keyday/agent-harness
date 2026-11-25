@@ -2975,3 +2975,13 @@ func (a *App) pickX11Display(preferred int) (int, bool) {
 	}
 	return 0, false
 }
+
+// allocForwardID hands out the next client-side forward registry id. Every
+// site that starts a forward takes its id here: the start modal used to bump
+// and then use the counter while the workspace apply and the X11 opens used
+// and then bumped it, so a modal forward followed by one of those got the same
+// id, and the second PortForwardStartedMsg overwrote the first entry.
+func (a *App) allocForwardID() int {
+	a.nextForwardID++
+	return a.nextForwardID
+}

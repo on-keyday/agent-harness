@@ -100,8 +100,7 @@ func (a *App) openX11Resume(t protocol.TaskInfo) tea.Cmd {
 		a.cmdresult.Append(ErrorStyle.Render(fmt.Sprintf("D: no free display number from 10 to %d in this TUI", x11DisplayMax)))
 		return nil
 	}
-	fid := a.nextForwardID
-	a.nextForwardID++
+	fid := a.allocForwardID()
 	return openX11Session(a.client, "", resumeSelectorOpts(t.AssignedTo), nil, FormatTaskID(t.Id), n, fid, a.program,
 		a.authority(), false, true, false, string(t.AgentProfile), cli.RunModeFlags{})
 }
