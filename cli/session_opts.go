@@ -44,6 +44,10 @@ type SessionOpts struct {
 	// these routes -- the wire carries it as a sibling of scope, and both
 	// shared builders below copy it under the same presence bit.
 	Overrides []protocol.ScopeOverride
+	// GrantConditions bound which object an override's bits reach (grant
+	// conditions C4): each names one override by its exact capability list.
+	// The open marks that override and sends the bodies on their own stream.
+	GrantConditions []protocol.GrantCondition
 	// InitialRows / InitialCols size the session's PTY at open time. Both must
 	// be non-zero to take effect; 0 (the zero value) sends nothing and leaves
 	// the historical behaviour, where a PTY has NO size until an attached

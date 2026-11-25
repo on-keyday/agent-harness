@@ -100,7 +100,7 @@ func parseDaysDuration(s string) (time.Duration, error) {
 // credentialAuthorityNames are the spawn grammar's authority flags, taken
 // from spawnFlags as the same rows (never copies): a credential's caps and
 // scope are written with the words `session new` uses.
-var credentialAuthorityNames = []string{"caps", "scope", "scope-for", "delegate-caps", "delegate-scope", "spawn-depth", "max-descendants"}
+var credentialAuthorityNames = []string{"caps", "scope", "scope-for", "grant-condition", "delegate-caps", "delegate-scope", "spawn-depth", "max-descendants"}
 
 func credentialAuthorityFlags() []Flag {
 	var out []Flag

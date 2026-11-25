@@ -52,6 +52,31 @@ func WhoAmI(ctx context.Context, serverCID objproto.ConnectionID) (protocol.WhoA
 	return WhoAmIWith(ctx, c)
 }
 
+// SelfGrantConditions fetches the bodies of the caller's own grant
+// conditions through the list path (the whoami answer carries only markers,
+// grant conditions C6). nil when no override is marked, for the operator, or
+// when the caller's own row is not in the listing; the markers then render as
+// "(condition unknown)".
+func SelfGrantConditions(ctx context.Context, c *Client, resp protocol.WhoAmIResponse) []protocol.GrantCondition {
+	marked := false
+	for _, o := range resp.Overrides {
+		marked = marked || o.Conditioned()
+	}
+	if !marked || isZeroTaskID(resp.PrincipalTaskId) {
+		return nil
+	}
+	lr, err := c.Snapshot(ctx)
+	if err != nil {
+		return nil
+	}
+	for _, t := range lr.Tasks {
+		if t.Id == resp.PrincipalTaskId {
+			return t.GrantConditions
+		}
+	}
+	return nil
+}
+
 // isZeroTaskID reports whether a TaskID is all-zero (the operator / no-creator
 // sentinel used throughout the protocol).
 func isZeroTaskID(t protocol.TaskID) bool { return t.Id == ([16]byte{}) }
@@ -90,6 +115,14 @@ func ServerRevisionLabel(resp protocol.WhoAmIResponse) string {
 // JSON form emits the same fields with hex task ids ("" when zero) for
 // scripting.
 func WriteWhoAmI(out io.Writer, resp protocol.WhoAmIResponse, asJSON bool) error {
+	return WriteWhoAmIWith(out, resp, nil, asJSON)
+}
+
+// WriteWhoAmIWith is WriteWhoAmI with the bodies of the caller's grant
+// conditions. The whoami answer itself carries only each override's marker
+// (grant conditions C6), which renders "(condition unknown)"; conds, when the
+// caller fetched them (SelfGrantConditions), fill those in.
+func WriteWhoAmIWith(out io.Writer, resp protocol.WhoAmIResponse, conds []protocol.GrantCondition, asJSON bool) error {
 	operator := isZeroTaskID(resp.PrincipalTaskId)
 	if asJSON {
 		taskHex := ""
@@ -107,13 +140,17 @@ func WriteWhoAmI(out io.Writer, resp protocol.WhoAmIResponse, asJSON bool) error
 		if err != nil {
 			return err
 		}
+		condByCap, err := json.Marshal(ConditionsByCap(resp.Capabilities, resp.Overrides, conds))
+		if err != nil {
+			return err
+		}
 		// server_revision is the RAW value, empty string included: item 22's
 		// rule (a machine surface reports the value, a human surface labels
 		// it), so a script can compare it against a sha without parsing the
 		// "unknown …" prose the text form prints.
 		_, err = fmt.Fprintf(out,
-			"{\"operator\":%t,\"principal_task_id\":%q,\"creator_task_id\":%q,\"capabilities\":%q,\"scope\":%q,\"scope_by_cap\":%s,\"delegate_caps\":%q,\"delegate_scope\":%q,\"spawn_depth\":%s,\"max_descendants\":%s,\"descendants\":%d,\"spawn_room\":%s,\"server_revision\":%q,\"server_dirty\":%t,\"principal_kind\":%q,\"credential_expires_at\":%q}\n",
-			operator, taskHex, creatorHex, CapsLabel(resp.Capabilities), ScopeLabel(resp.Scope), byCap,
+			"{\"operator\":%t,\"principal_task_id\":%q,\"creator_task_id\":%q,\"capabilities\":%q,\"scope\":%q,\"scope_by_cap\":%s,\"conditions_by_cap\":%s,\"delegate_caps\":%q,\"delegate_scope\":%q,\"spawn_depth\":%s,\"max_descendants\":%s,\"descendants\":%d,\"spawn_room\":%s,\"server_revision\":%q,\"server_dirty\":%t,\"principal_kind\":%q,\"credential_expires_at\":%q}\n",
+			operator, taskHex, creatorHex, CapsLabel(resp.Capabilities), ScopeLabel(resp.Scope), byCap, condByCap,
 			CapsLabel(resp.DelegateCaps), ScopeLabel(resp.DelegateScope),
 			limitJSONText(resp.SpawnDepth), limitJSONText(resp.MaxDescendants), resp.Descendants, limitJSONText(resp.SpawnRoom),
 			string(resp.ServerRevision), resp.ServerDirty(), whoamiKindWord(resp), whoamiCredentialExpiry(resp))
@@ -127,6 +164,9 @@ func WriteWhoAmI(out io.Writer, resp protocol.WhoAmIResponse, asJSON bool) error
 	caps += "  scope=" + ScopeLabel(resp.Scope)
 	if ov := OverridesLabel(resp.Overrides); ov != "" {
 		caps += " +" + ov
+	}
+	if cl := ConditionsLabel(resp.Overrides, conds); cl != "" {
+		caps += "  conditions=" + cl
 	}
 	// What this caller may hand to the tasks it spawns — the line to read
 	// before promising a worker a bit.

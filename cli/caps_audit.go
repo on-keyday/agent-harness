@@ -27,8 +27,12 @@ type AuditHolder struct {
 	Scope                 string // the bit's resolved scope; "" for ScopeNone
 	Breadth               ScopeBreadth
 	Override              bool // Scope came from a --scope-for override
-	TaskScope             string
-	Authority             string // AuthorityLabel: who last wrote the holder's authority
+	// Condition is the grant condition on this bit (--grant-condition's
+	// spelling), "" when unconditioned. Part of the scope cell, so a
+	// conditioned holder never reads as an unconditioned one (C7).
+	Condition string
+	TaskScope string
+	Authority string // AuthorityLabel: who last wrote the holder's authority
 	// Delegates: the holder's delegation bound names this bit too, so it may
 	// hand the bit to tasks it creates — "who can spread X".
 	Delegates bool
@@ -96,6 +100,7 @@ func auditHolder(t protocol.TaskInfo, c protocol.Capability, live bool) AuditHol
 		return h
 	}
 	h.Scope = ResolvedScopeByCap(t.Capabilities, t.Scope, t.Overrides)[c.String()]
+	h.Condition = ConditionsByCap(t.Capabilities, t.Overrides, t.GrantConditions)[c.String()]
 	h.Breadth = ScopeBreadthOf(h.Scope)
 	for _, o := range t.Overrides {
 		if o.Caps&c != 0 {

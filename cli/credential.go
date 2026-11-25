@@ -59,15 +59,16 @@ func credentialRefusalError(cred connauth.Credential, err error) error {
 // typed the verb, used when the server sent no message of its own. Every
 // status has one.
 var credentialStatusGloss = map[protocol.CredentialStatus]string{
-	protocol.CredentialStatus_TtlInvalid:        "a credential needs an expiry: pass --ttl",
-	protocol.CredentialStatus_TtlTooLong:        "the ttl is longer than the server allows (at most 90d)",
-	protocol.CredentialStatus_BadPubkey:         "not a usable Ed25519 public key",
-	protocol.CredentialStatus_ScopeNotPermitted: "the caps or scope asked for are more than you may issue (credential_issue and your own caps and scope bound them)",
-	protocol.CredentialStatus_SpawnLimit:        "your spawn limits do not allow another task",
-	protocol.CredentialStatus_NotCredential:     "that task is not a credential",
-	protocol.CredentialStatus_NoSuchTask:        "no such credential within your reach",
-	protocol.CredentialStatus_MaskedCap:         "a credential can never hold credential_issue or schedule_edit",
-	protocol.CredentialStatus_BadName:           "--name is at most 64 bytes of text, with no control characters",
+	protocol.CredentialStatus_TtlInvalid:         "a credential needs an expiry: pass --ttl",
+	protocol.CredentialStatus_TtlTooLong:         "the ttl is longer than the server allows (at most 90d)",
+	protocol.CredentialStatus_BadPubkey:          "not a usable Ed25519 public key",
+	protocol.CredentialStatus_ScopeNotPermitted:  "the caps or scope asked for are more than you may issue (credential_issue and your own caps and scope bound them)",
+	protocol.CredentialStatus_SpawnLimit:         "your spawn limits do not allow another task",
+	protocol.CredentialStatus_NotCredential:      "that task is not a credential",
+	protocol.CredentialStatus_NoSuchTask:         "no such credential within your reach",
+	protocol.CredentialStatus_MaskedCap:          "a credential can never hold credential_issue or schedule_edit",
+	protocol.CredentialStatus_BadName:            "--name is at most 64 bytes of text, with no control characters",
+	protocol.CredentialStatus_BadGrantConditions: "the server refused the --grant-condition body",
 }
 
 // credentialStatusError is the error for a credential answer: nil for ok,
@@ -99,14 +100,16 @@ func credentialTTLMs(s string) (uint64, error) {
 }
 
 // credentialIssueRequest builds the wire request for credential new / rekey
-// from the parsed action and the public key.
-func credentialIssueRequest(a verb.CredentialIssueAction, pub ed25519.PublicKey) (*protocol.TaskControlRequest, error) {
+// from the parsed action and the public key, and the grant-conditions body
+// that rides its own stream (nil when there is none; setGrantConditionsStream
+// names the stream on the request).
+func credentialIssueRequest(a verb.CredentialIssueAction, pub ed25519.PublicKey) (*protocol.TaskControlRequest, []byte, error) {
 	ttl, err := credentialTTLMs(a.TTL)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if len(pub) != ed25519.PublicKeySize {
-		return nil, fmt.Errorf("credential: public key is %d bytes, want %d", len(pub), ed25519.PublicKeySize)
+		return nil, nil, fmt.Errorf("credential: public key is %d bytes, want %d", len(pub), ed25519.PublicKeySize)
 	}
 	var pk [32]byte
 	copy(pk[:], pub)
@@ -117,6 +120,13 @@ func credentialIssueRequest(a verb.CredentialIssueAction, pub ed25519.PublicKey)
 			scope = *a.Scope
 		}
 		overrides = a.Overrides
+	}
+	if len(a.GrantConditions) != 0 && !a.ScopePresent {
+		return nil, nil, fmt.Errorf("--grant-condition attaches to a --scope-for override")
+	}
+	condBody, overrides, err := grantConditionsBody(overrides, a.GrantConditions)
+	if err != nil {
+		return nil, nil, err
 	}
 	// Each half is written only behind its presence bit (a typed flag), so a
 	// re-key narrows only what it names and an issue's unnamed halves are the
@@ -143,7 +153,7 @@ func credentialIssueRequest(a verb.CredentialIssueAction, pub ed25519.PublicKey)
 	if a.Sub == verb.SubRekey {
 		tid, err := parseTaskIDHex(a.ID)
 		if err != nil {
-			return nil, fmt.Errorf("credential id: %w", err)
+			return nil, nil, fmt.Errorf("credential id: %w", err)
 		}
 		rk := protocol.CredentialRekeyRequest{
 			TaskId: tid, Pubkey: pk, TtlMs: ttl,
@@ -159,7 +169,7 @@ func credentialIssueRequest(a verb.CredentialIssueAction, pub ed25519.PublicKey)
 		rk.SetMaxDescendantsPresent(a.MaxDescendantsPresent)
 		req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_CredentialRekey}}
 		req.SetCredentialRekey(rk)
-		return req, nil
+		return req, condBody, nil
 	}
 	is := protocol.CredentialIssueRequest{
 		Pubkey: pk, TtlMs: ttl,
@@ -167,12 +177,23 @@ func credentialIssueRequest(a verb.CredentialIssueAction, pub ed25519.PublicKey)
 		SpawnDepth: depth, MaxDescendants: desc,
 	}
 	if !is.SetName([]byte(a.Name)) || len(a.Name) > 64 {
-		return nil, fmt.Errorf("--name is %d bytes, at most 64", len(a.Name))
+		return nil, nil, fmt.Errorf("--name is %d bytes, at most 64", len(a.Name))
 	}
 	is.SetOverrides(overrides)
 	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_CredentialIssue}}
 	req.SetCredentialIssue(is)
-	return req, nil
+	return req, condBody, nil
+}
+
+// setGrantConditionsStream names the grant-conditions stream on a credential
+// issue or rekey request.
+func setGrantConditionsStream(req *protocol.TaskControlRequest, id uint64) {
+	if is := req.CredentialIssue(); is != nil {
+		is.GrantConditionsStreamId = id
+	}
+	if rk := req.CredentialRekey(); rk != nil {
+		rk.GrantConditionsStreamId = id
+	}
 }
 
 // CredentialIssued is a successful issue or re-key: the task, and when the
@@ -189,11 +210,14 @@ func (c *Client) CredentialIssue(ctx context.Context, a verb.CredentialIssueActi
 	if a.Sub == verb.SubRekey {
 		verbName = "rekey"
 	}
-	req, err := credentialIssueRequest(a, pub)
+	req, condBody, err := credentialIssueRequest(a, pub)
 	if err != nil {
 		return CredentialIssued{}, fmt.Errorf("credential %s: %w", verbName, err)
 	}
-	resp, err := c.RoundTripTaskControl(ctx, req)
+	resp, err := roundTripWithBody(ctx, c, condBody, func(id uint64) *protocol.TaskControlRequest {
+		setGrantConditionsStream(req, id)
+		return req
+	})
 	if err != nil {
 		return CredentialIssued{}, err
 	}

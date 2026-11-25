@@ -46,7 +46,7 @@ func spawnOpts(a verb.SpawnAction) (cli.SessionOpts, error) {
 	}
 	return cli.SessionOpts{
 		Selector: sel, ExtraArgs: a.ExtraArgs, ResumeTaskID: a.ResumeTaskID,
-		Caps: caps, Scope: scope, Overrides: a.Overrides,
+		Caps: caps, Scope: scope, Overrides: a.Overrides, GrantConditions: a.GrantConditions,
 		ResumeCapsOverride: a.ResumeTaskID != "" && a.CapsPresent,
 		ScopePresent:       a.ResumeTaskID != "" && a.ScopePresent,
 		DelegateCaps:       dcaps, DelegateScope: dscope,

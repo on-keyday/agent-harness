@@ -357,11 +357,18 @@ func (h cliVerbs) Caps(a verb.CatalogAction) error {
 }
 
 func (h cliVerbs) Whoami(a verb.CatalogAction) error {
-	resp, err := cli.WhoAmI(h.ctx, h.cid())
+	c, err := cli.Dial(h.ctx, h.cid(), protocol.ClientKind_Cli)
+	if err != nil {
+		return fmt.Errorf("dial server: %w", err)
+	}
+	defer c.Close()
+	resp, err := cli.WhoAmIWith(h.ctx, c)
 	if err != nil {
 		return err
 	}
-	return cli.WriteWhoAmI(h.stdout(), resp, a.JSON)
+	// The answer carries each grant condition's marker only; the bodies come
+	// from the caller's own row (grant conditions C6).
+	return cli.WriteWhoAmIWith(h.stdout(), resp, cli.SelfGrantConditions(h.ctx, c, resp), a.JSON)
 }
 
 func (h cliVerbs) Version(a verb.CatalogAction) error {
@@ -845,6 +852,9 @@ func (h cliVerbs) CapsSet(a verb.SetCapsAction) error {
 		opts.Scope = a.Scope
 		opts.Overrides = a.Overrides
 	}
+	// Passed whatever --scope says: SetCapsWith refuses a condition with no
+	// scope to attach to rather than dropping it.
+	opts.GrantConditions = a.GrantConditions
 	opts.DelegateCaps, opts.DelegateScope = a.DelegateCaps, a.DelegateScope
 	opts.SpawnDepth, opts.MaxDescendants = a.SpawnDepth, a.MaxDescendants
 	res, err := cli.SetCaps(h.ctx, h.cid(), opts)

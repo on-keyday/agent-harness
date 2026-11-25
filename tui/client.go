@@ -70,6 +70,9 @@ type Authority struct {
 	// SessionOpts carries it: a field threaded through some callers and not
 	// others is the failure mode these routes have already had.
 	Overrides []protocol.ScopeOverride
+	// GrantConditions belong to Overrides (grant conditions C4): each names
+	// one by its exact capability list, and travels with it.
+	GrantConditions []protocol.GrantCondition
 	// ScopePresent, on a resume, re-grants Scope onto the task instead of
 	// keeping its persisted one (SessionOpts.ScopePresent). Ignored on
 	// create. Set only when the command line named --scope explicitly —
@@ -153,6 +156,7 @@ func (a Authority) opts(r sessionRequest) cli.SessionOpts {
 		Caps:               a.Caps,
 		Scope:              a.Scope,
 		Overrides:          a.Overrides,
+		GrantConditions:    a.GrantConditions,
 		ScopePresent:       a.ScopePresent,
 
 		DelegateCaps:         a.DelegateCaps,

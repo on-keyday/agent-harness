@@ -56,14 +56,20 @@ type ScheduleSpecOpts struct {
 
 	// The authority block, as OpenInteractiveRequest's: Scope gates Overrides
 	// too (ScopePresent), exactly as --scope / --scope-for do.
-	Caps           *protocol.Capability
-	ScopePresent   bool
-	Scope          protocol.TaskScope
-	Overrides      []protocol.ScopeOverride
-	DelegateCaps   *protocol.Capability
-	DelegateScope  *protocol.TaskScope
-	SpawnDepth     *protocol.SpawnLimit
-	MaxDescendants *protocol.SpawnLimit
+	Caps         *protocol.Capability
+	ScopePresent bool
+	Scope        protocol.TaskScope
+	Overrides    []protocol.ScopeOverride
+	// GrantConditions name overrides by their exact capability list (grant
+	// conditions C4); the bodies ride their own stream beside the prompt's.
+	GrantConditions []protocol.GrantCondition
+	DelegateCaps    *protocol.Capability
+	DelegateScope   *protocol.TaskScope
+	SpawnDepth      *protocol.SpawnLimit
+	MaxDescendants  *protocol.SpawnLimit
+	// grantConditionsStream is the stream scheduleBodies named for the
+	// conditions; buildScheduleSpec writes it onto the spec.
+	grantConditionsStream uint64
 
 	// The run's conditions, each present only when named, so a zero is an
 	// answer the server reads (R17): QueueTimeout 0 = none, Quiet / Blocked 0 =
@@ -157,6 +163,7 @@ func ScheduleSpecOptsFromAction(a verb.ScheduleSpecAction) (ScheduleSpecOpts, er
 		}
 		o.Overrides = a.Overrides
 	}
+	o.GrantConditions = a.GrantConditions
 	for _, nd := range []struct {
 		flag    string
 		present bool
@@ -327,6 +334,7 @@ func buildScheduleSpec(o ScheduleSpecOpts, promptStreamID uint64) protocol.Sched
 		s.SetInitialRows(o.Rows)
 		s.SetInitialCols(o.Cols)
 	}
+	s.GrantConditionsStreamId = o.grantConditionsStream
 	return s
 }
 
@@ -372,6 +380,7 @@ var scheduleStatusGloss = map[protocol.ScheduleStatus]string{
 	protocol.ScheduleStatus_KindUnsupported:       "a schedule runs its task as interactive or stream",
 	protocol.ScheduleStatus_OneshotStream:         "--oneshot runs in a PTY; an event-stream (--stream) schedule has none",
 	protocol.ScheduleStatus_PtyStream:             "--pty: an event-stream (--stream) schedule has no PTY",
+	protocol.ScheduleStatus_BadGrantConditions:    "the server refused the --grant-condition body",
 }
 
 // scheduleDetailPty is the detail's PTY word. A stream run has no PTY, and the
@@ -448,26 +457,21 @@ func scheduleAnswer(verbName string, req *protocol.TaskControlRequest, resp *pro
 
 // scheduleWithPrompt sends a create or an edit. A named prompt rides its own
 // payload stream written after the request, as an open's does (A-D17), so a
-// request of any prompt size still fits one datagram.
-func (c *Client) scheduleWithPrompt(ctx context.Context, verbName string, o ScheduleSpecOpts, build func(streamID uint64) *protocol.TaskControlRequest) (*protocol.ScheduleResponse, error) {
-	if o.Prompt == "" {
-		req := build(0)
-		return c.scheduleRoundTrip(ctx, verbName, req)
-	}
-	if err := checkPrompt(o.Prompt); err != nil {
+// request of any prompt size still fits one datagram; grant conditions ride
+// another (grant conditions C6).
+func (c *Client) scheduleWithPrompt(ctx context.Context, verbName string, o ScheduleSpecOpts, build func(o ScheduleSpecOpts, promptStreamID uint64) *protocol.TaskControlRequest) (*protocol.ScheduleResponse, error) {
+	payloads, buildIDs, err := scheduleBodies(o, build)
+	if err != nil {
 		return nil, err
 	}
-	body := protocol.PromptBody{}
-	body.SetPrompt([]byte(o.Prompt))
-	enc, err := body.EncodeCopy(nil)
-	if err != nil {
-		return nil, fmt.Errorf("encode prompt: %w", err)
+	if len(payloads) == 0 {
+		return c.scheduleRoundTrip(ctx, verbName, buildIDs(nil))
 	}
 	var sent *protocol.TaskControlRequest
-	res, err := c.TaskControlWithPayload(ctx, func(streamID uint64) (*protocol.TaskControlRequest, error) {
-		sent = build(streamID)
+	res, err := c.TaskControlWithPayloads(ctx, func(ids []uint64) (*protocol.TaskControlRequest, error) {
+		sent = buildIDs(ids)
 		return sent, nil
-	}, enc)
+	}, payloads)
 	if err != nil {
 		return nil, err
 	}
@@ -477,9 +481,52 @@ func (c *Client) scheduleWithPrompt(ctx context.Context, verbName string, o Sche
 	return scheduleAnswer(verbName, sent, res.Resp)
 }
 
+// scheduleBodies is a create's or an edit's body streams — the prompt (if
+// any), then the grant conditions (if any) — and the request naming them. The
+// overrides the conditions belong to are marked here, so a condition that
+// matches no --scope-for is refused before anything is sent.
+func scheduleBodies(o ScheduleSpecOpts, build func(o ScheduleSpecOpts, promptStreamID uint64) *protocol.TaskControlRequest) ([][]byte, func([]uint64) *protocol.TaskControlRequest, error) {
+	var payloads [][]byte
+	if o.Prompt != "" {
+		if err := checkPrompt(o.Prompt); err != nil {
+			return nil, nil, err
+		}
+		body := protocol.PromptBody{}
+		body.SetPrompt([]byte(o.Prompt))
+		enc, err := body.EncodeCopy(nil)
+		if err != nil {
+			return nil, nil, fmt.Errorf("encode prompt: %w", err)
+		}
+		payloads = append(payloads, enc)
+	}
+	if len(o.GrantConditions) != 0 && !o.ScopePresent {
+		return nil, nil, fmt.Errorf("--grant-condition attaches to a --scope-for override")
+	}
+	condBody, overrides, err := grantConditionsBody(o.Overrides, o.GrantConditions)
+	if err != nil {
+		return nil, nil, err
+	}
+	o.Overrides = overrides
+	if condBody != nil {
+		payloads = append(payloads, condBody)
+	}
+	return payloads, func(ids []uint64) *protocol.TaskControlRequest {
+		next := 0
+		var promptID uint64
+		if o.Prompt != "" {
+			promptID = ids[next]
+			next++
+		}
+		if condBody != nil {
+			o.grantConditionsStream = ids[next]
+		}
+		return build(o, promptID)
+	}, nil
+}
+
 // ScheduleCreate creates a schedule and returns its id (32 hex).
 func (c *Client) ScheduleCreate(ctx context.Context, spec ScheduleSpecOpts) (string, error) {
-	r, err := c.scheduleWithPrompt(ctx, "new", spec, func(id uint64) *protocol.TaskControlRequest { return scheduleCreateRequest(spec, id) })
+	r, err := c.scheduleWithPrompt(ctx, "new", spec, scheduleCreateRequest)
 	if err != nil {
 		return "", err
 	}
@@ -497,7 +544,7 @@ func (c *Client) ScheduleEdit(ctx context.Context, id string, spec ScheduleSpecO
 	if err != nil {
 		return err
 	}
-	r, err := c.scheduleWithPrompt(ctx, "edit", spec, func(s uint64) *protocol.TaskControlRequest { return scheduleEditRequest(sid, spec, s) })
+	r, err := c.scheduleWithPrompt(ctx, "edit", spec, func(o ScheduleSpecOpts, s uint64) *protocol.TaskControlRequest { return scheduleEditRequest(sid, o, s) })
 	if err != nil {
 		return err
 	}
@@ -1020,6 +1067,9 @@ func ScheduleDetailParts(d protocol.ScheduleDetail, now time.Time) ScheduleDetai
 	if ov := OverridesLabel(d.Overrides); ov != "" {
 		auth += " +" + ov
 	}
+	if cl := ConditionsLabel(d.Overrides, d.GrantConditions); cl != "" {
+		auth += " conditions=" + cl
+	}
 	line("authority: %s delegate=%s delegate-scope=%s spawn-depth=%s max-descendants=%s",
 		auth, CapsLabel(d.DelegateCaps), ScopeLabel(d.DelegateScope),
 		authority.LimitLabel(d.SpawnDepth), authority.LimitLabel(d.MaxDescendants))
@@ -1177,6 +1227,7 @@ type scheduleDetailJSON struct {
 	Caps               string                `json:"caps"`
 	Scope              string                `json:"scope"`
 	ScopeByCap         map[string]string     `json:"scope_by_cap"`
+	ConditionsByCap    map[string]string     `json:"conditions_by_cap"`
 	DelegateCaps       string                `json:"delegate_caps"`
 	DelegateScope      string                `json:"delegate_scope"`
 	SpawnDepth         *uint32               `json:"spawn_depth"`
@@ -1203,8 +1254,9 @@ func writeScheduleDetailJSON(w io.Writer, d protocol.ScheduleDetail, now time.Ti
 			QuietMs: d.Conditions.QuietMs, BlockedMs: d.Conditions.BlockedMs, QueueTimeoutMs: d.Conditions.QueueTimeoutMs,
 		},
 		Caps: CapsLabel(d.Caps), Scope: ScopeLabel(d.Scope),
-		ScopeByCap:   ResolvedScopeByCap(d.Caps, d.Scope, d.Overrides),
-		DelegateCaps: CapsLabel(d.DelegateCaps), DelegateScope: ScopeLabel(d.DelegateScope),
+		ScopeByCap:      ResolvedScopeByCap(d.Caps, d.Scope, d.Overrides),
+		ConditionsByCap: ConditionsByCap(d.Caps, d.Overrides, d.GrantConditions),
+		DelegateCaps:    CapsLabel(d.DelegateCaps), DelegateScope: ScopeLabel(d.DelegateScope),
 		SpawnDepth: LimitJSON(d.SpawnDepth), MaxDescendants: LimitJSON(d.MaxDescendants),
 		Creator:   taskIDHexOrEmpty(d.Creator.Id[:]),
 		CreatedAt: d.CreatedAt, EditedAt: d.EditedAt,

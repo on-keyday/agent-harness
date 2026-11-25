@@ -95,6 +95,16 @@ func ResolvedScopeByCap(caps protocol.Capability, base protocol.TaskScope, overr
 	return verb.ResolvedScopeByCap(caps, base, overrides)
 }
 
+// ConditionsLabel renders the conditioned overrides' grant conditions.
+func ConditionsLabel(overrides []protocol.ScopeOverride, conds []protocol.GrantCondition) string {
+	return verb.ConditionsLabel(overrides, conds)
+}
+
+// ConditionsByCap maps each held, conditioned capability to its condition.
+func ConditionsByCap(caps protocol.Capability, overrides []protocol.ScopeOverride, conds []protocol.GrantCondition) map[string]string {
+	return verb.ConditionsByCap(caps, overrides, conds)
+}
+
 // --- grid ---
 
 // GridScopeMode names how a grid chose its tasks.

@@ -78,10 +78,14 @@ func auditScopeText(h AuditHolder) string {
 	if h.ScopeKind == verb.ScopeNone {
 		return UnboundedScopeLabel
 	}
+	s := h.Scope
 	if h.Override {
-		return h.Scope + "*"
+		s += "*"
 	}
-	return h.Scope
+	if h.Condition != "" {
+		s += " if " + h.Condition
+	}
+	return s
 }
 
 func impliedNote(by []protocol.Capability) string {
@@ -114,6 +118,7 @@ type AuditHolderJSON struct {
 	Scope     string `json:"scope"`
 	Breadth   string `json:"breadth"` // "global" | "subtree" | "narrow" | "" for scope_kind none
 	Override  bool   `json:"override"`
+	Condition string `json:"condition"` // the bit's grant condition; "" = unconditioned
 	TaskScope string `json:"task_scope"`
 	Authority string `json:"authority"`
 	Delegates bool   `json:"delegates"`
@@ -129,7 +134,7 @@ func AuditRowsJSON(rows []AuditRow) []AuditRowJSON {
 		}
 		for _, h := range r.Holders {
 			hj := AuditHolderJSON{TaskID: h.TaskID, Label: h.Label, Parent: h.Parent, Live: h.Live,
-				ScopeKind: "own", ScopeText: auditScopeText(h), Scope: h.Scope, Override: h.Override, TaskScope: h.TaskScope, Authority: h.Authority, Delegates: h.Delegates}
+				ScopeKind: "own", ScopeText: auditScopeText(h), Scope: h.Scope, Override: h.Override, Condition: h.Condition, TaskScope: h.TaskScope, Authority: h.Authority, Delegates: h.Delegates}
 			if h.ScopeKind == verb.ScopeNone {
 				hj.ScopeKind = "none"
 			} else {

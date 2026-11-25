@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/on-keyday/agent-harness/cli/verb"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -21,28 +22,18 @@ func checkPrompt(prompt string) error {
 
 // roundTripOpenRequest sends an open-interactive request. With a prompt, the
 // prompt rides its own payload stream written after the request (A-D17), so a
-// request of any prompt size still fits one datagram.
-func (c *Client) roundTripOpenRequest(ctx context.Context, oi protocol.OpenInteractiveRequest, prompt string) (*protocol.TaskControlResponse, error) {
-	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_OpenInteractive}}
-	if prompt == "" {
-		req.SetOpenInteractive(oi)
-		return c.RoundTripTaskControl(ctx, req)
-	}
-	if err := checkPrompt(prompt); err != nil {
+// request of any prompt size still fits one datagram; grant conditions ride
+// another (grant conditions C6).
+func (c *Client) roundTripOpenRequest(ctx context.Context, oi protocol.OpenInteractiveRequest, prompt string, conds []protocol.GrantCondition) (*protocol.TaskControlResponse, error) {
+	payloads, build, err := openBodies(oi, prompt, conds)
+	if err != nil {
 		return nil, err
 	}
-	body := protocol.PromptBody{}
-	body.SetPrompt([]byte(prompt))
-	enc, err := body.EncodeCopy(nil)
-	if err != nil {
-		return nil, fmt.Errorf("encode prompt: %w", err)
+	if len(payloads) == 0 {
+		req, _ := build(nil)
+		return c.RoundTripTaskControl(ctx, req)
 	}
-	res, err := c.TaskControlWithPayload(ctx, func(streamID uint64) (*protocol.TaskControlRequest, error) {
-		oi.SetPromptPresent(true)
-		oi.SetPromptStreamId(streamID)
-		req.SetOpenInteractive(oi)
-		return req, nil
-	}, enc)
+	res, err := c.TaskControlWithPayloads(ctx, build, payloads)
 	if err != nil {
 		return nil, err
 	}
@@ -50,6 +41,75 @@ func (c *Client) roundTripOpenRequest(ctx context.Context, oi protocol.OpenInter
 		return nil, res.Err
 	}
 	return res.Resp, nil
+}
+
+// openBodies is an open's body streams and the request that names them: the
+// prompt (if any), then the grant conditions (if any), each on its own stream.
+// The overrides the conditions belong to are marked here, so a condition that
+// matches no --scope-for is refused before anything is sent.
+func openBodies(oi protocol.OpenInteractiveRequest, prompt string, conds []protocol.GrantCondition) ([][]byte, func([]uint64) (*protocol.TaskControlRequest, error), error) {
+	var payloads [][]byte
+	if prompt != "" {
+		if err := checkPrompt(prompt); err != nil {
+			return nil, nil, err
+		}
+		body := protocol.PromptBody{}
+		body.SetPrompt([]byte(prompt))
+		enc, err := body.EncodeCopy(nil)
+		if err != nil {
+			return nil, nil, fmt.Errorf("encode prompt: %w", err)
+		}
+		payloads = append(payloads, enc)
+	}
+	condBody, overrides, err := grantConditionsBody(oi.Overrides, conds)
+	if err != nil {
+		return nil, nil, err
+	}
+	oi.Overrides = overrides
+	if condBody != nil {
+		payloads = append(payloads, condBody)
+	}
+	build := func(ids []uint64) (*protocol.TaskControlRequest, error) {
+		next := 0
+		if prompt != "" {
+			oi.SetPromptPresent(true)
+			oi.SetPromptStreamId(ids[next])
+			next++
+		}
+		if condBody != nil {
+			var ext protocol.OpenInteractiveExt
+			if oi.ExtPresent() && oi.Ext() != nil {
+				ext = *oi.Ext()
+			}
+			ext.SetGrantConditionsPresent(true)
+			ext.SetGrantConditionsStreamId(ids[next])
+			oi.SetExtPresent(true)
+			oi.SetExt(ext)
+		}
+		req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_OpenInteractive}}
+		req.SetOpenInteractive(oi)
+		return req, nil
+	}
+	return payloads, build, nil
+}
+
+// grantConditionsBody marks the overrides conds belong to and encodes conds
+// for their stream; a nil body means there are none to send.
+func grantConditionsBody(overrides []protocol.ScopeOverride, conds []protocol.GrantCondition) ([]byte, []protocol.ScopeOverride, error) {
+	if len(conds) == 0 {
+		return nil, overrides, nil
+	}
+	marked, err := verb.MarkGrantConditions(overrides, conds)
+	if err != nil {
+		return nil, nil, err
+	}
+	var body protocol.GrantConditions
+	body.SetConditions(conds)
+	enc, err := body.EncodeCopy(nil)
+	if err != nil {
+		return nil, nil, fmt.Errorf("encode grant conditions: %w", err)
+	}
+	return enc, marked, nil
 }
 
 // runModeStatusError is the text of the open statuses pillar A added; nil for
@@ -68,6 +128,8 @@ func runModeStatusError(status protocol.OpenInteractiveStatus) error {
 		return fmt.Errorf("interactive prompt_too_large: the most a session's prompt may hold is %d bytes", protocol.PromptMax)
 	case protocol.OpenInteractiveStatus_BadPrompt:
 		return fmt.Errorf("interactive bad_prompt: the prompt stream could not be read")
+	case protocol.OpenInteractiveStatus_BadGrantConditions:
+		return fmt.Errorf("interactive bad_grant_conditions: the server refused the --grant-condition body")
 	case protocol.OpenInteractiveStatus_ConditionsWithoutBackground:
 		return fmt.Errorf("interactive conditions_without_background: --deadline/--turn-end/--quiet/--blocked/--queue-timeout belong to a background session; add --background")
 	}

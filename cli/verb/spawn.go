@@ -69,6 +69,18 @@ func spawnFlags(k spawnKind) []Flag {
 			FieldType: "[]protocol.ScopeOverride", Convert: "parseScopeForList",
 			Help: "narrow ONE capability (or a comma-separated list of them) to a tighter scope than --scope",
 		},
+		// A condition attaches to one --scope-for override (grant conditions
+		// C4); the request builders mark that override and stream the body.
+		// Deliberately absent from `caps what-if` (authority.WhatIf predicts
+		// targets, not objects, so it would draw a conditioned grant as an
+		// unconditioned one) and from `caps set-defaults` (a session default
+		// carries no conditions: one belongs to the override named on the
+		// same command line).
+		{
+			Name: "grant-condition", Type: FlagString, Custom: grantConditionValue, Field: "GrantConditions",
+			FieldType: "[]protocol.GrantCondition", Convert: "parseGrantConditionList",
+			Help: GrantConditionHelp,
+		},
 		// The delegation bound: what the new task may write onto the tasks IT
 		// creates. Each half has its own presence, like --caps and --scope, so
 		// a resume re-grants only the half it names.
@@ -304,11 +316,12 @@ func spawnRules(k spawnKind) ([]Rule, []Requirement) {
 	}}
 	// --exact takes the task's recorded settings — the last run's prompt and
 	// --oneshot among them — so every flag that sets one contradicts it.
-	exactConflicts := []string{"prompt", "oneshot", "agent", "agent-arg", "caps", "scope", "scope-for", "delegate-caps", "delegate-scope", "spawn-depth", "max-descendants"}
+	exactConflicts := []string{"prompt", "oneshot", "agent", "agent-arg", "caps", "scope", "scope-for", "grant-condition", "delegate-caps", "delegate-scope", "spawn-depth", "max-descendants"}
 	for _, f := range exactConflicts {
 		excl = append(excl, Rule{Flags: []string{"exact", f}, Reason: "an exact resume takes the task's recorded settings"})
 	}
 	exactNeeds := Requirement{Flags: []string{"exact"}, Needs: "resume", Reason: "an exact resume names the task it restores"}
+	condNeeds := Requirement{Flags: []string{"grant-condition"}, Needs: "scope-for", Reason: "a condition attaches to one --scope-for override"}
 	excl = append(excl,
 		Rule{Flags: []string{"x11", "detach"},
 			Reason: "a detached session has no client to host the X tunnel"},
@@ -329,7 +342,7 @@ func spawnRules(k spawnKind) ([]Rule, []Requirement) {
 	)
 	// A stream session needs --detach or --background (which implies it):
 	// checked in spawnValidate, since a Requirement names one flag.
-	return excl, []Requirement{exactNeeds}
+	return excl, []Requirement{exactNeeds, condNeeds}
 }
 
 func spawnExclusive(k spawnKind) []Rule { r, _ := spawnRules(k); return r }

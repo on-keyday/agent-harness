@@ -109,7 +109,7 @@ func (c *Client) roundTripOpen(ctx context.Context, repoPath string, opts Sessio
 		f.SetCookie(x11.Cookie)
 		oi.SetX11(f)
 	}
-	resp, err := c.roundTripOpenRequest(ctx, oi, opts.Prompt)
+	resp, err := c.roundTripOpenRequest(ctx, oi, opts.Prompt, opts.GrantConditions)
 	if err != nil {
 		return nil, err
 	}

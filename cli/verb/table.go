@@ -2592,7 +2592,9 @@ var Verbs = []VerbSpec{
 		// dropped a lone --scope-for silently; this says so.
 		AtLeastOne: []Rule{{Flags: []string{"caps", "scope", "delegate-caps", "delegate-scope", "spawn-depth", "max-descendants"}, Reason: "there is nothing to change otherwise"}},
 		Requires: []Requirement{{Flags: []string{"scope-for"}, Needs: "scope",
-			Reason: "a narrowing has no base to narrow unless this call names one"}},
+			Reason: "a narrowing has no base to narrow unless this call names one"},
+			{Flags: []string{"grant-condition"}, Needs: "scope-for",
+				Reason: "a condition attaches to one --scope-for override"}},
 		Flags: []Flag{
 			{Name: "caps", Type: FlagString, Default: "", Field: "Caps",
 				FieldType: "*protocol.Capability", Convert: "parseCapsFlag",
@@ -2607,6 +2609,9 @@ var Verbs = []VerbSpec{
 			{Name: "scope-for", Type: FlagString, Custom: scopeForValue, Field: "Overrides",
 				FieldType: "[]protocol.ScopeOverride", Convert: "parseScopeForList",
 				Help: "narrow ONE capability below --scope (written with --scope; they are one half of the authority)"},
+			{Name: "grant-condition", Type: FlagString, Custom: grantConditionValue, Field: "GrantConditions",
+				FieldType: "[]protocol.GrantCondition", Convert: "parseGrantConditionList",
+				Help: GrantConditionHelp},
 			{Name: "delegate-caps", Type: FlagString, Default: "", Field: "DelegateCaps",
 				FieldType: "*protocol.Capability", Convert: "parseCapsFlag",
 				Help: "new delegation bound: the caps the task may put into the tasks it creates; omitted = keep it"},

@@ -438,24 +438,9 @@ func ConditionsFromWire(body protocol.GrantConditions, s *Scope) error {
 		if s.Overrides[i].Cond.Kind != 0 {
 			return fmt.Errorf("two grant conditions name %s", CapsLabel(w.Caps))
 		}
-		var acts [][16]byte
-		var spans []PortSpan
-		if a := w.ActionSet(); a != nil {
-			for _, id := range a.Actions {
-				acts = append(acts, id.Id)
-			}
-		}
-		if p := w.PortRange(); p != nil {
-			for _, sp := range p.Spans {
-				spans = append(spans, PortSpan{sp.Lo, sp.Hi})
-			}
-		}
-		c, err := NewCondition(w.Kind, acts, spans)
+		c, err := ConditionFromWire(w)
 		if err != nil {
-			return fmt.Errorf("grant condition on %s: %w", CapsLabel(w.Caps), err)
-		}
-		if extra := w.Caps &^ ApplicableBits(w.Kind); extra != 0 {
-			return fmt.Errorf("a %s condition does not apply to %s", w.Kind, CapsLabel(extra))
+			return err
 		}
 		s.Overrides[i].Cond = c
 	}
@@ -465,6 +450,31 @@ func ConditionsFromWire(body protocol.GrantConditions, s *Scope) error {
 		}
 	}
 	return nil
+}
+
+// ConditionFromWire normalises one body and checks that its kind applies to
+// every bit of its mask (C9).
+func ConditionFromWire(w protocol.GrantCondition) (*Condition, error) {
+	var acts [][16]byte
+	var spans []PortSpan
+	if a := w.ActionSet(); a != nil {
+		for _, id := range a.Actions {
+			acts = append(acts, id.Id)
+		}
+	}
+	if p := w.PortRange(); p != nil {
+		for _, sp := range p.Spans {
+			spans = append(spans, PortSpan{sp.Lo, sp.Hi})
+		}
+	}
+	c, err := NewCondition(w.Kind, acts, spans)
+	if err != nil {
+		return nil, fmt.Errorf("grant condition on %s: %w", CapsLabel(w.Caps), err)
+	}
+	if extra := w.Caps &^ ApplicableBits(w.Kind); extra != 0 {
+		return nil, fmt.Errorf("a %s condition does not apply to %s", w.Kind, CapsLabel(extra))
+	}
+	return c, nil
 }
 
 // ConditionsToWire is the bodies of s's conditioned overrides, for the

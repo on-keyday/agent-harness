@@ -428,6 +428,12 @@ func taskLine(t protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo) st
 	if ov := OverridesLabel(t.Overrides); ov != "" {
 		caps += " +" + ov
 	}
+	// The grant conditions on those overrides (grant conditions C4), in the
+	// spelling --grant-condition takes; a marker whose body this listing does
+	// not carry reads "(condition unknown)", never as unconditioned (C7).
+	if cl := ConditionsLabel(t.Overrides, t.GrantConditions); cl != "" {
+		caps += "  conditions=" + cl
+	}
 	// The delegation bound: what this task may write onto the tasks it
 	// grants to. Always printed, the default (none / subtree) included — a
 	// supervisor that may hand down nothing is exactly what an operator scans
@@ -655,6 +661,11 @@ type taskJSON struct {
 	// merge. Emitted always, overrides or not, so a machine reader never has
 	// to redo the merge to learn what a verb may target.
 	ScopeByCap map[string]string `json:"scope_by_cap"`
+	// ConditionsByCap is the grant condition on each held bit that has one,
+	// in --grant-condition's spelling; a bit with no entry is unconditioned.
+	// Per bit like scope_by_cap, so a forward_local condition cannot read as
+	// covering forward_remote. Emitted always, empty included.
+	ConditionsByCap map[string]string `json:"conditions_by_cap"`
 	// The delegation bound, in the forms caps and scope use.
 	DelegateCaps  string `json:"delegate_caps"`
 	DelegateScope string `json:"delegate_scope"`
@@ -846,6 +857,7 @@ func newTaskJSON(t *protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo
 		Caps:                 CapsLabel(t.Capabilities),
 		Scope:                ScopeLabel(t.Scope),
 		ScopeByCap:           ResolvedScopeByCap(t.Capabilities, t.Scope, t.Overrides),
+		ConditionsByCap:      ConditionsByCap(t.Capabilities, t.Overrides, t.GrantConditions),
 		DelegateCaps:         CapsLabel(t.DelegateCaps),
 		DelegateScope:        ScopeLabel(t.DelegateScope),
 		SpawnDepth:           LimitJSON(t.SpawnDepth),

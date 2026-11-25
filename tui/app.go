@@ -357,6 +357,9 @@ func (a App) spawnAuthority(v verb.SpawnAction, caps protocol.Capability) Author
 			auth.Scope = *explicit
 		}
 		auth.Overrides = overrides
+		// The conditions belong to those overrides (grant conditions C4), so
+		// they travel with them and never with the session default's.
+		auth.GrantConditions = v.GrantConditions
 		auth.ScopePresent = resumeTaskID != ""
 	}
 	return auth

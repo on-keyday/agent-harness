@@ -24,6 +24,10 @@ type SetCapsOpts struct {
 	// a non-nil Scope with an empty Overrides is therefore the only way to
 	// CLEAR them -- the same shape as writing an empty ids list.
 	Overrides []protocol.ScopeOverride
+	// GrantConditions bound which object an override's bits reach (grant
+	// conditions C4); each names one of Overrides by its exact capability
+	// list, and so needs Scope. The bodies travel on their own stream.
+	GrantConditions []protocol.GrantCondition
 	// DelegateCaps / DelegateScope rewrite the delegation bound; nil keeps
 	// it. Either set with Cascade also clamps the descendants to the new
 	// bound; a cascade naming neither clamps caps and scope only.
@@ -65,6 +69,14 @@ func SetCapsWith(ctx context.Context, c taskControlClient, opts SetCapsOpts) (Se
 		return SetCapsResult{}, fmt.Errorf("set-caps: %w", err)
 	}
 
+	if len(opts.GrantConditions) != 0 && opts.Scope == nil {
+		return SetCapsResult{}, fmt.Errorf("set-caps: --grant-condition attaches to a --scope-for override, which is written with --scope")
+	}
+	condBody, overrides, err := grantConditionsBody(opts.Overrides, opts.GrantConditions)
+	if err != nil {
+		return SetCapsResult{}, fmt.Errorf("set-caps: %w", err)
+	}
+
 	body := protocol.SetCapsRequest{TaskId: tid}
 	if opts.Caps != nil {
 		body.Caps = *opts.Caps
@@ -72,8 +84,8 @@ func SetCapsWith(ctx context.Context, c taskControlClient, opts SetCapsOpts) (Se
 	}
 	if opts.Scope != nil {
 		body.Scope = *opts.Scope
-		body.Overrides = opts.Overrides
-		body.OverridesLen = uint8(len(opts.Overrides))
+		body.Overrides = overrides
+		body.OverridesLen = uint8(len(overrides))
 		body.SetScopePresent(true)
 	}
 	if opts.DelegateCaps != nil {
@@ -95,9 +107,12 @@ func SetCapsWith(ctx context.Context, c taskControlClient, opts SetCapsOpts) (Se
 	body.SetCascade(opts.Cascade)
 	body.SetKeepConns(opts.KeepConns)
 
-	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_SetCaps}}
-	req.SetSetCaps(body)
-	resp, err := c.RoundTripTaskControl(ctx, req)
+	resp, err := roundTripWithBody(ctx, c, condBody, func(streamID uint64) *protocol.TaskControlRequest {
+		body.GrantConditionsStreamId = streamID
+		req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_SetCaps}}
+		req.SetSetCaps(body)
+		return req
+	})
 	if err != nil {
 		return SetCapsResult{}, err
 	}
@@ -135,6 +150,8 @@ func setCapsStatusError(s protocol.SetCapsStatus, msg string) error {
 	case protocol.SetCapsStatus_NotOperator:
 		return fmt.Errorf("operator only: capabilities can be re-granted from an " +
 			"operator connection, not from inside a task")
+	case protocol.SetCapsStatus_BadGrantConditions:
+		return fmt.Errorf("the server refused the --grant-condition body: %s", msg)
 	case protocol.SetCapsStatus_InvalidScope:
 		if msg != "" {
 			return fmt.Errorf("the re-grant is outside what you may grant: %s", msg)

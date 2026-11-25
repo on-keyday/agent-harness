@@ -155,7 +155,7 @@ func (c *Client) Interactive(ctx context.Context, repo string, opts SessionOpts)
 		}
 		oi.ResumeTaskId = tid
 	}
-	resp, err := c.roundTripOpenRequest(ctx, oi, opts.Prompt)
+	resp, err := c.roundTripOpenRequest(ctx, oi, opts.Prompt, opts.GrantConditions)
 	if err != nil {
 		return "", fmt.Errorf("OpenInteractive RPC: %w", err)
 	}

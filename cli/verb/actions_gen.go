@@ -280,6 +280,8 @@ type CredentialIssueAction struct {
 	Scope *protocol.TaskScope
 	// narrow ONE capability (or a comma-separated list of them) to a tighter scope than --scope
 	Overrides []protocol.ScopeOverride
+	// bound which object a --scope-for override's capabilities reach, as CAPS=ports:P[-Q],… (forward_loc…
+	GrantConditions []protocol.GrantCondition
 	// whether --delegate-caps was typed, which its zero value cannot say
 	DelegateCapsPresent bool
 	// capabilities the new task may put into the tasks IT creates (default none)
@@ -774,6 +776,8 @@ type ScheduleSpecAction struct {
 	Agent string
 	// narrow ONE capability (or a comma-separated list of them) to a tighter scope than --scope
 	Overrides []protocol.ScopeOverride
+	// bound which object a --scope-for override's capabilities reach, as CAPS=ports:P[-Q],… (forward_loc…
+	GrantConditions []protocol.GrantCondition
 	// whether --delegate-caps was typed, which its zero value cannot say
 	DelegateCapsPresent bool
 	// capabilities the new task may put into the tasks IT creates (default none)
@@ -1013,6 +1017,8 @@ type SetCapsAction struct {
 	Scope *protocol.TaskScope
 	// narrow ONE capability below --scope (written with --scope; they are one half of the authority)
 	Overrides []protocol.ScopeOverride
+	// bound which object a --scope-for override's capabilities reach, as CAPS=ports:P[-Q],… (forward_loc…
+	GrantConditions []protocol.GrantCondition
 	// new delegation bound: the caps the task may put into the tasks it creates; omitted = keep it
 	DelegateCaps *protocol.Capability
 	// the most scope it may give them (--scope's grammar); with --cascade, also clamps its descendants to …
@@ -1082,6 +1088,8 @@ type SpawnAction struct {
 	Agent string
 	// narrow ONE capability (or a comma-separated list of them) to a tighter scope than --scope
 	Overrides []protocol.ScopeOverride
+	// bound which object a --scope-for override's capabilities reach, as CAPS=ports:P[-Q],… (forward_loc…
+	GrantConditions []protocol.GrantCondition
 	// whether --delegate-caps was typed, which its zero value cannot say
 	DelegateCapsPresent bool
 	// capabilities the new task may put into the tasks IT creates (default none)
@@ -2627,6 +2635,13 @@ func init() {
 				}
 				a.Overrides = v
 			}
+			if b.Set["grant-condition"] {
+				v, err := parseGrantConditionList(stringsOf(b.Custom["grant-condition"]))
+				if err != nil {
+					return nil, fmt.Errorf("session new: --grant-condition: %w", err)
+				}
+				a.GrantConditions = v
+			}
 			a.DelegateCapsPresent = b.Set["delegate-caps"]
 			if b.Set["delegate-caps"] {
 				v, err := parseCapsFlag(b.Str("delegate-caps"))
@@ -2715,6 +2730,13 @@ func init() {
 				}
 				a.Overrides = v
 			}
+			if b.Set["grant-condition"] {
+				v, err := parseGrantConditionList(stringsOf(b.Custom["grant-condition"]))
+				if err != nil {
+					return nil, fmt.Errorf("session new: --grant-condition: %w", err)
+				}
+				a.GrantConditions = v
+			}
 			a.DelegateCapsPresent = b.Set["delegate-caps"]
 			if b.Set["delegate-caps"] {
 				v, err := parseCapsFlag(b.Str("delegate-caps"))
@@ -2802,6 +2824,13 @@ func init() {
 					return nil, fmt.Errorf("session new: --scope-for: %w", err)
 				}
 				a.Overrides = v
+			}
+			if b.Set["grant-condition"] {
+				v, err := parseGrantConditionList(stringsOf(b.Custom["grant-condition"]))
+				if err != nil {
+					return nil, fmt.Errorf("session new: --grant-condition: %w", err)
+				}
+				a.GrantConditions = v
 			}
 			a.DelegateCapsPresent = b.Set["delegate-caps"]
 			if b.Set["delegate-caps"] {
@@ -3299,6 +3328,13 @@ func init() {
 				}
 				a.Overrides = v
 			}
+			if b.Set["grant-condition"] {
+				v, err := parseGrantConditionList(stringsOf(b.Custom["grant-condition"]))
+				if err != nil {
+					return nil, fmt.Errorf("caps set: --grant-condition: %w", err)
+				}
+				a.GrantConditions = v
+			}
 			if b.Set["delegate-caps"] {
 				v, err := parseCapsFlag(b.Str("delegate-caps"))
 				if err != nil {
@@ -3356,6 +3392,13 @@ func init() {
 					return nil, fmt.Errorf("caps set: --scope-for: %w", err)
 				}
 				a.Overrides = v
+			}
+			if b.Set["grant-condition"] {
+				v, err := parseGrantConditionList(stringsOf(b.Custom["grant-condition"]))
+				if err != nil {
+					return nil, fmt.Errorf("caps set: --grant-condition: %w", err)
+				}
+				a.GrantConditions = v
 			}
 			if b.Set["delegate-caps"] {
 				v, err := parseCapsFlag(b.Str("delegate-caps"))
@@ -4347,6 +4390,13 @@ func init() {
 				}
 				a.Overrides = v
 			}
+			if b.Set["grant-condition"] {
+				v, err := parseGrantConditionList(stringsOf(b.Custom["grant-condition"]))
+				if err != nil {
+					return nil, fmt.Errorf("schedule new: --grant-condition: %w", err)
+				}
+				a.GrantConditions = v
+			}
 			a.DelegateCapsPresent = b.Set["delegate-caps"]
 			if b.Set["delegate-caps"] {
 				v, err := parseCapsFlag(b.Str("delegate-caps"))
@@ -4440,6 +4490,13 @@ func init() {
 					return nil, fmt.Errorf("schedule new: --scope-for: %w", err)
 				}
 				a.Overrides = v
+			}
+			if b.Set["grant-condition"] {
+				v, err := parseGrantConditionList(stringsOf(b.Custom["grant-condition"]))
+				if err != nil {
+					return nil, fmt.Errorf("schedule new: --grant-condition: %w", err)
+				}
+				a.GrantConditions = v
 			}
 			a.DelegateCapsPresent = b.Set["delegate-caps"]
 			if b.Set["delegate-caps"] {
@@ -4535,6 +4592,13 @@ func init() {
 				}
 				a.Overrides = v
 			}
+			if b.Set["grant-condition"] {
+				v, err := parseGrantConditionList(stringsOf(b.Custom["grant-condition"]))
+				if err != nil {
+					return nil, fmt.Errorf("schedule new: --grant-condition: %w", err)
+				}
+				a.GrantConditions = v
+			}
 			a.DelegateCapsPresent = b.Set["delegate-caps"]
 			if b.Set["delegate-caps"] {
 				v, err := parseCapsFlag(b.Str("delegate-caps"))
@@ -4629,6 +4693,13 @@ func init() {
 					return nil, fmt.Errorf("schedule edit: --scope-for: %w", err)
 				}
 				a.Overrides = v
+			}
+			if b.Set["grant-condition"] {
+				v, err := parseGrantConditionList(stringsOf(b.Custom["grant-condition"]))
+				if err != nil {
+					return nil, fmt.Errorf("schedule edit: --grant-condition: %w", err)
+				}
+				a.GrantConditions = v
 			}
 			a.DelegateCapsPresent = b.Set["delegate-caps"]
 			if b.Set["delegate-caps"] {
@@ -4728,6 +4799,13 @@ func init() {
 				}
 				a.Overrides = v
 			}
+			if b.Set["grant-condition"] {
+				v, err := parseGrantConditionList(stringsOf(b.Custom["grant-condition"]))
+				if err != nil {
+					return nil, fmt.Errorf("schedule edit: --grant-condition: %w", err)
+				}
+				a.GrantConditions = v
+			}
 			a.DelegateCapsPresent = b.Set["delegate-caps"]
 			if b.Set["delegate-caps"] {
 				v, err := parseCapsFlag(b.Str("delegate-caps"))
@@ -4825,6 +4903,13 @@ func init() {
 					return nil, fmt.Errorf("schedule edit: --scope-for: %w", err)
 				}
 				a.Overrides = v
+			}
+			if b.Set["grant-condition"] {
+				v, err := parseGrantConditionList(stringsOf(b.Custom["grant-condition"]))
+				if err != nil {
+					return nil, fmt.Errorf("schedule edit: --grant-condition: %w", err)
+				}
+				a.GrantConditions = v
 			}
 			a.DelegateCapsPresent = b.Set["delegate-caps"]
 			if b.Set["delegate-caps"] {
@@ -5020,6 +5105,13 @@ func init() {
 				}
 				a.Overrides = v
 			}
+			if b.Set["grant-condition"] {
+				v, err := parseGrantConditionList(stringsOf(b.Custom["grant-condition"]))
+				if err != nil {
+					return nil, fmt.Errorf("credential new: --grant-condition: %w", err)
+				}
+				a.GrantConditions = v
+			}
 			a.DelegateCapsPresent = b.Set["delegate-caps"]
 			if b.Set["delegate-caps"] {
 				v, err := parseCapsFlag(b.Str("delegate-caps"))
@@ -5084,6 +5176,13 @@ func init() {
 				}
 				a.Overrides = v
 			}
+			if b.Set["grant-condition"] {
+				v, err := parseGrantConditionList(stringsOf(b.Custom["grant-condition"]))
+				if err != nil {
+					return nil, fmt.Errorf("credential new: --grant-condition: %w", err)
+				}
+				a.GrantConditions = v
+			}
 			a.DelegateCapsPresent = b.Set["delegate-caps"]
 			if b.Set["delegate-caps"] {
 				v, err := parseCapsFlag(b.Str("delegate-caps"))
@@ -5147,6 +5246,13 @@ func init() {
 				}
 				a.Overrides = v
 			}
+			if b.Set["grant-condition"] {
+				v, err := parseGrantConditionList(stringsOf(b.Custom["grant-condition"]))
+				if err != nil {
+					return nil, fmt.Errorf("credential new: --grant-condition: %w", err)
+				}
+				a.GrantConditions = v
+			}
 			a.DelegateCapsPresent = b.Set["delegate-caps"]
 			if b.Set["delegate-caps"] {
 				v, err := parseCapsFlag(b.Str("delegate-caps"))
@@ -5209,6 +5315,13 @@ func init() {
 					return nil, fmt.Errorf("credential rekey: --scope-for: %w", err)
 				}
 				a.Overrides = v
+			}
+			if b.Set["grant-condition"] {
+				v, err := parseGrantConditionList(stringsOf(b.Custom["grant-condition"]))
+				if err != nil {
+					return nil, fmt.Errorf("credential rekey: --grant-condition: %w", err)
+				}
+				a.GrantConditions = v
 			}
 			a.DelegateCapsPresent = b.Set["delegate-caps"]
 			if b.Set["delegate-caps"] {
@@ -5276,6 +5389,13 @@ func init() {
 				}
 				a.Overrides = v
 			}
+			if b.Set["grant-condition"] {
+				v, err := parseGrantConditionList(stringsOf(b.Custom["grant-condition"]))
+				if err != nil {
+					return nil, fmt.Errorf("credential rekey: --grant-condition: %w", err)
+				}
+				a.GrantConditions = v
+			}
 			a.DelegateCapsPresent = b.Set["delegate-caps"]
 			if b.Set["delegate-caps"] {
 				v, err := parseCapsFlag(b.Str("delegate-caps"))
@@ -5340,6 +5460,13 @@ func init() {
 					return nil, fmt.Errorf("credential rekey: --scope-for: %w", err)
 				}
 				a.Overrides = v
+			}
+			if b.Set["grant-condition"] {
+				v, err := parseGrantConditionList(stringsOf(b.Custom["grant-condition"]))
+				if err != nil {
+					return nil, fmt.Errorf("credential rekey: --grant-condition: %w", err)
+				}
+				a.GrantConditions = v
 			}
 			a.DelegateCapsPresent = b.Set["delegate-caps"]
 			if b.Set["delegate-caps"] {
