@@ -107,7 +107,7 @@ func TestLocalX11Display(t *testing.T) {
 	}
 }
 
-// Windows has no /tmp/.X11-unix: a bare ":0" there passed the check and
+// No Windows X server serves /tmp/.X11-unix: a bare ":0" there passed the check and
 // then failed to dial, after the TUI had already restarted the agent for it.
 func TestLocalX11DisplayForWindowsNeedsAHost(t *testing.T) {
 	if _, err := localX11DisplayFor(":0", "windows"); err == nil || !strings.Contains(err.Error(), "localhost:0") {

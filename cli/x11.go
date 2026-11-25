@@ -85,8 +85,9 @@ func LocalX11Display() (string, error) {
 }
 
 // localX11DisplayFor is LocalX11Display for a given DISPLAY and GOOS. A
-// host-less DISPLAY means the unix socket /tmp/.X11-unix/XN, which Windows
-// does not have: VcXsrv listens on TCP, so the value must name a host.
+// host-less DISPLAY means the unix socket /tmp/.X11-unix/XN. Windows has
+// AF_UNIX, but no Windows X server serves that path: VcXsrv listens on TCP
+// 6000+N, so there the value must name a host.
 func localX11DisplayFor(display, goos string) (string, error) {
 	network, _, _, err := localXServerDialSpec(display)
 	if err != nil {
@@ -94,7 +95,7 @@ func localX11DisplayFor(display, goos string) (string, error) {
 	}
 	if network == "unix" && goos == "windows" {
 		n, _ := x11DisplayNumber(display)
-		return "", fmt.Errorf("x11: DISPLAY=%s names a unix socket, which Windows does not have; set DISPLAY=localhost:%d", display, n)
+		return "", fmt.Errorf("x11: DISPLAY=%s names the unix socket /tmp/.X11-unix/X%d, which no Windows X server serves (VcXsrv listens on TCP); set DISPLAY=localhost:%d", display, n, n)
 	}
 	return display, nil
 }

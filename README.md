@@ -907,8 +907,9 @@ exported as `$DISPLAY`). Override the display number with `--x11-display N`
 (default 10). Not available with `--detach` or for the WebUI client.
 
 `$DISPLAY` must name a display the client can dial: `[unix]:N` is the unix
-socket `/tmp/.X11-unix/XN`, `host:N` is TCP `host:6000+N`. On Windows there is
-no unix socket, so write the host (`localhost:0` for VcXsrv's display 0); with
+socket `/tmp/.X11-unix/XN`, `host:N` is TCP `host:6000+N`. Windows has unix
+sockets, but no Windows X server listens at that path (VcXsrv listens on TCP),
+so write the host there (`localhost:0` for VcXsrv's display 0); with
 no `xauth` there the X server must accept unauthenticated connections
 (XLaunch: "Disable access control").
 
