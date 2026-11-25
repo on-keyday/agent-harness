@@ -906,6 +906,29 @@ local X server (Linux with `$DISPLAY`, or Windows/macOS with VcXsrv/XQuartz
 exported as `$DISPLAY`). Override the display number with `--x11-display N`
 (default 10). Not available with `--detach` or for the WebUI client.
 
+`$DISPLAY` must name a display the client can dial: `[unix]:N` is the unix
+socket `/tmp/.X11-unix/XN`, `host:N` is TCP `host:6000+N`. On Windows there is
+no unix socket, so write the host (`localhost:0` for VcXsrv's display 0); with
+no `xauth` there the X server must accept unauthenticated connections
+(XLaunch: "Disable access control").
+
+From the CLI the tunnel lives as long as the attach: a detach (`Ctrl+]`)
+closes it, and the GUI programs with it. The TUI keeps it instead, in its
+forward registry: it survives a detach and ends when the task does, when
+`x` kills it in the forwards pane (`f`, where it is listed), or when the TUI
+exits. **`D`** on a task row gives that task X11:
+
+- a live session this TUI holds the tunnel for: reattach;
+- a finished task: resume it with X11, conversation kept;
+- a live session without one: after a y/n, cancel it and resume it with X11
+  once it has finished, conversation kept (a running agent cannot gain
+  `DISPLAY`; a turn in flight is lost). `$DISPLAY` is checked before the
+  question, so nothing is cancelled when X11 could not open afterwards.
+
+The TUI also picks the display number: the lowest from the requested one
+(`--x11-display`, else 10) that none of its own tunnels uses, so two X11
+sessions on one runner do not collide on `6010`.
+
 ### Daemon lifecycle helpers
 
 Run the server and runner as **detached background daemons** instead of
@@ -2267,7 +2290,7 @@ who holds which capability (`caps audit`), `w`/`W` arm a watcher on the
 selected task, picking what to wake on — output quiet, the hooks' lifecycle,
 the program's status, any of them, or the next progress line (`W` fires as an
 operator notification), `X` empties its
-progress line, `I` the armed watchers
+progress line, `D` gives it X11 (see X11 forwarding), `I` the armed watchers
 (await-idle and await-progress, each with its condition), `V` the overview, `G` git, `F` files,
 `q` quit. **The authoritative list is the TUI itself**:
 the footer shows the keys that work in the focused pane and `?` shows

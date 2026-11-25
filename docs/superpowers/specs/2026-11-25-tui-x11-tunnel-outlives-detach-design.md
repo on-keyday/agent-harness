@@ -110,3 +110,22 @@ an in-flight turn is never hidden behind a single unconfirmed key.
   host (`localhost:0`); a bare `:0` resolves to a unix socket
   (`localXServerDialSpec`). `D` on a task, `xclock &`, Ctrl+], reattach: the
   clock is still there.
+
+## Amendment (as built, 2026-11-25)
+
+- A finished **background** task gets a hint from `D`, not a resume: its
+  resume stays in background, which the server refuses with X11. The table
+  above names only finished tasks in general.
+- The builder's open points, as decided: no cmdline verb mirrors `D` (the
+  typed form is `session new --x11 --resume <id> --resume-conversation`); the
+  wait reads task statuses as they land (snapshot and tasks.status), bounded
+  at 30s, after which the restart is given up and said so; a refused resume
+  shows the ordinary open-failure line and releases its display number.
+- On the TUI command line, `--x11-display N` is the lowest number the TUI may
+  take, not the exact one (the CLI still uses N exactly). The cmdresult line
+  `forward started: <id> --x11 :N -> <DISPLAY>` names the number used.
+- Measured live (dummy harness, socat stand-in): after the task ended, the
+  TUI dropped the forward at once (`forward stopped: task is no longer
+  running`), but the runner's `127.0.0.1:6010` listener was still bound ~9s
+  later and gone by ~20s. A `D` on another task inside that window could pick
+  10 again and fail to bind; it is reported, not retried.
