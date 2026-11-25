@@ -89,6 +89,19 @@ the author chose it while writing; those rows are the ones to check.
 - Pillar D itself (provisioner, reclamation, reconciliation).
 - Host conditions on forwards (C14), path conditions on file transfer, and
   conditions on any bit not listed in C9.
+- Tying a runner identity to the key it registers with. `Registry.Add` refuses
+  a key mismatch only while the identity's current holder is connected
+  (`server/registry.go:204-210`), so a runner using a bound key that knows an
+  offline runner's identity can register as it. What it gains is limited by
+  the binding (C2) and by the readopt check (§ Bound enrollment); persisting
+  identity↔key changes runner registration, the path the harness upgrades
+  itself through, and is its own change.
+- Pinning a forward's per-connection open to the host and port its
+  registration named. Today any holder of the bit may open any port through a
+  registration (`server/port_forward.go:41-68` reads `RemotePort` from each
+  open, not from the registration); this spec checks the port against a
+  `PortRange` condition on each open (§ Grant conditions) and leaves the
+  unconditioned behaviour as it is.
 - Binding a key to a root instead of a task (a warm pool that serves several
   tasks). It would need a condition-like root set; per-task ephemeral runners
   do not.
@@ -97,6 +110,21 @@ the author chose it while writing; those rows are the ones to check.
   unconditioned `exec_run` over the same task can change what the command does,
   and so can an agent running in that task. Where the command lives is the
   operator's arrangement; § Surfaces requires the overlap to be shown.
+
+## Approaches
+
+Each row is a choice where more than one way was weighed in the conversation
+of 2026-11-26.
+
+| Choice | Considered | Picked, and why |
+| --- | --- | --- |
+| Where the pillar-D controller sits | in the server (a provisioner the scheduler calls); outside it, holding a credential; a warm pool of idle runners | outside, first — no server change to prototype; the server-side form needs the same binding this spec adds |
+| How to narrow enrollment | a new bit for bound enrollment beside `runner_enroll`; scope on `runner_enroll` itself | scope on the existing bit (C1): global already means "every task, including later ones", and the one holder was already global (C3) |
+| How attenuation of conditions works | containment (IAM-style); appended caveats (Macaroons / Biscuit) | containment (C5): one value to display, and every condition kind has a cheap containment test once regex and globs are out |
+| Where condition bodies live | inline in every format; a separate store with a u32 reference; on the `TaskEntry` with a one-bit marker | the `TaskEntry` (C6): no datagram carries a body, and no separate store with its own lifecycle |
+| Where an action is defined | on the runner that runs it; on the server | the server (C8): managed in one place; the server already relays any argv an `exec_run` holder sends, so no new trust |
+| What an action runs against | a long-lived task on the host; a new runner-targeted exec | a task (C10): the existing `ExecRunRequest` path |
+| Whether an action can change | immutable, re-grant to change; editable, gated like `set_caps` | editable (C11): one edit instead of N re-grants, under the gate a re-grant already has |
 
 ## Design
 
@@ -130,6 +158,10 @@ the author chose it while writing; those rows are the ones to check.
   `server/schedule_handler.go:670`) pass the task id. Where there is none yet
   (a new foreground open, a schedule check at creation), they pass zero, and
   zero matches no binding.
+- Readopt: `readoptHeldTasks` (`server/readopt.go:63-81`) also refuses a held
+  task that the reporting runner's binding does not name, with its own log
+  line. Readopt places tasks without `Candidates`, so the placement rule above
+  does not reach it.
 - A key bound to T gives whoever holds the private half T's prompt and a ticket
   with T's caps. Granting `runner_enroll` over T is therefore a statement that
   the holder may take over T's execution; the bit stays `TierStrong`.
@@ -182,7 +214,18 @@ the author chose it while writing; those rows are the ones to check.
   answer "not reached" for a conditioned bit. A new
   `authorizeObject(cid, want, target, obj)` evaluates the condition. It is the
   only way past a conditioned bit, so a gate that does not pass the object
-  denies. Objects: the action id for `exec_run`; the port for a forward.
+  denies. Every existing gate on a C9 bit, and the object each passes:
+
+  | Gate | Object |
+  | --- | --- |
+  | `openExecRun` (`server/exec_run.go`) | the invoked action id; a raw argv has none and is refused |
+  | `handleExecRunKill` (`server/exec_run.go:422`) | the action id the exec was started with; an exec started from a raw argv is not stoppable through an `ActionSet`-conditioned bit |
+  | shared transcripts, `includeShared` (`server/transcript.go:64-65`) | none: a conditioned `exec_run` does not include shared transcripts |
+  | `RegisterPortForwardRequest` | `target_port` (local) / `bind_port` (remote), C14 |
+  | per-connection `OpenPortForward` (`server/task_handler.go:838-845` → `server/port_forward.go`) | the open's own `RemotePort`. This is where `PortRange` holds for a tcp `-L`: each connection's open names its port (`server/port_forward.go:41-68`), so a check at registration alone would let a holder register an allowed port and open any other |
+  | `KillPortForward` (`server/task_handler.go:896-901`) | the registration's port |
+
+  A gate added later on these bits goes through `authorizeObject` or denies.
 - Attenuation, in `authority` beside `Attenuate` / `ClampUnder`: a child naming
   no condition for a bit the granter holds conditioned inherits the granter's
   condition. A child naming a condition not contained in the granter's is
@@ -350,10 +393,17 @@ func ParseTemplate(words []string, params []protocol.ActionParam) ([]protocol.Ac
   fields (name, params, template, …), not as encoded wire bytes, so a later
   `.bgn` change does not reinterpret the file.
 - `server/action_handler.go`: `handleActionPut`, `handleActionRemove`,
-  `handleActionList`. `action_put` with a non-zero id collects the holders
-  (tasks whose conditions name the id, from the task store; schedules, from
-  the schedule store), applies C11 to each before writing, then bumps the
-  revision.
+  `handleActionList`. `action_put` with a non-zero id collects the holders —
+  every task in the task store, whatever its status (a finished task can be
+  resumed with its recorded caps), and every schedule in the schedule store,
+  whose stored conditions name the id — applies C11 to each before writing,
+  then bumps the revision. An editor that is itself a holder is refused, as
+  `regrantReaches` refuses a caller's own task
+  (`server/set_caps_handler.go:168-175`): editing an action you hold would
+  change your own authority. Pruned tasks are not holders; a task `restore`
+  brings back keeps the conditions it was pruned with and runs whatever
+  revision is current then. That gap in C11 is accepted: a restore is an
+  operator act on named ids.
 - `authority/need.go`: `action_put` and `action_remove` →
   `Capability_ActionAdmin` (central); `action_list` →
   `AnyOf: ActionAdmin | ExecRun`. `server/scope_completeness_test.go`: all
@@ -442,6 +492,15 @@ loads as unbound, so no transition window is needed.
   schedule it may not `schedule edit`, is refused and changes nothing. After an
   edit, a holder's next run uses the new template. Deleting an action makes
   `exec_run` of it refused for a grantee that could run it before.
+- C7 object gates: for an `ActionSet`-conditioned `exec_run`, kill of an exec
+  started with an allowed action succeeds and of a raw-argv exec is refused;
+  shared transcripts are not included. For a `PortRange`-conditioned
+  `forward_local`, a per-connection open to a port outside the range is
+  refused even when the registration named an allowed port.
+- Readopt: a runner with a key bound to T that reports a held task U is refused
+  U and keeps T.
+- C11 holders: an edit is refused when a finished task holds the action and
+  the editor cannot re-grant it, and when the editor itself holds it.
 - C15: a response encoded over the budget arrives as `response_too_large` over
   UDP. Demonstrated red first: an oversized `whoami` over `scripts/netem-lab`
   hangs before the guard.
