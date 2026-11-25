@@ -377,7 +377,7 @@ func sameScope(a, b Scope) bool {
 	}
 	for i := range a.Overrides {
 		x, y := a.Overrides[i], b.Overrides[i]
-		if x.Caps != y.Caps || x.Base != y.Base || x.ExcludeSelf != y.ExcludeSelf || !sameIDs(x.IDs, y.IDs) {
+		if x.Caps != y.Caps || x.Base != y.Base || x.ExcludeSelf != y.ExcludeSelf || !sameIDs(x.IDs, y.IDs) || !x.Cond.Equal(y.Cond) {
 			return false
 		}
 	}

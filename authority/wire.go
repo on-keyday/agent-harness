@@ -51,6 +51,11 @@ func ScopeFromWire(w protocol.TaskScope, ov []protocol.ScopeOverride) Scope {
 	}
 	for _, o := range ov {
 		so := ScopeOverride{Caps: o.Caps, Base: o.Base, ExcludeSelf: o.ExcludeSelf(), IDs: idsFromWire(o.Ids)}
+		if o.Conditioned() {
+			// Body unknown until ConditionsFromWire attaches it: until then
+			// the override reaches nothing (C7).
+			so.Cond = &Condition{}
+		}
 		s.Overrides = append(s.Overrides, so)
 	}
 	return s
@@ -81,6 +86,7 @@ func (s Scope) OverridesToWire() []protocol.ScopeOverride {
 	for _, o := range s.Overrides {
 		w := protocol.ScopeOverride{Caps: o.Caps, Base: o.Base}
 		w.SetExcludeSelf(o.ExcludeSelf)
+		w.SetConditioned(o.Cond != nil)
 		w.Ids = idsToWire(o.IDs)
 		w.IdsLen = uint16(len(w.Ids))
 		out = append(out, w)

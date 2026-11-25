@@ -46,7 +46,7 @@ func Attenuate(req Scope, childCaps protocol.Capability, creator *Reach) (out Sc
 	}
 	for _, o := range req.Overrides {
 		out.Overrides = append(out.Overrides, ScopeOverride{
-			Caps: o.Caps, Base: o.Base, ExcludeSelf: o.ExcludeSelf, IDs: NormalizeIDs(o.IDs),
+			Caps: o.Caps, Base: o.Base, ExcludeSelf: o.ExcludeSelf, IDs: NormalizeIDs(o.IDs), Cond: o.Cond,
 		})
 	}
 
@@ -78,6 +78,26 @@ func Attenuate(req Scope, childCaps protocol.Capability, creator *Reach) (out Sc
 	wantVis := MinBase(out.VisRank(), r.scope.VisRank())
 	exercised := ExercisedBits(childCaps)
 	out = r.BoundRanks(out, exercised)
+	// Conditions (C5): a bit the creator holds conditioned keeps a condition
+	// inside the creator's — refused when the child names a wider one,
+	// inherited when it names none (a base-clause bit moves into an override
+	// to carry it). Like ids, a condition is checked, never clamped.
+	var ok2 bool
+	var wider protocol.Capability
+	if out, wider, ok2 = applyConds(out, exercised, func(bit protocol.Capability, cur *Condition) (*Condition, bool) {
+		pc := r.scope.CondFor(bit)
+		switch {
+		case pc == nil:
+			return cur, true
+		case cur == nil:
+			return pc, true
+		case pc.Contains(cur):
+			return cur, true
+		}
+		return nil, false
+	}); !ok2 {
+		return Scope{}, widerPrefix + CapsLabel(wider), false
+	}
 	// Written explicitly once the rank no longer follows the clamped base, as
 	// ClampUnder does: a child whose visibility followed a base the
 	// creator may act through but not see would otherwise see it.
@@ -139,6 +159,11 @@ func IsNarrowing(beforeCaps protocol.Capability, before Scope, afterCaps protoco
 		bBase, bExcl, bIDs := before.ForCap(bit)
 		aBase, aExcl, aIDs := after.ForCap(bit)
 		if reachNarrowed(bBase, bExcl, bIDs, aBase, aExcl, aIDs) {
+			return true
+		}
+		// A condition added, narrowed, or replaced by one that does not
+		// cover the old: some object the bit reached is no longer reached.
+		if !after.CondFor(bit).Contains(before.CondFor(bit)) {
 			return true
 		}
 	}
@@ -243,6 +268,17 @@ func ClampUnder(child Scope, childCaps protocol.Capability, parent *Reach) Scope
 		o.IDs = keep(o.IDs, o.Caps)
 		out.Overrides = append(out.Overrides, o)
 	}
+
+	// Conditions are intersected with the parent's per bit, as Attenuate
+	// checks them; a cascade has no caller to refuse. A base-clause bit under
+	// a conditioned parent moves into an override carrying the parent's.
+	out, _, _ = applyConds(out, exercised, func(bit protocol.Capability, cur *Condition) (*Condition, bool) {
+		pc := parent.scope.CondFor(bit)
+		if pc == nil {
+			return cur, true
+		}
+		return cur.Intersect(pc), true
+	})
 
 	// No final clamp against the visibility rank. One used to live here to keep
 	// every action set inside what ls shows; that rule is gone, and the two

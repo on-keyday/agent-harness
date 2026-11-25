@@ -117,6 +117,9 @@ func attenuateError(offender string) error {
 	if len(offender) >= len(prefix) && offender[:len(prefix)] == prefix {
 		return &InvalidScopeError{Err: fmt.Errorf("%s", offender[len(prefix):])}
 	}
+	if len(offender) >= len(widerPrefix) && offender[:len(widerPrefix)] == widerPrefix {
+		return &WiderConditionError{Caps: capsFromLabel(offender[len(widerPrefix):])}
+	}
 	return &OutOfReachError{ID: offender}
 }
 

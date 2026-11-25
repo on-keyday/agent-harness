@@ -45,6 +45,10 @@ func NewReach(hex string, scope Scope, children map[string][]string) *Reach {
 //
 // Where the granter's override for a bit is WIDER than its base, the bit may
 // rise to it: the bound is the granter's scope for the bit, not its base.
+//
+// Every piece keeps the condition of the entry it came from; pieces carved
+// from the base clause have none. Conditions are bounded separately
+// (Attenuate, ClampUnder), after this.
 func (r *Reach) BoundRanks(s Scope, held protocol.Capability) Scope {
 	bound := func(rank protocol.ScopeBase, bit protocol.Capability) protocol.ScopeBase {
 		b, _, _ := r.scope.ForCap(bit)
@@ -71,10 +75,11 @@ func (r *Reach) BoundRanks(s Scope, held protocol.Capability) Scope {
 		}
 		return stay, moved
 	}
-	withEntry := func(pieces []ScopeOverride, excl bool, ids []string) []ScopeOverride {
+	withEntry := func(pieces []ScopeOverride, excl bool, ids []string, cond *Condition) []ScopeOverride {
 		for i := range pieces {
 			pieces[i].ExcludeSelf = excl
 			pieces[i].IDs = append([]string(nil), ids...)
+			pieces[i].Cond = cond
 		}
 		return pieces
 	}
@@ -88,12 +93,12 @@ func (r *Reach) BoundRanks(s Scope, held protocol.Capability) Scope {
 		keep := MinBase(o.Base, r.scope.Base)
 		stay, moved := split(o.Base, keep, o.Caps&held)
 		if main := stay | o.Caps&^held; main != 0 {
-			out.Overrides = append(out.Overrides, ScopeOverride{Caps: main, Base: keep, ExcludeSelf: o.ExcludeSelf, IDs: o.IDs})
+			out.Overrides = append(out.Overrides, ScopeOverride{Caps: main, Base: keep, ExcludeSelf: o.ExcludeSelf, IDs: o.IDs, Cond: o.Cond})
 		}
-		out.Overrides = append(out.Overrides, withEntry(moved, o.ExcludeSelf, o.IDs)...)
+		out.Overrides = append(out.Overrides, withEntry(moved, o.ExcludeSelf, o.IDs, o.Cond)...)
 	}
 	_, moved := split(s.Base, out.Base, held&^overridden&^protocol.Capability_Spawn)
-	out.Overrides = append(out.Overrides, withEntry(moved, s.ExcludeSelf, s.IDs)...)
+	out.Overrides = append(out.Overrides, withEntry(moved, s.ExcludeSelf, s.IDs, nil)...)
 	return out
 }
 

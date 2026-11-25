@@ -73,6 +73,10 @@ type ScopeOverride struct {
 	Base        protocol.ScopeBase
 	ExcludeSelf bool
 	IDs         []string
+	// Cond bounds which object inside a target these bits reach (grant
+	// conditions, condition.go). nil = unconditioned. Shared between copies:
+	// a *Condition is never mutated after it is built.
+	Cond *Condition
 }
 
 // TaskIDHexLen is the hex width of a protocol.TaskID (16 bytes).
@@ -135,6 +139,8 @@ func CapsLabel(m protocol.Capability) string {
 //     ForCap a lookup rather than a precedence walk.
 //   - VisBase must be zero when VisBasePresent is not set, so one authority
 //     has exactly one encoding.
+//   - A condition is within its limits and its kind applies to every bit of
+//     its override's mask (grant conditions C9).
 //
 // **The action rank is deliberately NOT compared against the visibility rank.**
 // An earlier version required base <= visRank on the reasoning that `ls` should
@@ -175,6 +181,9 @@ func Validate(s Scope) error {
 		}
 		if overlap := seen & o.Caps; overlap != 0 {
 			return fmt.Errorf("scope override masks intersect at %s", CapsLabel(overlap))
+		}
+		if err := validateCond(o); err != nil {
+			return err
 		}
 		seen |= o.Caps
 	}

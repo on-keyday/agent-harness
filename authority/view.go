@@ -153,8 +153,8 @@ func DelegableOf(tasks []Task, id string) ReachResult {
 }
 
 // Wider is how a task reaches further than its creator: the exercised bits
-// whose target set is not inside the creator's for that bit, and whether it
-// sees more than the creator sees.
+// whose target set, or condition, is not inside the creator's for that bit,
+// and whether it sees more than the creator sees.
 type Wider struct {
 	Bits protocol.Capability
 	Sees bool
@@ -203,7 +203,9 @@ func WiderThanParent(tasks []Task, id string) Wider {
 			continue
 		}
 		pAll, pSet, _ := actionReach(p, bit, v.children)
-		if exceeds(cAll, cSet, pAll, pSet) {
+		// A condition wider than the creator's reaches objects the creator
+		// cannot, over the same targets (grant conditions C5).
+		if exceeds(cAll, cSet, pAll, pSet) || !p.Scope.CondFor(bit).Contains(t.Scope.CondFor(bit)) {
 			w.Bits |= bit
 		}
 	}
