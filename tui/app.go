@@ -242,6 +242,11 @@ type App struct {
 	// InteractiveReadyMsg has not arrived yet; the number then lives on its
 	// ForwardX11 entry instead. See pickX11Display.
 	x11Reserved map[int]bool
+	// x11RestartAsk is the task (32 hex) whose D restart awaits y/n; "" =
+	// none. x11Restarts holds the ones whose cancel was sent and whose X11
+	// resume waits for a finished status (advanceX11Restarts).
+	x11RestartAsk string
+	x11Restarts   map[string]bool
 
 	// rawModal is the third way to start a forward (`t`), alongside p/-L and
 	// b/-R: a live host:port connection whose client-side endpoint is this
@@ -455,6 +460,7 @@ func New(cfg Config) *App {
 		authorityRecvAt:   map[string]time.Time{},
 		activeForwards:    map[int]*PortForwardSession{},
 		x11Reserved:       map[int]bool{},
+		x11Restarts:       map[string]bool{},
 		pendingKeep:       map[int]string{},
 		sessionCaps:       protocol.Capability_None,
 		sessionScope:      protocol.TaskScope{Base: protocol.ScopeBase_Subtree},
@@ -624,9 +630,9 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		listCmd := a.requestScheduleList()
 		if a.workspaceArmed {
 			a.workspaceArmed = false
-			return a, tea.Batch(listCmd, a.applyWorkspace())
+			return a, tea.Batch(listCmd, a.applyWorkspace(), a.advanceX11Restarts())
 		}
-		return a, listCmd
+		return a, tea.Batch(listCmd, a.advanceX11Restarts())
 
 	case TaskEventMsg:
 		id := FormatTaskID(msg.Event.TaskId)
@@ -676,7 +682,7 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.tasksByID[id] = cur
 		a.refreshTasksTable()
 		a.schedules.rebuild()
-		return a, a.scheduleListFor(msg.Event)
+		return a, tea.Batch(a.scheduleListFor(msg.Event), a.advanceX11Restarts())
 
 	case RunnerEventMsg:
 		// RunnerStatusEvent now carries the runner's identity, but a registered
@@ -1286,6 +1292,8 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 	case CancelResultMsg:
 		if msg.Err != nil {
+			// A D restart whose cancel failed is over: nothing to resume.
+			delete(a.x11Restarts, msg.Resolved)
 			a.cmdresult.Append(ErrorStyle.Render("cancel failed: " + msg.Err.Error()))
 			return a, nil
 		}
@@ -1294,6 +1302,13 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 			short = short[:12]
 		}
 		a.cmdresult.Append(OKStyle.Render("cancelled ") + short)
+		return a, nil
+
+	case x11RestartTimeoutMsg:
+		if a.x11Restarts[msg.TaskID] {
+			delete(a.x11Restarts, msg.TaskID)
+			a.cmdresult.Append(WarnStyle.Render(fmt.Sprintf("D %s: the task did not finish within %s; nothing restarted", shortTaskID(msg.TaskID), x11RestartWait)))
+		}
 		return a, nil
 
 	case SessionModeResultMsg:
@@ -2238,6 +2253,9 @@ func (a *App) View() string {
 	}
 	if a.credRevokeID != "" {
 		footer = WarnStyle.Render(clipLine(credRevokePrompt(a.credRevokeID), 0, a.width))
+	}
+	if a.x11RestartAsk != "" {
+		footer = WarnStyle.Render(clipLine(x11RestartPrompt(a.x11RestartAsk), 0, a.width))
 	}
 
 	view := strings.Join([]string{

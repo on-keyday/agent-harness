@@ -2,6 +2,7 @@ package cli
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -86,5 +87,22 @@ func TestLocalXServerDialSpec(t *testing.T) {
 		if err != nil || network != tc.wantNetwork || host != tc.wantHost || port != tc.wantPort {
 			t.Errorf("%q: got (%q,%q,%d,%v)", tc.display, network, host, port, err)
 		}
+	}
+}
+
+// The TUI asks this before it cancels a live session to restart it with X11:
+// a restart that cannot open X afterwards must not kill the agent first.
+func TestLocalX11Display(t *testing.T) {
+	t.Setenv("DISPLAY", "")
+	if _, err := LocalX11Display(); err == nil || !strings.Contains(err.Error(), "empty") {
+		t.Fatalf("empty DISPLAY: err = %v", err)
+	}
+	t.Setenv("DISPLAY", "localhost:0")
+	if d, err := LocalX11Display(); err != nil || d != "localhost:0" {
+		t.Fatalf("localhost:0: %q, %v", d, err)
+	}
+	t.Setenv("DISPLAY", "nonsense")
+	if _, err := LocalX11Display(); err == nil {
+		t.Fatal("a DISPLAY without a display number was accepted")
 	}
 }

@@ -53,6 +53,7 @@ type mainKeyMap struct {
 	ResumeAnyFresh         string
 	BackgroundOpen         string
 	RunMode                string
+	X11Open                string
 	ViewOnly               string
 	AwaitIdle              string
 	AwaitIdleNotify        string
@@ -101,6 +102,7 @@ var mainKeys = mainKeyMap{
 	ResumeAnyFresh:         "U",
 	BackgroundOpen:         "N",
 	RunMode:                "E",
+	X11Open:                "D",
 	ViewOnly:               "v",
 	AwaitIdle:              "w",
 	AwaitIdleNotify:        "W",
@@ -357,6 +359,8 @@ var mainKeyBindings = []keyBinding{
 	{Keys: []string{mainKeys.BackgroundOpen}, Scope: scopeTasks | scopeSchedules | scopeCredentials, Do: (*App).onBackgroundOpen, Short: "N new",
 		Long: "in the tasks table, open a background session (a prompt and a deadline, queued until a runner is free, ended by its conditions); in the schedules table, create a schedule (schedule new); in the credentials table, put `credential new --ttl ` on the command line to complete"},
 	{Keys: []string{mainKeys.RunMode}, Scope: scopeTasks, Do: (*App).onRunMode, Short: "E run mode", Long: "switch the selected running session between foreground and background (background asks for a deadline)"},
+	{Keys: []string{mainKeys.X11Open}, Scope: scopeTasks, Do: (*App).onX11Open, Short: "D x11",
+		Long: "give the selected task X11: reattach if this TUI holds its tunnel, resume a finished task with X11, or restart a live one with X11 after a y/n (conversation kept). The tunnel then lives until the task ends or this TUI exits, Ctrl+] included"},
 
 	// --- cmdline ---
 	{Keys: []string{"up", "down"}, Scope: scopeCmdline, Short: "↑/↓ history", Long: "walk the command history"},

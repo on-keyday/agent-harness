@@ -14,6 +14,10 @@ const (
 	// still drives the agent, through turns and approvals rather than through
 	// keystrokes.
 	actionChat
+	// actionX11Restart is D on a live session this TUI holds no X11 tunnel
+	// for: after a y/n it is cancelled and resumed with X11, conversation
+	// kept, because a running agent's environment cannot gain DISPLAY.
+	actionX11Restart
 )
 
 // taskAction is what the r/R keys should do for the selected task.
@@ -77,4 +81,42 @@ func resumeReattachAction(t *protocol.TaskInfo, withContinue bool) taskAction {
 	}
 	return taskAction{Kind: actionNone,
 		Hint: "r/R: pick a live session (take over) or a finished task (resume)"}
+}
+
+// x11OpenAction decides what D does for the selected task. held reports
+// whether this TUI holds an X11 tunnel (a ForwardX11 registry entry) for it.
+// A live session with one is reattached, since its X is already there; a
+// live session without one can only gain DISPLAY by restarting, which is
+// destructive and so asked first (the one-shot takeover above is two explicit
+// keystrokes for the same reason); a finished task is resumed with X11. A
+// background task is refused by the server for X11 (no client to host the
+// tunnel), and its resume stays in background, so both say so here.
+func x11OpenAction(t *protocol.TaskInfo, held bool) taskAction {
+	if t == nil {
+		return taskAction{Kind: actionNone, Hint: "no task selected"}
+	}
+	background := t.RunMode == protocol.RunMode_Background
+	switch t.Status {
+	case protocol.TaskStatus_Succeeded, protocol.TaskStatus_Failed, protocol.TaskStatus_Cancelled:
+		if background {
+			return taskAction{Kind: actionNone,
+				Hint: "D: a background task resumes in background, which has no client to host the X tunnel"}
+		}
+		return taskAction{Kind: actionResume, ResumeConversation: true}
+	}
+	if !protocol.IsPTYKind(t.Kind) {
+		return taskAction{Kind: actionNone, Hint: "D: X11 needs a terminal session, and this task has none"}
+	}
+	if !taskSessionAlive(t.Status) {
+		return taskAction{Kind: actionNone,
+			Hint: "D: task is still queued — D gives it X11 once it runs or after it finishes"}
+	}
+	if background {
+		return taskAction{Kind: actionNone,
+			Hint: "D: a background session has no client to host the X tunnel — E switches it to foreground first"}
+	}
+	if held {
+		return taskAction{Kind: actionReattach}
+	}
+	return taskAction{Kind: actionX11Restart}
 }

@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/cli/verb"
+	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 const x11TaskID = "0123456789abcdef0123456789abcdef"
@@ -113,5 +114,150 @@ func TestTuiSessionNewX11UsesAFreeDisplay(t *testing.T) {
 	_ = (tuiVerbs{a}).SessionNew(verb.SpawnAction{Repo: "/r", X11: true, X11Display: 10})
 	if len(got) != 1 || got[0] != 11 {
 		t.Fatalf("displays opened = %v; want [11]", got)
+	}
+}
+
+type x11Open struct {
+	resume  string
+	display int
+	conv    bool
+	sel     cli.SelectorOpts
+}
+
+// stubX11Open records what reaches the X11 open seam.
+func stubX11Open(t *testing.T) *[]x11Open {
+	var got []x11Open
+	old := openX11Session
+	t.Cleanup(func() { openX11Session = old })
+	openX11Session = func(c *cli.Client, repo string, sel cli.SelectorOpts, extraArgs []string, resumeTaskID string, displayN int, forwardID int, program *tea.Program, auth Authority, capsOverride, conv, exact bool, agent string, rm cli.RunModeFlags) tea.Cmd {
+		got = append(got, x11Open{resume: resumeTaskID, display: displayN, conv: conv, sel: sel})
+		return nil
+	}
+	return &got
+}
+
+// x11App seeds one interactive task in st and selects it.
+func x11App(t *testing.T, st protocol.TaskStatus) (*App, protocol.TaskInfo) {
+	a := New(Config{})
+	var ti protocol.TaskInfo
+	ti.Id.Id[0] = 0x58
+	ti.Kind = protocol.TaskKind_Interactive
+	ti.Status = st
+	ti.AssignedTo.Id[0] = 0x07
+	a.Update(SnapshotMsg{Tasks: []protocol.TaskInfo{ti}})
+	return a, ti
+}
+
+func x11Out(a *App) string { return strings.Join(a.cmdresult.lines, "\n") }
+
+func TestDReattachesWhenThisTUIHoldsTheTunnel(t *testing.T) {
+	got := stubX11Open(t)
+	a, ti := x11App(t, protocol.TaskStatus_Running)
+	a.activeForwards[1] = &PortForwardSession{ID: 1, TaskID: FormatTaskID(ti.Id), Direction: ForwardX11, X11Display: 10}
+	_, cmd := a.Update(runeKey('D'))
+	if cmd == nil {
+		t.Fatal("D on a session whose tunnel this TUI holds did nothing")
+	}
+	if len(*got) != 0 || a.x11RestartAsk != "" {
+		t.Fatalf("D reopened or asked instead of reattaching: opens=%v ask=%q", *got, a.x11RestartAsk)
+	}
+}
+
+func TestDResumesAFinishedTaskWithX11(t *testing.T) {
+	t.Setenv("DISPLAY", "localhost:0")
+	got := stubX11Open(t)
+	a, ti := x11App(t, protocol.TaskStatus_Cancelled)
+	a.Update(runeKey('D'))
+	want := x11Open{resume: FormatTaskID(ti.Id), display: 10, conv: true, sel: resumeSelectorOpts(ti.AssignedTo)}
+	if len(*got) != 1 || (*got)[0] != want {
+		t.Fatalf("opens = %+v; want [%+v]", *got, want)
+	}
+}
+
+func TestDAsksBeforeRestarting(t *testing.T) {
+	t.Setenv("DISPLAY", "localhost:0")
+	got := stubX11Open(t)
+	a, ti := x11App(t, protocol.TaskStatus_Running)
+	a.Update(tea.WindowSizeMsg{Width: 200, Height: 50})
+	_, cmd := a.Update(runeKey('D'))
+	if a.x11RestartAsk != FormatTaskID(ti.Id) || cmd != nil {
+		t.Fatalf("D did not just ask: ask=%q cmd=%v", a.x11RestartAsk, cmd != nil)
+	}
+	if !strings.Contains(a.View(), "restart") {
+		t.Fatal("the question is not on screen")
+	}
+	// q must not quit under a pending destructive question.
+	_, cmd = a.Update(runeKey('q'))
+	if cmd != nil {
+		t.Fatalf("q under the question returned a command (quit?)")
+	}
+	if a.x11RestartAsk != "" || len(a.x11Restarts) != 0 || len(*got) != 0 {
+		t.Fatalf("a non-y answer restarted something: ask=%q pending=%v opens=%v", a.x11RestartAsk, a.x11Restarts, *got)
+	}
+	if !strings.Contains(x11Out(a), "nothing restarted") {
+		t.Fatalf("no 'nothing restarted' line: %s", x11Out(a))
+	}
+}
+
+func TestDRefusesWithoutADisplay(t *testing.T) {
+	t.Setenv("DISPLAY", "")
+	a, _ := x11App(t, protocol.TaskStatus_Running)
+	a.Update(runeKey('D'))
+	if a.x11RestartAsk != "" {
+		t.Fatal("D asked to restart with no usable DISPLAY: the agent would be killed for nothing")
+	}
+	if !strings.Contains(x11Out(a), "DISPLAY") {
+		t.Fatalf("the refusal does not name DISPLAY: %s", x11Out(a))
+	}
+}
+
+func TestDRestartCancelsThenResumes(t *testing.T) {
+	t.Setenv("DISPLAY", "localhost:0")
+	got := stubX11Open(t)
+	a, ti := x11App(t, protocol.TaskStatus_Running)
+	id := FormatTaskID(ti.Id)
+	a.Update(runeKey('D'))
+	_, cmd := a.Update(runeKey('y'))
+	if cmd == nil || !a.x11Restarts[id] {
+		t.Fatalf("y did not cancel: cmd=%v pending=%v", cmd != nil, a.x11Restarts)
+	}
+	_, cmd = a.Update(runeKey('D'))
+	if cmd != nil || a.x11RestartAsk != "" || !strings.Contains(x11Out(a), "already restarting") {
+		t.Fatalf("a second D while restarting: cmd=%v ask=%q out=%s", cmd != nil, a.x11RestartAsk, x11Out(a))
+	}
+	if len(*got) != 0 {
+		t.Fatal("reopened before the task finished")
+	}
+	a.Update(TaskEventMsg{Event: protocol.TaskStatusEvent{TaskId: ti.Id, TaskStatus: protocol.TaskStatus_Cancelled, Kind: protocol.StatusEventKind_TaskEnded}})
+	if len(*got) != 1 || (*got)[0].resume != id || !(*got)[0].conv {
+		t.Fatalf("opens after the cancel = %+v; want one resume of %s with the conversation", *got, id)
+	}
+	if len(a.x11Restarts) != 0 {
+		t.Fatalf("the restart is still pending: %v", a.x11Restarts)
+	}
+}
+
+func TestDRestartGivesUpOnCancelError(t *testing.T) {
+	a, ti := x11App(t, protocol.TaskStatus_Running)
+	id := FormatTaskID(ti.Id)
+	a.x11Restarts[id] = true
+	a.Update(CancelResultMsg{IDPrefix: id, Resolved: id, Err: errors.New("denied")})
+	if len(a.x11Restarts) != 0 || !strings.Contains(x11Out(a), "denied") {
+		t.Fatalf("pending=%v out=%s", a.x11Restarts, x11Out(a))
+	}
+}
+
+func TestDRestartGivesUpAfterTimeout(t *testing.T) {
+	got := stubX11Open(t)
+	a, ti := x11App(t, protocol.TaskStatus_Running)
+	id := FormatTaskID(ti.Id)
+	a.x11Restarts[id] = true
+	a.Update(x11RestartTimeoutMsg{TaskID: id})
+	if len(a.x11Restarts) != 0 || !strings.Contains(x11Out(a), "did not finish") {
+		t.Fatalf("pending=%v out=%s", a.x11Restarts, x11Out(a))
+	}
+	a.Update(TaskEventMsg{Event: protocol.TaskStatusEvent{TaskId: ti.Id, TaskStatus: protocol.TaskStatus_Cancelled, Kind: protocol.StatusEventKind_TaskEnded}})
+	if len(*got) != 0 {
+		t.Fatal("a restart given up on still reopened the task")
 	}
 }

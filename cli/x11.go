@@ -75,6 +75,18 @@ func localXServerDialSpec(display string) (network, host string, port int, err e
 	return "tcp", hostPart, 6000 + n, nil
 }
 
+// LocalX11Display returns this client's $DISPLAY once it names a local X
+// server an X11 forward can dial, or why it does not. A caller about to do
+// something costly for X11 (the TUI restarts a live session with it) asks
+// first, so it does not pay and then fail at the open.
+func LocalX11Display() (string, error) {
+	d := os.Getenv("DISPLAY")
+	if _, _, _, err := localXServerDialSpec(d); err != nil {
+		return "", err
+	}
+	return d, nil
+}
+
 // localX11Cookie shells out to `xauth list <display>` and returns the cookie
 // bytes for the display number encoded in DISPLAY. Requires xauth on PATH.
 func localX11Cookie(display string) ([]byte, error) {

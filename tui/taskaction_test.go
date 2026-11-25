@@ -77,3 +77,46 @@ func TestResumeReattachAction(t *testing.T) {
 		t.Errorf("ended stream: want actionResume, got %v %q", got.Kind, got.Hint)
 	}
 }
+
+// D (X11) on each kind of row: reattach only where this TUI holds the
+// tunnel, restart (after a y/n) a live session without one, resume a finished
+// task with its conversation, and say why for everything else.
+func TestX11OpenAction(t *testing.T) {
+	inter := func(s protocol.TaskStatus) *protocol.TaskInfo {
+		return &protocol.TaskInfo{Status: s, Kind: protocol.TaskKind_Interactive}
+	}
+	bg := inter(protocol.TaskStatus_Running)
+	bg.RunMode = protocol.RunMode_Background
+	cases := []struct {
+		name string
+		t    *protocol.TaskInfo
+		held bool
+		want taskActionKind
+		hint string
+	}{
+		{"nil", nil, false, actionNone, "no task selected"},
+		{"running, held", inter(protocol.TaskStatus_Running), true, actionReattach, ""},
+		{"detached, held", inter(protocol.TaskStatus_Detached), true, actionReattach, ""},
+		{"running, not held", inter(protocol.TaskStatus_Running), false, actionX11Restart, ""},
+		{"detached, not held", inter(protocol.TaskStatus_Detached), false, actionX11Restart, ""},
+		{"background", bg, false, actionNone, "background"},
+		{"stream", &protocol.TaskInfo{Status: protocol.TaskStatus_Running, Kind: protocol.TaskKind_Stream}, false, actionNone, "terminal"},
+		{"queued", inter(protocol.TaskStatus_Queued), false, actionNone, "queued"},
+	}
+	for _, c := range cases {
+		got := x11OpenAction(c.t, c.held)
+		if got.Kind != c.want || !strings.Contains(got.Hint, c.hint) {
+			t.Errorf("%s: got %+v, want kind %v hint ~%q", c.name, got, c.want, c.hint)
+		}
+	}
+	for _, st := range []protocol.TaskStatus{protocol.TaskStatus_Succeeded, protocol.TaskStatus_Failed, protocol.TaskStatus_Cancelled} {
+		if got := x11OpenAction(inter(st), false); got.Kind != actionResume || !got.ResumeConversation {
+			t.Errorf("%v: got %+v, want a resume with the conversation", st, got)
+		}
+	}
+	done := inter(protocol.TaskStatus_Cancelled)
+	done.RunMode = protocol.RunMode_Background
+	if got := x11OpenAction(done, false); got.Kind != actionNone || !strings.Contains(got.Hint, "background") {
+		t.Errorf("finished background task: got %+v, want a hint (a background task resumes in background)", got)
+	}
+}
