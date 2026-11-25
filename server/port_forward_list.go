@@ -78,10 +78,9 @@ func (h *TaskHandler) listPortForwards(conn ConnHandle, requestID uint32, connID
 // rank is global sees
 // everything; anyone else sees only forwards for tasks in its own subtree.
 //
-// The reap is deliberately lazy — here, at the single call site — rather than
-// hooked into TaskStore.Finish/Cancel/MarkFailed and the runner-loss paths.
-// Intercepting a shared transition at some of its call sites is a failure mode
-// this repo has already paid for (see implementation-pitfalls Pitfall 3 / 10).
+// This reap is now the backstop: a task's end reaps its forwards eagerly
+// (reapTaskPortForwards, from the task_ended publication). It still catches a
+// registration that raced the end, at the cost of one status read per row.
 func (h *TaskHandler) visiblePortForwards(connID objproto.ConnectionID, filter protocol.TaskID) []protocol.PortForwardInfo {
 	all, allowed := h.visibleToCaller(connID)
 	filterHex := ""
@@ -258,6 +257,24 @@ func (h *TaskHandler) DropRunnerStateForwards(runnerCID string) {
 			continue
 		}
 		h.teardownPortForward(pf, protocol.PortForwardCloseReason_RunnerGone, "", true)
+	}
+}
+
+// reapTaskPortForwards ends every forward of a task that has just ended,
+// telling its client TaskGone and its runner to release any listener, udp
+// registration or tun. Called where the server publishes task_ended
+// (server.go), the one point Finish, MarkFailed and Cancel all reach, which is
+// also where the task's progress watchers are ended. Until this, the only reap
+// was the lazy one in visiblePortForwards: between a task ending and someone
+// listing forwards, a -R listener kept accepting connections and relaying them
+// to the client's target, since nothing on that path asks whether the task is
+// alive. The lazy reap stays as the backstop for a registration that races the
+// end.
+func (h *TaskHandler) reapTaskPortForwards(taskIDHex string) {
+	for _, pf := range h.pforwards().list() {
+		if pf.taskIDHex == taskIDHex {
+			h.closePortForward(pf, protocol.PortForwardCloseReason_TaskGone, "")
+		}
 	}
 }
 

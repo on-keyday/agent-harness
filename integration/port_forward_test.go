@@ -607,6 +607,58 @@ func TestRemotePortForwardE2E(t *testing.T) {
 		}
 	})
 
+	// --- The task ending must end its -R forwards by itself: the client is
+	// told (RunRemoteForward returns) and the runner listener closes, with no
+	// `forward ls` in between. Until the server reaped on task end, only a
+	// list call did this, and the runner kept accepting connections for a
+	// task that no longer existed and relaying them to the client's target.
+	t.Run("task_end_stops_forward", func(t *testing.T) {
+		pl, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		port2 := pl.Addr().(*net.TCPAddr).Port
+		pl.Close()
+		addr2 := net.JoinHostPort("127.0.0.1", strconv.Itoa(port2))
+		done2 := make(chan error, 1)
+		go func() {
+			done2 <- cli.RunRemoteForward(ctx, c, taskID, []cli.RemoteForwardSpec{{
+				BindAddr: "127.0.0.1", RunnerPort: port2, DialHost: "127.0.0.1", DialPort: echoPort}}, nil)
+		}()
+		deadline := time.Now().Add(8 * time.Second)
+		for {
+			tc, err := net.DialTimeout("tcp", addr2, 100*time.Millisecond)
+			if err == nil {
+				tc.Close()
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("second runner listener on %s did not come up", addr2)
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		if err := c.Cancel(ctx, taskID); err != nil {
+			t.Fatalf("cancel task: %v", err)
+		}
+		select {
+		case <-done2:
+		case <-time.After(5 * time.Second):
+			t.Fatal("RunRemoteForward did not return within 5s of its task ending (no list call made)")
+		}
+		deadline = time.Now().Add(3 * time.Second)
+		for {
+			tc, err := net.DialTimeout("tcp", addr2, 100*time.Millisecond)
+			if err != nil {
+				break
+			}
+			tc.Close()
+			if time.Now().After(deadline) {
+				t.Fatal("runner listener still accepting 3s after its task ended")
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	})
+
 	cancel()
 	select {
 	case <-serverDone:

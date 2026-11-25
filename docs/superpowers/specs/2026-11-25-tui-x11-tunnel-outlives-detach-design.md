@@ -124,8 +124,13 @@ an in-flight turn is never hidden behind a single unconfirmed key.
 - On the TUI command line, `--x11-display N` is the lowest number the TUI may
   take, not the exact one (the CLI still uses N exactly). The cmdresult line
   `forward started: <id> --x11 :N -> <DISPLAY>` names the number used.
-- Measured live (dummy harness, socat stand-in): after the task ended, the
-  TUI dropped the forward at once (`forward stopped: task is no longer
-  running`), but the runner's `127.0.0.1:6010` listener was still bound ~9s
-  later and gone by ~20s. A `D` on another task inside that window could pick
-  10 again and fail to bind; it is reported, not retried.
+- "The runner closes it when the task ends" (Tunnel ownership, above) was
+  false when written. The server reaped a task's forwards only lazily, inside
+  a `forward ls`; the live check's `forward stopped: task is no longer
+  running` and the listener's disappearance were both caused by the check's
+  own `forward ls`, not by the task ending. Until a list call the TUI kept the
+  entry and its display number, and the runner kept `127.0.0.1:6000+N`
+  relaying to the operator's X server. Fixed on the server (operator
+  decision): a task's end now reaps its forwards
+  (`reapTaskPortForwards`; amendment in
+  `2026-07-30-port-forward-registry-design.md`), so the sentence holds.

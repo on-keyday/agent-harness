@@ -368,6 +368,19 @@ Composed from existing gates; no new capability bit and no new gating concept.
   repo has already paid for. Consequence, accepted: between a task dying and
   anyone running `forward ls`, its forwards stay listed and connections through
   them fail with the existing `NoSuchTask`.
+  **Amended 2026-11-25 (operator decision): reaped eagerly at the task's end.**
+  The accepted consequence held for `-L` only: a `-R` connection is accepted by
+  the runner and relayed by `handleRemoteForwardConn`, and neither asks whether
+  the task is alive, so a `-R` listener kept relaying to the client's target
+  until someone listed forwards. The interceptor this paragraph avoided now has
+  a single point to sit at: task_ended is published from one closure
+  (`server/server.go` `publishTaskEvent`) that `Finish`, `MarkFailed` and
+  `Cancel` all reach, and since 2026-10-19 it already ends the task's progress
+  watchers there. `reapTaskPortForwards` runs beside that call; the list
+  handler's reap stays as the backstop for a registration that races the end.
+  Found when the TUI's X11 tunnel, which now outlives a detach, kept its runner
+  listener after the session exited (spec
+  `2026-11-25-tui-x11-tunnel-outlives-detach-design.md`).
 - **Local bind fails** (port in use). Nothing is registered — bind precedes
   registration — and the CLI exits with the existing listen error.
 - **Registration fails.** The forward aborts (decision 4). The just-bound

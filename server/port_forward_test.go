@@ -939,3 +939,43 @@ func TestOpenPortForwardRefusesUnattributedStream(t *testing.T) {
 		}
 	}
 }
+
+// A task's end reaps its forwards at once: the client is told TaskGone and
+// the runner is told to drop a -R listener, while another task's forward is
+// untouched. Until this, only a list call reaped, and a -R listener kept
+// relaying connections for a task that no longer existed.
+func TestReapTaskPortForwards_ClosesOnlyThatTasks(t *testing.T) {
+	h := &TaskHandler{Tasks: NewTaskStore(), Registry: NewRegistry()}
+	liveHex := addRunningTask(t, h, 0x11, "runner-1")
+	deadHex := addRunningTask(t, h, 0x22, "runner-1")
+	runnerConn := &fakeConn{}
+	h.Registry.Add(&RunnerEntry{ID: tcid("runner-1"), Identity: testRunnerID("runner-1"), Conn: runnerConn})
+
+	conn := &fakeConn{nextStreamID: 100}
+	deadCtrl := newRecordingBidiStream(2)
+	live := &portForward{direction: protocol.PortForwardDirection_Remote, taskIDHex: liveHex,
+		control: newRecordingBidiStream(1), clientCxn: conn, runnerID: testRunnerID("runner-1"), bindAddr: "127.0.0.1", bindPort: 6010}
+	dead := &portForward{direction: protocol.PortForwardDirection_Remote, taskIDHex: deadHex,
+		control: deadCtrl, clientCxn: conn, runnerID: testRunnerID("runner-1"), bindAddr: "127.0.0.1", bindPort: 6011}
+	liveID := h.pforwards().add(live)
+	deadID := h.pforwards().add(dead)
+
+	h.reapTaskPortForwards(deadHex)
+
+	if _, ok := h.pforwards().get(deadID); ok {
+		t.Fatal("the ended task's forward is still registered")
+	}
+	if _, ok := h.pforwards().get(liveID); !ok {
+		t.Fatal("another task's forward was reaped")
+	}
+	var ev protocol.PortForwardEvent
+	if _, err := ev.Decode(deadCtrl.Written()); err != nil {
+		t.Fatalf("decode closed event: %v", err)
+	}
+	if c := ev.Closed(); ev.Kind != protocol.PortForwardEventKind_Closed || c == nil || c.Reason != protocol.PortForwardCloseReason_TaskGone {
+		t.Fatalf("client event = %+v, want closed{task_gone}", ev)
+	}
+	if len(runnerConn.Sent()) != 1 {
+		t.Fatalf("runner got %d messages, want one ClosePortForward", len(runnerConn.Sent()))
+	}
+}

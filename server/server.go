@@ -603,6 +603,9 @@ func New(cfg Config) *Server {
 		// end its progress watchers rather than leave them armed forever.
 		if kind == protocol.StatusEventKind_TaskEnded || kind == protocol.StatusEventKind_TaskPruned {
 			s.taskHandler.fireProgressWatchers(taskID, protocol.AwaitProgressStatus_TaskEnded, "", 0)
+			// Its forwards too: a -R listener left up would keep relaying
+			// connections for a task that no longer exists.
+			s.taskHandler.reapTaskPortForwards(taskID)
 		}
 		// task_pruned goes to everyone: it carries only the id and kind, and
 		// the visibility filter cannot be evaluated once the entry is gone
