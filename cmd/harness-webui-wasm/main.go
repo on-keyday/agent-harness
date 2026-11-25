@@ -1919,7 +1919,7 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					// A `session new --oneshot` run (A3, A-D29): the raw bit a
 					// Compose prefill sets its one-shot box from, and the
 					// kind as the ls row words it (interactive+oneshot).
-					"oneshot":   t.Oneshot(),
+					"oneshot":   t.Kind == protocol.TaskKind_Oneshot,
 					"kindLabel": cli.KindLabel(&t),
 					// The run's child has no PTY (A-D33): the raw bit a
 					// Compose prefill sets its PTY select from.
@@ -3611,6 +3611,14 @@ func harnessStartInteractive(this js.Value, args []js.Value) any {
 				rejectErr(reject, fmt.Errorf("interactive: %w", rmErr))
 				return
 			}
+			if eventStream && runMode.Oneshot {
+				rejectErr(reject, errors.New("interactive: --oneshot and --stream are mutually exclusive"))
+				return
+			}
+			kind := protocol.TaskKind_Interactive
+			if eventStream {
+				kind = protocol.TaskKind_Stream
+			}
 			sopts := cli.SessionOpts{
 				Selector: sel, ExtraArgs: extraArgs, ResumeTaskID: resumeTaskID,
 				Caps: caps, Scope: scope, Overrides: overrides,
@@ -3618,7 +3626,7 @@ func harnessStartInteractive(this js.Value, args []js.Value) any {
 				ResumeConversation: resumeConversation, AgentProfile: agentProfile,
 				ResumeExact: resumeExact,
 				InitialRows: initRows, InitialCols: initCols,
-				EventStream: eventStream, Detached: detached,
+				Kind: kind, Detached: detached,
 				DelegateCaps: bound.DelegateCaps, DelegateScope: bound.DelegateScope,
 				DelegateCapsPresent: bound.DelegateCapsPresent, DelegateScopePresent: bound.DelegateScopePresent,
 				SpawnDepth: bound.SpawnDepth, MaxDescendants: bound.MaxDescendants,
@@ -3627,7 +3635,7 @@ func harnessStartInteractive(this js.Value, args []js.Value) any {
 			// A background open is detached: no xterm, the id comes back.
 			runMode.Apply(&sopts)
 			// c.Interactive itself declines to mount the xterm when
-			// EventStream is set (cli/open_interactive_wasm.go): this kind has
+			// Kind is TaskKind_Stream (cli/open_interactive_wasm.go): this kind has
 			// no PTY, and splicing NDJSON into a terminal is what that guard
 			// exists to prevent. JS attaches the chat afterwards.
 			taskID, err := c.Interactive(rootCtx, repo, sopts)

@@ -123,14 +123,13 @@ func ScheduleSpecOptsFromAction(a verb.ScheduleSpecAction) (ScheduleSpecOpts, er
 		v := a.ResumeConversation
 		o.ResumeConversation = &v
 	}
-	if a.OneshotPresent {
-		v := a.Oneshot
-		o.Oneshot = &v
-	}
-	if a.StreamPresent {
+	if a.OneshotPresent || a.StreamPresent {
 		k := protocol.TaskKind_Interactive
-		if a.Stream {
+		switch {
+		case a.StreamPresent && a.Stream:
 			k = protocol.TaskKind_Stream
+		case a.OneshotPresent && a.Oneshot:
+			k = protocol.TaskKind_Oneshot
 		}
 		o.Kind = &k
 	}
@@ -254,10 +253,13 @@ func buildScheduleSpec(o ScheduleSpecOpts, promptStreamID uint64) protocol.Sched
 	if o.Kind != nil {
 		s.SetKindPresent(true)
 		s.SetKind(*o.Kind)
-	}
-	if o.Oneshot != nil {
-		s.SetOneshotSet(true)
-		s.SetOneshot(*o.Oneshot)
+	} else if o.Oneshot != nil {
+		k := protocol.TaskKind_Interactive
+		if *o.Oneshot {
+			k = protocol.TaskKind_Oneshot
+		}
+		s.SetKindPresent(true)
+		s.SetKind(k)
 	}
 	if o.Record != nil {
 		s.SetRecordSet(true)
@@ -633,8 +635,8 @@ func scheduleChangeList(o ScheduleSpecOpts) string {
 	add(o.Selector != nil, "runner")
 	add(o.ExtraArgs != nil, "agent-arg")
 	add(o.ResumeConversation != nil, "resume-conversation")
-	add(o.Oneshot != nil, "oneshot")
-	add(o.Kind != nil, "stream")
+	add(o.Oneshot != nil || (o.Kind != nil && *o.Kind == protocol.TaskKind_Oneshot), "oneshot")
+	add(o.Kind != nil && *o.Kind != protocol.TaskKind_Oneshot, "stream")
 	add(o.Record != nil, "record")
 	add(o.Pty != nil, "pty")
 	add(o.Prompt != "", "prompt")
@@ -1012,7 +1014,6 @@ func ScheduleDetailParts(d protocol.ScheduleDetail, now time.Time) ScheduleDetai
 	line("extra-args: %s", quotedList(d.ExtraArgs.AsStrings()))
 	line("resume-conversation: %v", d.ResumeConversation())
 	line("kind: %s", ScheduleKindWord(d.Kind))
-	line("oneshot: %v", d.Oneshot())
 	line("record: %s", schedTriState(d.RecordSet(), d.Record(), "server default"))
 	line("pty: %s", scheduleDetailPty(d, "the mode's default"))
 	line("conditions: %s", schedConditions(d.Conditions))
@@ -1196,7 +1197,7 @@ func writeScheduleDetailJSON(w io.Writer, d protocol.ScheduleDetail, now time.Ti
 		scheduleRowJSON: newScheduleRowJSON(d.Row),
 		Prompt:          string(d.Prompt), ExtraArgs: append([]string{}, d.ExtraArgs.AsStrings()...),
 		Selector:           schedSelectorLabel(d.Selector),
-		ResumeConversation: d.ResumeConversation(), Kind: ScheduleKindWord(d.Kind), Oneshot: d.Oneshot(),
+		ResumeConversation: d.ResumeConversation(), Kind: ScheduleKindWord(d.Kind), Oneshot: d.Kind == protocol.TaskKind_Oneshot,
 		Record: schedTriState(d.RecordSet(), d.Record(), "default"), Pty: scheduleDetailPty(d, "default"),
 		Conditions: conditionsJSON{
 			DeadlineMs: d.Conditions.DeadlineMs, TurnEnd: EnumWireName(d.Conditions.TurnEnd.String()),

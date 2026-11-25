@@ -425,7 +425,7 @@ format OpenExecRunnerRequest:
     extra_args :AgentArgs
     x11_enabled :u1   # relayed from OpenInteractiveRequest.x11_enabled
     resume_conversation :u1 # relayed from OpenInteractiveRequest.resume_conversation
-    # relayed from OpenInteractiveRequest.event_stream: run the profile's
+    # relayed from OpenInteractiveRequest.kind == TaskKind.stream: run the profile's
     # stream adapter rather than the agent under a PTY. Mutually exclusive with
     # x11_enabled, which is a terminal concept.
     event_stream :u1
@@ -433,9 +433,9 @@ format OpenExecRunnerRequest:
     # before this request; the runner reads it before starting the agent.
     prompt_present :u1
     # 1 = run the profile's oneshot argv (resume_oneshot with
-    # resume_conversation) in the PTY instead of its interactive one; relayed
-    # from OpenInteractiveExt.oneshot (A3, A-D29). Sent only to a runner whose
-    # hello set oneshot_sessions.
+    # resume_conversation) instead of its interactive one; relayed from
+    # OpenInteractiveRequest.kind == TaskKind.oneshot. Sent only to a runner
+    # whose hello set oneshot_sessions.
     oneshot :u1
     # 1 = run the child without a PTY: stdin/stdout/stderr are pipes (stdin is
     # /dev/null for a oneshot), and stdout and stderr arrive as separate frame
@@ -1242,13 +1242,11 @@ format TaskInfo:
     cancelled_by_hidden :u1
     # recording: the task's live session is being recorded now (A-D22).
     recording :u1
-    # oneshot: the current run is a `session new --oneshot` (A3, A-D29). The
-    # kind stays interactive; this bit is what tells the run apart from an
-    # ordinary session.
-    oneshot :u1
+    # Formerly oneshot :u1; now TaskKind.oneshot on TaskInfo.kind. Kept
+    # reserved so no_pty keeps its bit position.
+    reserved_oneshot :u1
     # no_pty: the current run's child has no PTY, only pipes (A-D33).
-    # Meaningful for the interactive kind; the stream kind never has one, and
-    # a pre-A3 oneshot-kind task ran without one.
+    # Meaningful for interactive and oneshot; the stream kind never has one.
     no_pty :u1
     ring_buffer_bytes :u64    # current bytes buffered (0 for oneshot tasks —
                               # every interactive session has a ring)
@@ -2484,20 +2482,16 @@ format OpenInteractiveRequest:
     # caps_present/scope_present. Ignored on create (scope always applies to
     # a fresh task; its zero value IS the subtree default).
     scope_present :u1
-    # 1 = open this session as TaskKind.stream: the runner spawns the profile's
-    # stream adapter instead of the agent under a PTY, and the frames carry
-    # neutral NDJSON. Takes a reserved bit rather than a new request type,
-    # because everything else about opening a session — caps, scope, the
-    # server-allocated stream, the session mux that owns it — is identical.
-    event_stream :u1
+    # Formerly event_stream :u1; kept reserved so neighbouring bits keep their
+    # positions. The task kind now travels as the enum field `kind :TaskKind`.
+    reserved :u1
     # resume only: 1 = take every setting from the task's record. The request
     # must carry none — no prompt, extra_args, agent_profile or ext.oneshot,
     # and resume_caps_override, scope_present, delegate_caps_present,
     # delegate_scope_present, spawn_depth_present and max_descendants_present
     # all 0 — else
     # resume_exact_mismatch (exactMismatch, server/task_handler.go). Satisfied
-    # by resume_exact or resume. event_stream must match the recorded kind
-    # (0 = interactive, 1 = stream).
+    # by resume_exact or resume. kind must match the recorded kind.
     resume_exact :u1
     # 1 = open without attaching the requester: no client stream is created and
     # the response carries no stream_id. 0 = the requester takes the control
@@ -2579,6 +2573,9 @@ format OpenInteractiveRequest:
         prompt_stream_id :u64
     if ext_present == 1:
         ext :OpenInteractiveExt
+    # TaskKind to open: oneshot, interactive or stream; any other value
+    # (credential, or unknown) is refused kind_unsupported.
+    kind :TaskKind
 
 # OpenInteractiveExt is the open request's second flag byte (ext_present).
 format OpenInteractiveExt:
@@ -2588,9 +2585,9 @@ format OpenInteractiveExt:
     # saying off needs nothing (A-D22).
     record_set :u1
     record :u1
-    # 1 = session new --oneshot: the profile's oneshot argv runs and the
-    # session ends with it; a prompt is required (A3, A-D29).
-    oneshot :u1
+    # Formerly oneshot :u1; now TaskKind.oneshot on OpenInteractiveRequest.kind.
+    # Kept reserved so pty_set / pty keep their bit positions.
+    reserved_oneshot :u1
     # pty_set = 0: the open says nothing about a PTY and the mode's default
     # applies — a PTY for an interactive open, none for a --oneshot one; an
     # exact resume takes the task's recorded choice. pty is meaningful only
@@ -2656,12 +2653,16 @@ enum OpenInteractiveStatus:
     # its roots, …). error_msg is the reason the runner recorded on the task.
     # Appended.
     session_ended = "session_ended"
-    # --oneshot with event_stream: a one-shot runs in a PTY, and a stream
+    # --oneshot with kind == stream: a one-shot runs in a PTY, and a stream
     # session has none (A3, A-D29).
     oneshot_stream = "oneshot_stream"
-    # --pty (ext.pty_set and ext.pty) with event_stream: a stream session has
+    # --pty (ext.pty_set and ext.pty) with kind == stream: a stream session has
     # no PTY (A-D33). Appended.
     pty_stream = "pty_stream"
+    # kind is a TaskKind other than interactive / stream (retired oneshot,
+    # credential, or an unknown value). Mirrors ScheduleStatus.kind_unsupported.
+    # Appended.
+    kind_unsupported = "kind_unsupported"
 
 # One RUNNER offered when a spawn is ambiguous: more than one (runner, agent
 # profile) choice matched. profiles lists the agents the caller may pick on
@@ -3959,10 +3960,9 @@ format TaskStatusEvent:
     live_terminal :u1
     # recording: as TaskInfo.recording; a switch emits an event (A-D22).
     recording :u1
-    # oneshot: as TaskInfo.oneshot. Stamped on every event because a resume
-    # changes it per run (A-D29) and the TUI polls no snapshot of its own.
-    oneshot :u1
-    # no_pty: as TaskInfo.no_pty, stamped on every event for oneshot's reason.
+    # Formerly oneshot :u1; now TaskKind.oneshot on TaskStatusEvent.task_kind.
+    reserved_oneshot :u1
+    # no_pty: as TaskInfo.no_pty, stamped on every event.
     no_pty :u1
     # schedule_present: as TaskInfo.schedule_present (pillar S).
     schedule_present :u1
@@ -6241,8 +6241,8 @@ format ScheduleSpec:
     requested_caps_present :u1
     resume_conversation_set :u1
     resume_conversation :u1     # meaningful only with resume_conversation_set == 1
-    oneshot_set :u1
-    oneshot :u1                 # meaningful only with oneshot_set == 1
+    # Formerly oneshot_set / oneshot :u1; now TaskKind.oneshot on kind below.
+    reserved_oneshot :u2
     record_set :u1
     record :u1                  # meaningful only with record_set == 1
     pty_set :u1
@@ -6262,10 +6262,10 @@ format ScheduleSpec:
     turn_end_present :u1
     prompt_present :u1          # 1 = a PromptBody follows on prompt_stream_id
     size_present :u1            # 1 = initial_rows / initial_cols below (0 in either = none)
-    # 1 = kind below. The task kind each firing creates or resumes the task as
-    # (2026-11-17-schedule-stream-kind-design.md, K1/K2): interactive or
-    # stream; any other value is refused kind_unsupported. Absent on a create
-    # = interactive; absent on an edit = unchanged.
+    # 1 = kind below. The task kind each firing creates or resumes the task as:
+    # oneshot, interactive or stream; any other value is refused
+    # kind_unsupported. Absent on a create = interactive; absent on an edit =
+    # unchanged.
     kind_present :u1
     reserved :u3
     if cron_present == 1:
@@ -6440,7 +6440,8 @@ format ScheduleListBody:
 format ScheduleDetail:
     row :ScheduleRow
     resume_conversation :u1
-    oneshot :u1
+    # Formerly oneshot :u1; now TaskKind.oneshot on kind below.
+    reserved_oneshot :u1
     record_set :u1
     record :u1
     pty_set :u1

@@ -24,10 +24,13 @@ package protocol
 // A credential task is not a session either: it has no runner, no process and
 // no stream, so no session verb applies to it.
 func IsSessionKind(k TaskKind) bool {
-	return k == TaskKind_Interactive || k == TaskKind_Stream
+	return k == TaskKind_Oneshot || k == TaskKind_Interactive || k == TaskKind_Stream
 }
 
-// IsPTYKind reports whether a task drives a real terminal. It is the other half
-// of IsSessionKind, named so a caller has to say which one it means rather than
-// writing a bare comparison whose intent the next kind will make ambiguous.
-func IsPTYKind(k TaskKind) bool { return k == TaskKind_Interactive }
+// IsPTYKind reports whether a task uses the terminal/pipe session mux (as
+// opposed to the NDJSON event-stream adapter). Both interactive and oneshot
+// ride that mux (oneshot defaults to pipes, interactive to a PTY, orthogonal
+// via --pty / --no-pty).
+func IsPTYKind(k TaskKind) bool {
+	return k == TaskKind_Oneshot || k == TaskKind_Interactive
+}

@@ -339,7 +339,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // Two kinds are sessions; only one drives a TERMINAL, so every site has to
   // say which question it is asking — a bare `kind === "Interactive"` reads as
   // an oversight the next reader will "fix" by adding "Stream" to it.
-  const isPTYKind = (t) => !!t && t.kind === "Interactive";
+  const isPTYKind = (t) => !!t && (t.kind === "Interactive" || t.kind === "Oneshot");
   // The other session kind. Spelled out for the same reason isPTYKind is: a
   // bare kind === "Stream" reads as an oversight the next reader will "fix".
   const isStreamKind = (t) => !!t && t.kind === "Stream";

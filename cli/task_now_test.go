@@ -32,7 +32,6 @@ func TestTaskNowTextPrecedence(t *testing.T) {
 		{"progress", nowTask(protocol.TaskKind_Interactive, "stage 2", 1, true, "✳ topic"), "stage 2 (12m ago)"},
 		{"title", nowTask(protocol.TaskKind_Interactive, "", 0, true, "✳ topic"), "(title) ✳ topic"},
 		{"cleared falls to title", nowTask(protocol.TaskKind_Interactive, "", 9, true, "✳ topic"), "(title) ✳ topic"},
-		{"prompt", nowTask(protocol.TaskKind_Oneshot, "", 0, false, ""), "the original ask"},
 		{"interactive", nowTask(protocol.TaskKind_Interactive, "", 0, false, ""), "<interactive>"},
 		{"stream", nowTask(protocol.TaskKind_Stream, "", 0, false, ""), "<stream>"},
 	}
@@ -41,8 +40,7 @@ func TestTaskNowTextPrecedence(t *testing.T) {
 			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
 		}
 	}
-	one := nowTask(protocol.TaskKind_Interactive, "", 0, false, "")
-	one.SetOneshot(true)
+	one := nowTask(protocol.TaskKind_Oneshot, "", 0, false, "")
 	one.SetNoPty(true)
 	if got := TaskNowText(one); got != "(oneshot) the original ask" {
 		t.Errorf("oneshot: got %q", got)
@@ -70,17 +68,19 @@ func TestTaskNowTextStripsControlsInProgressAndTitle(t *testing.T) {
 // The prompt is agent-written too; before this it passed ESC and C1 through.
 func TestTaskNowTextSanitisesPrompt(t *testing.T) {
 	ti := nowTask(protocol.TaskKind_Oneshot, "", 0, false, "")
+	ti.SetNoPty(true)
 	ti.SetPrompt([]byte("a\x1b[2Jb\u009bc\nd"))
-	if got := TaskNowText(ti); got != "a[2Jbc d" {
+	if got := TaskNowText(ti); got != "(oneshot) a[2Jbc d" {
 		t.Fatalf("got %q", got)
 	}
 }
 
 func TestTaskNowTextPromptCutOnRune(t *testing.T) {
 	ti := nowTask(protocol.TaskKind_Oneshot, "", 0, false, "")
+	ti.SetNoPty(true)
 	ti.SetPrompt([]byte(strings.Repeat("あ", 100))) // 300 bytes
 	got := TaskNowText(ti)
-	if !utf8.ValidString(got) || len(got) > 140 || len(got) < 138 {
-		t.Fatalf("len %d valid %v", len(got), utf8.ValidString(got))
+	if !utf8.ValidString(got) || len(got) > 155 || len(got) < 145 {
+		t.Fatalf("len %d valid %v: %q", len(got), utf8.ValidString(got), got)
 	}
 }

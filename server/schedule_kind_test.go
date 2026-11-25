@@ -40,23 +40,17 @@ func TestScheduleCreateStreamKind(t *testing.T) {
 func TestScheduleKindUnsupported(t *testing.T) {
 	e := newSchedEnv(t)
 	e.addCandidate("claude")
-	for _, k := range []protocol.TaskKind{protocol.TaskKind_Oneshot, protocol.TaskKind(99)} {
+	for _, k := range []protocol.TaskKind{protocol.TaskKind_Credential, protocol.TaskKind(99)} {
 		if r := e.create(t, objproto.ConnectionID{}, kindSpec(k), "p"); r.Status != protocol.ScheduleStatus_KindUnsupported {
 			t.Errorf("kind %v: %v %s", k, r.Status, r.Message)
 		}
 	}
 }
 
-func TestScheduleCreateStreamWithOneshotOrPtyRefused(t *testing.T) {
+func TestScheduleCreateStreamWithPtyRefused(t *testing.T) {
 	e := newSchedEnv(t)
 	e.addCandidate("claude")
 	sp := kindSpec(protocol.TaskKind_Stream)
-	sp.SetOneshotSet(true)
-	sp.SetOneshot(true)
-	if r := e.create(t, objproto.ConnectionID{}, sp, "p"); r.Status != protocol.ScheduleStatus_OneshotStream {
-		t.Errorf("stream+oneshot: %v %s", r.Status, r.Message)
-	}
-	sp = kindSpec(protocol.TaskKind_Stream)
 	sp.SetPtySet(true)
 	sp.SetPty(true)
 	if r := e.create(t, objproto.ConnectionID{}, sp, "p"); r.Status != protocol.ScheduleStatus_PtyStream {
@@ -64,24 +58,25 @@ func TestScheduleCreateStreamWithOneshotOrPtyRefused(t *testing.T) {
 	}
 }
 
-// The combination is judged after the overlay: a stored --oneshot and an edit
-// naming only the kind.
-func TestScheduleEditStreamOverOneshotRefused(t *testing.T) {
+// Editing a oneshot schedule to stream switches its kind cleanly (both are
+// values of TaskKind, so they cannot coexist).
+func TestScheduleEditStreamOverOneshotSwitchesKind(t *testing.T) {
 	e := newSchedEnv(t)
 	e.addCandidate("claude")
-	sp := createSpec()
-	sp.SetOneshotSet(true)
-	sp.SetOneshot(true)
+	sp := kindSpec(protocol.TaskKind_Oneshot)
 	r := e.create(t, objproto.ConnectionID{}, sp, "p")
+	if r.Status != protocol.ScheduleStatus_Ok {
+		t.Fatalf("create oneshot: %v %s", r.Status, r.Message)
+	}
 	id := schedIDHex(r.Id)
 	edit := &protocol.ScheduleSpec{}
 	edit.SetKindPresent(true)
 	edit.SetKind(protocol.TaskKind_Stream)
-	if r := e.edit(t, objproto.ConnectionID{}, id, edit, ""); r.Status != protocol.ScheduleStatus_OneshotStream {
-		t.Errorf("%v %s", r.Status, r.Message)
+	if r := e.edit(t, objproto.ConnectionID{}, id, edit, ""); r.Status != protocol.ScheduleStatus_Ok {
+		t.Fatalf("%v %s", r.Status, r.Message)
 	}
-	if sc := e.stored(t, id); sc.Kind != protocol.TaskKind_Interactive || !sc.Run.Oneshot {
-		t.Errorf("refused edit changed the schedule: kind %v oneshot %v", sc.Kind, sc.Run.Oneshot)
+	if sc := e.stored(t, id); sc.Kind != protocol.TaskKind_Stream {
+		t.Errorf("edited kind = %v, want stream", sc.Kind)
 	}
 }
 

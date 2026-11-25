@@ -390,6 +390,10 @@ func DoStartDetachedSession(c *cli.Client, repo string, selOpts cli.SelectorOpts
 		if err != nil {
 			return SessionStartedMsg{Err: fmt.Errorf("selector: %w", err)}
 		}
+		kind := protocol.TaskKind_Interactive
+		if eventStream {
+			kind = protocol.TaskKind_Stream
+		}
 		taskID, err := c.OpenDetached(context.Background(), repo, auth.opts(sessionRequest{
 			Selector: sel, ExtraArgs: extraArgs, ResumeTaskID: resumeTaskID,
 			ResumeCapsOverride: resumeCapsOverride,
@@ -400,8 +404,8 @@ func DoStartDetachedSession(c *cli.Client, repo string, selOpts cli.SelectorOpts
 			// available. Without it the session sits at 0x0 and a full-screen
 			// TUI inside it paints nothing.
 			InitialRows: size.Rows, InitialCols: size.Cols,
-			EventStream: eventStream,
-			RunMode:     runMode,
+			Kind:    kind,
+			RunMode: runMode,
 		}))
 		if err != nil {
 			return SessionStartedMsg{Err: err}

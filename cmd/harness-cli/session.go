@@ -379,7 +379,9 @@ func runSessionNewWith(ctx context.Context, cid objproto.ConnectionID, a verb.Sp
 	if err != nil {
 		return err
 	}
-	sopts.EventStream = a.Stream
+	if a.Stream {
+		sopts.Kind = protocol.TaskKind_Stream
+	}
 	sopts.InitialRows, sopts.InitialCols = uint16(a.Rows), uint16(a.Cols)
 	turnEnd, err := verb.ParseTurnEnd(a.TurnEnd)
 	if err != nil {

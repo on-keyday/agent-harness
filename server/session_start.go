@@ -249,7 +249,7 @@ func (h *TaskHandler) StartQueuedSession(runnerID objproto.ConnectionID, taskID 
 		Rows:               t.Cond.Rows,
 		Cols:               t.Cond.Cols,
 		Prompt:             t.Prompt,
-		Oneshot:            t.Oneshot,
+		Oneshot:            t.Kind == protocol.TaskKind_Oneshot,
 		NoPTY:              t.NoPTY,
 	})
 	if st != protocol.OpenInteractiveStatus_Ok {

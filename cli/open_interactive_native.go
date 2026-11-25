@@ -177,6 +177,8 @@ func openInteractiveStatusError(repo, agentProfile string, status protocol.OpenI
 		return fmt.Errorf("interactive session_ended: the runner ended the session before it could be attached")
 	case protocol.OpenInteractiveStatus_DetachRequired:
 		return fmt.Errorf("interactive detach_required: you may open this task but not hold its seat (it is outside your exec_control scope); add -d")
+	case protocol.OpenInteractiveStatus_KindUnsupported:
+		return fmt.Errorf("interactive kind_unsupported: a session opens as oneshot, interactive or stream")
 	case protocol.OpenInteractiveStatus_InternalError:
 		return fmt.Errorf("interactive internal_error")
 	default:

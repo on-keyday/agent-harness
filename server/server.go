@@ -523,13 +523,13 @@ func New(cfg Config) *Server {
 		var endReason protocol.EndReason
 		var deadlineAt int64
 		var run uint32
-		var oneshot, noPTY bool
+		var noPTY bool
 		if t, ok := s.tasks.Get(taskID); ok {
 			taskKind = t.Kind
 			progress, progressAt = t.Progress, t.ProgressAt
 			lifecycle, lifecycleAt = t.Lifecycle, t.LifecycleAt
 			runMode, endReason, deadlineAt = t.RunMode, t.EndReason, t.DeadlineAt
-			run, oneshot, noPTY = t.Run, t.Oneshot, t.NoPTY
+			run, noPTY = t.Run, t.NoPTY
 		}
 		ev := protocol.TaskStatusEvent{
 			Kind:       kind,
@@ -544,8 +544,6 @@ func New(cfg Config) *Server {
 			DeadlineRemainingMs: remainingMs(deadlineAt),
 			Run:                 run,
 		}
-		// Per run, not per task (A-D29): a resume can turn it on or off.
-		ev.SetOneshot(oneshot)
 		ev.SetNoPty(noPTY)
 		// Stored, so stamped on every event like the kind: any event refreshes
 		// a subscriber's progress column without waiting for a List.

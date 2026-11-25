@@ -341,8 +341,8 @@ func TestScheduleEditBoolsNeedPresence(t *testing.T) {
 		t.Fatal(err)
 	}
 	var want protocol.ScheduleSpec
-	want.SetOneshotSet(true)
-	want.SetOneshot(false)
+	want.SetKindPresent(true)
+	want.SetKind(protocol.TaskKind_Interactive)
 	want.SetResumeConversationSet(true)
 	want.SetResumeConversation(false)
 	want.SetRecordSet(true)
@@ -408,7 +408,7 @@ func TestScheduleNewSpec(t *testing.T) {
 	if s.QuietPresent() || s.BlockedPresent() || s.QueueTimeoutPresent() {
 		t.Errorf("unnamed conditions are present")
 	}
-	if !s.OneshotSet() || !s.Oneshot() || !s.PtySet() || s.Pty() || !s.RecordSet() || !s.Record() {
+	if !s.KindPresent() || s.Kind() == nil || *s.Kind() != protocol.TaskKind_Oneshot || !s.PtySet() || s.Pty() || !s.RecordSet() || !s.Record() {
 		t.Errorf("run flags")
 	}
 	if !s.SizePresent() || *s.InitialRows() != 40 || *s.InitialCols() != 120 {

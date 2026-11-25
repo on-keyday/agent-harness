@@ -15,7 +15,7 @@ import (
 func (f *resumeFixture) openAttached(t *testing.T, resume string) protocol.TaskControlResponse {
 	t.Helper()
 	f.reqID++
-	oi := protocol.OpenInteractiveRequest{}
+	oi := protocol.OpenInteractiveRequest{Kind: protocol.TaskKind_Interactive}
 	oi.SetRepoPath([]byte("/r"))
 	if resume != "" {
 		oi.ResumeTaskId = hexToTaskID(t, resume)
@@ -110,7 +110,7 @@ func TestOperatorAttachedOpenStillWorks(t *testing.T) {
 	h := newTestHandler(t)
 	openRunner(t, h)
 	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9131-1"), nextBidi: newFakeStream(t)}
-	oi := protocol.OpenInteractiveRequest{}
+	oi := protocol.OpenInteractiveRequest{Kind: protocol.TaskKind_Interactive}
 	oi.SetRepoPath([]byte("/r"))
 	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_OpenInteractive, RequestId: 1}}
 	req.SetOpenInteractive(oi)
@@ -127,7 +127,7 @@ func TestAttachedOpenFirstStreamIdZero(t *testing.T) {
 	h := newTestHandler(t)
 	openRunner(t, h)
 	tui := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9132-1"), nextBidi: newFakeStream(t)} // id 0
-	oi := &protocol.OpenInteractiveRequest{}
+	oi := &protocol.OpenInteractiveRequest{Kind: protocol.TaskKind_Interactive}
 	oi.SetRepoPath([]byte("/r"))
 	resp, _ := h.handleOpenInteractive(objproto.ConnectionID{}, tui, oi, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All, "")
 	if id := resp.StreamId(); resp.Status != protocol.OpenInteractiveStatus_Ok || !resp.Attached() || id == nil || *id != 0 {
@@ -136,7 +136,7 @@ func TestAttachedOpenFirstStreamIdZero(t *testing.T) {
 }
 
 func detachedOpen(rows, cols uint16) *protocol.OpenInteractiveRequest {
-	oi := &protocol.OpenInteractiveRequest{}
+	oi := &protocol.OpenInteractiveRequest{Kind: protocol.TaskKind_Interactive}
 	oi.SetRepoPath([]byte("/r"))
 	oi.SetDetached(true)
 	oi.SetInitialRows(rows)

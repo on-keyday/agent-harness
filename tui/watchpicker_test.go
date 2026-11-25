@@ -37,7 +37,8 @@ func TestWatchLive(t *testing.T) {
 		{protocol.TaskKind_Interactive, protocol.TaskStatus_Running, true},
 		{protocol.TaskKind_Interactive, protocol.TaskStatus_Detached, true},
 		{protocol.TaskKind_Interactive, protocol.TaskStatus_Succeeded, false},
-		{protocol.TaskKind_Oneshot, protocol.TaskStatus_Running, false},
+		{protocol.TaskKind_Oneshot, protocol.TaskStatus_Running, true},
+		{protocol.TaskKind_Credential, protocol.TaskStatus_Running, false},
 	} {
 		if got := watchLive(&protocol.TaskInfo{Kind: c.kind, Status: c.status}); got != c.want {
 			t.Errorf("watchLive(%v,%v) = %v, want %v", c.kind, c.status, got, c.want)

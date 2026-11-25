@@ -888,7 +888,7 @@ func newTaskJSON(t *protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo
 		WaitReason:          EnumWireName(t.WaitReason.String()),
 		Run:                 t.Run,
 		Recording:           t.Recording(),
-		Oneshot:             t.Oneshot(),
+		Oneshot:             t.Kind == protocol.TaskKind_Oneshot,
 		Pty:                 TaskHasPTY(t),
 		Conditions: conditionsJSON{
 			DeadlineMs: t.Conditions.DeadlineMs, TurnEnd: EnumWireName(t.Conditions.TurnEnd.String()),
@@ -994,27 +994,28 @@ func KindLabel(t *protocol.TaskInfo) string {
 }
 
 // RunMark is KindLabel's marks alone, for a surface that words the kind
-// itself (the TUI detail popup).
+// itself (the TUI detail popup). Only a non-default PTY choice is marked:
+// "+pipe" on an interactive run without a PTY, "+pty" on a oneshot run with
+// one.
 func RunMark(t *protocol.TaskInfo) string {
-	if t.Kind != protocol.TaskKind_Interactive {
-		return ""
-	}
-	switch {
-	case t.Oneshot() && !t.NoPty():
-		return "+oneshot+pty"
-	case t.Oneshot():
-		return "+oneshot"
-	case t.NoPty():
-		return "+pipe"
+	switch t.Kind {
+	case protocol.TaskKind_Oneshot:
+		if !t.NoPty() {
+			return "+pty"
+		}
+	case protocol.TaskKind_Interactive:
+		if t.NoPty() {
+			return "+pipe"
+		}
 	}
 	return ""
 }
 
 // TaskHasPTY reports whether the task's current run gives its child a PTY
-// (A-D33): an interactive run unless it went without one. A stream session
-// never has one, nor did a oneshot-kind task from before A3.
+// (A-D33): an interactive or oneshot run unless it went without one. A stream
+// session never has one.
 func TaskHasPTY(t *protocol.TaskInfo) bool {
-	return t.Kind == protocol.TaskKind_Interactive && !t.NoPty()
+	return protocol.IsPTYKind(t.Kind) && !t.NoPty()
 }
 
 // agentProfileNames returns a runner's advertised agent profile names, falling

@@ -671,6 +671,7 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, tea.Batch(a.refreshSnapshot(), a.scheduleListFor(msg.Event))
 		}
 		cur.Status = msg.Event.TaskStatus
+		cur.Kind = msg.Event.TaskKind
 		if msg.Event.Kind == protocol.StatusEventKind_TaskEnded {
 			cur.ExitCode = msg.Event.ExitCode
 			cur.EndedAt = msg.Event.Ts
@@ -2450,9 +2451,6 @@ func (a *App) applyEventProgress(ti *protocol.TaskInfo, id string, ev protocol.T
 	ti.ProgressAgeMs = ev.ProgressAgeMs
 	ti.SetLiveTerminal(ev.LiveTerminal())
 	ti.SetTitle(ev.Title)
-	// Per run, not per task (A-D29): a resume can turn it on or off, and this
-	// row hears of the resume only through events.
-	ti.SetOneshot(ev.Oneshot())
 	ti.SetNoPty(ev.NoPty())
 	if ev.ProgressAt != 0 {
 		a.progressRecvAt[id] = time.Now()

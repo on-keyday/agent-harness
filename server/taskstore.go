@@ -173,9 +173,6 @@ type TaskEntry struct {
 	// Record: the current run's session is to be recorded (A-D22), set by its
 	// open and by a switch while it runs.
 	Record bool
-	// Oneshot: the current run is a --oneshot session (A3, A-D29); a queued
-	// one is started with the oneshot argv, and only on a runner that runs it.
-	Oneshot bool
 	// NoPTY: the current run's child has no PTY (A-D33); a queued one is
 	// started without one, and an exact resume takes it unless it says.
 	NoPTY bool
@@ -1663,24 +1660,11 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 	// never by being swept here, or the whole hold would be undone by the
 	// replay that was supposed to restore it.
 	for _, t := range s.tasks {
-		// A oneshot from before A3 left Queued or Held: nothing places a
-		// oneshot any more and nothing reads its output, so a hold would only
-		// keep a child whose answer is lost (A-D32). Running ones fall to the
-		// rule below like any survivor.
-		if t.Kind == protocol.TaskKind_Oneshot && (t.Status == protocol.TaskStatus_Queued || t.Status == protocol.TaskStatus_Held) {
-			t.Status = protocol.TaskStatus_Failed
-			now := time.Now()
-			t.EndedAt = &now
-			t.ErrorMsg = []byte("oneshot_retired")
-			t.EndReason = protocol.EndReason_Failed
-			t.DeadlineAt, t.QueueDeadlineAt = 0, 0
-			continue
-		}
 		// A foreground session left Queued (a crash between its create or
 		// resume and its Assign) has nothing to place it: Tick places only
 		// background work. Failed like a Running survivor.
 		if t.Status == protocol.TaskStatus_Queued && t.RunMode == protocol.RunMode_Foreground &&
-			(t.Kind == protocol.TaskKind_Interactive || t.Kind == protocol.TaskKind_Stream) {
+			protocol.IsSessionKind(t.Kind) {
 			t.Status = protocol.TaskStatus_Running
 		}
 		if t.Status == protocol.TaskStatus_Running {
@@ -1851,7 +1835,6 @@ func (e *TaskEntry) applyRunSpec(run RunSpec, now int64) {
 	e.RunMode = run.Mode
 	e.Cond = run.Cond
 	e.Record = run.Record
-	e.Oneshot = run.Oneshot
 	e.NoPTY = run.NoPTY
 	e.DeadlineAt, e.QueueDeadlineAt, e.ModeSwitchedAt = 0, 0, 0
 	e.EndReason, e.CancelledBy = protocol.EndReason_None, protocol.TaskID{}
@@ -1863,7 +1846,6 @@ func (e *TaskEntry) applyRunSpec(run RunSpec, now int64) {
 func (e *TaskEntry) runSpecToWAL(ev *WALEvent) {
 	ev.RunMode = uint8(e.RunMode)
 	ev.Record = e.Record
-	ev.Oneshot = e.Oneshot
 	ev.NoPTY = e.NoPTY
 	e.Cond.toWAL(ev)
 	ev.QueueDeadlineNs = e.QueueDeadlineAt
@@ -1871,10 +1853,14 @@ func (e *TaskEntry) runSpecToWAL(ev *WALEvent) {
 
 // runSpecFromWAL is applyRunSpec on replay: the record carries the resolved
 // queue deadline rather than recomputing it from the replay clock.
+// Legacy A3 WAL entries wrote kind=interactive + oneshot=true; upgrade those
+// to TaskKind_Oneshot.
 func (e *TaskEntry) runSpecFromWAL(ev WALEvent) {
 	e.RunMode = protocol.RunMode(ev.RunMode)
 	e.Record = ev.Record
-	e.Oneshot = ev.Oneshot
+	if ev.Oneshot {
+		e.Kind = protocol.TaskKind_Oneshot
+	}
 	e.NoPTY = ev.NoPTY
 	e.Cond = conditionsFromWAL(ev)
 	e.QueueDeadlineAt = ev.QueueDeadlineNs
@@ -1921,7 +1907,7 @@ func (s *TaskStore) switchRunModeLocked(id string, mode protocol.RunMode, cond R
 	if !ok {
 		return TaskEntry{}, ErrSwitchNotFound
 	}
-	if e.Kind != protocol.TaskKind_Interactive && e.Kind != protocol.TaskKind_Stream {
+	if !protocol.IsSessionKind(e.Kind) {
 		return *e, ErrSwitchNotSession
 	}
 	switch e.Status {

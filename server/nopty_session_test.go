@@ -79,12 +79,12 @@ func TestPtyWithStreamRefused(t *testing.T) {
 	oneshotRunner(h, "A", true)
 	fg := withPty(detachedOpen(40, 120), true)
 	fg.SetAgentProfile([]byte("claude"))
-	fg.SetEventStream(true)
+	fg.Kind = protocol.TaskKind_Stream
 	if resp, _ := h.handleOpenInteractive(objproto.ConnectionID{}, nil, fg, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All, "p"); resp.Status != protocol.OpenInteractiveStatus_PtyStream {
 		t.Fatalf("foreground: %v", resp.Status)
 	}
 	bg := withPty(bgOpen("claude"), true)
-	bg.SetEventStream(true)
+	bg.Kind = protocol.TaskKind_Stream
 	if r := openBG(h, bg, "p"); r.Status != protocol.OpenInteractiveStatus_PtyStream {
 		t.Fatalf("background: %v", r.Status)
 	}
@@ -196,7 +196,7 @@ func TestPlainResumeTakesModeDefault(t *testing.T) {
 	h := newTestHandler(t)
 	rc := oneshotRunner(h, "A", true)
 	id := recordedNoPTY(t, h, "A")
-	oi := &protocol.OpenInteractiveRequest{ResumeTaskId: hexToTaskID(t, id)}
+	oi := &protocol.OpenInteractiveRequest{ResumeTaskId: hexToTaskID(t, id), Kind: protocol.TaskKind_Interactive}
 	oi.SetDetached(true)
 	oi.SetInitialRows(40)
 	oi.SetInitialCols(120)

@@ -41,7 +41,7 @@ func recordedTask(t *testing.T, h *TaskHandler, kind protocol.TaskKind, prompt s
 // exactOpen is a detached exact-resume open of id.
 func exactOpen(t *testing.T, id string) *protocol.OpenInteractiveRequest {
 	t.Helper()
-	oi := &protocol.OpenInteractiveRequest{ResumeTaskId: hexToTaskID(t, id)}
+	oi := &protocol.OpenInteractiveRequest{ResumeTaskId: hexToTaskID(t, id), Kind: protocol.TaskKind_Interactive}
 	oi.SetResumeExact(true)
 	oi.SetDetached(true)
 	oi.SetInitialRows(0)
@@ -83,27 +83,92 @@ func TestExactMismatchEachField(t *testing.T) {
 func TestExactKindMismatch(t *testing.T) {
 	h := newTestHandler(t)
 	exactRunner(t, h, "A", nil, "bash")
-	// A task recorded before A3 as a oneshot: no path opens that kind any more,
-	// so nothing resumes it exactly.
-	one := recordedTask(t, h, protocol.TaskKind_Oneshot, "p", nil, "bash", "A")
-	resp, _ := openExact(h, exactOpen(t, one))
-	if resp.Status != protocol.OpenInteractiveStatus_ResumeExactMismatch || !strings.Contains(string(resp.ErrorMsg), "kind") {
-		t.Fatalf("open of a oneshot task: status %v msg %q, want a kind mismatch", resp.Status, resp.ErrorMsg)
-	}
 
 	stream := recordedTask(t, h, protocol.TaskKind_Stream, "", nil, "bash", "A")
-	oi := &protocol.OpenInteractiveRequest{ResumeTaskId: hexToTaskID(t, stream)}
-	oi.SetResumeExact(true) // event_stream = 0, recorded Stream
+	oi := &protocol.OpenInteractiveRequest{ResumeTaskId: hexToTaskID(t, stream), Kind: protocol.TaskKind_Interactive}
+	oi.SetResumeExact(true)
 	oresp, _ := h.handleOpenInteractive(objproto.ConnectionID{}, nil, oi, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All, "")
 	if oresp.Status != protocol.OpenInteractiveStatus_ResumeExactMismatch {
-		t.Fatalf("open of a stream task without event_stream: status %v, want resume_exact_mismatch", oresp.Status)
+		t.Fatalf("open of a stream task with kind=interactive: status %v, want resume_exact_mismatch", oresp.Status)
 	}
+
+	// Explicit kind=stream against a recorded interactive task mismatches.
+	inter := recordedTask(t, h, protocol.TaskKind_Interactive, "", nil, "bash", "A")
+	oi3 := &protocol.OpenInteractiveRequest{ResumeTaskId: hexToTaskID(t, inter), Kind: protocol.TaskKind_Stream}
+	oi3.SetResumeExact(true)
+	if r, _ := h.handleOpenInteractive(objproto.ConnectionID{}, nil, oi3, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All, ""); r.Status != protocol.OpenInteractiveStatus_ResumeExactMismatch {
+		t.Fatalf("open of an interactive task with kind=stream: status %v, want resume_exact_mismatch", r.Status)
+	}
+}
+
+func TestOpenInteractiveKindUnsupported(t *testing.T) {
+	badKinds := []struct {
+		name string
+		kind protocol.TaskKind
+	}{
+		{"credential", protocol.TaskKind_Credential},
+		{"unknown_99", protocol.TaskKind(99)},
+	}
+
+	t.Run("foreground", func(t *testing.T) {
+		h := newTestHandler(t)
+		exactRunner(t, h, "A", nil, "bash")
+		for _, tc := range badKinds {
+			oi := &protocol.OpenInteractiveRequest{Kind: tc.kind}
+			oi.SetRepoPath([]byte("/shared/repo"))
+			oi.SetDetached(true)
+			oi.SetInitialRows(0)
+			oi.SetInitialCols(0)
+			resp, _ := h.handleOpenInteractive(objproto.ConnectionID{}, nil, oi, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All, "")
+			if resp.Status != protocol.OpenInteractiveStatus_KindUnsupported {
+				t.Errorf("%s (%v): status %v msg %q, want kind_unsupported", tc.name, tc.kind, resp.Status, resp.ErrorMsg)
+			}
+		}
+		if n := len(h.Tasks.List(0)); n != 0 {
+			t.Fatalf("refused foreground opens created %d tasks", n)
+		}
+		// Control: interactive succeeds through the same path.
+		okReq := &protocol.OpenInteractiveRequest{Kind: protocol.TaskKind_Interactive}
+		okReq.SetRepoPath([]byte("/shared/repo"))
+		okReq.SetDetached(true)
+		okReq.SetInitialRows(0)
+		okReq.SetInitialCols(0)
+		if resp, _ := h.handleOpenInteractive(objproto.ConnectionID{}, nil, okReq, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All, ""); resp.Status != protocol.OpenInteractiveStatus_Ok {
+			t.Fatalf("control interactive: status %v msg %q, want ok", resp.Status, resp.ErrorMsg)
+		}
+	})
+
+	t.Run("background", func(t *testing.T) {
+		h := newTestHandler(t)
+		for _, tc := range badKinds {
+			oi := bgOpen("claude")
+			oi.Kind = tc.kind
+			// Test both via handleOpenInteractive and direct openBackground.
+			if r := openBG(h, oi, "p"); r.Status != protocol.OpenInteractiveStatus_KindUnsupported {
+				t.Errorf("openBG %s (%v): status %v msg %q, want kind_unsupported", tc.name, tc.kind, r.Status, r.ErrorMsg)
+			}
+			if r := h.openBackground(backgroundOpen{req: oi, repo: "/r", prompt: "p"}); r.Status != protocol.OpenInteractiveStatus_KindUnsupported {
+				t.Errorf("openBackground %s (%v): status %v msg %q, want kind_unsupported", tc.name, tc.kind, r.Status, r.ErrorMsg)
+			}
+		}
+		if n := len(h.Tasks.List(0)); n != 0 {
+			t.Fatalf("refused background opens created %d tasks", n)
+		}
+		// Control: interactive and oneshot succeed through the same path.
+		for _, k := range []protocol.TaskKind{protocol.TaskKind_Interactive, protocol.TaskKind_Oneshot} {
+			oi := bgOpen("claude")
+			oi.Kind = k
+			if r := h.openBackground(backgroundOpen{req: oi, repo: "/r", prompt: "p"}); r.Status != protocol.OpenInteractiveStatus_Ok || !r.Queued() {
+				t.Fatalf("control background %v: status %v queued %v msg %q, want ok+queued", k, r.Status, r.Queued(), r.ErrorMsg)
+			}
+		}
+	})
 }
 
 func TestExactWithoutResumeID(t *testing.T) {
 	h := newTestHandler(t)
 	exactRunner(t, h, "A", nil, "bash")
-	oi := &protocol.OpenInteractiveRequest{}
+	oi := &protocol.OpenInteractiveRequest{Kind: protocol.TaskKind_Interactive}
 	oi.SetRepoPath([]byte("/shared/repo"))
 	oi.SetResumeExact(true)
 	if resp, _ := h.handleOpenInteractive(objproto.ConnectionID{}, nil, oi, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All, ""); resp.Status != protocol.OpenInteractiveStatus_ResumeExactMismatch {
@@ -147,7 +212,7 @@ func TestExactOpenSendsRecordedArgsToRunner(t *testing.T) {
 	runnerConn.nextBidi = newFakeStream(t)
 	tuiConn.nextBidi = newFakeStream(t)
 
-	oi := &protocol.OpenInteractiveRequest{ResumeTaskId: hexToTaskID(t, id)}
+	oi := &protocol.OpenInteractiveRequest{ResumeTaskId: hexToTaskID(t, id), Kind: protocol.TaskKind_Interactive}
 	oi.SetResumeExact(true)
 	resp, _ := h.handleOpenInteractive(objproto.ConnectionID{}, tuiConn, oi, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All, "")
 	if resp.Status != protocol.OpenInteractiveStatus_Ok {
@@ -227,7 +292,7 @@ func TestExactPrefersProfileOverLastRunner(t *testing.T) {
 	bConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9122-1"), nextBidi: newFakeStream(t)}
 	exactRunner(t, h, "B", bConn, "bash")
 	inter := recordedTask(t, h, protocol.TaskKind_Interactive, "", nil, "bash", "A")
-	oi := &protocol.OpenInteractiveRequest{ResumeTaskId: hexToTaskID(t, inter)}
+	oi := &protocol.OpenInteractiveRequest{ResumeTaskId: hexToTaskID(t, inter), Kind: protocol.TaskKind_Interactive}
 	oi.SetResumeExact(true)
 	oi.SetDetached(true)
 	oi.SetInitialRows(0)
@@ -241,44 +306,37 @@ func TestExactPrefersProfileOverLastRunner(t *testing.T) {
 	}
 }
 
-// The prompt and --oneshot are settings like the rest: resume_exact permits a
-// resume that changes none of them, so a request carrying one is refused
-// rather than run under the task's recorded caps.
+// Prompt is a setting like the rest; kind must match the recorded kind.
 func TestExactRefusesPromptAndOneshot(t *testing.T) {
-	for _, c := range []struct {
-		field   string
-		oneshot bool
-		prompt  string
-	}{
-		{"prompt", false, "anything"},
-		{"--oneshot", true, ""},
-	} {
-		t.Run(c.field, func(t *testing.T) {
-			h := newTestHandler(t)
-			oneshotRunner(h, "A", true)
-			id := recordedOneshot(t, h, "P", "A")
-			req := exactOpen(t, id)
-			if c.oneshot {
-				withOneshot(req)
-			}
-			resp, _ := h.handleOpenInteractive(objproto.ConnectionID{}, nil, req, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All, c.prompt)
-			if resp.Status != protocol.OpenInteractiveStatus_ResumeExactMismatch {
-				t.Fatalf("status = %v (%q), want resume_exact_mismatch", resp.Status, resp.ErrorMsg)
-			}
-			if !strings.Contains(string(resp.ErrorMsg), c.field) {
-				t.Fatalf("error_msg %q does not name %s", resp.ErrorMsg, c.field)
-			}
-		})
-	}
+	t.Run("prompt", func(t *testing.T) {
+		h := newTestHandler(t)
+		oneshotRunner(h, "A", true)
+		id := recordedOneshot(t, h, "P", "A")
+		req := withOneshot(exactOpen(t, id))
+		resp, _ := h.handleOpenInteractive(objproto.ConnectionID{}, nil, req, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All, "anything")
+		if resp.Status != protocol.OpenInteractiveStatus_ResumeExactMismatch || !strings.Contains(string(resp.ErrorMsg), "prompt") {
+			t.Fatalf("status = %v (%q), want resume_exact_mismatch naming prompt", resp.Status, resp.ErrorMsg)
+		}
+	})
+	t.Run("kind", func(t *testing.T) {
+		h := newTestHandler(t)
+		oneshotRunner(h, "A", true)
+		id := recordedTask(t, h, protocol.TaskKind_Interactive, "", nil, "claude", "A")
+		req := withOneshot(exactOpen(t, id))
+		resp, _ := h.handleOpenInteractive(objproto.ConnectionID{}, nil, req, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All, "")
+		if resp.Status != protocol.OpenInteractiveStatus_ResumeExactMismatch || !strings.Contains(string(resp.ErrorMsg), "kind") {
+			t.Fatalf("status = %v (%q), want resume_exact_mismatch naming kind", resp.Status, resp.ErrorMsg)
+		}
+	})
 }
 
 // recordedOneshot creates a finished task on /r whose last run was a
-// --oneshot with prompt, run on runner `on`.
+// oneshot with prompt, run on runner `on`.
 func recordedOneshot(t *testing.T, h *TaskHandler, prompt, on string) string {
 	t.Helper()
-	id, err := h.Tasks.CreateWithinLimits("/r", prompt, protocol.TaskKind_Interactive, protocol.ClientKind_Cli,
+	id, err := h.Tasks.CreateWithinLimits("/r", prompt, protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,
 		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_None, Scope: authority.DefaultScope()},
-		"claude", RunSpec{Mode: protocol.RunMode_Foreground, Oneshot: true})
+		"claude", RunSpec{Mode: protocol.RunMode_Foreground})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -288,7 +346,8 @@ func recordedOneshot(t *testing.T, h *TaskHandler, prompt, on string) string {
 }
 
 // An exact resume runs what was recorded: the last run's prompt and its
-// --oneshot bit reach the runner without the request carrying either.
+// oneshot kind reach the runner when the client sends a plain exact resume
+// (Kind=Interactive, no --oneshot, no prompt).
 func TestExactRunsRecordedPromptAndOneshot(t *testing.T) {
 	h := newTestHandler(t)
 	rc := oneshotRunner(h, "A", true)
@@ -305,12 +364,13 @@ func TestExactRunsRecordedPromptAndOneshot(t *testing.T) {
 	if len(rc.sendStreams) != 1 || body.DecodeExact(rc.sendStreams[0].bytes) != nil || string(body.Prompt) != "P" {
 		t.Fatalf("prompt stream: %d streams, body %q, want the recorded P", len(rc.sendStreams), body.Prompt)
 	}
-	if e, _ := h.Tasks.Get(id); !e.Oneshot || e.Prompt != "P" {
-		t.Fatalf("after exact resume: oneshot=%v prompt=%q, want the record", e.Oneshot, e.Prompt)
+	if e, _ := h.Tasks.Get(id); e.Kind != protocol.TaskKind_Oneshot || e.Prompt != "P" {
+		t.Fatalf("after exact resume: kind=%v prompt=%q, want oneshot + P", e.Kind, e.Prompt)
 	}
 }
 
-// A background open needs a prompt; an exact one has the recorded prompt.
+// A background open needs a prompt; an exact one has the recorded prompt and
+// adopts the recorded oneshot kind from a plain exact resume request.
 func TestExactBackgroundUsesRecordedPrompt(t *testing.T) {
 	h := newTestHandler(t)
 	oneshotRunner(h, "A", true)
@@ -324,7 +384,7 @@ func TestExactBackgroundUsesRecordedPrompt(t *testing.T) {
 	if resp.Status != protocol.OpenInteractiveStatus_Ok || !resp.Queued() {
 		t.Fatalf("status %v (%q) queued %v, want queued", resp.Status, resp.ErrorMsg, resp.Queued())
 	}
-	if e, _ := h.Tasks.Get(id); e.Prompt != "P" || !e.Oneshot || e.RunMode != protocol.RunMode_Background {
-		t.Fatalf("queued: prompt %q oneshot %v mode %v, want the recorded P, oneshot, background", e.Prompt, e.Oneshot, e.RunMode)
+	if e, _ := h.Tasks.Get(id); e.Prompt != "P" || e.Kind != protocol.TaskKind_Oneshot || e.RunMode != protocol.RunMode_Background {
+		t.Fatalf("queued: prompt %q kind %v mode %v, want the recorded P, oneshot, background", e.Prompt, e.Kind, e.RunMode)
 	}
 }

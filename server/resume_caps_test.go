@@ -52,7 +52,7 @@ func (f *resumeFixture) terminalTask(t *testing.T, child bool) string {
 func (f *resumeFixture) open(t *testing.T, resume string, exact bool) protocol.TaskControlResponse {
 	t.Helper()
 	f.reqID++
-	oi := protocol.OpenInteractiveRequest{}
+	oi := protocol.OpenInteractiveRequest{Kind: protocol.TaskKind_Interactive}
 	oi.SetRepoPath([]byte("/r"))
 	if resume != "" {
 		oi.ResumeTaskId = hexToTaskID(t, resume)

@@ -66,33 +66,43 @@ type HistoryEntry struct {
 	Message                      string
 }
 
-// runKind is the kind a firing uses: stream when the schedule says so,
-// interactive otherwise (the zero value included).
+// runKind is the kind a firing uses: oneshot, interactive, or stream. Any
+// unsupported value falls back to interactive.
 func (s *Schedule) runKind() protocol.TaskKind {
-	if s.Kind == protocol.TaskKind_Stream {
-		return protocol.TaskKind_Stream
+	if protocol.IsSessionKind(s.Kind) {
+		return s.Kind
 	}
 	return protocol.TaskKind_Interactive
 }
 
 // scheduleKindName and scheduleKindFromName are the kind as schedules.json
 // holds it: by NAME, because the numeric zero is oneshot and a file written
-// before the field has none. "" (absent) reads as interactive.
+// before the field has none. "" (absent) reads as interactive unless the legacy
+// run.oneshot bit is set.
 func scheduleKindName(k protocol.TaskKind) string {
-	if k == protocol.TaskKind_Stream {
+	switch k {
+	case protocol.TaskKind_Oneshot:
+		return "oneshot"
+	case protocol.TaskKind_Stream:
 		return "stream"
+	default:
+		return "interactive"
 	}
-	return "interactive"
 }
 
-func scheduleKindFromName(n string) (protocol.TaskKind, error) {
+func scheduleKindFromName(n string, legacyOneshot bool) (protocol.TaskKind, error) {
 	switch n {
 	case "", "interactive":
+		if legacyOneshot {
+			return protocol.TaskKind_Oneshot, nil
+		}
 		return protocol.TaskKind_Interactive, nil
+	case "oneshot":
+		return protocol.TaskKind_Oneshot, nil
 	case "stream":
 		return protocol.TaskKind_Stream, nil
 	}
-	return 0, fmt.Errorf("kind %q (want interactive or stream)", n)
+	return 0, fmt.Errorf("kind %q (want oneshot, interactive or stream)", n)
 }
 
 // appendHistory adds e and evicts the oldest entries past historyMax.
@@ -633,7 +643,7 @@ func (s Schedule) toJSON() (scheduleJSON, error) {
 		Run: runSpecJSON{
 			Mode: s.Run.Mode, DeadlineNs: int64(c.Deadline), QuietNs: int64(c.Quiet), BlockedNs: int64(c.Blocked),
 			QueueTimeoutNs: int64(c.QueueTimeout), TurnEnd: c.TurnEnd, Rows: c.Rows, Cols: c.Cols,
-			Record: s.Run.Record, Oneshot: s.Run.Oneshot, NoPTY: s.Run.NoPTY,
+			Record: s.Run.Record, NoPTY: s.Run.NoPTY,
 		},
 		Grant: grantJSON{
 			Caps: s.Grant.Caps, Scope: scopeToJSON(s.Grant.Scope),
@@ -663,7 +673,7 @@ func (j scheduleJSON) schedule() (Schedule, error) {
 		return Schedule{}, fmt.Errorf("selector: %w", err)
 	}
 	r := j.Run
-	kind, err := scheduleKindFromName(j.Kind)
+	kind, err := scheduleKindFromName(j.Kind, r.Oneshot)
 	if err != nil {
 		return Schedule{}, err
 	}
@@ -673,7 +683,7 @@ func (j scheduleJSON) schedule() (Schedule, error) {
 		Repo: j.Repo, Agent: j.Agent, Selector: sel,
 		Prompt: j.Prompt, ExtraArgs: j.ExtraArgs, ResumeConversation: j.ResumeConversation,
 		Run: RunSpec{
-			Mode: r.Mode, Record: r.Record, Oneshot: r.Oneshot, NoPTY: r.NoPTY,
+			Mode: r.Mode, Record: r.Record, NoPTY: r.NoPTY,
 			Cond: RunConditions{
 				Deadline: time.Duration(r.DeadlineNs), Quiet: time.Duration(r.QuietNs), Blocked: time.Duration(r.BlockedNs),
 				QueueTimeout: time.Duration(r.QueueTimeoutNs), TurnEnd: r.TurnEnd, Rows: r.Rows, Cols: r.Cols,

@@ -559,22 +559,19 @@ func (h *TaskHandler) applySpec(cid objproto.ConnectionID, base Schedule, spec *
 		if v := spec.Kind(); v != nil {
 			k = *v
 		}
-		if k != protocol.TaskKind_Interactive && k != protocol.TaskKind_Stream {
-			return refuse(protocol.ScheduleStatus_KindUnsupported, "kind %s: a schedule runs interactive or stream", k)
+		if !protocol.IsSessionKind(k) {
+			return refuse(protocol.ScheduleStatus_KindUnsupported, "kind %s: a schedule runs oneshot, interactive or stream", k)
 		}
 		kindChanged = create || k != prevKind
 		sc.Kind = k
 	case create:
 		sc.Kind = protocol.TaskKind_Interactive
 	}
-	if spec.OneshotSet() {
-		sc.Run.Oneshot = spec.Oneshot()
-	}
 	switch {
 	case spec.PtySet():
 		sc.Run.NoPTY = !spec.Pty()
-	case create || spec.OneshotSet():
-		sc.Run.NoPTY = sc.Run.Oneshot // the mode's default (A-D33)
+	case create || (kindChanged && (sc.Kind == protocol.TaskKind_Oneshot || prevKind == protocol.TaskKind_Oneshot)):
+		sc.Run.NoPTY = sc.Kind == protocol.TaskKind_Oneshot // the mode's default (A-D33)
 	}
 	switch {
 	case spec.RecordSet():
@@ -654,9 +651,6 @@ func (h *TaskHandler) applySpec(cid objproto.ConnectionID, base Schedule, spec *
 	// indistinguishable from the interactive default; it is kept as it is (a
 	// switch back restores it) and the firing runs a stream with no PTY.
 	if sc.runKind() == protocol.TaskKind_Stream {
-		if sc.Run.Oneshot {
-			return refuse(protocol.ScheduleStatus_OneshotStream, "--oneshot runs in a PTY; an event-stream session has none")
-		}
 		if spec.PtySet() && spec.Pty() {
 			return refuse(protocol.ScheduleStatus_PtyStream, "--pty: an event-stream session has no PTY")
 		}
@@ -1190,7 +1184,6 @@ func (h *TaskHandler) scheduleDetail(cid objproto.ConnectionID, id protocol.Sche
 		EditedByKind: sc.EditedByKind, EditedBy: taskIDFromHex(sc.EditedBy),
 	}
 	d.SetResumeConversation(sc.ResumeConversation)
-	d.SetOneshot(sc.Run.Oneshot)
 	d.Kind = sc.runKind()
 	d.SetRecordSet(true)
 	d.SetRecord(sc.Run.Record)

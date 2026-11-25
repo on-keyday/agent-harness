@@ -56,6 +56,7 @@ func TestOpenInteractiveStatusError(t *testing.T) {
 		{protocol.OpenInteractiveStatus_AmbiguousRunner, "ambiguous_runner"},
 		{protocol.OpenInteractiveStatus_PinnedNotFound, "pinned_not_found"},
 		{protocol.OpenInteractiveStatus_ProfileUnavailable, "profile_unavailable"},
+		{protocol.OpenInteractiveStatus_KindUnsupported, "kind_unsupported"},
 		{protocol.OpenInteractiveStatus_InternalError, "internal_error"},
 	}
 	for _, tc := range tests {
@@ -103,28 +104,27 @@ func TestInteractiveE2E(t *testing.T) {
 	t.Skip("deferred to E2E integration tests — requires live server and runner with PTY")
 }
 
-// --stream must reach the wire. The flag rides an existing reserved bit, so a
-// build that forgets to set it produces a byte-identical request and a task
-// that silently opens as a PTY -- the failure mode a flag on a spare bit has.
-func TestEventStreamFlagReachesTheRequest(t *testing.T) {
+// Kind must reach the wire as kind :TaskKind. Zero SessionOpts sends
+// TaskKind_Interactive; TaskKind_Stream sends TaskKind_Stream.
+func TestOpenInteractiveKindReachesTheRequest(t *testing.T) {
 	sel := protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}
 
 	off := buildOpenInteractiveRequest("/repo", SessionOpts{Selector: sel})
-	if off.EventStream() {
-		t.Error("event_stream is set without the option; the wire zero must be a PTY session")
+	if off.Kind != protocol.TaskKind_Interactive {
+		t.Errorf("default kind = %v, want TaskKind_Interactive", off.Kind)
 	}
 
-	on := buildOpenInteractiveRequest("/repo", SessionOpts{Selector: sel, EventStream: true})
-	if !on.EventStream() {
-		t.Fatal("EventStream was dropped between SessionOpts and the request")
+	on := buildOpenInteractiveRequest("/repo", SessionOpts{Selector: sel, Kind: protocol.TaskKind_Stream})
+	if on.Kind != protocol.TaskKind_Stream {
+		t.Fatalf("Kind=Stream was dropped between SessionOpts and the request: %v", on.Kind)
 	}
 	// It must not disturb its bit-neighbours.
 	if on.X11Enabled() || on.ResumeConversation() || on.ScopePresent() || on.ResumeCapsOverride() {
-		t.Errorf("event_stream disturbed a neighbouring flag: x11=%v resume_conv=%v scope=%v caps=%v",
+		t.Errorf("kind disturbed a neighbouring flag: x11=%v resume_conv=%v scope=%v caps=%v",
 			on.X11Enabled(), on.ResumeConversation(), on.ScopePresent(), on.ResumeCapsOverride())
 	}
 
-	// And it survives the wire, which is the whole point of spending a bit.
+	// And it survives the wire.
 	buf, err := on.Append(nil)
 	if err != nil {
 		t.Fatalf("append: %v", err)
@@ -133,7 +133,7 @@ func TestEventStreamFlagReachesTheRequest(t *testing.T) {
 	if err := back.DecodeExact(buf); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if !back.EventStream() {
-		t.Error("event_stream did not survive an encode/decode round trip")
+	if back.Kind != protocol.TaskKind_Stream {
+		t.Errorf("kind did not survive an encode/decode round trip: %v", back.Kind)
 	}
 }

@@ -141,7 +141,6 @@ func TestToTaskInfoMapsEveryField(t *testing.T) {
 		EndReason:       protocol.EndReason_Deadline,
 		CancelledBy:     protocol.TaskID{Id: [16]byte{0x4e}},
 		Run:             3,
-		Oneshot:         true,
 		NoPTY:           true,
 		// The credential fields, set on an interactive entry on purpose: the
 		// mapper copies them whatever the kind (they are zero on any other).
@@ -194,9 +193,6 @@ func TestToTaskInfoMapsEveryField(t *testing.T) {
 	}
 	if !info.SkillsInjected() {
 		t.Error("TaskInfo.SkillsInjected is false after mapping SkillsInjected:true — the mapper forgot it")
-	}
-	if !info.Oneshot() {
-		t.Error("TaskInfo.Oneshot is false after mapping Oneshot:true — the mapper forgot it")
 	}
 	if !info.NoPty() {
 		t.Error("TaskInfo.NoPty is false after mapping NoPTY:true — the mapper forgot it")

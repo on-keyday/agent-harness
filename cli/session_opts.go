@@ -59,11 +59,12 @@ type SessionOpts struct {
 	// resize loop overwrites it with the real terminal size moments later.
 	InitialRows uint16
 	InitialCols uint16
-	// EventStream opens the session as TaskKind_Stream: the runner spawns the
-	// profile's stream adapter instead of the agent under a PTY, and the
-	// frames carry neutral NDJSON. A profile with no adapter refuses the
-	// request rather than falling back to a terminal.
-	EventStream bool
+	// Kind is the TaskKind the open creates or resumes as: TaskKind_Interactive
+	// (default when zero and Oneshot is false), TaskKind_Oneshot (when Oneshot
+	// is true), or TaskKind_Stream (the runner spawns the profile's stream
+	// adapter instead of the agent under a PTY, and the frames carry neutral
+	// NDJSON).
+	Kind protocol.TaskKind
 	// ScopePresent, on a resume, writes Scope onto the task (attenuated);
 	// false keeps the task's persisted scope. Independent of
 	// ResumeCapsOverride — the two halves of authority re-grant separately.
@@ -146,7 +147,13 @@ func buildOpenInteractiveRequest(repoPath string, opts SessionOpts) protocol.Ope
 	oi.SpawnDepth, oi.MaxDescendants = opts.SpawnDepth, opts.MaxDescendants
 	oi.SetSpawnDepthPresent(opts.SpawnDepthPresent)
 	oi.SetMaxDescendantsPresent(opts.MaxDescendantsPresent)
-	oi.SetEventStream(opts.EventStream)
+	kind := opts.Kind
+	if opts.Oneshot {
+		kind = protocol.TaskKind_Oneshot
+	} else if kind == 0 {
+		kind = protocol.TaskKind_Interactive
+	}
+	oi.Kind = kind
 	oi.SetResumeExact(opts.ResumeExact)
 	if opts.Detached {
 		oi.SetDetached(true) // the discriminator before its block
@@ -159,11 +166,10 @@ func buildOpenInteractiveRequest(repoPath string, opts SessionOpts) protocol.Ope
 		oi.SetConditionsPresent(true) // the discriminator before its block
 		oi.SetConditions(*opts.Conditions)
 	}
-	if opts.RecordSet || opts.Oneshot || opts.PtySet {
+	if opts.RecordSet || opts.PtySet {
 		var ext protocol.OpenInteractiveExt
 		ext.SetRecordSet(opts.RecordSet)
 		ext.SetRecord(opts.RecordSet && opts.Record)
-		ext.SetOneshot(opts.Oneshot)
 		ext.SetPtySet(opts.PtySet)
 		ext.SetPty(opts.PtySet && opts.Pty)
 		oi.SetExtPresent(true) // the discriminator before its byte

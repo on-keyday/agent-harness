@@ -6,15 +6,18 @@ import "testing"
 // on OpenExecRunnerRequest, and a runner that runs it says so in its hello.
 // Each is zero unless set, so an older peer's bytes read as "not oneshot".
 func TestOneshotBitsRoundTrip(t *testing.T) {
+	var oi OpenInteractiveRequest
+	oi.Kind = TaskKind_Oneshot
+	oi.SetExtPresent(true)
 	var ext OpenInteractiveExt
-	ext.SetOneshot(true)
 	ext.SetRecordSet(true)
-	var extOut OpenInteractiveExt
-	if err := extOut.DecodeExact(ext.MustAppend(nil)); err != nil {
+	oi.SetExt(ext)
+	var oiOut OpenInteractiveRequest
+	if err := oiOut.DecodeExact(oi.MustAppend(nil)); err != nil {
 		t.Fatal(err)
 	}
-	if !extOut.Oneshot() || !extOut.RecordSet() || extOut.Record() {
-		t.Fatalf("ext bits: oneshot=%v record_set=%v record=%v", extOut.Oneshot(), extOut.RecordSet(), extOut.Record())
+	if oiOut.Kind != TaskKind_Oneshot || oiOut.Ext() == nil || !oiOut.Ext().RecordSet() || oiOut.Ext().Record() {
+		t.Fatalf("open: kind=%v ext=%+v", oiOut.Kind, oiOut.Ext())
 	}
 
 	var oe OpenExecRunnerRequest

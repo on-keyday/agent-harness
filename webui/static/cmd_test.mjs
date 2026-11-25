@@ -952,7 +952,8 @@ test("watcher list and panel name a non-default signal", async () => {
 test("watch menu: choices follow the task, and each choice arms its own verb", () => {
   const live = { id: ID, kind: "Interactive", status: "Detached", progressAt: "17" };
   eq(page.watchChoices(live).map((c) => c.key), ["quiet", "lifecycle", "program", "any", "progress"]);
-  eq(page.watchChoices({ id: ID, kind: "Oneshot", status: "Running" }).map((c) => c.key), ["progress"]);
+  eq(page.watchChoices({ id: ID, kind: "Oneshot", status: "Running" }).map((c) => c.key), ["quiet", "lifecycle", "program", "any", "progress"]);
+  eq(page.watchChoices({ id: ID, kind: "Interactive", status: "Queued" }).map((c) => c.key), ["progress"]);
   eq(page.watchChoices({ id: ID, kind: "Interactive", status: "Succeeded" }).map((c) => c.key), []);
   const [quiet, , program, , progress] = page.watchChoices(live);
   eq(page.watchArm(program, live), { fn: "awaitIdle", opts: { taskId: ID, sink: "notify", signal: "program" } });
