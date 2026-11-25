@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/connauth"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -35,12 +35,12 @@ func (h *TaskHandler) runnerDialAdd(conn ConnHandle, r *protocol.RunnerDialAddRe
 	cands := make([]string, 0, len(r.Candidates))
 	total := 0
 	for _, c := range r.Candidates {
-		text, err := cli.CanonicalDialRecordCandidate(string(c.Text))
+		text, err := connauth.CanonicalDialRecordCandidate(string(c.Text))
 		if err != nil {
 			return protocol.RunnerDialStatus_InvalidCandidates, 0
 		}
 		total += len(text)
-		if h.DialLegs == nil || !h.DialLegs(cli.CandidateTransport(text)) {
+		if h.DialLegs == nil || !h.DialLegs(connauth.CandidateTransport(text)) {
 			return protocol.RunnerDialStatus_InvalidCandidates, 0
 		}
 		cands = append(cands, text)

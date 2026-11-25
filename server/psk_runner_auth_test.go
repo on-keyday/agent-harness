@@ -4,7 +4,7 @@ import (
 	"crypto/ed25519"
 	"testing"
 
-	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/connauth"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -13,7 +13,7 @@ func buildRunnerAuthReq(priv ed25519.PrivateKey, transcript []byte, rh protocol.
 	req.SetBinder(nil)
 	auth := protocol.RunnerAuth{Hello: rh}
 	copy(auth.Key[:], priv.Public().(ed25519.PublicKey))
-	copy(auth.Sig[:], cli.SignRunnerAuth(priv, transcript))
+	copy(auth.Sig[:], connauth.SignRunnerAuth(priv, transcript))
 	req.SetRunnerAuth(auth)
 	return req
 }

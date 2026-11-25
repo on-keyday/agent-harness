@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/appwire"
-	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/connauth"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -179,7 +179,7 @@ func (g *pskGate) agentBinderOK(hello *protocol.ClientHello, binder, transcript 
 	if !ok {
 		return false
 	}
-	want, err := cli.ComputePSKBinder(ticket[:], transcript)
+	want, err := connauth.ComputePSKBinder(ticket[:], transcript)
 	return err == nil && subtle.ConstantTimeCompare(binder, want) == 1
 }
 
@@ -255,7 +255,7 @@ func (g *pskGate) respond(sendFn func([]byte), transcript []byte, status protoco
 	}
 	resp := protocol.PskAuthResponse{Status: status}
 	if g.serverKey != nil {
-		resp.SetServerSig(cli.SignServerAuth(g.serverKey, transcript, status))
+		resp.SetServerSig(connauth.SignServerAuth(g.serverKey, transcript, status))
 	}
 	out, err := resp.Append([]byte{byte(appwire.AppKind_PskAuth)})
 	if err != nil {
@@ -328,7 +328,7 @@ func (g *pskGate) Check(
 			return true, true, nil
 		}
 	} else if key := g.binderKey(&req); len(key) > 0 {
-		expected, err := cli.ComputePSKBinder(key, transcript)
+		expected, err := connauth.ComputePSKBinder(key, transcript)
 		if err != nil || subtle.ConstantTimeCompare(req.Binder, expected) != 1 {
 			g.respond(sendFn, transcript, protocol.PskAuthStatus_BadPsk)
 			return true, true, nil
@@ -345,7 +345,7 @@ func (g *pskGate) Check(
 			return true, true, nil
 		}
 		key := ed25519.PublicKey(auth.Key[:])
-		if !cli.VerifyRunnerAuth(key, transcript, auth.Sig[:]) {
+		if !connauth.VerifyRunnerAuth(key, transcript, auth.Sig[:]) {
 			g.respond(sendFn, transcript, protocol.PskAuthStatus_BadPsk)
 			return true, true, nil
 		}
@@ -377,7 +377,7 @@ func (g *pskGate) Check(
 		if g.CredentialFor != nil && auth.TaskId.Id != ([16]byte{}) {
 			pub, state, ok = g.CredentialFor(auth.TaskId, time.Now())
 		}
-		if !ok || !cli.VerifyCredentialAuth(ed25519.PublicKey(pub[:]), transcript, auth.Sig[:]) {
+		if !ok || !connauth.VerifyCredentialAuth(ed25519.PublicKey(pub[:]), transcript, auth.Sig[:]) {
 			g.respond(sendFn, transcript, protocol.PskAuthStatus_BadTicket)
 			return true, true, nil
 		}

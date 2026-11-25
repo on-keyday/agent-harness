@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/appwire"
-	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/connauth"
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
@@ -55,7 +55,7 @@ func ListenAndServe(ctx context.Context, cfg ListenConfig) error {
 
 	wsPath := cfg.WSPath
 	if wsPath == "" {
-		wsPath = cli.WebSocketPath
+		wsPath = connauth.WebSocketPath
 	}
 
 	ep, httpServer, httpServerDone, err := buildListenEndpoint(cfg, wsPath)

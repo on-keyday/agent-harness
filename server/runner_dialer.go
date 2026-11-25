@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/connauth"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/objtrsf/transport"
@@ -80,7 +80,7 @@ type dialLoop struct {
 
 func newDialManager(cfg dialManagerConfig) *dialManager {
 	if cfg.Resolve == nil {
-		cfg.Resolve = cli.ResolveCandidate
+		cfg.Resolve = connauth.ResolveCandidate
 	}
 	if cfg.Sleep == nil {
 		cfg.Sleep = func(ctx context.Context, d time.Duration) bool {
@@ -556,8 +556,8 @@ func newWSTargets(cfg Config) *transport.WebSocketTargets {
 // through cli.ResolveCandidate.
 func resolveDialCandidate(targets *transport.WebSocketTargets) func(string) (objproto.ConnectionID, error) {
 	return func(spec string) (objproto.ConnectionID, error) {
-		if !cli.IsURLCandidate(spec) {
-			return cli.ResolveCandidate(spec)
+		if !connauth.IsURLCandidate(spec) {
+			return connauth.ResolveCandidate(spec)
 		}
 		if targets == nil {
 			return objproto.ConnectionID{}, fmt.Errorf("candidate %q: no WebSocket leg for a URL candidate", spec)

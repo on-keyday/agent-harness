@@ -1,6 +1,6 @@
 //go:build !js
 
-package cli
+package connauth
 
 import (
 	"fmt"

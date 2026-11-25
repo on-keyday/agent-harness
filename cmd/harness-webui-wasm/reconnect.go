@@ -20,7 +20,7 @@ import (
 // webui/static/reconnect.js for the page's side).
 //
 //   - reconnectKick ends a backoff sleep at once and resets the attempt count
-//     (cli.PersistConfig.Kick).
+//     (connauth.PersistConfig.Kick).
 //   - The backoff is capped low while the page is visible, where an operator is
 //     watching a "reconnecting" banner, and may grow while it is hidden, where
 //     a retry every few seconds only spends battery.
@@ -28,7 +28,7 @@ import (
 //     previewStartTimeout and says so, instead of leaving "connecting…" up.
 const (
 	visibleMaxBackoff   = 5 * time.Second
-	hiddenMaxBackoff    = 30 * time.Second // = cli.PersistConfig's own default cap
+	hiddenMaxBackoff    = 30 * time.Second // = connauth.PersistConfig's own default cap
 	previewStartTimeout = 10 * time.Second
 )
 

@@ -10,7 +10,6 @@ import (
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/authority"
-	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
 )
@@ -209,7 +208,7 @@ func idleNotifyText(taskIDHex string, f IdleFire) string {
 		return fmt.Sprintf("session %s ended", short)
 	case f.FiredBy != protocol.AwaitIdleSignal_Quiet:
 		return fmt.Sprintf("session %s idle (%s)", short,
-			cli.AwaitIdleFiredDetail(f.FiredBy, f.Lifecycle, f.ProgramState, f.ProgramKind))
+			protocol.AwaitIdleFiredDetail(f.FiredBy, f.Lifecycle, f.ProgramState, f.ProgramKind))
 	default:
 		idle := time.Since(time.Unix(0, f.LastOutput))
 		return fmt.Sprintf("session %s idle (%ds since last output)", short, int(idle/time.Second))
@@ -274,11 +273,11 @@ func (h *TaskHandler) fireIdleBoard(topic, taskIDHex string, requester protocol.
 		Task:         taskIDHex,
 		LastOutputMs: f.LastOutput / int64(time.Millisecond),
 		Status:       status,
-		Signal:       cli.AwaitIdleSignalString(signal),
-		FiredBy:      cli.AwaitIdleSignalString(f.FiredBy),
-		Lifecycle:    cli.LifecycleWord(f.Lifecycle),
-		ProgramState: cli.ProgramWord(f.ProgramState),
-		ProgramKind:  cli.ProgramKindWord(f.ProgramKind),
+		Signal:       protocol.AwaitIdleSignalString(signal),
+		FiredBy:      protocol.AwaitIdleSignalString(f.FiredBy),
+		Lifecycle:    protocol.LifecycleWord(f.Lifecycle),
+		ProgramState: protocol.ProgramWord(f.ProgramState),
+		ProgramKind:  protocol.ProgramKindWord(f.ProgramKind),
 	})
 	if err != nil {
 		slog.Warn("await-idle: encode board payload", "err", err)

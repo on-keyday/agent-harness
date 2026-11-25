@@ -174,54 +174,6 @@ func AwaitIdleSinkString(s protocol.AwaitSink) string {
 	}
 }
 
-// awaitIdleSignalWords is the schema's word for each signal, the one spelling
-// the flag, the JSON output, the board payload and the watcher lists share.
-var awaitIdleSignalWords = map[protocol.AwaitIdleSignal]string{
-	protocol.AwaitIdleSignal_Quiet:     "quiet",
-	protocol.AwaitIdleSignal_Lifecycle: "lifecycle",
-	protocol.AwaitIdleSignal_Program:   "program",
-	protocol.AwaitIdleSignal_Any:       "any",
-}
-
-// AwaitIdleSignalString is the signal's word, unknown(N) outside the enum.
-func AwaitIdleSignalString(s protocol.AwaitIdleSignal) string {
-	if w, ok := awaitIdleSignalWords[s]; ok {
-		return w
-	}
-	return fmt.Sprintf("unknown(%d)", int(s))
-}
-
-// ParseAwaitIdleSignal reads a --signal word; "" is the default, quiet.
-func ParseAwaitIdleSignal(word string) (protocol.AwaitIdleSignal, error) {
-	if word == "" {
-		return protocol.AwaitIdleSignal_Quiet, nil
-	}
-	for s, w := range awaitIdleSignalWords {
-		if w == word {
-			return s, nil
-		}
-	}
-	return 0, fmt.Errorf("unknown signal %q (want quiet, lifecycle, program or any)", word)
-}
-
-// AwaitIdleFiredDetail is what a fire saw, for the leg that fired: "program
-// done", "program blocked:permission", "lifecycle waiting". "" for the quiet
-// leg, whose surfaces keep their "last output" wording. One spelling for the
-// notification, the TUI result line and the WebUI.
-func AwaitIdleFiredDetail(firedBy protocol.AwaitIdleSignal, lc protocol.LifecycleState, ps protocol.ProgramState, pk protocol.ProgramKind) string {
-	switch firedBy {
-	case protocol.AwaitIdleSignal_Program:
-		state := ProgramWord(ps)
-		if ps == protocol.ProgramState_Blocked && pk != protocol.ProgramKind_None {
-			state += ":" + ProgramKindWord(pk)
-		}
-		return "program " + state
-	case protocol.AwaitIdleSignal_Lifecycle:
-		return "lifecycle " + LifecycleWord(lc)
-	}
-	return ""
-}
-
 // AwaitWatcherWaitsFor is a watcher row's condition cell, the one wording the
 // TUI modal, the WebUI panel and the WebUI command line print: "progress", or
 // "idle <signal>" with the threshold wherever a quiet leg uses it. The signal
@@ -230,7 +182,7 @@ func AwaitWatcherWaitsFor(w *protocol.AwaitIdleWatcherInfo) string {
 	if w.Condition == protocol.AwaitCondition_Progress {
 		return "progress"
 	}
-	s := "idle " + AwaitIdleSignalString(w.Signal)
+	s := "idle " + protocol.AwaitIdleSignalString(w.Signal)
 	if w.Signal == protocol.AwaitIdleSignal_Quiet || w.Signal == protocol.AwaitIdleSignal_Any {
 		s += fmt.Sprintf(" %dms", w.ThresholdMs)
 	}
@@ -289,7 +241,7 @@ func AwaitIdleWatcherLines(ws []protocol.AwaitIdleWatcherInfo) []string {
 		if w.Sink == protocol.AwaitSink_Board {
 			sink += " topic=" + string(w.Topic)
 		}
-		wait := fmt.Sprintf("signal=%s threshold=%dms", AwaitIdleSignalString(w.Signal), w.ThresholdMs)
+		wait := fmt.Sprintf("signal=%s threshold=%dms", protocol.AwaitIdleSignalString(w.Signal), w.ThresholdMs)
 		if w.Condition == protocol.AwaitCondition_Progress {
 			wait = "on=progress"
 		}
@@ -329,7 +281,7 @@ func AwaitIdleWatcherJSONLine(w *protocol.AwaitIdleWatcherInfo) string {
 		OriginKind:  w.OriginKind.String(),
 		OriginCID:   string(w.OriginCid),
 		Condition:   AwaitConditionString(w.Condition),
-		Signal:      AwaitIdleSignalString(w.Signal),
+		Signal:      protocol.AwaitIdleSignalString(w.Signal),
 	}
 	b, err := json.Marshal(row)
 	if err != nil {

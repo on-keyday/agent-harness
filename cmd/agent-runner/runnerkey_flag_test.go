@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/connauth"
 )
 
 // --print-pubkey needs no other flag (no --server-cid, no --roots) and prints
@@ -52,14 +52,14 @@ func TestNoKeyActionFallsThrough(t *testing.T) {
 }
 
 func TestResolveRunnerKeyPathOrder(t *testing.T) {
-	t.Setenv(cli.RunnerKeyFileEnv, "/from/env")
+	t.Setenv(connauth.RunnerKeyFileEnv, "/from/env")
 	if got, _ := resolveRunnerKeyPath("/from/flag"); got != "/from/flag" {
 		t.Errorf("flag given: %q, want the flag", got)
 	}
 	if got, _ := resolveRunnerKeyPath(""); got != "/from/env" {
 		t.Errorf("env only: %q, want the env", got)
 	}
-	os.Unsetenv(cli.RunnerKeyFileEnv)
+	os.Unsetenv(connauth.RunnerKeyFileEnv)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
@@ -70,9 +70,9 @@ func TestResolveRunnerKeyPathOrder(t *testing.T) {
 
 // Agents have no use for the key's path, and the runner hands them its env.
 func TestScrubDropsTheRunnerKeyFileName(t *testing.T) {
-	t.Setenv(cli.RunnerKeyFileEnv, "/somewhere/runner-key")
+	t.Setenv(connauth.RunnerKeyFileEnv, "/somewhere/runner-key")
 	scrubOperatorSecret()
-	if v, ok := os.LookupEnv(cli.RunnerKeyFileEnv); ok {
-		t.Errorf("%s survived the scrub with %q", cli.RunnerKeyFileEnv, v)
+	if v, ok := os.LookupEnv(connauth.RunnerKeyFileEnv); ok {
+		t.Errorf("%s survived the scrub with %q", connauth.RunnerKeyFileEnv, v)
 	}
 }

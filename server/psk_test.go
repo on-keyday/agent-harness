@@ -8,7 +8,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/appwire"
-	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/connauth"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
 )
@@ -24,7 +24,7 @@ var testTranscript = []byte("handshake-transcript-bytes")
 // No inputs were changed; this helper locks in the MITM-resistance test.
 func pskBinder(t *testing.T, psk, transcript []byte) []byte {
 	t.Helper()
-	b, err := cli.ComputePSKBinder(psk, transcript)
+	b, err := connauth.ComputePSKBinder(psk, transcript)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func buildPskAuthData(t *testing.T, req *protocol.PskAuthRequest) []byte {
 func buildOperatorClientHello(psk, transcript []byte) *protocol.PskAuthRequest {
 	req := &protocol.PskAuthRequest{Role: protocol.AuthRole_Client}
 	if len(psk) > 0 {
-		binder, _ := cli.ComputePSKBinder(psk, transcript)
+		binder, _ := connauth.ComputePSKBinder(psk, transcript)
 		req.SetBinder(binder)
 	}
 	req.SetClientHello(protocol.ClientHello{Kind: protocol.ClientKind_Cli})
@@ -853,7 +853,7 @@ func TestPSKGate_SignsEveryStatus(t *testing.T) {
 			t.Errorf("status = %v, want %v", resp.Status, want)
 			continue
 		}
-		if err := cli.VerifyServerAuth(pub, testTranscript, &resp); err != nil {
+		if err := connauth.VerifyServerAuth(pub, testTranscript, &resp); err != nil {
 			t.Errorf("%v: %v", want, err)
 		}
 	}

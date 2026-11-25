@@ -15,6 +15,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/connauth"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
 )
@@ -44,10 +45,10 @@ func TestSendMergedHandshake_OperatorKind_WithPSK(t *testing.T) {
 		return nil
 	}
 
-	respCh := make(chan cli.PskAuthReply, 1)
-	respCh <- cli.PskAuthReply{Resp: protocol.PskAuthResponse{Status: protocol.PskAuthStatus_Ok}}
+	respCh := make(chan connauth.PskAuthReply, 1)
+	respCh <- connauth.PskAuthReply{Resp: protocol.PskAuthResponse{Status: protocol.PskAuthStatus_Ok}}
 
-	err := cli.SendMergedHandshake(context.Background(), sendFn, psk, transcript, operatorKind, nil, respCh)
+	err := connauth.SendMergedHandshake(context.Background(), sendFn, psk, transcript, operatorKind, nil, respCh)
 	if err != nil {
 		t.Fatalf("SendMergedHandshake returned error: %v", err)
 	}
@@ -71,7 +72,7 @@ func TestSendMergedHandshake_OperatorKind_WithPSK(t *testing.T) {
 	}
 
 	// Binder must be present and match ComputePSKBinder(psk, transcript).
-	wantBinder, err := cli.ComputePSKBinder(psk, transcript)
+	wantBinder, err := connauth.ComputePSKBinder(psk, transcript)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,10 +116,10 @@ func TestSendMergedHandshake_NoPSK(t *testing.T) {
 
 	var sent []byte
 	sendFn := func(data []byte) error { sent = append(sent, data...); return nil }
-	respCh := make(chan cli.PskAuthReply, 1)
-	respCh <- cli.PskAuthReply{Resp: protocol.PskAuthResponse{Status: protocol.PskAuthStatus_Ok}}
+	respCh := make(chan connauth.PskAuthReply, 1)
+	respCh <- connauth.PskAuthReply{Resp: protocol.PskAuthResponse{Status: protocol.PskAuthStatus_Ok}}
 
-	err := cli.SendMergedHandshake(context.Background(), sendFn, nil, nil, protocol.ClientKind_Cli, nil, respCh)
+	err := connauth.SendMergedHandshake(context.Background(), sendFn, nil, nil, protocol.ClientKind_Cli, nil, respCh)
 	if err != nil {
 		t.Fatalf("SendMergedHandshake (no PSK): %v", err)
 	}
@@ -163,11 +164,11 @@ func TestSendMergedHandshake_AgentEnv(t *testing.T) {
 
 	var sent []byte
 	sendFn := func(data []byte) error { sent = append(sent, data...); return nil }
-	respCh := make(chan cli.PskAuthReply, 1)
-	respCh <- cli.PskAuthReply{Resp: protocol.PskAuthResponse{Status: protocol.PskAuthStatus_Ok}}
+	respCh := make(chan connauth.PskAuthReply, 1)
+	respCh <- connauth.PskAuthReply{Resp: protocol.PskAuthResponse{Status: protocol.PskAuthStatus_Ok}}
 
 	// Pass Cli as operator kind — the builder must override to Agent.
-	err := cli.SendMergedHandshake(context.Background(), sendFn, nil, nil, protocol.ClientKind_Cli, nil, respCh)
+	err := connauth.SendMergedHandshake(context.Background(), sendFn, nil, nil, protocol.ClientKind_Cli, nil, respCh)
 	if err != nil {
 		t.Fatalf("SendMergedHandshake (agent env): %v", err)
 	}
@@ -197,10 +198,10 @@ func TestSendMergedHandshake_BadPsk(t *testing.T) {
 	t.Setenv("HARNESS_AUTH_TICKET", "")
 
 	sendFn := func([]byte) error { return nil }
-	respCh := make(chan cli.PskAuthReply, 1)
-	respCh <- cli.PskAuthReply{Resp: protocol.PskAuthResponse{Status: protocol.PskAuthStatus_BadPsk}}
+	respCh := make(chan connauth.PskAuthReply, 1)
+	respCh <- connauth.PskAuthReply{Resp: protocol.PskAuthResponse{Status: protocol.PskAuthStatus_BadPsk}}
 
-	err := cli.SendMergedHandshake(context.Background(), sendFn, []byte("psk"), []byte("transcript"), protocol.ClientKind_Cli, nil, respCh)
+	err := connauth.SendMergedHandshake(context.Background(), sendFn, []byte("psk"), []byte("transcript"), protocol.ClientKind_Cli, nil, respCh)
 	if err == nil {
 		t.Fatal("expected error on BadPsk response, got nil")
 	}
@@ -214,10 +215,10 @@ func TestSendMergedHandshake_BadTicket(t *testing.T) {
 	t.Setenv("HARNESS_AUTH_TICKET", "")
 
 	sendFn := func([]byte) error { return nil }
-	respCh := make(chan cli.PskAuthReply, 1)
-	respCh <- cli.PskAuthReply{Resp: protocol.PskAuthResponse{Status: protocol.PskAuthStatus_BadTicket}}
+	respCh := make(chan connauth.PskAuthReply, 1)
+	respCh <- connauth.PskAuthReply{Resp: protocol.PskAuthResponse{Status: protocol.PskAuthStatus_BadTicket}}
 
-	err := cli.SendMergedHandshake(context.Background(), sendFn, nil, nil, protocol.ClientKind_Cli, nil, respCh)
+	err := connauth.SendMergedHandshake(context.Background(), sendFn, nil, nil, protocol.ClientKind_Cli, nil, respCh)
 	if err == nil {
 		t.Fatal("expected error on BadTicket response, got nil")
 	}
@@ -232,9 +233,9 @@ func TestSendMergedHandshake_ContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	sendFn := func([]byte) error { return nil }
-	respCh := make(chan cli.PskAuthReply) // never receives
+	respCh := make(chan connauth.PskAuthReply) // never receives
 
-	err := cli.SendMergedHandshake(ctx, sendFn, nil, nil, protocol.ClientKind_Cli, nil, respCh)
+	err := connauth.SendMergedHandshake(ctx, sendFn, nil, nil, protocol.ClientKind_Cli, nil, respCh)
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("got %v, want context.Canceled", err)
 	}
@@ -253,10 +254,10 @@ func TestSendMergedHandshake_BinderUnchanged(t *testing.T) {
 
 	var sent []byte
 	sendFn := func(data []byte) error { sent = append(sent, data...); return nil }
-	respCh := make(chan cli.PskAuthReply, 1)
-	respCh <- cli.PskAuthReply{Resp: protocol.PskAuthResponse{Status: protocol.PskAuthStatus_Ok}}
+	respCh := make(chan connauth.PskAuthReply, 1)
+	respCh <- connauth.PskAuthReply{Resp: protocol.PskAuthResponse{Status: protocol.PskAuthStatus_Ok}}
 
-	if err := cli.SendMergedHandshake(context.Background(), sendFn, psk, transcript, protocol.ClientKind_Cli, nil, respCh); err != nil {
+	if err := connauth.SendMergedHandshake(context.Background(), sendFn, psk, transcript, protocol.ClientKind_Cli, nil, respCh); err != nil {
 		t.Fatal(err)
 	}
 
@@ -265,7 +266,7 @@ func TestSendMergedHandshake_BinderUnchanged(t *testing.T) {
 		t.Fatalf("Decode: %v", err)
 	}
 
-	wantBinder, err := cli.ComputePSKBinder(psk, transcript)
+	wantBinder, err := connauth.ComputePSKBinder(psk, transcript)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -285,24 +286,24 @@ func TestSendMergedHandshake_RejectionFatal_CancelRetryable(t *testing.T) {
 	t.Setenv("HARNESS_AUTH_TICKET", "")
 
 	// Explicit server rejection → *PskRejectedError (fatal).
-	respCh := make(chan cli.PskAuthReply, 1)
-	respCh <- cli.PskAuthReply{Resp: protocol.PskAuthResponse{Status: protocol.PskAuthStatus_BadPsk}}
-	err := cli.SendMergedHandshake(context.Background(),
+	respCh := make(chan connauth.PskAuthReply, 1)
+	respCh <- connauth.PskAuthReply{Resp: protocol.PskAuthResponse{Status: protocol.PskAuthStatus_BadPsk}}
+	err := connauth.SendMergedHandshake(context.Background(),
 		func([]byte) error { return nil }, nil, nil, protocol.ClientKind_Cli, nil, respCh)
-	var rej *cli.PskRejectedError
+	var rej *connauth.PskRejectedError
 	if !errors.As(err, &rej) {
-		t.Fatalf("rejection: want *cli.PskRejectedError, got %T: %v", err, err)
+		t.Fatalf("rejection: want *connauth.PskRejectedError, got %T: %v", err, err)
 	}
 
 	// Cancellation mid-handshake (no response ever arrives) → context.Canceled,
 	// NOT a PskRejectedError → retryable.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	err = cli.SendMergedHandshake(ctx,
+	err = connauth.SendMergedHandshake(ctx,
 		func([]byte) error { return nil }, nil, nil, protocol.ClientKind_Cli, nil,
-		make(chan cli.PskAuthReply))
+		make(chan connauth.PskAuthReply))
 	if errors.As(err, &rej) {
-		t.Fatalf("cancel: must NOT be *cli.PskRejectedError (must be retryable), got %v", err)
+		t.Fatalf("cancel: must NOT be *connauth.PskRejectedError (must be retryable), got %v", err)
 	}
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancel: want context.Canceled, got %v", err)
@@ -312,11 +313,11 @@ func TestSendMergedHandshake_RejectionFatal_CancelRetryable(t *testing.T) {
 // A pinned client must not take an unsigned ok: that is the impostor case.
 func TestSendMergedHandshake_PinnedRefusesUnsignedOk(t *testing.T) {
 	pub, _, _ := ed25519.GenerateKey(rand.Reader)
-	respCh := make(chan cli.PskAuthReply, 1)
-	respCh <- cli.PskAuthReply{Resp: protocol.PskAuthResponse{Status: protocol.PskAuthStatus_Ok}}
-	err := cli.SendMergedHandshake(context.Background(), func([]byte) error { return nil },
+	respCh := make(chan connauth.PskAuthReply, 1)
+	respCh <- connauth.PskAuthReply{Resp: protocol.PskAuthResponse{Status: protocol.PskAuthStatus_Ok}}
+	err := connauth.SendMergedHandshake(context.Background(), func([]byte) error { return nil },
 		nil, []byte("tr"), protocol.ClientKind_Cli, pub, respCh)
-	var sae *cli.ServerAuthError
+	var sae *connauth.ServerAuthError
 	if !errors.As(err, &sae) {
 		t.Fatalf("err = %v, want *cli.ServerAuthError", err)
 	}
@@ -327,10 +328,10 @@ func TestSendMergedHandshake_PinnedAcceptsSignedOk(t *testing.T) {
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
 	tr := []byte("tr")
 	resp := protocol.PskAuthResponse{Status: protocol.PskAuthStatus_Ok}
-	resp.SetServerSig(cli.SignServerAuth(priv, tr, protocol.PskAuthStatus_Ok))
-	respCh := make(chan cli.PskAuthReply, 1)
-	respCh <- cli.PskAuthReply{Resp: resp}
-	if err := cli.SendMergedHandshake(context.Background(), func([]byte) error { return nil },
+	resp.SetServerSig(connauth.SignServerAuth(priv, tr, protocol.PskAuthStatus_Ok))
+	respCh := make(chan connauth.PskAuthReply, 1)
+	respCh <- connauth.PskAuthReply{Resp: resp}
+	if err := connauth.SendMergedHandshake(context.Background(), func([]byte) error { return nil },
 		nil, tr, protocol.ClientKind_Cli, pub, respCh); err != nil {
 		t.Fatal(err)
 	}
@@ -338,16 +339,16 @@ func TestSendMergedHandshake_PinnedAcceptsSignedOk(t *testing.T) {
 
 // An undecodable reply (old server) returns at once with the skew message.
 func TestSendMergedHandshake_UndecodableReplyIsImmediate(t *testing.T) {
-	respCh := make(chan cli.PskAuthReply, 1)
-	respCh <- cli.DecodePskAuthReply([]byte{0})
+	respCh := make(chan connauth.PskAuthReply, 1)
+	respCh <- connauth.DecodePskAuthReply([]byte{0})
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	err := cli.SendMergedHandshake(ctx, func([]byte) error { return nil },
+	err := connauth.SendMergedHandshake(ctx, func([]byte) error { return nil },
 		nil, nil, protocol.ClientKind_Cli, nil, respCh)
 	if err == nil || !strings.Contains(err.Error(), "server response did not decode") {
 		t.Fatalf("err = %v", err)
 	}
-	var rej *cli.PskRejectedError
+	var rej *connauth.PskRejectedError
 	if errors.As(err, &rej) {
 		t.Fatal("a decode failure must not be a PskRejectedError")
 	}
@@ -355,13 +356,13 @@ func TestSendMergedHandshake_UndecodableReplyIsImmediate(t *testing.T) {
 
 func TestGetServerPubKey_Env(t *testing.T) {
 	pub, _, _ := ed25519.GenerateKey(rand.Reader)
-	t.Setenv(cli.ServerPubKeyEnv, hex.EncodeToString(pub))
-	t.Setenv(cli.ServerPubKeyFileEnv, "")
+	t.Setenv(connauth.ServerPubKeyEnv, hex.EncodeToString(pub))
+	t.Setenv(connauth.ServerPubKeyFileEnv, "")
 	got, err := cli.GetServerPubKey()
 	if err != nil || !got.Equal(pub) {
 		t.Fatalf("got %x, %v", got, err)
 	}
-	t.Setenv(cli.ServerPubKeyEnv, "not-a-key")
+	t.Setenv(connauth.ServerPubKeyEnv, "not-a-key")
 	if _, err := cli.GetServerPubKey(); err == nil {
 		t.Fatal("malformed HARNESS_SERVER_PUBKEY accepted")
 	}
@@ -371,8 +372,8 @@ func TestGetServerPubKey_Env(t *testing.T) {
 // (spec D9): with the server down, a PersistLoop caller would otherwise only
 // ever see connection errors and retry forever.
 func TestDial_MalformedServerPubKeyFailsBeforeDialing(t *testing.T) {
-	t.Setenv(cli.ServerPubKeyEnv, "abcd")
-	t.Setenv(cli.ServerPubKeyFileEnv, "")
+	t.Setenv(connauth.ServerPubKeyEnv, "abcd")
+	t.Setenv(connauth.ServerPubKeyFileEnv, "")
 	t.Setenv("HARNESS_PROXY_VIA_RUNNER", "")
 	cid, err := objproto.ParseConnectionID("ws:127.0.0.1:1-*", objproto.ParseOption_AllowRandomID)
 	if err != nil {
@@ -381,8 +382,8 @@ func TestDial_MalformedServerPubKeyFailsBeforeDialing(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_, err = cli.Dial(ctx, cid, protocol.ClientKind_Cli)
-	var fatal *cli.PSKAuthError
-	if !errors.As(err, &fatal) || !strings.Contains(err.Error(), cli.ServerPubKeyEnv) {
-		t.Fatalf("err = %v, want a *cli.PSKAuthError naming %s", err, cli.ServerPubKeyEnv)
+	var fatal *connauth.PSKAuthError
+	if !errors.As(err, &fatal) || !strings.Contains(err.Error(), connauth.ServerPubKeyEnv) {
+		t.Fatalf("err = %v, want a *cli.PSKAuthError naming %s", err, connauth.ServerPubKeyEnv)
 	}
 }

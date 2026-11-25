@@ -1,15 +1,15 @@
 package server
 
 import (
+	"github.com/on-keyday/agent-harness/connauth"
 	"testing"
 
-	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 func buildAgentBinderReq(ticket [16]byte, transcript []byte, rid protocol.RunnerID, tid protocol.TaskID) *protocol.PskAuthRequest {
 	req := &protocol.PskAuthRequest{Role: protocol.AuthRole_Client}
-	binder, _ := cli.ComputePSKBinder(ticket[:], transcript)
+	binder, _ := connauth.ComputePSKBinder(ticket[:], transcript)
 	req.SetBinder(binder)
 	hello := protocol.ClientHello{Kind: protocol.ClientKind_Agent}
 	hello.SetAgentInfo(protocol.AgentInfo{RunnerId: rid, TaskId: tid})
@@ -78,7 +78,7 @@ func TestOperatorKindsUnderRoleClientProveOperatorPSK(t *testing.T) {
 		g := newPSKGate()
 		g.operatorPSK = []byte("op")
 		req := &protocol.PskAuthRequest{Role: protocol.AuthRole_Client}
-		b, _ := cli.ComputePSKBinder([]byte(c.key), testTranscript)
+		b, _ := connauth.ComputePSKBinder([]byte(c.key), testTranscript)
 		req.SetBinder(b)
 		req.SetClientHello(protocol.ClientHello{Kind: protocol.ClientKind_Cli})
 		var sent []byte

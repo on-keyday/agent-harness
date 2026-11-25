@@ -11,6 +11,7 @@ import (
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/connauth"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
 )
@@ -20,7 +21,7 @@ import (
 func TestConnectionRolesE2E(t *testing.T) {
 	for _, mode := range []string{"agent report", "client hello", "runner task control", "runner hello"} {
 		t.Run(mode, func(t *testing.T) {
-			for _, key := range []string{"HARNESS_TASK_ID", "HARNESS_RUNNER_ID", "HARNESS_AUTH_TICKET", "HARNESS_PROXY_VIA_RUNNER", "HARNESS_PSK", "HARNESS_PSK_FILE", "HARNESS_OPERATOR_PSK", "HARNESS_OPERATOR_PSK_FILE", "HARNESS_SERVER_CID", "HARNESS_WS_PATH", cli.ServerPubKeyEnv, cli.ServerPubKeyFileEnv} {
+			for _, key := range []string{"HARNESS_TASK_ID", "HARNESS_RUNNER_ID", "HARNESS_AUTH_TICKET", "HARNESS_PROXY_VIA_RUNNER", "HARNESS_PSK", "HARNESS_PSK_FILE", "HARNESS_OPERATOR_PSK", "HARNESS_OPERATOR_PSK_FILE", "HARNESS_SERVER_CID", "HARNESS_WS_PATH", connauth.ServerPubKeyEnv, connauth.ServerPubKeyFileEnv} {
 				t.Setenv(key, "")
 			}
 			ln, err := net.Listen("tcp", "127.0.0.1:0")

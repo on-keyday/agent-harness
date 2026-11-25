@@ -12,6 +12,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/cli/cliopts"
+	"github.com/on-keyday/agent-harness/connauth"
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/pubsub"
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -130,7 +131,7 @@ func DialWith(ctx context.Context, ep objproto.Endpoint, peerCID objproto.Connec
 func serverPubKeyForDial() (ed25519.PublicKey, error) {
 	key, err := GetServerPubKey()
 	if err != nil {
-		return nil, &PSKAuthError{Err: fmt.Errorf("%s / %s: %w", ServerPubKeyEnv, ServerPubKeyFileEnv, err)}
+		return nil, &connauth.PSKAuthError{Err: fmt.Errorf("%s / %s: %w", connauth.ServerPubKeyEnv, connauth.ServerPubKeyFileEnv, err)}
 	}
 	return key, nil
 }
@@ -140,8 +141,8 @@ func serverPubKeyForDial() (ed25519.PublicKey, error) {
 // configuration error no retry fixes, so it is the PersistLoop-fatal
 // *PSKAuthError, exactly as serverPubKeyForDial's is.
 func credentialForDial() error {
-	if _, err := activeCredential(); err != nil {
-		return &PSKAuthError{Err: err}
+	if _, err := connauth.ActiveCredential(); err != nil {
+		return &connauth.PSKAuthError{Err: err}
 	}
 	return nil
 }
@@ -157,12 +158,12 @@ func dialOn(ctx context.Context, pc *peer.Conn, kind protocol.ClientKind, server
 	// A credential is loaded here, before anything is sent, so one that cannot
 	// be read (a group-readable file, a malformed value) is a configuration
 	// error no retry fixes — and never a connection as something else.
-	cred, cerr := activeCredential()
+	cred, cerr := connauth.ActiveCredential()
 	if cerr != nil {
 		pc.Close()
-		return nil, &PSKAuthError{Err: cerr}
+		return nil, &connauth.PSKAuthError{Err: cerr}
 	}
-	announced, _ := EffectiveClientKind(kind)
+	announced, _ := connauth.EffectiveClientKind(kind)
 	c := &Client{
 		conn:    pc,
 		kind:    announced,
@@ -174,13 +175,13 @@ func dialOn(ctx context.Context, pc *peer.Conn, kind protocol.ClientKind, server
 	// in-task agent proves its ticket instead. See resolveBinderPSK.
 	psk := resolveBinderPSK()
 	// Receives exactly one PskAuthResponse (brgen-decoded) from the server.
-	pskRespCh := make(chan PskAuthReply, 1)
+	pskRespCh := make(chan connauth.PskAuthReply, 1)
 
 	// Combined handler: PskAuth response during merged handshake, TaskControl after.
 	pc.SetOnControl(func(kind appwire.AppKind, payload []byte) {
 		if kind == appwire.AppKind_PskAuth && len(payload) > 0 {
 			select {
-			case pskRespCh <- DecodePskAuthReply(payload):
+			case pskRespCh <- connauth.DecodePskAuthReply(payload):
 			default:
 			}
 			return
@@ -205,9 +206,9 @@ func dialOn(ctx context.Context, pc *peer.Conn, kind protocol.ClientKind, server
 	if cred != nil {
 		// Never the operator binder and never an agent hello: the credential
 		// names the principal, and nothing else this process holds is sent.
-		pskErr = credentialRefusalError(*cred, SendCredentialHandshake(pskCtx, sendFn, pc.Connection().GetTranscript(), *cred, serverKey, pskRespCh))
+		pskErr = credentialRefusalError(*cred, connauth.SendCredentialHandshake(pskCtx, sendFn, pc.Connection().GetTranscript(), *cred, serverKey, pskRespCh))
 	} else {
-		pskErr = SendMergedHandshake(pskCtx, sendFn, psk, pc.Connection().GetTranscript(), kind, serverKey, pskRespCh)
+		pskErr = connauth.SendMergedHandshake(pskCtx, sendFn, psk, pc.Connection().GetTranscript(), kind, serverKey, pskRespCh)
 	}
 	pskCancel()
 	if pskErr != nil {
@@ -217,9 +218,9 @@ func dialOn(ctx context.Context, pc *peer.Conn, kind protocol.ClientKind, server
 		// (NoIdentity = the server could not decode our hello, i.e. wire skew),
 		// propagates as a plain error so PersistLoop reconnects instead of
 		// exiting. See PskRejectedError.Retryable.
-		var rej *PskRejectedError
+		var rej *connauth.PskRejectedError
 		if errors.As(pskErr, &rej) && !rej.Retryable() {
-			return nil, &PSKAuthError{Err: pskErr}
+			return nil, &connauth.PSKAuthError{Err: pskErr}
 		}
 		return nil, pskErr
 	}
@@ -237,7 +238,7 @@ func dialOn(ctx context.Context, pc *peer.Conn, kind protocol.ClientKind, server
 // whole life and starts its sweepers. Call it ONCE, outside any reconnect
 // loop, and pass the result to DialWith on every attempt.
 func NewProcessEndpoint(peerCID objproto.ConnectionID) (objproto.Endpoint, error) {
-	ep, err := BuildClientEndpoint(peerCID)
+	ep, err := connauth.BuildClientEndpoint(peerCID)
 	if err != nil {
 		return nil, err
 	}

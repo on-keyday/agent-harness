@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/appwire"
-	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/connauth"
 	"github.com/on-keyday/agent-harness/iplink"
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -144,7 +144,7 @@ type RunHandle struct {
 	sender  *peerSender
 	cfg     Config
 
-	pskRespCh chan cli.PskAuthReply
+	pskRespCh chan connauth.PskAuthReply
 	closeOnce sync.Once
 
 	// Control-message handling spans two phases. During the merged handshake
@@ -310,7 +310,7 @@ func ConnectWith(ctx context.Context, ep objproto.Endpoint, cfg Config) (*RunHan
 		// would turn "wrong PSK" into a slow trip down the list and then a
 		// reconnect loop, when driveAfterConn has already classified it as the
 		// one failure no retry can fix.
-		var fatal *cli.PSKAuthError
+		var fatal *connauth.PSKAuthError
 		if errors.As(err, &fatal) {
 			return nil, err
 		}
@@ -439,7 +439,7 @@ func driveAfterConn(ctx context.Context, cfg Config, pc *peer.Conn) (*RunHandle,
 		ServerCID:      serverCID,
 		Hostname:       cfg.Hostname,
 		MintedRunnerID: cfg.RunnerID,
-		WSPath:         cli.WebSocketPath,
+		WSPath:         connauth.WebSocketPath,
 		BinDir:         binDir,
 		ServerPubKey:   cfg.ServerPubKey,
 		OnLeave:        cfg.OnLeave,
@@ -481,7 +481,7 @@ func driveAfterConn(ctx context.Context, cfg Config, pc *peer.Conn) (*RunHandle,
 		session:   session,
 		sender:    sender,
 		cfg:       cfg,
-		pskRespCh: make(chan cli.PskAuthReply, 1),
+		pskRespCh: make(chan connauth.PskAuthReply, 1),
 		helloSeen: make(chan struct{}),
 	}
 
@@ -490,7 +490,7 @@ func driveAfterConn(ctx context.Context, cfg Config, pc *peer.Conn) (*RunHandle,
 	pc.SetOnControl(func(kind appwire.AppKind, payload []byte) {
 		if kind == appwire.AppKind_PskAuth && len(payload) > 0 {
 			select {
-			case h.pskRespCh <- cli.DecodePskAuthReply(payload):
+			case h.pskRespCh <- connauth.DecodePskAuthReply(payload):
 			default:
 			}
 			return
@@ -541,7 +541,7 @@ func driveAfterConn(ctx context.Context, cfg Config, pc *peer.Conn) (*RunHandle,
 		// fleet. Both cases are real: a transport drop mid-handshake, and a
 		// NoIdentity rejection from a version-skewed server that cannot decode
 		// our RunnerHello (see cli.PskRejectedError.Retryable).
-		var rej *cli.PskRejectedError
+		var rej *connauth.PskRejectedError
 		if errors.As(pskErr, &rej) && rej.Code == protocol.PskAuthStatus_NotEnrolled && cfg.NotEnrolledOnce != nil {
 			cfg.NotEnrolledOnce.Do(func() {
 				pub := hex.EncodeToString(cfg.RunnerKey.Public().(ed25519.PublicKey))
@@ -550,7 +550,7 @@ func driveAfterConn(ctx context.Context, cfg Config, pc *peer.Conn) (*RunHandle,
 			})
 		}
 		if errors.As(pskErr, &rej) && !rej.Retryable() {
-			return nil, &cli.PSKAuthError{Err: pskErr}
+			return nil, &connauth.PSKAuthError{Err: pskErr}
 		}
 		return nil, pskErr
 	}
@@ -614,7 +614,7 @@ func buildRunnerHello(cfg Config) protocol.RunnerHello {
 //
 // This is the runner-side counterpart to cli.SendMergedHandshake (which is
 // role=client).
-func sendRunnerMergedHandshake(ctx context.Context, sendFn func([]byte) error, transcript []byte, cfg Config, respCh <-chan cli.PskAuthReply) error {
+func sendRunnerMergedHandshake(ctx context.Context, sendFn func([]byte) error, transcript []byte, cfg Config, respCh <-chan connauth.PskAuthReply) error {
 	// role=runner proves the enrolled key by signing this connection's
 	// transcript; there is no binder.
 	if len(cfg.RunnerKey) != ed25519.PrivateKeySize {
@@ -624,7 +624,7 @@ func sendRunnerMergedHandshake(ctx context.Context, sendFn func([]byte) error, t
 	req.SetBinder(nil)
 	auth := protocol.RunnerAuth{Hello: buildRunnerHello(cfg)}
 	copy(auth.Key[:], cfg.RunnerKey.Public().(ed25519.PublicKey))
-	copy(auth.Sig[:], cli.SignRunnerAuth(cfg.RunnerKey, transcript))
+	copy(auth.Sig[:], connauth.SignRunnerAuth(cfg.RunnerKey, transcript))
 	if !req.SetRunnerAuth(auth) {
 		return fmt.Errorf("psk: SetRunnerAuth failed")
 	}
@@ -645,7 +645,7 @@ func sendRunnerMergedHandshake(ctx context.Context, sendFn func([]byte) error, t
 		// verify still gets its Code via cli.NewPskRejectedError — this is the
 		// third PskRejectedError creation site the 2026-07-16 note warns about
 		// (the runner sends a RunnerHello, so it has its own handshake here).
-		return cli.CheckPskAuthReply(reply, cfg.ServerPubKey, transcript)
+		return connauth.CheckPskAuthReply(reply, cfg.ServerPubKey, transcript)
 	case <-ctx.Done():
 		// Transport drop / cancellation mid-handshake — RETRYABLE: a server
 		// restart that interrupts the handshake must trigger reconnect, not exit.
@@ -982,8 +982,8 @@ func buildRunnerEndpoint(cfg Config, legs endpointLegs) (objproto.Endpoint, erro
 		// WebSocketEndpointEx documents.
 		ls = append(ls, transport.WebSocketLeg(nil, transport.WebSocketConfig{
 			Logger: cfg.Logger,
-			Path:   cli.WebSocketPath,
-			TLS:    cli.ClientTLSConfig(),
+			Path:   connauth.WebSocketPath,
+			TLS:    connauth.ClientTLSConfig(),
 		}))
 	}
 	if legs.udp {

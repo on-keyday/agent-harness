@@ -14,6 +14,7 @@ import (
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/connauth"
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/pubsub"
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -38,7 +39,7 @@ func buildCredentialAuthReq(tid protocol.TaskID, priv ed25519.PrivateKey, transc
 	req := &protocol.PskAuthRequest{Role: protocol.AuthRole_Credential}
 	req.SetBinder(nil)
 	auth := protocol.CredentialAuth{TaskId: tid}
-	copy(auth.Sig[:], cli.SignCredentialAuth(priv, transcript))
+	copy(auth.Sig[:], connauth.SignCredentialAuth(priv, transcript))
 	req.SetCredentialAuth(auth)
 	return req
 }

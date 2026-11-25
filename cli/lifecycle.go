@@ -43,36 +43,6 @@ func LifecycleSet(ctx context.Context, peerCID objproto.ConnectionID, st protoco
 	return c.LifecycleSet(ctx, st, reportedAt)
 }
 
-// ParseLifecycleState accepts the wire words only.
-func ParseLifecycleState(s string) (protocol.LifecycleState, bool) {
-	switch s {
-	case "working":
-		return protocol.LifecycleState_Working, true
-	case "waiting":
-		return protocol.LifecycleState_Waiting, true
-	case "idle":
-		return protocol.LifecycleState_Idle, true
-	case "error":
-		return protocol.LifecycleState_Error, true
-	}
-	return protocol.LifecycleState_Unset, false
-}
-
-// LifecycleWord is the wire word for st, "" for unset.
-func LifecycleWord(st protocol.LifecycleState) string {
-	switch st {
-	case protocol.LifecycleState_Working:
-		return "working"
-	case protocol.LifecycleState_Waiting:
-		return "waiting"
-	case protocol.LifecycleState_Idle:
-		return "idle"
-	case protocol.LifecycleState_Error:
-		return "error"
-	}
-	return ""
-}
-
 // LifecycleShown reports whether t's lifecycle is rendered at all: not for a
 // finished task, which must not read "working" (D14). A live task that never
 // reported IS rendered, as "-": hooks that do not fire (an agent without them,
@@ -92,7 +62,7 @@ func LifecycleStr(t *protocol.TaskInfo) string {
 	if t.LifecycleAt == 0 {
 		return "lifecycle=-"
 	}
-	return fmt.Sprintf("lifecycle=%s (%s)", LifecycleWord(t.Lifecycle), AgeStr(t.LifecycleAgeMs))
+	return fmt.Sprintf("lifecycle=%s (%s)", protocol.LifecycleWord(t.Lifecycle), AgeStr(t.LifecycleAgeMs))
 }
 
 // LifecycleBadge is the list badge: `work:5s`, `wait:3m`, `ready:12m` or
@@ -130,38 +100,6 @@ func shortAge(ageMs uint64) string {
 	return fmt.Sprintf("%ds", int(d/time.Second))
 }
 
-// ProgramWord is the wire word for a program state, "" for none.
-func ProgramWord(s protocol.ProgramState) string {
-	// Spelled out: the generated String() capitalizes ("Blocked"), and these
-	// are the protocol's words, shared with ls --json and the WebUI.
-	switch s {
-	case protocol.ProgramState_Idle:
-		return "idle"
-	case protocol.ProgramState_Working:
-		return "working"
-	case protocol.ProgramState_Done:
-		return "done"
-	case protocol.ProgramState_Blocked:
-		return "blocked"
-	case protocol.ProgramState_Error:
-		return "error"
-	}
-	return ""
-}
-
-// ProgramKindWord is the wire word for a blocked kind, "" for none.
-func ProgramKindWord(k protocol.ProgramKind) string {
-	switch k {
-	case protocol.ProgramKind_Permission:
-		return "permission"
-	case protocol.ProgramKind_Question:
-		return "question"
-	case protocol.ProgramKind_Auth:
-		return "auth"
-	}
-	return ""
-}
-
 // ProgramStr is `program=blocked:question` for the CLI `ls` row: the
 // program's own OSC 7501 report, kind only with blocked, never the msg (a
 // free-form line belongs in the detail views). "" when the task has no live
@@ -170,8 +108,8 @@ func ProgramStr(t *protocol.TaskInfo) string {
 	if !t.LiveTerminal() || t.ProgramState == protocol.ProgramState_None {
 		return ""
 	}
-	s := "program=" + ProgramWord(t.ProgramState)
-	if k := ProgramKindWord(t.ProgramKind); k != "" {
+	s := "program=" + protocol.ProgramWord(t.ProgramState)
+	if k := protocol.ProgramKindWord(t.ProgramKind); k != "" {
 		s += ":" + k
 	}
 	return s
@@ -185,7 +123,7 @@ func ProgramBadge(t *protocol.TaskInfo) string {
 	if !t.LiveTerminal() || t.ProgramState == protocol.ProgramState_None {
 		return ""
 	}
-	return "p:" + ProgramWord(t.ProgramState)
+	return "p:" + protocol.ProgramWord(t.ProgramState)
 }
 
 // ProgramDetail is the detail views' program line: `blocked (question) — q?`,
@@ -194,8 +132,8 @@ func ProgramDetail(t *protocol.TaskInfo) string {
 	if t.ProgramState == protocol.ProgramState_None {
 		return ""
 	}
-	s := ProgramWord(t.ProgramState)
-	if k := ProgramKindWord(t.ProgramKind); k != "" {
+	s := protocol.ProgramWord(t.ProgramState)
+	if k := protocol.ProgramKindWord(t.ProgramKind); k != "" {
 		s += " (" + k + ")"
 	}
 	if len(t.ProgramMsg) > 0 {
@@ -416,7 +354,7 @@ func applyHookEvent(taskHex string, ev hookEvent, argv protocol.LifecycleState) 
 	withHookState(taskHex, func(st *hookState) {
 		r.state = st.next(ev, argv)
 		r.reportedAt = time.Now().UnixNano()
-		r.skip = taskHex != "" && st.LastSent == LifecycleWord(r.state)
+		r.skip = taskHex != "" && st.LastSent == protocol.LifecycleWord(r.state)
 	})
 	return r
 }
@@ -429,7 +367,7 @@ func recordSent(taskHex string, r hookResult, status protocol.LifecycleSetStatus
 		switch status {
 		case protocol.LifecycleSetStatus_Ok:
 			if r.reportedAt > st.LastSentAt {
-				st.LastSent, st.LastSentAt = LifecycleWord(r.state), r.reportedAt
+				st.LastSent, st.LastSentAt = protocol.LifecycleWord(r.state), r.reportedAt
 			}
 		default:
 			st.LastSent, st.LastSentAt = "", 0
@@ -451,7 +389,7 @@ func ReportLifecycle(ctx context.Context, cid func() objproto.ConnectionID, word
 			defer fmt.Fprintln(outw, `{}`)
 		}
 	}
-	argv, ok := ParseLifecycleState(word)
+	argv, ok := protocol.ParseLifecycleState(word)
 	if !ok {
 		fmt.Fprintf(errw, "lifecycle: unknown state %q\n", word)
 		return
@@ -472,11 +410,11 @@ func ReportLifecycle(ctx context.Context, cid func() objproto.ConnectionID, word
 	resp, err := LifecycleSet(ctx, cid(), r.state, r.reportedAt)
 	if err != nil {
 		recordSent(task, r, protocol.LifecycleSetStatus_NotFound) // unknown outcome: send next time
-		fmt.Fprintf(errw, "lifecycle %s: %v\n", LifecycleWord(r.state), strings.ReplaceAll(err.Error(), "\n", " "))
+		fmt.Fprintf(errw, "lifecycle %s: %v\n", protocol.LifecycleWord(r.state), strings.ReplaceAll(err.Error(), "\n", " "))
 		return
 	}
 	recordSent(task, r, resp.Status)
 	if resp.Status != protocol.LifecycleSetStatus_Ok && resp.Status != protocol.LifecycleSetStatus_Stale {
-		fmt.Fprintf(errw, "lifecycle %s: %s\n", LifecycleWord(r.state), resp.Status.String())
+		fmt.Fprintf(errw, "lifecycle %s: %s\n", protocol.LifecycleWord(r.state), resp.Status.String())
 	}
 }

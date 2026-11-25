@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/connauth"
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/objtrsf/objproto"
 )
@@ -43,7 +43,7 @@ func TestListenAcceptsIncomingDial(t *testing.T) {
 		t.Fatalf("parse CID: %v", err)
 	}
 
-	clientEP, err := cli.BuildClientEndpoint(clientCID)
+	clientEP, err := connauth.BuildClientEndpoint(clientCID)
 	if err != nil {
 		t.Fatalf("build client EP: %v", err)
 	}

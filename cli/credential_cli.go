@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/on-keyday/agent-harness/cli/verb"
+	"github.com/on-keyday/agent-harness/connauth"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
 )
@@ -34,7 +35,7 @@ func checkSeedDestination(a verb.CredentialIssueAction) error {
 	if a.Out != "" || a.Pubkey != "" {
 		return nil
 	}
-	if kind, _ := EffectiveClientKind(protocol.ClientKind_Cli); kind == protocol.ClientKind_Agent {
+	if kind, _ := connauth.EffectiveClientKind(protocol.ClientKind_Cli); kind == protocol.ClientKind_Agent {
 		return errors.New("an agent identity may not print a private key: use --out FILE or --pubkey HEX")
 	}
 	return nil
@@ -178,7 +179,7 @@ func CredentialBindWith(a verb.CredentialBindAction, out io.Writer) error {
 	if err != nil || len(raw) != ed25519.SeedSize {
 		return fmt.Errorf("credential bind: %s is not a seed file (want the 64 hex characters credential keygen wrote)", a.File)
 	}
-	cred := Credential{TaskID: tid, Key: ed25519.NewKeyFromSeed(raw)}
+	cred := connauth.Credential{TaskID: tid, Key: ed25519.NewKeyFromSeed(raw)}
 
 	tmp, err := os.CreateTemp(filepath.Dir(a.File), ".credential-bind-*")
 	if err != nil {

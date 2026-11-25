@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/authority"
-	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/cli/agent"
+	"github.com/on-keyday/agent-harness/connauth"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -45,17 +45,17 @@ func TestAgentVerbsRunUnderCredential(t *testing.T) {
 	raw, _ := hex.DecodeString(idHex)
 	var credTID protocol.TaskID
 	copy(credTID.Id[:], raw)
-	cred := cli.Credential{TaskID: credTID, Key: priv}
+	cred := connauth.Credential{TaskID: credTID, Key: priv}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
 	// The script's env: the server and the credential, nothing of an agent.
-	for _, v := range []string{"HARNESS_RUNNER_ID", "HARNESS_TASK_ID", "HARNESS_AUTH_TICKET", "HARNESS_OPERATOR_PSK", cli.CredentialFileEnv} {
+	for _, v := range []string{"HARNESS_RUNNER_ID", "HARNESS_TASK_ID", "HARNESS_AUTH_TICKET", "HARNESS_OPERATOR_PSK", connauth.CredentialFileEnv} {
 		t.Setenv(v, "")
 	}
 	t.Setenv("HARNESS_SERVER_CID", "ws:"+addr+"-*")
-	t.Setenv(cli.CredentialEnv, cred.Secret())
+	t.Setenv(connauth.CredentialEnv, cred.Secret())
 
 	// send to a peer's chat topic.
 	var sendOut bytes.Buffer
@@ -65,7 +65,7 @@ func TestAgentVerbsRunUnderCredential(t *testing.T) {
 
 	// The peer received it. It is a real agent: the credential is out of ITS
 	// env (a loaded credential would win over its agent identity).
-	t.Setenv(cli.CredentialEnv, "")
+	t.Setenv(connauth.CredentialEnv, "")
 	restore := setAgentEnv(addr, ridB, tidB, ticketB)
 	var waitOut bytes.Buffer
 	werr := agent.Wait(ctx, []string{"--topic", "chat." + idB[:8], "--timeout", "3s"}, &waitOut)
@@ -85,7 +85,7 @@ func TestAgentVerbsRunUnderCredential(t *testing.T) {
 	for _, v := range []string{"HARNESS_RUNNER_ID", "HARNESS_TASK_ID", "HARNESS_AUTH_TICKET"} {
 		t.Setenv(v, "")
 	}
-	t.Setenv(cli.CredentialEnv, cred.Secret())
+	t.Setenv(connauth.CredentialEnv, cred.Secret())
 	var inOut bytes.Buffer
 	if err := agent.Wait(ctx, []string{"--topic", "chat." + idHex[:8], "--timeout", "3s"}, &inOut); err != nil {
 		t.Fatalf("agent wait on the credential's own chat: %v", err)

@@ -4,8 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/objtrsf/objproto"
+
+	"github.com/on-keyday/agent-harness/connauth"
 )
 
 // ServerCandidates is the ordered list of server addresses a dial-mode runner
@@ -41,7 +42,7 @@ type ServerCandidates struct {
 // ConnectionID belongs to objproto, and restating it would be a second copy to
 // keep in step.
 func ParseServerCandidates(spec string) (ServerCandidates, error) {
-	out, err := cli.SplitCandidates(spec)
+	out, err := connauth.SplitCandidates(spec)
 	if err != nil {
 		return ServerCandidates{}, fmt.Errorf("--server-cid: %w", err)
 	}
@@ -103,5 +104,5 @@ func (c ServerCandidates) Schemes() []string {
 // per dial attempt. It is cli.ResolveCandidate, which the server's dial records
 // use too, so the two lists agree on what a candidate is.
 func ResolveServerCandidate(spec string) (objproto.ConnectionID, error) {
-	return cli.ResolveCandidate(spec)
+	return connauth.ResolveCandidate(spec)
 }

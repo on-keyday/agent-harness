@@ -9,7 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/connauth"
 )
 
 // DefaultRunnerKeyPath is <home>/.config/harness/runner-key on every OS —
@@ -34,7 +34,7 @@ func LoadOrCreateRunnerKey(path string) (ed25519.PrivateKey, error) {
 	data, err := os.ReadFile(path)
 	switch {
 	case err == nil:
-		key, perr := cli.ParseServerKeySeed(string(data))
+		key, perr := connauth.ParseServerKeySeed(string(data))
 		if perr != nil {
 			return nil, fmt.Errorf("runner key %s does not parse (move it aside to make a new key, which then needs enrolling): %w", path, perr)
 		}

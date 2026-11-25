@@ -25,7 +25,7 @@ import (
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/buildinfo"
-	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/connauth"
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/pubsub"
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -938,9 +938,9 @@ func (s *Server) buildEndpoint() (objproto.Endpoint, *http.ServeMux, string, err
 		mux = http.NewServeMux()
 		legs = append(legs, transport.WebSocketLeg(mux, transport.WebSocketConfig{
 			Logger: s.cfg.Logger,
-			Path:   cli.WebSocketPath,
+			Path:   connauth.WebSocketPath,
 			// Reverse dials to wss runners, and to dial records' URLs.
-			TLS:     cli.ClientTLSConfig(),
+			TLS:     connauth.ClientTLSConfig(),
 			Targets: s.wsTargets,
 		}))
 	}

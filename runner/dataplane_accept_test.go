@@ -1,11 +1,11 @@
 package runner
 
 import (
+	"github.com/on-keyday/agent-harness/connauth"
 	"testing"
 	"time"
 
 	"github.com/on-keyday/agent-harness/appwire"
-	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -63,7 +63,7 @@ func TestCheckDataPlaneHelloRefusesTheRetiredRole(t *testing.T) {
 func TestCheckDataPlaneHelloRefusesOtherClientKinds(t *testing.T) {
 	psk := []byte("secret")
 	transcript := []byte("transcript-bytes")
-	binder, _ := cli.ComputePSKBinder(psk, transcript)
+	binder, _ := connauth.ComputePSKBinder(psk, transcript)
 	var req protocol.PskAuthRequest
 	req.Binder = binder
 	req.BinderLen = uint16(len(binder))

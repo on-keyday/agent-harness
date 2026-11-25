@@ -18,6 +18,7 @@ import (
 	"github.com/on-keyday/agent-harness/cli/sshgw"
 	"github.com/on-keyday/agent-harness/cli/verb"
 	"github.com/on-keyday/agent-harness/cli/workspace"
+	"github.com/on-keyday/agent-harness/connauth"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/topics"
 )
@@ -1320,7 +1321,7 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.Status {
 		case protocol.AwaitIdleStatus_Fired:
 			line := "await-idle " + short + ": session is idle"
-			if d := cli.AwaitIdleFiredDetail(msg.FiredBy, msg.Lifecycle, msg.ProgramState, msg.ProgramKind); d != "" {
+			if d := protocol.AwaitIdleFiredDetail(msg.FiredBy, msg.Lifecycle, msg.ProgramState, msg.ProgramKind); d != "" {
 				line += " (" + d + ")"
 			} else if msg.LastOutputAt > 0 {
 				line += " (last output " + formatNanoTs(msg.LastOutputAt) + ")"
@@ -2856,7 +2857,7 @@ func cmdlineHelpLines() []string {
 // the env here: a second reading of HARNESS_* is how the header would come to
 // claim one thing while the connection is another.
 func principalLabel() string {
-	kind, tid := cli.EffectiveClientKind(protocol.ClientKind_Tui)
+	kind, tid := connauth.EffectiveClientKind(protocol.ClientKind_Tui)
 	if kind != protocol.ClientKind_Agent && kind != protocol.ClientKind_Credential {
 		return "operator"
 	}

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/connauth"
 	"github.com/on-keyday/agent-harness/runner"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/server"
@@ -56,7 +57,7 @@ func genKey(t *testing.T) (ed25519.PublicKey, ed25519.PrivateKey) {
 func clearPSKEnv(t *testing.T) {
 	t.Setenv("HARNESS_PSK", "")
 	t.Setenv("HARNESS_PSK_FILE", "")
-	t.Setenv(cli.ServerPubKeyFileEnv, "")
+	t.Setenv(connauth.ServerPubKeyFileEnv, "")
 }
 
 // The transcript the server signs is the one the client verifies: a real
@@ -65,7 +66,7 @@ func TestServerAuthE2E_PinnedClientAcceptsRealServer(t *testing.T) {
 	pub, priv := genKey(t)
 	cid := startServerWithKey(t, priv)
 	clearPSKEnv(t)
-	t.Setenv(cli.ServerPubKeyEnv, hex.EncodeToString(pub))
+	t.Setenv(connauth.ServerPubKeyEnv, hex.EncodeToString(pub))
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)
@@ -80,7 +81,7 @@ func TestServerAuthE2E_PinnedClientRefusesImpostor(t *testing.T) {
 	_, impostor := genKey(t)
 	cid := startServerWithKey(t, impostor)
 	clearPSKEnv(t)
-	t.Setenv(cli.ServerPubKeyEnv, hex.EncodeToString(pub))
+	t.Setenv(connauth.ServerPubKeyEnv, hex.EncodeToString(pub))
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)
@@ -88,7 +89,7 @@ func TestServerAuthE2E_PinnedClientRefusesImpostor(t *testing.T) {
 		c.Close()
 		t.Fatal("pinned client connected to an impostor")
 	}
-	var sae *cli.ServerAuthError
+	var sae *connauth.ServerAuthError
 	if !errors.As(err, &sae) {
 		t.Fatalf("err = %v, want *cli.ServerAuthError", err)
 	}
@@ -98,7 +99,7 @@ func TestServerAuthE2E_UnpinnedClientConnects(t *testing.T) {
 	_, priv := genKey(t)
 	cid := startServerWithKey(t, priv)
 	clearPSKEnv(t)
-	t.Setenv(cli.ServerPubKeyEnv, "")
+	t.Setenv(connauth.ServerPubKeyEnv, "")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)
@@ -123,7 +124,7 @@ func TestServerAuthE2E_PinnedRunnerRefusesImpostor(t *testing.T) {
 	_, impostor := genKey(t)
 	cid := startServerWithKey(t, impostor)
 	clearPSKEnv(t)
-	t.Setenv(cli.ServerPubKeyEnv, "")
+	t.Setenv(connauth.ServerPubKeyEnv, "")
 
 	repo := initRepo(t)
 	fake, err := filepath.Abs("../testdata/fake-claude.sh")
@@ -142,21 +143,21 @@ func TestServerAuthE2E_PinnedRunnerRefusesImpostor(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- cli.PersistLoop(ctx,
-			func(dialCtx context.Context) (cli.PersistHandle, error) {
+		done <- connauth.PersistLoop(ctx,
+			func(dialCtx context.Context) (connauth.PersistHandle, error) {
 				attempts.Add(1)
 				rh, err := runner.Connect(dialCtx, cfg)
-				var sae *cli.ServerAuthError
+				var sae *connauth.ServerAuthError
 				if errors.As(err, &sae) {
 					authErrs.Add(1)
 				}
 				return rh, err
 			},
-			func(runCtx context.Context, ph cli.PersistHandle) error {
+			func(runCtx context.Context, ph connauth.PersistHandle) error {
 				entered.Add(1)
 				return runner.OnConnect(runCtx, ph.(*runner.RunHandle))
 			},
-			cli.PersistConfig{Enabled: true, InitialBackoff: 200 * time.Millisecond, MaxBackoff: time.Second, Jitter: 0})
+			connauth.PersistConfig{Enabled: true, InitialBackoff: 200 * time.Millisecond, MaxBackoff: time.Second, Jitter: 0})
 	}()
 	t.Cleanup(func() {
 		cancel()

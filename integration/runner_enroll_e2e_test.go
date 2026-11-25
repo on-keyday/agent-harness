@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/connauth"
 	"github.com/on-keyday/agent-harness/runner"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/server"
@@ -68,7 +69,7 @@ func TestRunnerWithoutEnrolledKeyIsRefused(t *testing.T) {
 		h.Close()
 		t.Fatal("a runner with an unenrolled key connected")
 	}
-	var rej *cli.PskRejectedError
+	var rej *connauth.PskRejectedError
 	if !errors.As(err, &rej) || rej.Code != protocol.PskAuthStatus_NotEnrolled || !rej.Retryable() {
 		t.Fatalf("err = %v, want a retryable not_enrolled rejection", err)
 	}

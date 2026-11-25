@@ -12,6 +12,7 @@ import (
 	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/cli/verb"
+	"github.com/on-keyday/agent-harness/connauth"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -644,7 +645,7 @@ func (h tuiVerbs) SessionAwaitIdle(v verb.SessionAction) tea.Cmd {
 	if !ok {
 		return nil
 	}
-	signal, err := cli.ParseAwaitIdleSignal(v.Signal)
+	signal, err := protocol.ParseAwaitIdleSignal(v.Signal)
 	if err != nil {
 		a.cmdresult.Append("await-idle: " + err.Error())
 		return nil
@@ -974,7 +975,7 @@ func (h tuiVerbs) CapsReach(v verb.CapsReachAction) tea.Cmd {
 	}
 	// The aged listing, as every view reads it, so granter=… (age) advances
 	// between snapshots.
-	kind, _ := cli.EffectiveClientKind(protocol.ClientKind_Tui)
+	kind, _ := connauth.EffectiveClientKind(protocol.ClientKind_Tui)
 	r, err := cli.BuildReachReport(a.auditTasks(), full, focus, kind != protocol.ClientKind_Agent && kind != protocol.ClientKind_Credential)
 	if err != nil {
 		a.cmdresult.Append(ErrorStyle.Render(err.Error()))
@@ -1007,7 +1008,7 @@ func (h tuiVerbs) CapsWhatIf(v verb.CapsWhatIfAction) tea.Cmd {
 		a.cmdresult.Append(ErrorStyle.Render(err.Error()))
 		return nil
 	}
-	kind, _ := cli.EffectiveClientKind(protocol.ClientKind_Tui)
+	kind, _ := connauth.EffectiveClientKind(protocol.ClientKind_Tui)
 	r.Partial = kind == protocol.ClientKind_Agent || kind == protocol.ClientKind_Credential
 	var b strings.Builder
 	_ = cli.WriteWhatIf(&b, r, false)

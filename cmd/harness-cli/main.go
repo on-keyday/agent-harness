@@ -19,6 +19,7 @@ import (
 	"github.com/on-keyday/agent-harness/cli/cliopts"
 	"github.com/on-keyday/agent-harness/cli/verb"
 	"github.com/on-keyday/agent-harness/cli/workspace"
+	"github.com/on-keyday/agent-harness/connauth"
 	"github.com/on-keyday/objtrsf/objproto"
 	"golang.org/x/term"
 )
@@ -50,7 +51,7 @@ func main() {
 	// variable away. The server and the runner are other binaries and keep INFO.
 	// Installed before any verb dials: a loaded credential decides which
 	// principal every connection from this process is (cli.LoadCredential).
-	cli.SetCredentialFile(*credentialFile)
+	connauth.SetCredentialFile(*credentialFile)
 
 	lvl, err := parseLogLevel(cliopts.ResolveString(*logLevel, "HARNESS_LOG_LEVEL"))
 	if err != nil {
@@ -75,7 +76,7 @@ func main() {
 	if resolvedWS == "" {
 		resolvedWS = "/ws"
 	}
-	cli.WebSocketPath = resolvedWS
+	connauth.WebSocketPath = resolvedWS
 
 	if flag.NArg() == 0 {
 		usage()

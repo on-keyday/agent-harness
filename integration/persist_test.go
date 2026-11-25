@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/connauth"
 	"github.com/on-keyday/agent-harness/runner"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
@@ -81,18 +82,18 @@ func startPersistentRunnerHandle(t *testing.T, serverCID objproto.ConnectionID, 
 	h.done = doneCh
 
 	go func() {
-		doneCh <- cli.PersistLoop(ctx,
-			func(dialCtx context.Context) (cli.PersistHandle, error) {
+		doneCh <- connauth.PersistLoop(ctx,
+			func(dialCtx context.Context) (connauth.PersistHandle, error) {
 				rh, err := runner.Connect(dialCtx, cfg)
 				if err == nil {
 					h.currentRun.Store(rh)
 				}
 				return rh, err
 			},
-			func(runCtx context.Context, ph cli.PersistHandle) error {
+			func(runCtx context.Context, ph connauth.PersistHandle) error {
 				return runner.OnConnect(runCtx, ph.(*runner.RunHandle))
 			},
-			cli.PersistConfig{
+			connauth.PersistConfig{
 				Enabled:        true,
 				InitialBackoff: 200 * time.Millisecond,
 				MaxBackoff:     2 * time.Second,

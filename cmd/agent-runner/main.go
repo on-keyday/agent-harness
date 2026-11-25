@@ -25,11 +25,12 @@ import (
 	"time"
 
 	"github.com/google/shlex"
-	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/connauth"
 	"github.com/on-keyday/agent-harness/runner"
 	"github.com/on-keyday/agent-harness/runner/agentskills"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/runner/transcript"
+	"github.com/on-keyday/agent-harness/shutdownwatch"
 )
 
 // mainConfig holds all flag-derived state for agent-runner. Using a struct
@@ -79,7 +80,7 @@ type mainConfig struct {
 	// runCfg.Profiles (runner.Config) below.
 	Profiles runner.ProfileSet
 
-	// ShutdownFile, when non-empty, is polled by cli.WatchShutdownFile every
+	// ShutdownFile, when non-empty, is polled by shutdownwatch.WatchShutdownFile every
 	// 250ms; once the file appears the runner triggers a graceful shutdown.
 	// daemon.py injects this automatically when the runner is spawned via
 	// scripts/runner.py up, so Windows downs (where SIGTERM can't reach a
@@ -129,7 +130,7 @@ func (c *mainConfig) bindFlags(fs *flag.FlagSet) {
 		"path to the event-stream adapter for the default agent profile (e.g. harness-stream-adapter). "+
 			"Empty means this profile cannot serve event-stream tasks, and a request for one is refused "+
 			"rather than falling back to a PTY. Read per task, so editing the adapter needs no restart")
-	fs.StringVar(&c.WSPath, "ws-path", c.WSPath, "WebSocket URL path (overrides cli.WebSocketPath)")
+	fs.StringVar(&c.WSPath, "ws-path", c.WSPath, "WebSocket URL path (overrides connauth.WebSocketPath)")
 	fs.StringVar(&c.Hostname, "hostname", c.Hostname, "hostname to report in Hello (default: os.Hostname())")
 	fs.StringVar(&c.ServerPubKey, "server-pubkey", c.ServerPubKey, "the server's public key (hex, from <data-dir>/server-key.pub on the server host); when set, the runner refuses a server that cannot prove it holds the matching private key, and agents inherit it (env: HARNESS_SERVER_PUBKEY)")
 	fs.StringVar(&c.ServerPubKeyFile, "server-pubkey-file", c.ServerPubKeyFile, "path to a file holding --server-pubkey (env: HARNESS_SERVER_PUBKEY_FILE)")
@@ -333,7 +334,7 @@ func (c *mainConfig) buildProfiles(warn io.Writer) (runner.ProfileSet, error) {
 // runner's INITIAL environment, which /proc/<pid>/environ shows to any
 // same-uid process regardless of what is unset here.
 func scrubOperatorSecret() {
-	for _, k := range []string{cli.OperatorPSKEnv, cli.OperatorPSKFileEnv, cli.RunnerKeyFileEnv, cli.CredentialEnv, cli.CredentialFileEnv} {
+	for _, k := range []string{connauth.OperatorPSKEnv, connauth.OperatorPSKFileEnv, connauth.RunnerKeyFileEnv, connauth.CredentialEnv, connauth.CredentialFileEnv} {
 		os.Unsetenv(k)
 	}
 }
@@ -372,7 +373,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	cli.WebSocketPath = cfg.WSPath
+	connauth.WebSocketPath = cfg.WSPath
 
 	rawRoots := strings.Split(cfg.Roots, ",")
 	var abs []string
@@ -446,16 +447,16 @@ func main() {
 
 	// The marker is the SERVER's vocabulary (hold or not); a runner shuts down
 	// the same way either way, so it is ignored here.
-	cli.WatchShutdownFile(ctx, cfg.ShutdownFile, func(string) { cancel() }, 250*time.Millisecond, slog.Default())
+	shutdownwatch.WatchShutdownFile(ctx, cfg.ShutdownFile, func(string) { cancel() }, 250*time.Millisecond, slog.Default())
 
 	pubVal, pubFile := cfg.ServerPubKey, cfg.ServerPubKeyFile
 	if pubVal == "" {
-		pubVal = os.Getenv(cli.ServerPubKeyEnv)
+		pubVal = os.Getenv(connauth.ServerPubKeyEnv)
 	}
 	if pubFile == "" {
-		pubFile = os.Getenv(cli.ServerPubKeyFileEnv)
+		pubFile = os.Getenv(connauth.ServerPubKeyFileEnv)
 	}
-	serverPubKey, err := cli.ResolveServerPubKey(pubVal, pubFile)
+	serverPubKey, err := connauth.ResolveServerPubKey(pubVal, pubFile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "agent-runner: %v\n", err)
 		os.Exit(1)
@@ -571,20 +572,20 @@ func main() {
 
 	enabled := cfg.Persist && !cfg.NoPersist
 
-	err = cli.PersistLoop(ctx,
-		func(dialCtx context.Context) (cli.PersistHandle, error) {
+	err = connauth.PersistLoop(ctx,
+		func(dialCtx context.Context) (connauth.PersistHandle, error) {
 			return runner.ConnectWith(dialCtx, endpoint, runCfg)
 		},
-		func(runCtx context.Context, h cli.PersistHandle) error {
+		func(runCtx context.Context, h connauth.PersistHandle) error {
 			rh := h.(*runner.RunHandle)
 			return runner.OnConnect(runCtx, rh)
 		},
-		cli.PersistConfig{
+		connauth.PersistConfig{
 			Enabled:        enabled,
 			InitialBackoff: cfg.ReconnectInit,
 			MaxBackoff:     cfg.ReconnectMax,
 			Logger:         slog.Default(),
-			OnState: func(s cli.PersistState) {
+			OnState: func(s connauth.PersistState) {
 				slog.Info("runner persist state",
 					"phase", s.Phase, "attempt", s.Attempt,
 					"next_retry", s.NextRetry, "err", s.LastError)

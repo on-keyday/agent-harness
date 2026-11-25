@@ -1,4 +1,4 @@
-package cli
+package connauth
 
 // Environment names of the operator-only secret: read by operator surfaces
 // (GetOperatorPSK) and taken by harness-server as the value of --operator-psk.

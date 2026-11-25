@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/appwire"
-	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/connauth"
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
@@ -296,7 +296,7 @@ func ceremonyCaseRun(t *testing.T, ctx context.Context, deliverResp *protocol.Ch
 	if err != nil {
 		t.Fatalf("ceremonyCaseRun: parse CID: %v", err)
 	}
-	agentEP, err := cli.BuildClientEndpoint(runnerCID)
+	agentEP, err := connauth.BuildClientEndpoint(runnerCID)
 	if err != nil {
 		t.Fatalf("ceremonyCaseRun: BuildClientEndpoint: %v", err)
 	}
@@ -475,7 +475,7 @@ func TestCeremonyChainedRelayTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse CID: %v", err)
 	}
-	agentEP, err := cli.BuildClientEndpoint(runnerCID)
+	agentEP, err := connauth.BuildClientEndpoint(runnerCID)
 	if err != nil {
 		t.Fatalf("BuildClientEndpoint: %v", err)
 	}

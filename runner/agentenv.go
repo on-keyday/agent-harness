@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/connauth"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
 )
@@ -98,7 +98,7 @@ func BuildAgentEnv(s AgentEnvSpec) []string {
 		env = append(env, "PATH="+path)
 	}
 	if len(s.ServerPubKey) > 0 {
-		env = append(env, cli.ServerPubKeyEnv+"="+hex.EncodeToString(s.ServerPubKey))
+		env = append(env, connauth.ServerPubKeyEnv+"="+hex.EncodeToString(s.ServerPubKey))
 	}
 	if s.ProxyVia != "" {
 		env = append(env, "HARNESS_PROXY_VIA_RUNNER="+rewriteProxyViaForLocalDial(s.ProxyVia))

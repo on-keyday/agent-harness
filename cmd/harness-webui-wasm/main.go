@@ -34,6 +34,7 @@ import (
 	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/cli/verb"
+	"github.com/on-keyday/agent-harness/connauth"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/runner/streamagent"
 	"github.com/on-keyday/objtrsf/objproto"
@@ -422,7 +423,7 @@ func currentClient() (*cli.Client, error) {
 // waitForClient blocks until a live client handle is installed and returns it,
 // or returns ctx.Err() once ctx is done.
 //
-// Reconnect ordering: PersistLoop emits Connected (cli/persist.go) — which the
+// Reconnect ordering: PersistLoop emits Connected (connauth/persist.go) — which the
 // JS layer turns into an onConnectionChange('connected') that re-invokes the
 // watch starters below — BEFORE onConnect installs the new handle into `client`
 // and completes SayHello. So during the reconnect window currentClient() is
@@ -499,15 +500,15 @@ func harnessConnect(this js.Value, args []js.Value) any {
 			dropUnderlay.Store(&underlayDropper{ep: endpoint, addr: peerCIDLocal.Addr})
 
 			go func() {
-				err := cli.PersistLoop(rootCtx,
-					func(dialCtx context.Context) (cli.PersistHandle, error) {
+				err := connauth.PersistLoop(rootCtx,
+					func(dialCtx context.Context) (connauth.PersistHandle, error) {
 						c, derr := cli.DialWith(dialCtx, endpoint, peerCIDLocal, protocol.ClientKind_Webui)
 						if derr != nil {
 							return nil, derr
 						}
 						return cli.NewClientHandle(c), nil
 					},
-					func(runCtx context.Context, h cli.PersistHandle) error {
+					func(runCtx context.Context, h connauth.PersistHandle) error {
 						handle := h.(*cli.ClientHandle)
 						clientMu.Lock()
 						client = handle.C
@@ -519,16 +520,16 @@ func harnessConnect(this js.Value, args []js.Value) any {
 						clientMu.Unlock()
 						return nil
 					},
-					cli.PersistConfig{
+					connauth.PersistConfig{
 						Enabled:      persist,
 						Kick:         reconnectKick,
 						MaxBackoffFn: persistMaxBackoff,
-						OnState: func(s cli.PersistState) {
+						OnState: func(s connauth.PersistState) {
 							notifyConnState(s)
 						},
 					})
 				if err != nil && !errors.Is(err, context.Canceled) {
-					notifyConnState(cli.PersistState{Phase: cli.PersistPhaseClosed, LastError: err})
+					notifyConnState(connauth.PersistState{Phase: connauth.PersistPhaseClosed, LastError: err})
 				}
 			}()
 
@@ -547,7 +548,7 @@ func harnessConnect(this js.Value, args []js.Value) any {
 	return js.Global().Get("Promise").New(executor)
 }
 
-func notifyConnState(s cli.PersistState) {
+func notifyConnState(s connauth.PersistState) {
 	connStateHandlerM.Lock()
 	h := connStateHandler
 	connStateHandlerM.Unlock()
@@ -556,11 +557,11 @@ func notifyConnState(s cli.PersistState) {
 	}
 	phaseStr := "connecting"
 	switch s.Phase {
-	case cli.PersistPhaseConnected:
+	case connauth.PersistPhaseConnected:
 		phaseStr = "connected"
-	case cli.PersistPhaseReconnecting:
+	case connauth.PersistPhaseReconnecting:
 		phaseStr = "reconnecting"
-	case cli.PersistPhaseClosed:
+	case connauth.PersistPhaseClosed:
 		phaseStr = "closed"
 	}
 	payload := map[string]any{
@@ -1899,11 +1900,11 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					// reported); lifecycleAt is a decimal string like
 					// progressAt. And the program's OSC 7501 report, live-only
 					// like the title.
-					"lifecycle":      cli.LifecycleWord(t.Lifecycle),
+					"lifecycle":      protocol.LifecycleWord(t.Lifecycle),
 					"lifecycleAt":    strconv.FormatUint(t.LifecycleAt, 10),
 					"lifecycleAgeMs": float64(t.LifecycleAgeMs),
-					"programState":   cli.ProgramWord(t.ProgramState),
-					"programKind":    cli.ProgramKindWord(t.ProgramKind),
+					"programState":   protocol.ProgramWord(t.ProgramState),
+					"programKind":    protocol.ProgramKindWord(t.ProgramKind),
 					"programMsg":     string(t.ProgramMsg),
 					// Run mode (pillar A): the wire word, the row/sheet label
 					// rendered in Go as the CLI and TUI render it (cli.RunStr),
@@ -2015,7 +2016,7 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					"topic":        string(w.Topic),
 					"threshold_ms": float64(w.ThresholdMs),
 					"condition":    cli.AwaitConditionString(w.Condition),
-					"signal":       cli.AwaitIdleSignalString(w.Signal),
+					"signal":       protocol.AwaitIdleSignalString(w.Signal),
 					"waits_for":    cli.AwaitWatcherWaitsFor(w),
 					// RAW, for the exec rows' reason: the page re-renders per poll.
 					"armed_unix_ms": float64(w.ArmedUnixMs),
@@ -3312,7 +3313,7 @@ func jsArgString(args []js.Value, i int) string {
 func harnessRunnerDialAdd(this js.Value, args []js.Value) any {
 	candidates, keyPrefix, label := jsArgString(args, 0), jsArgString(args, 1), jsArgString(args, 2)
 	return runnerKeyPromise(func(c *cli.Client) (string, bool, error) {
-		cands, err := cli.SplitCandidates(candidates)
+		cands, err := connauth.SplitCandidates(candidates)
 		if err != nil {
 			return "", false, fmt.Errorf("runner dial add: %w", err)
 		}
@@ -4081,7 +4082,7 @@ func harnessAwaitIdle(this js.Value, args []js.Value) any {
 			if s := opts.Get("signal"); s.Type() == js.TypeString {
 				word = s.String()
 			}
-			signal, err := cli.ParseAwaitIdleSignal(word)
+			signal, err := protocol.ParseAwaitIdleSignal(word)
 			if err != nil {
 				rejectErr(reject, fmt.Errorf("awaitIdle: %w", err))
 				return
@@ -4097,11 +4098,11 @@ func harnessAwaitIdle(this js.Value, args []js.Value) any {
 				"status":       cli.AwaitIdleStatusString(resp.Status),
 				"lastOutputAt": float64(resp.LastOutputAt),
 				"watcherId":    float64(resp.WatcherId),
-				"firedBy":      cli.AwaitIdleSignalString(resp.FiredBy),
-				"lifecycle":    cli.LifecycleWord(resp.Lifecycle),
-				"programState": cli.ProgramWord(resp.ProgramState),
-				"programKind":  cli.ProgramKindWord(resp.ProgramKind),
-				"firedDetail":  cli.AwaitIdleFiredDetail(resp.FiredBy, resp.Lifecycle, resp.ProgramState, resp.ProgramKind),
+				"firedBy":      protocol.AwaitIdleSignalString(resp.FiredBy),
+				"lifecycle":    protocol.LifecycleWord(resp.Lifecycle),
+				"programState": protocol.ProgramWord(resp.ProgramState),
+				"programKind":  protocol.ProgramKindWord(resp.ProgramKind),
+				"firedDetail":  protocol.AwaitIdleFiredDetail(resp.FiredBy, resp.Lifecycle, resp.ProgramState, resp.ProgramKind),
 			}))
 		}()
 		return nil
@@ -5243,7 +5244,7 @@ func harnessAwaitIdleList(this js.Value, args []js.Value) any {
 					"originKind":  w.OriginKind.String(),
 					"originCid":   string(w.OriginCid),
 					"condition":   cli.AwaitConditionString(w.Condition),
-					"signal":      cli.AwaitIdleSignalString(w.Signal),
+					"signal":      protocol.AwaitIdleSignalString(w.Signal),
 					"waitsFor":    cli.AwaitWatcherWaitsFor(w),
 				})
 			}

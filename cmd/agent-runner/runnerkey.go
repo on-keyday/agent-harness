@@ -7,7 +7,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/connauth"
 	"github.com/on-keyday/agent-harness/runner"
 )
 
@@ -17,7 +17,7 @@ func resolveRunnerKeyPath(flagValue string) (string, error) {
 	if flagValue != "" {
 		return flagValue, nil
 	}
-	if v := os.Getenv(cli.RunnerKeyFileEnv); v != "" {
+	if v := os.Getenv(connauth.RunnerKeyFileEnv); v != "" {
 		return v, nil
 	}
 	return runner.DefaultRunnerKeyPath()

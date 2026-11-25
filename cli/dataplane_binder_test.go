@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"testing"
 
+	"github.com/on-keyday/agent-harness/connauth"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -25,7 +26,7 @@ func TestDataPlaneHelloCarriesNoGrantID(t *testing.T) {
 	if req.Role != protocol.AuthRole_Client || req.ClientHello() == nil || req.ClientHello().Kind != protocol.ClientKind_DataPlane {
 		t.Fatalf("role=%v hello=%+v", req.Role, req.ClientHello())
 	}
-	want, _ := ComputePSKBinder(grant[:], tr)
+	want, _ := connauth.ComputePSKBinder(grant[:], tr)
 	if !bytes.Equal(req.Binder, want) {
 		t.Fatal("the binder is not keyed by the grant over this transcript")
 	}

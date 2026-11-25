@@ -2,10 +2,10 @@ package runner
 
 import (
 	"crypto/subtle"
-	"github.com/on-keyday/agent-harness/cli"
 	"sync"
 	"time"
 
+	"github.com/on-keyday/agent-harness/connauth"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -82,7 +82,7 @@ func (s *grantStore) MatchBinder(taskID protocol.TaskID, transcript, binder []by
 		if e.grant.TaskId.Id != taskID.Id {
 			continue
 		}
-		want, err := cli.ComputePSKBinder(e.grant.GrantId[:], transcript)
+		want, err := connauth.ComputePSKBinder(e.grant.GrantId[:], transcript)
 		if err == nil && subtle.ConstantTimeCompare(binder, want) == 1 {
 			found, ok = e.grant, true
 		}

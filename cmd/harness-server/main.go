@@ -24,8 +24,9 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/agentboard"
-	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/connauth"
 	"github.com/on-keyday/agent-harness/server"
+	"github.com/on-keyday/agent-harness/shutdownwatch"
 	"github.com/on-keyday/agent-harness/webui"
 )
 
@@ -39,7 +40,7 @@ var (
 	taskRetain           = flag.Duration("task-retain", 0, "auto-prune terminal tasks older than this (0 = keep forever)")
 	holdWindow           = flag.Duration("hold-window", 90*time.Second, "after a DELIBERATE shutdown, how long a runner keeps its tasks' children alive with no server so this server's successor can re-adopt them; 0 disables holding (a deliberate shutdown then kills every task, as a crash does)")
 	holdAckTimeout       = flag.Duration("hold-ack-timeout", 1500*time.Millisecond, "how long a shutdown waits for each runner to say which tasks it will keep; short because the sequence sits inside daemon_down's hard-kill window, and a runner that misses it holds nothing")
-	wsPath               = flag.String("ws-path", "/ws", "WebSocket URL path (overrides cli.WebSocketPath)")
+	wsPath               = flag.String("ws-path", "/ws", "WebSocket URL path (overrides connauth.WebSocketPath)")
 	agentboardRing       = flag.Int("agentboard-ring", 64, "agentboard ring buffer entries per topic")
 	agentboardTTL        = flag.Duration("agentboard-ttl", 30*time.Minute, "agentboard topic TTL after last publish")
 	agentboardMaxTopics  = flag.Int("agentboard-max-topics", 1024, "agentboard max active topics")
@@ -183,7 +184,7 @@ func resolveServerKey(file, dataDir string) (ed25519.PrivateKey, error) {
 	data, err := os.ReadFile(file)
 	switch {
 	case err == nil && strings.TrimSpace(string(data)) != "":
-		if key, err = cli.ParseServerKeySeed(string(data)); err != nil {
+		if key, err = connauth.ParseServerKeySeed(string(data)); err != nil {
 			return nil, fmt.Errorf("%s: %w", file, err)
 		}
 	case err == nil || errors.Is(err, os.ErrNotExist):
@@ -232,7 +233,7 @@ func loadListenTLS(certFile, keyFile, wsListen string) (*tls.Config, error) {
 
 func main() {
 	flag.Parse()
-	cli.WebSocketPath = *wsPath
+	connauth.WebSocketPath = *wsPath
 	// Catch SIGTERM in addition to SIGINT so daemon.py's `p.terminate()`
 	// (the default Linux down path used by server.sh / server.py) closes
 	// active WS connections gracefully instead of being killed by the
@@ -267,7 +268,7 @@ func main() {
 			if srv == nil {
 				return
 			}
-			if cli.ShutdownRequestsNoHold(marker) {
+			if shutdownwatch.ShutdownRequestsNoHold(marker) {
 				// Told to the SERVER rather than acted on here, because this is
 				// not the only entry to the hold: serve() runs it as a fallback
 				// for a caller that arrives with nothing held (an embedded
@@ -292,14 +293,14 @@ func main() {
 		// Read the sentinel HERE too. daemon.py writes it before signalling and
 		// on Linux the signal wins that race every time, so a handler that
 		// ignored the file would hold for a shutdown that asked not to.
-		holdThenCancel(cli.ShutdownFileMarker(*shutdownFile))
+		holdThenCancel(shutdownwatch.ShutdownFileMarker(*shutdownFile))
 	}()
 
-	cli.WatchShutdownFile(ctx, *shutdownFile, holdThenCancel, 250*time.Millisecond, slog.Default())
+	shutdownwatch.WatchShutdownFile(ctx, *shutdownFile, holdThenCancel, 250*time.Millisecond, slog.Default())
 
 	resolvedOperatorPSKVal := *operatorPSK
 	if resolvedOperatorPSKVal == "" {
-		resolvedOperatorPSKVal = os.Getenv(cli.OperatorPSKEnv)
+		resolvedOperatorPSKVal = os.Getenv(connauth.OperatorPSKEnv)
 	}
 	operatorPSKBytes, err := resolveOperatorPSK(resolvedOperatorPSKVal, *operatorPSKFile, *dataDir, *permitNoOperatorPSK)
 	if err != nil {

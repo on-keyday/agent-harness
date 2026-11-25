@@ -75,12 +75,12 @@ func TestParseAwaitIdleSignal(t *testing.T) {
 		"program":   protocol.AwaitIdleSignal_Program,
 		"any":       protocol.AwaitIdleSignal_Any,
 	} {
-		got, err := ParseAwaitIdleSignal(in)
+		got, err := protocol.ParseAwaitIdleSignal(in)
 		if err != nil || got != want {
 			t.Errorf("ParseAwaitIdleSignal(%q) = %v, %v; want %v", in, got, err, want)
 		}
 	}
-	if _, err := ParseAwaitIdleSignal("busy"); err == nil {
+	if _, err := protocol.ParseAwaitIdleSignal("busy"); err == nil {
 		t.Error(`ParseAwaitIdleSignal("busy") accepted an unknown word`)
 	}
 }
@@ -93,7 +93,7 @@ func TestAwaitIdleSignalString(t *testing.T) {
 		protocol.AwaitIdleSignal_Any:       "any",
 		protocol.AwaitIdleSignal(9):        "unknown(9)",
 	} {
-		if got := AwaitIdleSignalString(s); got != want {
+		if got := protocol.AwaitIdleSignalString(s); got != want {
 			t.Errorf("AwaitIdleSignalString(%d) = %q, want %q", s, got, want)
 		}
 	}
@@ -127,7 +127,7 @@ func TestAwaitIdleFiredDetail(t *testing.T) {
 		{protocol.AwaitIdleSignal_Lifecycle, protocol.LifecycleState_Error, 0, 0, "lifecycle error"},
 		{protocol.AwaitIdleSignal_Quiet, protocol.LifecycleState_Idle, protocol.ProgramState_Done, 0, ""},
 	} {
-		if got := AwaitIdleFiredDetail(c.firedBy, c.lc, c.ps, c.pk); got != c.want {
+		if got := protocol.AwaitIdleFiredDetail(c.firedBy, c.lc, c.ps, c.pk); got != c.want {
 			t.Errorf("AwaitIdleFiredDetail(%v,%v,%v,%v) = %q, want %q", c.firedBy, c.lc, c.ps, c.pk, got, c.want)
 		}
 	}

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/connauth"
 )
 
 // The operator secret is required by default: handed nothing, the server
@@ -101,7 +101,7 @@ func TestResolveServerKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("public key not written: %v", err)
 	}
-	pub, err := cli.ParseServerPubKey(string(pubHex))
+	pub, err := connauth.ParseServerPubKey(string(pubHex))
 	if err != nil || !pub.Equal(k1.Public()) {
 		t.Fatalf("server-key.pub does not hold the key's public half: %v", err)
 	}

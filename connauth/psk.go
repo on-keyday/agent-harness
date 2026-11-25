@@ -1,0 +1,143 @@
+//go:build !js
+
+package connauth
+
+import (
+	"context"
+	"crypto/ed25519"
+	"fmt"
+
+	"github.com/on-keyday/agent-harness/appwire"
+	"github.com/on-keyday/agent-harness/cli/cliopts"
+	"github.com/on-keyday/agent-harness/runner/protocol"
+)
+
+// EffectiveClientKind reports which principal a client dialed from THIS
+// process announces: Credential when one is loaded (--credential-file,
+// HARNESS_CREDENTIAL_FILE, HARNESS_CREDENTIAL), else the operator kind it
+// asked for, or Agent when the in-task env (HARNESS_RUNNER_ID /
+// HARNESS_TASK_ID / HARNESS_AUTH_TICKET) is fully populated and overrides it. The task id is returned too, zero for an
+// operator.
+//
+// Exported so a surface can SAY which principal it is. Connecting as an agent
+// with caps=none makes the runner list come back EMPTY, and nothing on screen
+// explained that — the symptom reads as a broken pane or a lost connection.
+// buildMergedClientHello makes the same decision through this function, so the
+// header cannot disagree with the handshake.
+func EffectiveClientKind(operatorKind protocol.ClientKind) (protocol.ClientKind, protocol.TaskID) {
+	// A loaded credential outranks everything else this process carries: an
+	// operator PSK in the environment (an operator trying a script from their
+	// own terminal) and a full in-task agent env (an agent's shell that sets
+	// HARNESS_CREDENTIAL) both connect AS the credential. A credential that
+	// cannot be loaded is not decided here: Dial reports it, before it
+	// connects as anything.
+	if cred, err := ActiveCredential(); err == nil && cred != nil {
+		return protocol.ClientKind_Credential, cred.TaskID
+	}
+	if rid, err := cliopts.ResolveRunnerID(""); err == nil && !rid.IsZero() {
+		if tid, err := cliopts.ResolveTaskID(""); err == nil {
+			if _, err := cliopts.ResolveAuthTicket(); err == nil {
+				return protocol.ClientKind_Agent, tid
+			}
+		}
+	}
+	return operatorKind, protocol.TaskID{}
+}
+
+// buildMergedClientHello constructs the ClientHello to embed in a
+// PskAuthRequest. When the in-task agent env is fully populated, kind is
+// overridden to Agent with AgentInfo; otherwise the supplied operatorKind
+// is used. The override decision itself lives in EffectiveClientKind.
+//
+// For an agent it also returns the ticket, which keys the request's binder and
+// is never sent.
+func buildMergedClientHello(operatorKind protocol.ClientKind) (protocol.ClientHello, *[16]byte) {
+	hello := protocol.ClientHello{Kind: operatorKind}
+	if kind, _ := EffectiveClientKind(operatorKind); kind != protocol.ClientKind_Agent {
+		return hello, nil
+	}
+	// Re-resolving rather than threading the values out of EffectiveClientKind:
+	// that function answers WHICH principal, this one needs the credential
+	// itself, and an agent env that changed between the two calls would fail
+	// the handshake rather than announce a half-built identity.
+	rid, err := cliopts.ResolveRunnerID("")
+	if err != nil {
+		return hello, nil
+	}
+	tid, err := cliopts.ResolveTaskID("")
+	if err != nil {
+		return hello, nil
+	}
+	ticket, err := cliopts.ResolveAuthTicket()
+	if err != nil {
+		return hello, nil
+	}
+	info := protocol.AgentInfo{RunnerId: rid, TaskId: tid}
+	info.SetHostname([]byte(cliopts.ResolveString("", "HARNESS_HOSTNAME")))
+	hello.Kind = protocol.ClientKind_Agent
+	hello.SetAgentInfo(info)
+	return hello, &ticket
+}
+
+// SendMergedHandshake builds a PskAuthRequest{binder (or empty when psk==nil),
+// role=client, client_hello = <buildMergedClientHello(operatorKind)>}, sends
+// [0x45]+PskAuthRequest via sendFn, then blocks until a PskAuthResponse
+// arrives on respCh or ctx is cancelled.
+//
+// The binder computation (HMAC-SHA512 over the objproto transcript) is
+// unchanged from ComputePSKBinder; only the wire format moves from the old
+// hand-built [0x45+binder] to the brgen-schematized PskAuthRequest.
+//
+// Error mapping:
+//   - PskAuthStatus_BadPsk      → error (wrong PSK)
+//   - PskAuthStatus_BadTicket   → error (binder ok, invalid agent ticket)
+//   - PskAuthStatus_NoIdentity  → RETRYABLE error: we always embed a hello, so this
+//     means the server could not DECODE it — in practice a wire/schema skew
+//     (server older than us). Resolves when the server is upgraded; must not
+//     be fatal (see PskRejectedError.Retryable).
+//   - signature missing/wrong with serverKey set → *ServerAuthError (retryable)
+//   - undecodable response → retryable error ("server response did not decode")
+func SendMergedHandshake(ctx context.Context, sendFn func([]byte) error, psk, transcript []byte, operatorKind protocol.ClientKind, serverKey ed25519.PublicKey, respCh <-chan PskAuthReply) error {
+	req := protocol.PskAuthRequest{Role: protocol.AuthRole_Client}
+
+	hello, ticket := buildMergedClientHello(operatorKind)
+	if ticket != nil {
+		// An agent proves its ticket over this transcript and sends nothing
+		// a peer could replay on another connection.
+		psk = ticket[:]
+	}
+	if len(psk) > 0 {
+		binder, err := ComputePSKBinder(psk, transcript)
+		if err != nil {
+			return fmt.Errorf("psk: binder: %w", err)
+		}
+		if !req.SetBinder(binder) {
+			return fmt.Errorf("psk: SetBinder failed (len=%d)", len(binder))
+		}
+	} else {
+		req.SetBinder(nil) // binder_len = 0
+	}
+
+	if !req.SetClientHello(hello) {
+		return fmt.Errorf("psk: SetClientHello failed")
+	}
+
+	data, err := req.Append([]byte{byte(appwire.AppKind_PskAuth)})
+	if err != nil {
+		return fmt.Errorf("psk: encode: %w", err)
+	}
+	if err := sendFn(data); err != nil {
+		return fmt.Errorf("psk: send: %w", err)
+	}
+
+	select {
+	case reply := <-respCh:
+		// Signature first, then status: see CheckPskAuthReply.
+		return CheckPskAuthReply(reply, serverKey, transcript)
+	case <-ctx.Done():
+		// Transport drop / cancellation mid-handshake — RETRYABLE (e.g. a server
+		// restart interrupting the in-flight handshake). NOT a PskRejectedError,
+		// so callers must treat it as a normal disconnect and reconnect.
+		return ctx.Err()
+	}
+}

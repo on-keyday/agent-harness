@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/on-keyday/agent-harness/connauth"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
 )
@@ -101,7 +102,7 @@ func RunnerDialAddWith(ctx context.Context, c taskControlClient, candidates []st
 		// alone, so each one is checked here too, by the same function the
 		// server uses, and the refusal says which rule it broke (a URL's
 		// query or path, a pasted named cid, a typo).
-		if _, err := CanonicalDialRecordCandidate(c); err != nil {
+		if _, err := connauth.CanonicalDialRecordCandidate(c); err != nil {
 			return 0, 0, fmt.Errorf("runner dial add: %w", err)
 		}
 		if !cs[i].SetText([]byte(c)) {
@@ -250,8 +251,8 @@ func FormatRunnerDialAdd(st protocol.RunnerDialStatus, id uint32, candidates []s
 		shown := make([]string, len(candidates))
 		for i, c := range candidates {
 			shown[i] = c
-			if IsURLCandidate(c) {
-				if canon, err := CanonicalDialRecordCandidate(c); err == nil {
+			if connauth.IsURLCandidate(c) {
+				if canon, err := connauth.CanonicalDialRecordCandidate(c); err == nil {
 					shown[i] = canon
 				}
 			}

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/connauth"
 	"github.com/on-keyday/agent-harness/runner"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
@@ -71,12 +71,12 @@ func TestKickDialModeRunnerExitsAndStaysGone(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() {
-		done <- cli.PersistLoop(rctx,
-			func(dctx context.Context) (cli.PersistHandle, error) { return runner.ConnectWith(dctx, ep, cfg) },
-			func(rc context.Context, h cli.PersistHandle) error {
+		done <- connauth.PersistLoop(rctx,
+			func(dctx context.Context) (connauth.PersistHandle, error) { return runner.ConnectWith(dctx, ep, cfg) },
+			func(rc context.Context, h connauth.PersistHandle) error {
 				return runner.OnConnect(rc, h.(*runner.RunHandle))
 			},
-			cli.PersistConfig{Enabled: true, InitialBackoff: 50 * time.Millisecond})
+			connauth.PersistConfig{Enabled: true, InitialBackoff: 50 * time.Millisecond})
 	}()
 	f := &originFixture{s: s}
 	e := f.waitRunner(t, "kick-dial")

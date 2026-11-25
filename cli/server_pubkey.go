@@ -5,6 +5,8 @@ package cli
 import (
 	"crypto/ed25519"
 	"os"
+
+	"github.com/on-keyday/agent-harness/connauth"
 )
 
 // GetServerPubKey reads the server public key this process verifies against
@@ -12,5 +14,5 @@ import (
 // nil, nil. Set but unusable → error: dialing without the check the operator
 // asked for would be a silent downgrade.
 func GetServerPubKey() (ed25519.PublicKey, error) {
-	return ResolveServerPubKey(os.Getenv(ServerPubKeyEnv), os.Getenv(ServerPubKeyFileEnv))
+	return connauth.ResolveServerPubKey(os.Getenv(connauth.ServerPubKeyEnv), os.Getenv(connauth.ServerPubKeyFileEnv))
 }

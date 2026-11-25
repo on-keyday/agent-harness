@@ -1,11 +1,11 @@
 package runner
 
 import (
+	"github.com/on-keyday/agent-harness/connauth"
 	"testing"
 	"time"
 
 	"github.com/on-keyday/agent-harness/appwire"
-	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -21,7 +21,7 @@ func grantFor(id byte, task byte) protocol.DataPlaneGrant {
 func boundDataPlaneHello(t *testing.T, grantID [16]byte, task byte, transcript []byte) []byte {
 	t.Helper()
 	req := protocol.PskAuthRequest{Role: protocol.AuthRole_Client}
-	binder, err := cli.ComputePSKBinder(grantID[:], transcript)
+	binder, err := connauth.ComputePSKBinder(grantID[:], transcript)
 	if err != nil {
 		t.Fatal(err)
 	}

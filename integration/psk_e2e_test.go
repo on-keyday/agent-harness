@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/connauth"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/server"
 	"github.com/on-keyday/objtrsf/objproto"
@@ -71,7 +72,7 @@ func TestPSKBinderE2E_WrongPSK(t *testing.T) {
 		c.Close()
 		t.Fatal("Dial with wrong PSK must fail")
 	}
-	var pskErr *cli.PSKAuthError
+	var pskErr *connauth.PSKAuthError
 	if !errors.As(err, &pskErr) {
 		t.Errorf("err = %v, want *cli.PSKAuthError", err)
 	}

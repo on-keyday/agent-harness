@@ -20,6 +20,7 @@ import (
 	"github.com/on-keyday/agent-harness/cli/agent"
 	"github.com/on-keyday/agent-harness/cli/sshgw"
 	"github.com/on-keyday/agent-harness/cli/verb"
+	"github.com/on-keyday/agent-harness/connauth"
 	"github.com/on-keyday/agent-harness/iplink"
 	"github.com/on-keyday/agent-harness/runner/agentskills"
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -694,7 +695,7 @@ func (h cliVerbs) RunnerUnenroll(a verb.RunnerUnenrollAction) error {
 // --- dial records and kick ------------------------------------------------
 
 func (h cliVerbs) RunnerDialAdd(a verb.RunnerDialAddAction) error {
-	cands, err := cli.SplitCandidates(a.Candidates)
+	cands, err := connauth.SplitCandidates(a.Candidates)
 	if err != nil {
 		return fmt.Errorf("runner dial add: %w", err)
 	}
@@ -892,7 +893,7 @@ func (h cliVerbs) CapsReach(a verb.CapsReachAction) error {
 		}
 		// An agent's (or a credential's) listing is partial; the parent
 		// comparison is only made over an operator's (BuildReachReport).
-		kind, _ := cli.EffectiveClientKind(protocol.ClientKind_Cli)
+		kind, _ := connauth.EffectiveClientKind(protocol.ClientKind_Cli)
 		r, err := cli.BuildReachReport(body.Tasks, a.TaskID, focus, kind != protocol.ClientKind_Agent && kind != protocol.ClientKind_Credential)
 		if err != nil {
 			return err
@@ -911,7 +912,7 @@ func (h cliVerbs) CapsWhatIf(a verb.CapsWhatIfAction) error {
 		if err != nil {
 			return err
 		}
-		kind, _ := cli.EffectiveClientKind(protocol.ClientKind_Cli)
+		kind, _ := connauth.EffectiveClientKind(protocol.ClientKind_Cli)
 		r.Partial = kind == protocol.ClientKind_Agent || kind == protocol.ClientKind_Credential
 		return cli.WriteWhatIf(h.stdout(), r, a.JSON)
 	})

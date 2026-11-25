@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/appwire"
+	"github.com/on-keyday/agent-harness/connauth"
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
@@ -185,7 +186,7 @@ func (c *Client) dialDataPlane(ctx context.Context, t dataPlaneTarget) (*peer.Co
 // redeem on a connection of its own.
 func buildDataPlaneHello(transcript []byte, t dataPlaneTarget) ([]byte, error) {
 	req := protocol.PskAuthRequest{Role: protocol.AuthRole_Client}
-	binder, err := ComputePSKBinder(t.GrantID[:], transcript)
+	binder, err := connauth.ComputePSKBinder(t.GrantID[:], transcript)
 	if err != nil {
 		return nil, fmt.Errorf("file: compute binder: %w", err)
 	}

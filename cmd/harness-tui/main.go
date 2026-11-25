@@ -13,6 +13,7 @@ import (
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/cli/cliopts"
 	"github.com/on-keyday/agent-harness/cli/workspace"
+	"github.com/on-keyday/agent-harness/connauth"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/tui"
 	"github.com/on-keyday/objtrsf/objproto"
@@ -69,9 +70,9 @@ func main() {
 		wsServerCID, wsWSPath, wsRepo = ws.ServerCID, ws.WSPath, ws.Repo
 	}
 
-	cli.WebSocketPath = cliopts.ResolveStringWith(*wsPath, "HARNESS_WS_PATH", wsWSPath)
-	if cli.WebSocketPath == "" {
-		cli.WebSocketPath = defaultWSPath
+	connauth.WebSocketPath = cliopts.ResolveStringWith(*wsPath, "HARNESS_WS_PATH", wsWSPath)
+	if connauth.WebSocketPath == "" {
+		connauth.WebSocketPath = defaultWSPath
 	}
 	resolvedCID := cliopts.ResolveStringWith(*serverCID, "HARNESS_SERVER_CID", wsServerCID)
 	if resolvedCID == "" {
@@ -122,15 +123,15 @@ func main() {
 
 	go func() {
 		enabled := *persist && !*noPersist
-		err := cli.PersistLoop(ctx,
-			func(dialCtx context.Context) (cli.PersistHandle, error) {
+		err := connauth.PersistLoop(ctx,
+			func(dialCtx context.Context) (connauth.PersistHandle, error) {
 				c, err := cli.DialWith(dialCtx, endpoint, peerCID, protocol.ClientKind_Tui)
 				if err != nil {
 					return nil, err
 				}
 				return cli.NewClientHandle(c), nil
 			},
-			func(runCtx context.Context, h cli.PersistHandle) error {
+			func(runCtx context.Context, h connauth.PersistHandle) error {
 				handle := h.(*cli.ClientHandle)
 				program.Send(tui.BindClientMsg{Client: handle.C})
 				// No eager snapshot here: the tasks.status subscription's
@@ -145,14 +146,14 @@ func main() {
 				<-runCtx.Done()
 				return nil
 			},
-			cli.PersistConfig{
+			connauth.PersistConfig{
 				Enabled:        enabled,
 				InitialBackoff: *reconnectInit,
 				MaxBackoff:     *reconnectMax,
-				OnState: func(s cli.PersistState) {
+				OnState: func(s connauth.PersistState) {
 					program.Send(tui.ConnectionMsg{
-						Connected:    s.Phase == cli.PersistPhaseConnected,
-						Reconnecting: s.Phase == cli.PersistPhaseReconnecting,
+						Connected:    s.Phase == connauth.PersistPhaseConnected,
+						Reconnecting: s.Phase == connauth.PersistPhaseReconnecting,
 						Attempt:      s.Attempt,
 						NextRetry:    s.NextRetry,
 						Err:          s.LastError,

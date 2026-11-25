@@ -1,6 +1,7 @@
 package server
 
 import (
+	"github.com/on-keyday/agent-harness/connauth"
 	"testing"
 	"time"
 
@@ -66,7 +67,7 @@ func TestPipelinedRequestBehindRefusedIdentityIsNotDispatched(t *testing.T) {
 		pc.Start(ctx)
 		transcript := pc.Connection().GetTranscript()
 		req := &protocol.PskAuthRequest{Role: protocol.AuthRole_Client}
-		binder, _ := cli.ComputePSKBinder(psk, transcript)
+		binder, _ := connauth.ComputePSKBinder(psk, transcript)
 		req.SetBinder(binder)
 		req.SetClientHello(protocol.ClientHello{Kind: protocol.ClientKind_Credential})
 		if _, _, err := pc.Connection().SendMessage(buildPskAuthData(t, req)); err != nil {

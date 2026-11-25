@@ -452,7 +452,7 @@ func formatTaskDetail(t protocol.TaskInfo, runnerByID map[string]protocol.Runner
 		if t.LifecycleAt == 0 {
 			sb.WriteString("lifecycle:     - (never reported)\n")
 		} else {
-			fmt.Fprintf(&sb, "lifecycle:     %s (%s)\n", cli.LifecycleWord(t.Lifecycle), cli.AgeStr(t.LifecycleAgeMs))
+			fmt.Fprintf(&sb, "lifecycle:     %s (%s)\n", protocol.LifecycleWord(t.Lifecycle), cli.AgeStr(t.LifecycleAgeMs))
 		}
 	}
 	// The program's own OSC 7501 report, under what its hooks said, so a

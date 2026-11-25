@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"github.com/on-keyday/agent-harness/connauth"
 	"testing"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -24,7 +25,7 @@ func TestPskRejectedErrorRetryable(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.code.String(), func(t *testing.T) {
-			e := NewPskRejectedError(tc.code)
+			e := connauth.NewPskRejectedError(tc.code)
 			if got := e.Retryable(); got != tc.wantRetryable {
 				t.Errorf("Retryable() = %v, want %v for %v", got, tc.wantRetryable, tc.code)
 			}

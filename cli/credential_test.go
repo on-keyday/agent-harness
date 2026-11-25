@@ -17,13 +17,14 @@ import (
 	"testing"
 
 	"github.com/on-keyday/agent-harness/cli/verb"
+	"github.com/on-keyday/agent-harness/connauth"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 // A credential is `<32 hex task id>:<64 hex seed>`. The seed is a secret, so
 // no error here may repeat what was parsed.
 
-func testCredential(t *testing.T) Credential {
+func testCredential(t *testing.T) connauth.Credential {
 	t.Helper()
 	_, priv, err := ed25519.GenerateKey(nil)
 	if err != nil {
@@ -33,7 +34,7 @@ func testCredential(t *testing.T) Credential {
 	for i := range tid.Id {
 		tid.Id[i] = byte(0xa0 + i)
 	}
-	return Credential{TaskID: tid, Key: priv}
+	return connauth.Credential{TaskID: tid, Key: priv}
 }
 
 func TestParseCredentialRoundTrip(t *testing.T) {
@@ -42,14 +43,14 @@ func TestParseCredentialRoundTrip(t *testing.T) {
 	if len(s) != 32+1+64 || s[32] != ':' {
 		t.Fatalf("String() = %d bytes %q, want <32 hex>:<64 hex>", len(s), s[:8])
 	}
-	got, err := ParseCredential(s)
+	got, err := connauth.ParseCredential(s)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got.TaskID != c.TaskID || !bytes.Equal(got.Key, c.Key) {
 		t.Fatalf("round trip changed the credential")
 	}
-	if got2, err := ParseCredential("  " + s + "\n"); err != nil || got2.TaskID != c.TaskID {
+	if got2, err := connauth.ParseCredential("  " + s + "\n"); err != nil || got2.TaskID != c.TaskID {
 		t.Fatalf("surrounding whitespace (a file's newline) must be tolerated: %v", err)
 	}
 }
@@ -72,7 +73,7 @@ func TestParseCredentialRejects(t *testing.T) {
 		"id and colon":  id + ":",
 		"colon and key": ":" + seed,
 	} {
-		_, err := ParseCredential(in)
+		_, err := connauth.ParseCredential(in)
 		if err == nil {
 			t.Errorf("%s: accepted", name)
 			continue
@@ -85,11 +86,11 @@ func TestParseCredentialRejects(t *testing.T) {
 
 func clearCredentialEnv(t *testing.T) {
 	t.Helper()
-	t.Setenv(CredentialFileEnv, "")
-	t.Setenv(CredentialEnv, "")
+	t.Setenv(connauth.CredentialFileEnv, "")
+	t.Setenv(connauth.CredentialEnv, "")
 }
 
-func writeCredentialFile(t *testing.T, dir, name string, c Credential, mode os.FileMode) string {
+func writeCredentialFile(t *testing.T, dir, name string, c connauth.Credential, mode os.FileMode) string {
 	t.Helper()
 	p := filepath.Join(dir, name)
 	if err := os.WriteFile(p, []byte(c.Secret()+"\n"), mode); err != nil {
@@ -109,24 +110,24 @@ func TestLoadCredentialOrder(t *testing.T) {
 	flagPath := writeCredentialFile(t, dir, "flag", flagC, 0o600)
 	filePath := writeCredentialFile(t, dir, "env", fileC, 0o600)
 
-	if c, err := LoadCredential(""); err != nil || c != nil {
+	if c, err := connauth.LoadCredential(""); err != nil || c != nil {
 		t.Fatalf("no source: got (%v, %v), want (nil, nil)", c, err)
 	}
 
-	t.Setenv(CredentialEnv, valueC.Secret())
-	if c, err := LoadCredential(""); err != nil || c == nil || c.TaskID != valueC.TaskID {
+	t.Setenv(connauth.CredentialEnv, valueC.Secret())
+	if c, err := connauth.LoadCredential(""); err != nil || c == nil || c.TaskID != valueC.TaskID {
 		t.Fatalf("value env alone: got (%v, %v)", c, err)
 	}
-	t.Setenv(CredentialFileEnv, filePath)
-	if c, err := LoadCredential(""); err != nil || c == nil || c.TaskID != fileC.TaskID {
+	t.Setenv(connauth.CredentialFileEnv, filePath)
+	if c, err := connauth.LoadCredential(""); err != nil || c == nil || c.TaskID != fileC.TaskID {
 		t.Fatalf("file env must beat value env: got (%v, %v)", c, err)
 	}
-	if c, err := LoadCredential(flagPath); err != nil || c == nil || c.TaskID != flagC.TaskID {
+	if c, err := connauth.LoadCredential(flagPath); err != nil || c == nil || c.TaskID != flagC.TaskID {
 		t.Fatalf("flag must beat both: got (%v, %v)", c, err)
 	}
 	// First match wins: a named file that cannot be read is an error, never a
 	// quiet fall through to the next source.
-	if _, err := LoadCredential(filepath.Join(dir, "missing")); err == nil {
+	if _, err := connauth.LoadCredential(filepath.Join(dir, "missing")); err == nil {
 		t.Fatalf("a missing --credential-file fell through to another source")
 	}
 }
@@ -139,7 +140,7 @@ func TestLoadCredentialRefusesGroupReadableFile(t *testing.T) {
 	c := testCredential(t)
 	for _, mode := range []os.FileMode{0o640, 0o604, 0o644, 0o660, 0o666} {
 		p := writeCredentialFile(t, t.TempDir(), "cred", c, mode)
-		_, err := LoadCredential(p)
+		_, err := connauth.LoadCredential(p)
 		if err == nil {
 			t.Errorf("mode %04o accepted", mode)
 			continue
@@ -151,10 +152,10 @@ func TestLoadCredentialRefusesGroupReadableFile(t *testing.T) {
 			t.Errorf("the error contains the seed")
 		}
 	}
-	if _, err := LoadCredential(writeCredentialFile(t, t.TempDir(), "ok", c, 0o600)); err != nil {
+	if _, err := connauth.LoadCredential(writeCredentialFile(t, t.TempDir(), "ok", c, 0o600)); err != nil {
 		t.Fatalf("0600 refused: %v", err)
 	}
-	if _, err := LoadCredential(writeCredentialFile(t, t.TempDir(), "ro", c, 0o400)); err != nil {
+	if _, err := connauth.LoadCredential(writeCredentialFile(t, t.TempDir(), "ro", c, 0o400)); err != nil {
 		t.Fatalf("0400 refused: %v", err)
 	}
 }
@@ -163,14 +164,14 @@ func TestLoadCredentialRefusesGroupReadableFile(t *testing.T) {
 // become valid by trying again: PersistLoop must stop, not retry forever.
 func TestRevokedIsFatal(t *testing.T) {
 	for _, st := range []protocol.PskAuthStatus{protocol.PskAuthStatus_Revoked, protocol.PskAuthStatus_Expired, protocol.PskAuthStatus_BadTicket} {
-		if NewPskRejectedError(st).Retryable() {
+		if connauth.NewPskRejectedError(st).Retryable() {
 			t.Errorf("%v is retryable", st)
 		}
 	}
 	// What the script's operator reads still wraps the rejection, so
 	// PersistLoop classifies it by the same Retryable().
-	err := credentialRefusalError(testCredential(t), NewPskRejectedError(protocol.PskAuthStatus_Revoked))
-	var rej *PskRejectedError
+	err := credentialRefusalError(testCredential(t), connauth.NewPskRejectedError(protocol.PskAuthStatus_Revoked))
+	var rej *connauth.PskRejectedError
 	if !errors.As(err, &rej) || rej.Retryable() {
 		t.Errorf("the worded refusal lost the fatal rejection: %v", err)
 	}
@@ -236,14 +237,14 @@ func TestKeygenBindLoad(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := strings.Repeat("ab", 16)
-	if _, err := LoadCredential(path); err == nil {
+	if _, err := connauth.LoadCredential(path); err == nil {
 		t.Fatalf("a bare seed file loaded as a credential")
 	}
 	out.Reset()
 	if err := CredentialBindWith(verb.CredentialBindAction{ID: id, File: path}, &out); err != nil {
 		t.Fatal(err)
 	}
-	c, err := LoadCredential(path)
+	c, err := connauth.LoadCredential(path)
 	if err != nil || c == nil || hex.EncodeToString(c.TaskID.Id[:]) != id {
 		t.Fatalf("bound file does not load: %v", err)
 	}

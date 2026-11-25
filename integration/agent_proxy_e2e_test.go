@@ -48,6 +48,7 @@ import (
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/connauth"
 	"github.com/on-keyday/agent-harness/runner"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/server"
@@ -222,7 +223,7 @@ func TestAgentProxyE2E(t *testing.T) {
 	info.SetHostname([]byte("proxy-e2e-agent"))
 	{
 		req := protocol.PskAuthRequest{Role: protocol.AuthRole_Client}
-		binder, err := cli.ComputePSKBinder(ticket[:], proxyConn.Connection().GetTranscript())
+		binder, err := connauth.ComputePSKBinder(ticket[:], proxyConn.Connection().GetTranscript())
 		if err != nil {
 			t.Fatal(err)
 		}

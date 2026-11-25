@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/connauth"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -74,7 +75,7 @@ func DoRunnerUnenroll(c *cli.Client, prefix string, force bool) tea.Cmd {
 
 func DoRunnerDialAdd(c *cli.Client, candidates, keyPrefix, label string) tea.Cmd {
 	return func() tea.Msg {
-		cands, err := cli.SplitCandidates(candidates)
+		cands, err := connauth.SplitCandidates(candidates)
 		if err != nil {
 			return RunnerKeyResultMsg{Verb: "runner dial add", Err: err}
 		}

@@ -695,7 +695,7 @@ func runSessionAwaitIdleWith(ctx context.Context, cid objproto.ConnectionID, a v
 	case a.Topic != "":
 		sink = protocol.AwaitSink_Board
 	}
-	signal, err := cli.ParseAwaitIdleSignal(a.Signal)
+	signal, err := protocol.ParseAwaitIdleSignal(a.Signal)
 	if err != nil {
 		return err
 	}
@@ -715,10 +715,10 @@ func runSessionAwaitIdleWith(ctx context.Context, cid objproto.ConnectionID, a v
 		"status":         cli.AwaitIdleStatusString(resp.Status),
 		"last_output_at": resp.LastOutputAt,
 		"watcher_id":     resp.WatcherId,
-		"fired_by":       cli.AwaitIdleSignalString(resp.FiredBy),
-		"lifecycle":      cli.LifecycleWord(resp.Lifecycle),
-		"program_state":  cli.ProgramWord(resp.ProgramState),
-		"program_kind":   cli.ProgramKindWord(resp.ProgramKind),
+		"fired_by":       protocol.AwaitIdleSignalString(resp.FiredBy),
+		"lifecycle":      protocol.LifecycleWord(resp.Lifecycle),
+		"program_state":  protocol.ProgramWord(resp.ProgramState),
+		"program_kind":   protocol.ProgramKindWord(resp.ProgramKind),
 	})
 	switch resp.Status {
 	case protocol.AwaitIdleStatus_Fired, protocol.AwaitIdleStatus_Armed:

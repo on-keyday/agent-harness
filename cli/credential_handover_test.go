@@ -13,6 +13,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/cli/verb"
+	"github.com/on-keyday/agent-harness/connauth"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -52,11 +53,11 @@ func TestIssueCredentialHandsOverOneWorkingSecret(t *testing.T) {
 		t.Fatalf("issued line = %q", line)
 	}
 
-	t.Setenv(cli.CredentialEnv, secret)
+	t.Setenv(connauth.CredentialEnv, secret)
 	if r := whoami(t, cid); r.PrincipalTaskId != h.TaskID || r.Capabilities != caps {
 		t.Fatalf("the handed-over secret is not the credential: principal %x caps %v", r.PrincipalTaskId.Id, cli.CapsLabel(r.Capabilities))
 	}
-	t.Setenv(cli.CredentialEnv, "")
+	t.Setenv(connauth.CredentialEnv, "")
 
 	// --pubkey: the holder's key is registered and nothing secret comes back.
 	pub, _, _ := ed25519.GenerateKey(nil)

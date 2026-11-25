@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/appwire"
-	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/connauth"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/trsf"
 )
@@ -269,8 +269,8 @@ func TestRunnerMergedHandshakeEncodesRoleRunner(t *testing.T) {
 		return nil
 	}
 
-	respCh := make(chan cli.PskAuthReply, 1)
-	respCh <- cli.PskAuthReply{Resp: protocol.PskAuthResponse{Status: protocol.PskAuthStatus_Ok}}
+	respCh := make(chan connauth.PskAuthReply, 1)
+	respCh <- connauth.PskAuthReply{Resp: protocol.PskAuthResponse{Status: protocol.PskAuthStatus_Ok}}
 
 	// No PSK: binder_len should be 0.
 	ctx := context.Background()
@@ -304,7 +304,7 @@ func TestRunnerMergedHandshakeEncodesRoleRunner(t *testing.T) {
 	if !ed25519.PublicKey(auth.Key[:]).Equal(key.Public().(ed25519.PublicKey)) {
 		t.Error("RunnerAuth.Key is not the configured key")
 	}
-	if !cli.VerifyRunnerAuth(auth.Key[:], transcript, auth.Sig[:]) {
+	if !connauth.VerifyRunnerAuth(auth.Key[:], transcript, auth.Sig[:]) {
 		t.Error("RunnerAuth.Sig does not verify over this connection's transcript")
 	}
 	rh := &auth.Hello
@@ -487,30 +487,30 @@ func TestRunnerHandshake_ForgedRejectionIsNotFatal(t *testing.T) {
 	_, impostor, _ := ed25519.GenerateKey(rand.Reader)
 	tr := []byte("tr")
 	resp := protocol.PskAuthResponse{Status: protocol.PskAuthStatus_BadPsk}
-	resp.SetServerSig(cli.SignServerAuth(impostor, tr, protocol.PskAuthStatus_BadPsk))
-	respCh := make(chan cli.PskAuthReply, 1)
-	respCh <- cli.PskAuthReply{Resp: resp}
+	resp.SetServerSig(connauth.SignServerAuth(impostor, tr, protocol.PskAuthStatus_BadPsk))
+	respCh := make(chan connauth.PskAuthReply, 1)
+	respCh <- connauth.PskAuthReply{Resp: resp}
 
 	_, rk, _ := ed25519.GenerateKey(rand.Reader)
 	cfg := Config{RunnerID: NewRunnerID(), ServerPubKey: pub, RunnerKey: rk}
 	err := sendRunnerMergedHandshake(context.Background(), func([]byte) error { return nil }, tr, cfg, respCh)
-	var sae *cli.ServerAuthError
-	var rej *cli.PskRejectedError
+	var sae *connauth.ServerAuthError
+	var rej *connauth.PskRejectedError
 	if !errors.As(err, &sae) || errors.As(err, &rej) {
 		t.Fatalf("err = %v, want ServerAuthError and not PskRejectedError", err)
 	}
 }
 
 func TestRunnerHandshake_UndecodableReplyIsRetryable(t *testing.T) {
-	respCh := make(chan cli.PskAuthReply, 1)
-	respCh <- cli.DecodePskAuthReply([]byte{0})
+	respCh := make(chan connauth.PskAuthReply, 1)
+	respCh <- connauth.DecodePskAuthReply([]byte{0})
 	_, rk, _ := ed25519.GenerateKey(rand.Reader)
 	err := sendRunnerMergedHandshake(context.Background(), func([]byte) error { return nil },
 		nil, Config{RunnerID: NewRunnerID(), RunnerKey: rk}, respCh)
 	if err == nil || !strings.Contains(err.Error(), "server response did not decode") {
 		t.Fatalf("err = %v", err)
 	}
-	var rej *cli.PskRejectedError
+	var rej *connauth.PskRejectedError
 	if errors.As(err, &rej) {
 		t.Fatal("must not be a PskRejectedError")
 	}

@@ -14,6 +14,7 @@ import (
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/connauth"
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/pubsub"
 	pubsubproto "github.com/on-keyday/agent-harness/pubsub/protocol"
@@ -35,7 +36,7 @@ type pubsubAuthzServer struct {
 
 func startPubsubAuthzServer(t *testing.T, opts ...func(*Config)) (context.Context, *pubsubAuthzServer) {
 	t.Helper()
-	for _, key := range []string{"HARNESS_TASK_ID", "HARNESS_RUNNER_ID", "HARNESS_AUTH_TICKET", "HARNESS_PROXY_VIA_RUNNER", "HARNESS_PSK", "HARNESS_PSK_FILE", "HARNESS_OPERATOR_PSK", "HARNESS_OPERATOR_PSK_FILE", "HARNESS_SERVER_CID", "HARNESS_WS_PATH", cli.ServerPubKeyEnv, cli.ServerPubKeyFileEnv} {
+	for _, key := range []string{"HARNESS_TASK_ID", "HARNESS_RUNNER_ID", "HARNESS_AUTH_TICKET", "HARNESS_PROXY_VIA_RUNNER", "HARNESS_PSK", "HARNESS_PSK_FILE", "HARNESS_OPERATOR_PSK", "HARNESS_OPERATOR_PSK_FILE", "HARNESS_SERVER_CID", "HARNESS_WS_PATH", connauth.ServerPubKeyEnv, connauth.ServerPubKeyFileEnv} {
 		t.Setenv(key, "")
 	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

@@ -21,6 +21,7 @@ import (
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/cli/cliopts"
 	"github.com/on-keyday/agent-harness/cli/verb"
+	"github.com/on-keyday/agent-harness/connauth"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/server"
 	"github.com/on-keyday/objtrsf/objproto"
@@ -33,7 +34,7 @@ func startCredentialServer(t *testing.T, psk string) (*server.Server, objproto.C
 	t.Helper()
 	for _, k := range []string{
 		"HARNESS_RUNNER_ID", "HARNESS_TASK_ID", "HARNESS_AUTH_TICKET", "HARNESS_OPERATOR_PSK",
-		"HARNESS_OPERATOR_PSK_FILE", cli.CredentialEnv, cli.CredentialFileEnv, "HARNESS_PROXY_VIA_RUNNER",
+		"HARNESS_OPERATOR_PSK_FILE", connauth.CredentialEnv, connauth.CredentialFileEnv, "HARNESS_PROXY_VIA_RUNNER",
 	} {
 		t.Setenv(k, "")
 	}
@@ -67,7 +68,7 @@ func startCredentialServer(t *testing.T, psk string) (*server.Server, objproto.C
 	return s, cid
 }
 
-func newCredential(t *testing.T, s *server.Server, g authority.Grant) cli.Credential {
+func newCredential(t *testing.T, s *server.Server, g authority.Grant) connauth.Credential {
 	t.Helper()
 	pub, priv, err := ed25519.GenerateKey(nil)
 	if err != nil {
@@ -82,7 +83,7 @@ func newCredential(t *testing.T, s *server.Server, g authority.Grant) cli.Creden
 	raw, _ := hex.DecodeString(id)
 	var tid protocol.TaskID
 	copy(tid.Id[:], raw)
-	return cli.Credential{TaskID: tid, Key: priv}
+	return connauth.Credential{TaskID: tid, Key: priv}
 }
 
 func whoami(t *testing.T, cid objproto.ConnectionID) protocol.WhoAmIResponse {
@@ -113,7 +114,7 @@ func TestCredentialBeatsOperatorPSK(t *testing.T) {
 		t.Fatalf("control: the PSK alone connected as task %x, want the operator", r.PrincipalTaskId.Id)
 	}
 
-	t.Setenv(cli.CredentialEnv, cred.Secret())
+	t.Setenv(connauth.CredentialEnv, cred.Secret())
 	r := whoami(t, cid)
 	if r.PrincipalTaskId != cred.TaskID {
 		t.Fatalf("with a credential loaded the principal is %x, want the credential task %x", r.PrincipalTaskId.Id, cred.TaskID.Id)
@@ -153,9 +154,9 @@ func TestCredentialBeatsAgentEnv(t *testing.T) {
 	t.Setenv("HARNESS_RUNNER_ID", strings.Repeat("ab", 16))
 	t.Setenv("HARNESS_TASK_ID", strings.Repeat("cd", 16))
 	t.Setenv("HARNESS_AUTH_TICKET", strings.Repeat("ef", 16))
-	t.Setenv(cli.CredentialEnv, cred.Secret())
+	t.Setenv(connauth.CredentialEnv, cred.Secret())
 
-	kind, tid := cli.EffectiveClientKind(protocol.ClientKind_Cli)
+	kind, tid := connauth.EffectiveClientKind(protocol.ClientKind_Cli)
 	if kind != protocol.ClientKind_Credential || tid != cred.TaskID {
 		t.Fatalf("EffectiveClientKind = (%v, %x), want the credential", kind, tid.Id)
 	}
@@ -169,9 +170,9 @@ func credentialDial(ctx context.Context, cid objproto.ConnectionID) (*cli.Client
 	return cli.Dial(ctx, cid, protocol.ClientKind_Cli)
 }
 
-func readCredentialFile(t *testing.T, path string) cli.Credential {
+func readCredentialFile(t *testing.T, path string) connauth.Credential {
 	t.Helper()
-	c, err := cli.LoadCredential(path)
+	c, err := connauth.LoadCredential(path)
 	if err != nil || c == nil {
 		t.Fatalf("load %s: %v", path, err)
 	}
@@ -225,21 +226,21 @@ func TestCredentialVerbsEndToEnd(t *testing.T) {
 	}
 
 	// The credential works, with what it was given.
-	t.Setenv(cli.CredentialFileEnv, outPath)
+	t.Setenv(connauth.CredentialFileEnv, outPath)
 	if r := whoami(t, cid); r.PrincipalTaskId != cred.TaskID || r.Capabilities != caps {
 		t.Fatalf("whoami as the new credential: task=%x caps=%v", r.PrincipalTaskId.Id, cli.CapsLabel(r.Capabilities))
 	}
-	t.Setenv(cli.CredentialFileEnv, "")
+	t.Setenv(connauth.CredentialFileEnv, "")
 
 	// --- new, printed: `secret: <id>:<seed>` once.
 	out.Reset()
 	if err := cli.CredentialIssueWith(ctx, op, verb.CredentialIssueAction{Sub: verb.SubNew, TTL: "2h"}, &out); err != nil {
 		t.Fatalf("new (print): %v", err)
 	}
-	var printed cli.Credential
+	var printed connauth.Credential
 	for _, l := range strings.Split(out.String(), "\n") {
 		if v, ok := strings.CutPrefix(l, "secret: "); ok {
-			if printed, err = cli.ParseCredential(v); err != nil {
+			if printed, err = connauth.ParseCredential(v); err != nil {
 				t.Fatalf("the printed secret does not parse: %v", err)
 			}
 		}
@@ -271,11 +272,11 @@ func TestCredentialVerbsEndToEnd(t *testing.T) {
 	raw, _ := hex.DecodeString(pubID)
 	var pubTID protocol.TaskID
 	copy(pubTID.Id[:], raw)
-	t.Setenv(cli.CredentialEnv, cli.Credential{TaskID: pubTID, Key: priv}.Secret())
+	t.Setenv(connauth.CredentialEnv, connauth.Credential{TaskID: pubTID, Key: priv}.Secret())
 	if r := whoami(t, cid); r.PrincipalTaskId != pubTID {
 		t.Fatalf("the registered key does not authenticate")
 	}
-	t.Setenv(cli.CredentialEnv, "")
+	t.Setenv(connauth.CredentialEnv, "")
 
 	// --- refusals name their cause.
 	for name, c := range map[string]struct {
@@ -339,15 +340,15 @@ func TestCredentialVerbsEndToEnd(t *testing.T) {
 	if got := readCredentialFile(t, newOut); got.TaskID != cred.TaskID {
 		t.Fatalf("rekey changed the task id")
 	}
-	t.Setenv(cli.CredentialFileEnv, outPath) // the old seed
+	t.Setenv(connauth.CredentialFileEnv, outPath) // the old seed
 	if _, err := credentialDial(ctx, cid); err == nil {
 		t.Fatalf("the replaced key still authenticates")
 	}
-	t.Setenv(cli.CredentialFileEnv, newOut)
+	t.Setenv(connauth.CredentialFileEnv, newOut)
 	if r := whoami(t, cid); r.PrincipalTaskId != cred.TaskID {
 		t.Fatalf("the re-keyed credential does not authenticate")
 	}
-	t.Setenv(cli.CredentialFileEnv, "")
+	t.Setenv(connauth.CredentialFileEnv, "")
 	// A rekey names its cause when the target is not a credential / not in reach.
 	other := hex.EncodeToString(bytes.Repeat([]byte{0x77}, 16))
 	err = cli.CredentialIssueWith(ctx, op, verb.CredentialIssueAction{Sub: verb.SubRekey, ID: other, TTL: "1d", Out: filepath.Join(dir, "z")}, &bytes.Buffer{})
@@ -363,13 +364,13 @@ func TestCredentialVerbsEndToEnd(t *testing.T) {
 	if !strings.Contains(out.String(), "revoked") {
 		t.Fatalf("revoke output: %q", out.String())
 	}
-	t.Setenv(cli.CredentialFileEnv, newOut)
+	t.Setenv(connauth.CredentialFileEnv, newOut)
 	_, err = credentialDial(ctx, cid)
-	var fatal *cli.PSKAuthError
+	var fatal *connauth.PSKAuthError
 	if err == nil || !strings.Contains(err.Error(), "revoked") || !errors.As(err, &fatal) {
 		t.Fatalf("dial with a revoked credential: %v (want a fatal PSKAuthError naming revoked)", err)
 	}
-	t.Setenv(cli.CredentialFileEnv, "")
+	t.Setenv(connauth.CredentialFileEnv, "")
 	// Revoke is a credential verb: it will not cancel another kind of task.
 	taskID := s.Tasks().Create("repo", "", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{}, "")
 	if err := cli.CredentialRevokeWith(ctx, op, taskID, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "no such credential within your reach") {

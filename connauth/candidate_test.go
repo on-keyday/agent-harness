@@ -1,7 +1,6 @@
-package cli
+package connauth
 
 import (
-	"context"
 	"strings"
 	"testing"
 )
@@ -89,19 +88,6 @@ func TestCanonicalDialRecordCandidate(t *testing.T) {
 	}
 }
 
-// A refused URL is refused before the request leaves, with the rule named:
-// the server answers only invalid_candidates.
-func TestRunnerDialAddWithRefusesBadURLLocally(t *testing.T) {
-	f := &fakeTaskControlClient{}
-	_, _, err := RunnerDialAddWith(context.Background(), f, []string{"wss://h/ws?token=x"}, "abcd1234", "")
-	if err == nil || !strings.Contains(err.Error(), "query is not supported") {
-		t.Fatalf("err = %v, want one naming the query rule", err)
-	}
-	if f.lastRequest != nil {
-		t.Fatal("the request was sent")
-	}
-}
-
 // A named cid (cid= of a runner a URL reached) is a key into one server's
 // table, never an address to dial: every candidate grammar refuses it.
 func TestCandidatesRefuseNamedText(t *testing.T) {
@@ -122,23 +108,5 @@ func TestCanonicalDialRecordCandidateLength(t *testing.T) {
 	raw := "wss://h/" + strings.Repeat("é", 80) // 168 bytes typed, 488 canonical
 	if _, err := CanonicalDialRecordCandidate(raw); err == nil || !strings.Contains(err.Error(), "255") {
 		t.Fatalf("err = %v, want one naming the 255-byte limit", err)
-	}
-}
-
-// Every candidate is checked before it is sent, so the operator reads why:
-// the server answers a refusal with invalid_candidates alone.
-func TestRunnerDialAddWithNamesEveryRefusal(t *testing.T) {
-	for raw, want := range map[string]string{
-		"wss:@3f2a9c0d11b7e604-*": "ws(s):// URL",
-		"not-a-cid":               "not-a-cid",
-	} {
-		f := &fakeTaskControlClient{}
-		_, _, err := RunnerDialAddWith(context.Background(), f, []string{raw}, "abcd1234", "")
-		if err == nil || !strings.Contains(err.Error(), want) {
-			t.Errorf("%s: err = %v, want it to contain %q", raw, err, want)
-		}
-		if f.lastRequest != nil {
-			t.Errorf("%s: the request was sent", raw)
-		}
 	}
 }
