@@ -124,6 +124,12 @@ func parsePort(s string) (uint16, error) {
 	return uint16(n), nil
 }
 
+// ParseGrantConditionList is parseGrantConditionList for a caller outside the
+// declaration (the wasm bridge, which receives the spellings from a form).
+func ParseGrantConditionList(specs []string) ([]protocol.GrantCondition, error) {
+	return parseGrantConditionList(specs)
+}
+
 // parseGrantConditionList is --grant-condition, repeatable: at most
 // authority.MaxGrantConditions, at most one per capability list.
 func parseGrantConditionList(specs []string) ([]protocol.GrantCondition, error) {

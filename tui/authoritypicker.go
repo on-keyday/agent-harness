@@ -42,8 +42,13 @@ type AuthorityPickerModel struct {
 	// bit — a re-grant that returned an empty list would silently erase the
 	// target's per-capability rules, which is the same defect the cascade had.
 	overrides []protocol.ScopeOverride
-	cascade   bool
-	keepConns bool
+	// grantConditions are carried with overrides, for the same reason: the
+	// overrides keep their conditioned markers, and a re-grant that sent a
+	// marker without its body would be refused, while one that dropped both
+	// would widen the grant (grant conditions C6, C7).
+	grantConditions []protocol.GrantCondition
+	cascade         bool
+	keepConns       bool
 
 	// The spawn limits, each a number or unbounded: typed digits set the
 	// value on its row, backspace removes one, space toggles unbounded / 0.
@@ -156,6 +161,7 @@ func (m *AuthorityPickerModel) OpenRegrant(target protocol.TaskInfo, tasks []pro
 	m.setDeleg(target.DelegateCaps, target.DelegateScope)
 	m.setLimits(target.SpawnDepth, target.MaxDescendants)
 	m.overrides = target.Overrides
+	m.grantConditions = target.GrantConditions
 	m.targetHex = FormatTaskID(target.Id)
 	m.buildRows(tasks)
 }
@@ -293,6 +299,7 @@ func (m *AuthorityPickerModel) reset(mode AuthorityPickerMode, caps protocol.Cap
 	m.deleg = newPickerScope(0, protocol.TaskScope{})
 	m.delegOpened = ""
 	m.overrides = nil
+	m.grantConditions = nil
 	m.cascade = false
 	m.keepConns = false
 	m.spawnDepth, m.maxDescendants, m.limitsOpened = authority.Unbounded(), authority.Unbounded(), ""
@@ -496,6 +503,9 @@ func (m *AuthorityPickerModel) Toggle() {
 // unchanged, so the caller can send them back with the scope rather than
 // clearing them.
 func (m *AuthorityPickerModel) Overrides() []protocol.ScopeOverride { return m.overrides }
+
+// GrantConditions are the carried overrides' grant conditions.
+func (m *AuthorityPickerModel) GrantConditions() []protocol.GrantCondition { return m.grantConditions }
 
 // Delegation returns the delegation bound's selection: its caps, its scope in
 // the grammar (always explicit — the bound has no "not named" form here), and

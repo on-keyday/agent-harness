@@ -639,6 +639,15 @@ func overrideSpecs(in []protocol.ScopeOverride) []any {
 	return out
 }
 
+// stringMapJS converts a map for js.ValueOf.
+func stringMapJS(in map[string]string) map[string]any {
+	out := make(map[string]any, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
 // scopeByCapJS is the resolved capability -> scope map, merge already done, so
 // the browser never re-derives which override covers a bit.
 func scopeByCapJS(caps protocol.Capability, base protocol.TaskScope, ov []protocol.ScopeOverride) map[string]any {
@@ -648,6 +657,33 @@ func scopeByCapJS(caps protocol.Capability, base protocol.TaskScope, ov []protoc
 		out[k] = v
 	}
 	return out
+}
+
+// grantConditionSpecs is cli.GrantConditionSpecs for js.ValueOf: the raw
+// "CAPS=COND" list the re-grant and resume dialogs send back.
+func grantConditionSpecs(ov []protocol.ScopeOverride, conds []protocol.GrantCondition) []any {
+	out := []any{}
+	for _, s := range cli.GrantConditionSpecs(ov, conds) {
+		out = append(out, s)
+	}
+	return out
+}
+
+// grantConditionsFromOpts reads the optional `grantConditions` array: each a
+// --grant-condition value ("CAPS=ports:…" / "CAPS=actions:…"), parsed by the
+// declaration's own parser so the browser holds no grammar.
+func grantConditionsFromOpts(opts js.Value) ([]protocol.GrantCondition, error) {
+	v := opts.Get("grantConditions")
+	if v.Type() != js.TypeObject || v.Length() == 0 {
+		return nil, nil
+	}
+	var specs []string
+	for i := 0; i < v.Length(); i++ {
+		if e := v.Index(i); e.Type() == js.TypeString && e.String() != "" {
+			specs = append(specs, e.String())
+		}
+	}
+	return verb.ParseGrantConditionList(specs)
 }
 
 func overridesFromOpts(opts js.Value) ([]protocol.ScopeOverride, error) {
@@ -877,6 +913,14 @@ func harnessSetCaps(this js.Value, args []js.Value) any {
 				}
 				sc.Overrides = ov
 			}
+			// Read whether or not a scope is given: SetCapsWith refuses a
+			// condition with no scope to attach to rather than dropping it.
+			gc, gcErr := grantConditionsFromOpts(opts)
+			if gcErr != nil {
+				rejectErr(reject, fmt.Errorf("setCaps: %w", gcErr))
+				return
+			}
+			sc.GrantConditions = gc
 			// The bound's halves, each written only when the key is given, as
 			// caps and scope are.
 			if cv := opts.Get("delegateCaps"); cv.Type() == js.TypeNumber {
@@ -1842,6 +1886,13 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					"scopeFor":      cli.OverridesLabel(t.Overrides),
 					"scopeForSpecs": overrideSpecs(t.Overrides),
 					"scopeByCap":    scopeByCapJS(t.Capabilities, t.Scope, t.Overrides),
+					// Grant conditions (C4): the label for the row and sheet,
+					// per bit for machine readers, and the raw "CAPS=COND"
+					// list the dialogs send back beside scopeForSpecs.
+					// "grant" because "conditions" is the background run's.
+					"grantConditions":      cli.ConditionsLabel(t.Overrides, t.GrantConditions),
+					"grantConditionsByCap": stringMapJS(cli.ConditionsByCap(t.Capabilities, t.Overrides, t.GrantConditions)),
+					"grantConditionSpecs":  grantConditionSpecs(t.Overrides, t.GrantConditions),
 					// The delegation bound: labels for the row and sheet, raw
 					// values in the scope's own shape for the dialogs' prefill.
 					"delegateCaps":             cli.CapsLabel(t.DelegateCaps),
@@ -3556,6 +3607,10 @@ func harnessStartInteractive(this js.Value, args []js.Value) any {
 			if ovErr != nil && scopeErr == nil {
 				scopeErr = ovErr
 			}
+			grantConds, gcErr := grantConditionsFromOpts(opts)
+			if gcErr != nil && scopeErr == nil {
+				scopeErr = gcErr
+			}
 			if scopeErr != nil {
 				rejectErr(reject, scopeErr)
 				return
@@ -3613,7 +3668,7 @@ func harnessStartInteractive(this js.Value, args []js.Value) any {
 			}
 			sopts := cli.SessionOpts{
 				Selector: sel, ExtraArgs: extraArgs, ResumeTaskID: resumeTaskID,
-				Caps: caps, Scope: scope, Overrides: overrides,
+				Caps: caps, Scope: scope, Overrides: overrides, GrantConditions: grantConds,
 				ScopePresent: scopePresent, ResumeCapsOverride: resumeCapsOverride,
 				ResumeConversation: resumeConversation, AgentProfile: agentProfile,
 				ResumeExact: resumeExact,

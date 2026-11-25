@@ -120,14 +120,42 @@ function resumeRegrantFlags({ resumeTaskId, resumeExact, caps, scope, scopeFor }
 // the server writes the scope and its overrides together (one presence bit),
 // so a panel value filled into the other half would rewrite the task's own --
 // the half not given is the default ("" = subtree, no overrides), as on the CLI.
-function sessionScopeFields({ resumeTaskId, scope, scopeFor }, panel) {
+// The grant conditions belong to the overrides and go wherever they go: typed
+// overrides carry only typed conditions, the panel's carry the panel's.
+function sessionScopeFields({ resumeTaskId, scope, scopeFor, grantConditions }, panel) {
+  const given = (v) => v !== null && v !== undefined;
+  const conds = given(scopeFor) ? (given(grantConditions) ? grantConditions : [])
+    : (resumeTaskId ? [] : (panel.grantConditions || []));
   if (resumeTaskId) {
-    return { scope: scope !== null && scope !== undefined ? scope : "", scopeFor: scopeFor !== null && scopeFor !== undefined ? scopeFor : [] };
+    return { scope: given(scope) ? scope : "", scopeFor: given(scopeFor) ? scopeFor : [], grantConditions: conds };
   }
   return {
-    scope: scope !== null && scope !== undefined ? scope : panel.scope,
-    scopeFor: scopeFor !== null && scopeFor !== undefined ? scopeFor : panel.scopeFor,
+    scope: given(scope) ? scope : panel.scope,
+    scopeFor: given(scopeFor) ? scopeFor : panel.scopeFor,
+    grantConditions: conds,
   };
+}
+
+// conditionKindForCaps is the grant-condition kind an override row may carry,
+// by its capability names: ports for forward_local / forward_remote, actions
+// for exec_run alone, "" otherwise -- so a row cannot build a condition the
+// server would refuse as inapplicable (grant conditions C9).
+function conditionKindForCaps(names) {
+  if (!names || names.length === 0) return "";
+  if (names.every((n) => n === "forward_local" || n === "forward_remote")) return "ports";
+  if (names.length === 1 && names[0] === "exec_run") return "actions";
+  return "";
+}
+
+// conditionForOverride is the condition ("ports:…" / "actions:…") a task's
+// grantConditionSpecs hold for the override whose capability list is exactly
+// capsLabel, "" when it has none.
+function conditionForOverride(capsLabel, specs) {
+  for (const s of specs || []) {
+    const eq = s.indexOf("=");
+    if (eq >= 0 && s.slice(0, eq) === capsLabel) return s.slice(eq + 1);
+  }
+  return "";
 }
 
 // orderedRowsModel lays the task list out from harness.orderTasks' groups
@@ -547,6 +575,7 @@ function composeScheduleTokens(f) {
   if (f.caps) t.push("--caps", f.caps);
   if (f.scope) t.push("--scope", f.scope);
   for (const s of f.scopeFor || []) t.push("--scope-for", s);
+  for (const g of f.grantConditions || []) t.push("--grant-condition", g);
   if (f.delegateCaps) t.push("--delegate-caps", f.delegateCaps);
   if (f.delegateScope) t.push("--delegate-scope", f.delegateScope);
   if (f.spawnDepth && f.spawnDepth !== "unbounded") t.push("--spawn-depth", f.spawnDepth);
@@ -590,7 +619,7 @@ const COMPOSE_TABS = ["interactive", "oneshot", "background", "schedule"];
 // The fields every tab reads, and each tab's own. Keys are composeForm()'s;
 // the authority panel and the PTY record are shared and always read.
 const COMPOSE_SHARED_FIELDS = ["repo", "host", "agent", "agentArgs", "prompt", "record",
-  "caps", "scope", "scopeFor", "delegateCaps", "delegateScope", "spawnDepth", "maxDescendants"];
+  "caps", "scope", "scopeFor", "grantConditions", "delegateCaps", "delegateScope", "spawnDepth", "maxDescendants"];
 const COMPOSE_COND_FIELDS = ["deadline", "turnEnd", "quiet", "blocked", "queueTimeout"];
 const COMPOSE_TAB_DEFS = {
   interactive: { label: "session を開く", action: "open-session", fields: ["stream", "pty"] },
@@ -738,9 +767,10 @@ function capXor(a, b) { return Number(capBig(a) ^ capBig(b)); }
 
 // composeAuthoritySummary is the 新規作成 権限 section's closed line: caps,
 // scope, and the scope-for overrides when there are any.
-function composeAuthoritySummary(capsLabel, scope, scopeFor) {
+function composeAuthoritySummary(capsLabel, scope, scopeFor, grantConditions) {
   let line = `権限  caps: ${capsLabel} · scope: ${scope || "subtree"}`;
   if (scopeFor && scopeFor.length > 0) line += "  +scope-for " + scopeFor.join(" ");
+  if (grantConditions && grantConditions.length > 0) line += "  +grant-condition " + grantConditions.join(" ");
   return line;
 }
 
@@ -772,8 +802,10 @@ function resumeDialogRequest(f, t) {
     caps: f.override ? f.caps : null,
     scope: f.override ? f.scope : null,
     // The dialog does not edit per-cap overrides; an open override keeps the
-    // task's own, since they travel with the scope.
+    // task's own, since they travel with the scope -- and their grant
+    // conditions with them, or the re-grant would widen the task.
     scopeFor: f.override ? (t.scopeForSpecs || []) : null,
+    grantConditions: f.override ? (t.grantConditionSpecs || []) : null,
   };
   if (bg) {
     const c = f.cond || {};

@@ -3,6 +3,7 @@ package cli
 import (
 	"flag"
 	"io"
+	"strings"
 
 	"github.com/on-keyday/agent-harness/cli/verb"
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -98,6 +99,24 @@ func ResolvedScopeByCap(caps protocol.Capability, base protocol.TaskScope, overr
 // ConditionsLabel renders the conditioned overrides' grant conditions.
 func ConditionsLabel(overrides []protocol.ScopeOverride, conds []protocol.GrantCondition) string {
 	return verb.ConditionsLabel(overrides, conds)
+}
+
+// GrantConditionSpecs is each conditioned override's condition as a
+// --grant-condition value ("CAPS=COND"), for a surface that sends a task's
+// overrides back (a re-grant or resume dialog) and must send its conditions
+// with them. A body this listing lacks renders "(condition unknown)", which
+// does not parse, so such a send is refused rather than made unconditioned.
+func GrantConditionSpecs(overrides []protocol.ScopeOverride, conds []protocol.GrantCondition) []string {
+	var out []string
+	for _, o := range overrides {
+		if !o.Conditioned() {
+			continue
+		}
+		label := verb.ConditionsLabel([]protocol.ScopeOverride{o}, conds)
+		caps, cond, _ := strings.Cut(label, ":")
+		out = append(out, caps+"="+cond)
+	}
+	return out
 }
 
 // ConditionsByCap maps each held, conditioned capability to its condition.

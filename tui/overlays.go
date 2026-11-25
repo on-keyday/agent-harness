@@ -861,6 +861,7 @@ func (a *App) inAuthorityPicker(msg tea.KeyMsg) tea.Cmd {
 		// per-capability narrowings, because they travel with the scope
 		// under one presence bit and an empty list would erase them.
 		overrides := a.authorityPicker.Overrides()
+		grantConds := a.authorityPicker.GrantConditions()
 		depth, maxDesc, limitsChanged := a.authorityPicker.Limits()
 		mode, target := a.authorityPicker.Mode(), a.authorityPicker.TargetID()
 		a.authorityPicker.Close()
@@ -901,7 +902,7 @@ func (a *App) inAuthorityPicker(msg tea.KeyMsg) tea.Cmd {
 			return nil
 		}
 		opts := cli.SetCapsOpts{
-			TaskID: target, Caps: &caps, Scope: &sc, Overrides: overrides,
+			TaskID: target, Caps: &caps, Scope: &sc, Overrides: overrides, GrantConditions: grantConds,
 			Cascade: cascade, KeepConns: keep,
 		}
 		// The bound is written only when the operator changed it: with

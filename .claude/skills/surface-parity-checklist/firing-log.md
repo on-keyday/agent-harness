@@ -4615,3 +4615,49 @@ omitted: 14 (`session ls` is JSON Lines with no envelope to carry a count; it
          something is left out or every task is listed: a hint with nothing
          to say or change; the CLI line carries the zero)
 missed:  none found by this walk
+
+### 2026-11-26 (pre-landing) — grant conditions: `--grant-condition` and the condition display
+
+Spec `2026-11-26-grant-conditions-and-bound-enrollment-design.md` (C4–C7, C9,
+C14), plan `2026-11-26-grant-conditions.md` Task 7. Native execution. S1–S6
+`n/a` (no agent preset, argv or launch env changed).
+done:    1 (`--grant-condition` row in the spawn grammar — session new,
+         schedule new/edit, credential new/rekey share it — and on `caps set`,
+         with Requires scope-for), 2 (exact-mask match and applicability in
+         `verb.MarkGrantConditions` / `ParseGrantCondition`, called by every
+         request builder), 5 (TUI re-grant picker carries the target's
+         conditions with its overrides — sending the markers without bodies
+         would be refused, dropping both would widen the task), 6 (WebUI
+         override rows gain a condition field; re-grant dialog prefills it
+         from `grantConditionSpecs`; resume dialog's open override sends them),
+         8 (wasm `grantConditionsFromOpts` on setCaps / startInteractive), 11
+         (`conditions=CAPS:COND` on the `ls` row), 12 (`conditions_by_cap`), 13
+         (CLI whoami fetches its own row for the bodies), 17 (TUI detail
+         `conditions:` line), 20 (WebUI row meta), 22/23 (snapshot
+         `grantConditions` / `grantConditionsByCap` / `grantConditionSpecs`),
+         24 (resume without scope keeps the recorded conditions server-side;
+         a body for a scope the request does not write is refused), 25
+         (`grant_conditions_present` on the open; stream id 0 = none
+         elsewhere), 27/28a (cli builders `openBodies`, `SetCapsWith`,
+         `credentialIssueRequest`, `scheduleBodies`; TUI `Authority.opts`
+         guard extended), 28 (WAL `cond`, schedule store `cond`), 31 (a marker
+         without its body reads `(condition unknown)`, never elided), 32 (Go
+         renders and parses; JS only joins a row's caps label to the typed
+         text), 33 (a condition with no matching --scope-for errors before
+         sending), 34a (the field appears only where one condition kind applies
+         to every bit of the row), 37 (spec: outside_condition status), 39
+         (spec Surfaces rows walked), caps audit scope cell (`… if COND`).
+         Live: CLI ls / --json / caps audit, TUI detail + `a` re-grant apply +
+         cmdline open in a PTY, WebUI re-grant dialog prefill + apply, command
+         input open, Compose background open with a row condition (headless
+         Playwright; the MCP browser had no X server), all on a dummy.
+omitted: 9/26 (`caps set-defaults` takes no condition: a condition belongs to
+         the override named on the same line; Compose rows feed fresh spawns
+         only, a resume never takes them — tested), 15 (no new bit), 16 (TUI
+         task table has no scope column), 29 (the caps set result line prints
+         no overrides either), credential ls row (prints base scope only, no
+         overrides — pre-existing; the credential's `ls` row shows both),
+         35/36 (README and agent skills: deferred to the spec's last plan,
+         when exec_run actions exist — ledgered), what-if (predicts targets,
+         not objects)
+missed:  none found by this walk

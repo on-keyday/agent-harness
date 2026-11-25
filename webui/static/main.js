@@ -382,7 +382,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   function sessionReq({ repo = "", task = "", host = "", runner = "", ip = "", agent = "",
                         agentArgs = [], resumeTaskId = "", resumeConversation = false,
                         eventStream = false, resumeExact = false,
-                        caps = null, scope = null, scopeFor = null,
+                        caps = null, scope = null, scopeFor = null, grantConditions = null,
                         delegateCaps = null, delegateScope = null,
                         spawnDepth = null, maxDescendants = null,
                         prompt = "", runMode = "", deadlineMs = 0, quietMs = 0,
@@ -411,7 +411,8 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       // and this surface had no parameter for them at all, so the three
       // parsed and were dropped while the chips decided the authority.
       caps: caps !== null ? caps : spawnCaps,
-      ...sessionScopeFields({ resumeTaskId, scope, scopeFor }, { scope: spawnScope, scopeFor: overrideSpecsFrom("spawn") }),
+      ...sessionScopeFields({ resumeTaskId, scope, scopeFor, grantConditions },
+        { scope: spawnScope, scopeFor: overrideSpecsFrom("spawn"), grantConditions: grantConditionSpecsFrom("spawn") }),
       // A resume re-grants only what the caller gave: silently applying the
       // Compose panel's leftover state to a resumed task would be the exact
       // invisible rewrite scope_present exists to prevent.
@@ -4712,7 +4713,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // The 権限 section's summary: what the panel holds, without opening it.
   function renderComposeAuthoritySummary() {
     const sum = document.getElementById("compose-authority-summary");
-    if (sum) sum.textContent = composeAuthoritySummary(capsLabelFor(spawnCaps), spawnScope, overrideSpecsFrom("spawn"));
+    if (sum) sum.textContent = composeAuthoritySummary(capsLabelFor(spawnCaps), spawnScope, overrideSpecsFrom("spawn"), grantConditionSpecsFrom("spawn"));
   }
   const composeForm = () => ({
     cron: composeCron ? composeCron.value : "",
@@ -4736,6 +4737,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     caps: capsLabelFor(spawnCaps),
     scope: spawnScope,
     scopeFor: overrideSpecsFrom("spawn"),
+    grantConditions: grantConditionSpecsFrom("spawn"),
     delegateCaps: capsLabelFor(spawnDeleg.caps),
     delegateScope: scopeStateSpec(spawnDeleg),
     spawnDepth: spawnLimits.depth,
@@ -4884,6 +4886,24 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     return out;
   }
 
+  // grantConditionSpecsFrom is the rows' grant conditions in the
+  // --grant-condition spelling ("CAPS=ports:…"), each beside the --scope-for
+  // its row serializes to; the bridge parses them with the declaration's own
+  // parser and the client marks the matching override (grant conditions C4).
+  function grantConditionSpecsFrom(which) {
+    const out = [];
+    for (const r of overrideRowsFor[which]) {
+      if (!r.caps || !r.cond || !r.cond.trim()) continue;
+      out.push(capsLabelFor(r.caps) + "=" + r.cond.trim());
+    }
+    return out;
+  }
+
+  // rowCapNames is a row's capability names, for conditionKindForCaps.
+  function rowCapNames(row) {
+    return capDefs.filter((c) => c.name !== "all" && c.name !== "none" && capHas(row.caps, c.bit)).map((c) => c.name);
+  }
+
   // parseOverrideSpec turns a stored "CAPS=SCOPE" string back into a row, so
   // the re-grant dialog opens showing the task's existing rules as controls
   // rather than as text the operator has to re-type to keep.
@@ -4909,7 +4929,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     if (base === "descendants") { base = "subtree"; excludeSelf = true; }
     else if (base.endsWith("-self")) { base = base.slice(0, -5); excludeSelf = true; }
     if (!["subtree", "none", "global"].includes(base)) base = "subtree";
-    return { caps, base, excludeSelf, ids };
+    return { caps, base, excludeSelf, ids, cond: "" };
   }
 
   // claimedElsewhere is the mask every OTHER row already holds, which is what
@@ -5012,6 +5032,36 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
 
       box.appendChild(baseRow);
 
+      // The grant condition, only where one kind applies to every bit of the
+      // row (forward bits: ports; exec_run alone: actions), so a condition the
+      // server would refuse as inapplicable cannot be built (item 34a). A
+      // port range has no existing control to build it from, so it is typed
+      // in --grant-condition's spelling after the '='. A row whose bits no
+      // longer take one drops it.
+      const condKind = conditionKindForCaps(rowCapNames(row));
+      if (!condKind) {
+        row.cond = "";
+      } else {
+        const condLabel = document.createElement("label");
+        condLabel.className = "override-cond";
+        condLabel.appendChild(document.createTextNode("条件 (任意) "));
+        const condInput = document.createElement("input");
+        condInput.type = "text";
+        condInput.value = row.cond || "";
+        condInput.placeholder = condKind === "ports" ? "ports:8000-8100,22" : "actions:<32 hex>";
+        condInput.title = condKind === "ports"
+          ? "この絞り込みの forward が使える port (forward_local は接続先、forward_remote は待受)"
+          : "この絞り込みの exec_run が実行できる action の id";
+        // input, not change + rebuild: rebuilding on every key would take the
+        // focus away mid-word.
+        condInput.addEventListener("input", () => {
+          row.cond = condInput.value;
+          onChange();
+        });
+        condLabel.appendChild(condInput);
+        box.appendChild(condLabel);
+      }
+
       // Ids, only where they mean something. Under `global` the base already
       // covers every task, so the list is hidden rather than shown-and-ignored.
       if (row.base !== "global") {
@@ -5050,7 +5100,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       // from the moment it exists: a control called "絞り込み" that defaults to
       // the same set the base already grants would sit there doing nothing,
       // and `none` fails closed while the operator picks.
-      rows.push({ caps: 0, base: "none", excludeSelf: false, ids: new Set() });
+      rows.push({ caps: 0, base: "none", excludeSelf: false, ids: new Set(), cond: "" });
       buildOverrideRows(which, containerId, onChange);
       onChange();
     });
@@ -5437,7 +5487,13 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     // bit, so applying with no rows CLEARS them. Showing them as rows is what
     // makes that an operator's choice rather than a silent erase.
     overrideRowsFor.regrant = (t.scopeForSpecs || [])
-      .map(parseOverrideSpec)
+      .map((spec) => {
+        // A row keeps the task's condition, found by the override's own
+        // capability text, so 適用 sends it back instead of widening the task.
+        const r = parseOverrideSpec(spec);
+        if (r) r.cond = conditionForOverride(spec.slice(0, spec.indexOf("=")), t.grantConditionSpecs);
+        return r;
+      })
       .filter((r) => r !== null);
     const title = document.getElementById("regrant-task");
     if (title) title.textContent = t.id.slice(0, 8);
@@ -5553,6 +5609,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
         scope: scopeSpec(regrantBase, regrantExcludeSelf, regrantIds, false,
           regrantVisBase, regrantVisIds),
         scopeFor: overrideSpecsFrom("regrant"),
+        grantConditions: grantConditionSpecsFrom("regrant"),
         cascade: document.getElementById("regrant-cascade").checked,
         keepConns: document.getElementById("regrant-keep-conns").checked,
       };
@@ -7242,6 +7299,8 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       // scope is half a task's authority and is never absent, a narrowing that
       // is not there has nothing to report.
       if (t.scopeFor) metaText += `  +${t.scopeFor}`;
+      // The grant conditions on those overrides, as ls prints them.
+      if (t.grantConditions) metaText += `  conditions=${t.grantConditions}`;
       // The bound, always — the default too, as ls prints it.
       if (t.delegateCaps !== undefined) metaText += `  delegate=${t.delegateCaps} delegate-scope=${t.delegateScope}`;
       // The spawn limits and the subtree's record count, unbounded included.

@@ -498,6 +498,11 @@ func formatTaskDetail(t protocol.TaskInfo, runnerByID map[string]protocol.Runner
 	if ov := cli.OverridesLabel(t.Overrides); ov != "" {
 		fmt.Fprintf(&sb, "scope-for:     %s\n", ov)
 	}
+	// Grant conditions on those overrides, present only when one is; a
+	// marker whose body the listing lacks reads "(condition unknown)" (C7).
+	if cl := cli.ConditionsLabel(t.Overrides, t.GrantConditions); cl != "" {
+		fmt.Fprintf(&sb, "conditions:    %s\n", cl)
+	}
 	fmt.Fprintf(&sb, "delegate:      %s\n", cli.CapsLabel(t.DelegateCaps))
 	fmt.Fprintf(&sb, "delegate-scope: %s\n", cli.ScopeLabel(t.DelegateScope))
 	fmt.Fprintf(&sb, "spawn limits:  depth=%s max-descendants=%s descendants=%d\n",

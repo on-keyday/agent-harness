@@ -259,3 +259,25 @@ func TestCapsAuditShowsGrantCondition(t *testing.T) {
 		t.Fatalf("forward_local %q, forward_remote %q", local, remote)
 	}
 }
+
+// The dialogs send a task's conditions back beside its overrides; a marker
+// whose body is unknown renders a spec that does not parse, so the re-grant is
+// refused rather than sent unconditioned.
+func TestGrantConditionSpecsRoundTrip(t *testing.T) {
+	_, ov, _ := verb.ParseScopeFor("forward_local,forward_remote=global")
+	_, plain, _ := verb.ParseScopeFor("cancel=none")
+	cond := mustGrantCondition(t, "forward_local,forward_remote=ports:22,8000-8100")
+	marked, _ := verb.MarkGrantConditions([]protocol.ScopeOverride{plain, ov}, []protocol.GrantCondition{cond})
+	specs := GrantConditionSpecs(marked, []protocol.GrantCondition{cond})
+	if len(specs) != 1 || specs[0] != "forward_local,forward_remote=ports:22,8000-8100" {
+		t.Fatalf("specs = %v", specs)
+	}
+	back, err := verb.ParseGrantConditionList(specs)
+	if err != nil || len(back) != 1 || back[0].Caps != cond.Caps {
+		t.Fatalf("parse back: %v %v", back, err)
+	}
+	unknown := GrantConditionSpecs(marked, nil)
+	if _, err := verb.ParseGrantConditionList(unknown); err == nil {
+		t.Fatalf("an unknown body %v parsed; a re-grant would send it unconditioned", unknown)
+	}
+}

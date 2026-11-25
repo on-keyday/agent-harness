@@ -227,6 +227,9 @@ async function runSessionNew(tokens, ctx) {
     caps: set.caps ? b.flags.caps : null,
     scope: set.scope ? b.flags.scope : null,
     scopeFor: scopeFor && scopeFor.length ? scopeFor : null,
+    // The conditions belong to those overrides (the declaration requires
+    // --scope-for beside --grant-condition).
+    grantConditions: (b.custom && b.custom["grant-condition"] && b.custom["grant-condition"].length) ? b.custom["grant-condition"] : null,
     delegateCaps: set["delegate-caps"] ? b.flags["delegate-caps"] : null,
     delegateScope: set["delegate-scope"] ? b.flags["delegate-scope"] : null,
     spawnDepth: set["spawn-depth"] ? b.flags["spawn-depth"] : null,

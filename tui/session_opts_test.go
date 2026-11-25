@@ -105,6 +105,7 @@ func TestAuthorityOptsCarriesEveryAuthorityField(t *testing.T) {
 		Overrides: []protocol.ScopeOverride{
 			{Caps: protocol.Capability_Spawn, Base: protocol.ScopeBase_Global},
 		},
+		GrantConditions:      []protocol.GrantCondition{{Caps: protocol.Capability_ForwardLocal, Kind: protocol.ConditionKind_PortRange}},
 		ScopePresent:         true,
 		DelegateCaps:         protocol.Capability_FileRead,
 		DelegateScope:        protocol.TaskScope{Base: protocol.ScopeBase_None},

@@ -443,6 +443,11 @@ Every new input and display goes on the CLI, TUI and WebUI; walk
 Appended fields and arms only: `ScopeOverride.conditioned`,
 `grant_conditions_stream_id` on the five grant-writing formats, `GrantCondition`
 lists on `TaskInfo` and `ScheduleDetail` (both already on streams),
+`bad_grant_conditions` on the open, credential, set_caps and schedule statuses,
+`outside_condition` on `OpenPortForwardStatus` and `KillPortForwardStatus` (a
+port outside a `PortRange` on a target in reach: neither `no_such_task` nor a
+`permission_denied` naming a bit the caller holds is true of it — added while
+implementing),
 `RunnerEnrollRequest.bound`,
 `ExecRunBody`'s action variant, the action verbs. The
 WAL gains condition bodies; the key store gains `bound_tasks`; the action store

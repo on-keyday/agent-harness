@@ -1105,10 +1105,11 @@ test("resumeDialogRequest: the override decides the re-grant; the mode decides t
 // the 新規作成 panel -- that silently widened a task's scope-for.
 test("sessionScopeFields: a resume never takes the panel's scope half", () => {
   const panel = { scope: "global", scopeFor: ["exec_view=none"] };
-  eq(page.sessionScopeFields({ resumeTaskId: "", scope: null, scopeFor: null }, panel), { scope: "global", scopeFor: ["exec_view=none"] });
-  eq(page.sessionScopeFields({ resumeTaskId: ID, scope: "none", scopeFor: null }, panel), { scope: "none", scopeFor: [] });
-  eq(page.sessionScopeFields({ resumeTaskId: ID, scope: null, scopeFor: ["cancel=none"] }, panel), { scope: "", scopeFor: ["cancel=none"] });
-  eq(page.sessionScopeFields({ resumeTaskId: ID, scope: null, scopeFor: null }, panel), { scope: "", scopeFor: [] });
+  // grantConditions ride with scopeFor (grant_condition_test.mjs covers them).
+  eq(page.sessionScopeFields({ resumeTaskId: "", scope: null, scopeFor: null }, panel), { scope: "global", scopeFor: ["exec_view=none"], grantConditions: [] });
+  eq(page.sessionScopeFields({ resumeTaskId: ID, scope: "none", scopeFor: null }, panel), { scope: "none", scopeFor: [], grantConditions: [] });
+  eq(page.sessionScopeFields({ resumeTaskId: ID, scope: null, scopeFor: ["cancel=none"] }, panel), { scope: "", scopeFor: ["cancel=none"], grantConditions: [] });
+  eq(page.sessionScopeFields({ resumeTaskId: ID, scope: null, scopeFor: null }, panel), { scope: "", scopeFor: [], grantConditions: [] });
 });
 
 // Final review #1, dialog half: an open override keeps the task's own
