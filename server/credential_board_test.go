@@ -209,7 +209,7 @@ func TestCredentialBoardStateDroppedOnRevokeAndRekey(t *testing.T) {
 			_, newPub := newCredentialKey(t)
 			// The operator re-keys: no principal on this connection id.
 			r := s.taskHandler.credentialRekey(tcid("ws:127.0.0.1:9439-1"),
-				&protocol.CredentialRekeyRequest{TaskId: tid, Pubkey: newPub, TtlMs: uint64(time.Hour / time.Millisecond)}, time.Now())
+				&protocol.CredentialRekeyRequest{TaskId: tid, Pubkey: newPub, TtlMs: uint64(time.Hour / time.Millisecond)}, time.Now(), protocol.GrantConditions{})
 			if r.Status != protocol.CredentialStatus_Ok {
 				t.Fatalf("re-key: %v", r.Status)
 			}
@@ -465,7 +465,7 @@ func TestRekeyRaceNewKeyGetsAFreshBoardState(t *testing.T) {
 		}
 	}
 	r := s.taskHandler.credentialRekey(tcid("ws:127.0.0.1:9479-1"),
-		&protocol.CredentialRekeyRequest{TaskId: tid, Pubkey: newPub, TtlMs: uint64(time.Hour / time.Millisecond)}, time.Now())
+		&protocol.CredentialRekeyRequest{TaskId: tid, Pubkey: newPub, TtlMs: uint64(time.Hour / time.Millisecond)}, time.Now(), protocol.GrantConditions{})
 	if r.Status != protocol.CredentialStatus_Ok {
 		t.Fatalf("re-key: %v", r.Status)
 	}
@@ -514,7 +514,7 @@ func TestRekeyPublishesOutsideCredentialMu(t *testing.T) {
 	}
 	_, newPub := newCredentialKey(t)
 	r := s.taskHandler.credentialRekey(tcid("ws:127.0.0.1:9489-1"),
-		&protocol.CredentialRekeyRequest{TaskId: tid, Pubkey: newPub, TtlMs: uint64(time.Hour / time.Millisecond)}, time.Now())
+		&protocol.CredentialRekeyRequest{TaskId: tid, Pubkey: newPub, TtlMs: uint64(time.Hour / time.Millisecond)}, time.Now(), protocol.GrantConditions{})
 	if r.Status != protocol.CredentialStatus_Ok {
 		t.Fatalf("re-key: %v", r.Status)
 	}

@@ -185,7 +185,7 @@ func (e *schedEnv) send(t *testing.T, conn *fakeConn, kind protocol.TaskControlK
 // separately, as the dispatch does after reading the stream).
 func (e *schedEnv) create(t *testing.T, cid objproto.ConnectionID, sp *protocol.ScheduleSpec, prompt string) protocol.ScheduleResponse {
 	t.Helper()
-	r, c := e.h.scheduleCreate(cid, sp, prompt)
+	r, c := e.h.scheduleCreate(cid, sp, prompt, protocol.GrantConditions{})
 	if c != 0 {
 		t.Fatalf("create denied for %v; the caller needs more bits", c)
 	}
@@ -194,12 +194,12 @@ func (e *schedEnv) create(t *testing.T, cid objproto.ConnectionID, sp *protocol.
 
 // createDeny is create that also reports the capability a denial names.
 func (e *schedEnv) createDeny(cid objproto.ConnectionID, sp *protocol.ScheduleSpec, prompt string) (protocol.ScheduleResponse, protocol.Capability) {
-	return e.h.scheduleCreate(cid, sp, prompt)
+	return e.h.scheduleCreate(cid, sp, prompt, protocol.GrantConditions{})
 }
 
 func (e *schedEnv) edit(t *testing.T, cid objproto.ConnectionID, id string, sp *protocol.ScheduleSpec, prompt string) protocol.ScheduleResponse {
 	t.Helper()
-	r, c := e.h.scheduleEdit(cid, schedHexID(t, id), sp, prompt)
+	r, c := e.h.scheduleEdit(cid, schedHexID(t, id), sp, prompt, protocol.GrantConditions{})
 	if c != 0 {
 		t.Fatalf("edit denied for %v; the caller needs more bits", c)
 	}
@@ -207,7 +207,7 @@ func (e *schedEnv) edit(t *testing.T, cid objproto.ConnectionID, id string, sp *
 }
 
 func (e *schedEnv) editDeny(t *testing.T, cid objproto.ConnectionID, id string, sp *protocol.ScheduleSpec, prompt string) (protocol.ScheduleResponse, protocol.Capability) {
-	return e.h.scheduleEdit(cid, schedHexID(t, id), sp, prompt)
+	return e.h.scheduleEdit(cid, schedHexID(t, id), sp, prompt, protocol.GrantConditions{})
 }
 
 func (e *schedEnv) call(t *testing.T, conn *fakeConn, kind protocol.TaskControlKind, id string) protocol.ScheduleResponse {
@@ -1370,7 +1370,7 @@ func TestBindingChangesPublishATaskEvent(t *testing.T) {
 	// bind of a task already in background: no mode write, still an event.
 	a := mk()
 	before := len(getEvents())
-	r, _ := h.scheduleCreate(objproto.ConnectionID{}, bindSpec(t, createSpec(), a), "go")
+	r, _ := h.scheduleCreate(objproto.ConnectionID{}, bindSpec(t, createSpec(), a), "go", protocol.GrantConditions{})
 	if r.Status != protocol.ScheduleStatus_Ok {
 		t.Fatalf("%v %s", r.Status, r.Message)
 	}
@@ -1388,7 +1388,7 @@ func TestBindingChangesPublishATaskEvent(t *testing.T) {
 	}
 	// delete.
 	b := mk()
-	r, _ = h.scheduleCreate(objproto.ConnectionID{}, bindSpec(t, createSpec(), b), "go")
+	r, _ = h.scheduleCreate(objproto.ConnectionID{}, bindSpec(t, createSpec(), b), "go", protocol.GrantConditions{})
 	if r.Status != protocol.ScheduleStatus_Ok || !last(b).SchedulePresent() {
 		t.Fatalf("bind b: %v", r.Status)
 	}

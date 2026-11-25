@@ -18,12 +18,35 @@ import (
 // new key and expiry on one (D18). Both need credential_issue, checked
 // centrally (authority.CentralCap); the attenuation and the target gates are here.
 
+// handleCredentialIssue / handleCredentialRekey read the request's grant
+// conditions first (grant conditions C6), off the receive loop when a stream
+// is named; req is the decoded frame, so an owned copy goes there.
 func (h *TaskHandler) handleCredentialIssue(conn ConnHandle, requestID uint32, cid objproto.ConnectionID, req *protocol.CredentialIssueRequest) {
-	h.sendCredential(conn, protocol.TaskControlKind_CredentialIssue, requestID, h.credentialIssue(cid, req, time.Now()))
+	own, err := ownCopy(req)
+	if err != nil {
+		discardStream(conn, req.GrantConditionsStreamId)
+		h.sendCredential(conn, protocol.TaskControlKind_CredentialIssue, requestID, credentialRefusal(protocol.CredentialStatus_BadGrantConditions, "%s", err.Error()))
+		return
+	}
+	withGrantConditions(conn, own.GrantConditionsStreamId, func(err error) {
+		h.sendCredential(conn, protocol.TaskControlKind_CredentialIssue, requestID, credentialRefusal(protocol.CredentialStatus_BadGrantConditions, "%s", err.Error()))
+	}, func(conds protocol.GrantConditions) {
+		h.sendCredential(conn, protocol.TaskControlKind_CredentialIssue, requestID, h.credentialIssue(cid, own, time.Now(), conds))
+	})
 }
 
 func (h *TaskHandler) handleCredentialRekey(conn ConnHandle, requestID uint32, cid objproto.ConnectionID, req *protocol.CredentialRekeyRequest) {
-	h.sendCredential(conn, protocol.TaskControlKind_CredentialRekey, requestID, h.credentialRekey(cid, req, time.Now()))
+	own, err := ownCopy(req)
+	if err != nil {
+		discardStream(conn, req.GrantConditionsStreamId)
+		h.sendCredential(conn, protocol.TaskControlKind_CredentialRekey, requestID, credentialRefusal(protocol.CredentialStatus_BadGrantConditions, "%s", err.Error()))
+		return
+	}
+	withGrantConditions(conn, own.GrantConditionsStreamId, func(err error) {
+		h.sendCredential(conn, protocol.TaskControlKind_CredentialRekey, requestID, credentialRefusal(protocol.CredentialStatus_BadGrantConditions, "%s", err.Error()))
+	}, func(conds protocol.GrantConditions) {
+		h.sendCredential(conn, protocol.TaskControlKind_CredentialRekey, requestID, h.credentialRekey(cid, own, time.Now(), conds))
+	})
 }
 
 func (h *TaskHandler) sendCredential(conn ConnHandle, kind protocol.TaskControlKind, requestID uint32, r protocol.CredentialResponse) {
@@ -100,16 +123,23 @@ func maskedRefusal(caps protocol.Capability) *protocol.CredentialResponse {
 	return nil
 }
 
-func issueGrantRequest(req *protocol.CredentialIssueRequest) grantRequest {
-	return grantRequest{
+// issueGrantRequest / rekeyGrantRequest read the request as a grant request
+// with its grant conditions on the scope it writes (an issue always does, a
+// rekey behind scope_present). A refused body is a *BadGrantConditionsError.
+func issueGrantRequest(req *protocol.CredentialIssueRequest, conds protocol.GrantConditions) (grantRequest, error) {
+	r := grantRequest{
 		Caps: req.RequestedCaps, Scope: authority.ScopeFromWire(req.Scope, req.Overrides),
 		DelegateCaps: req.DelegateCaps, DelegateScope: authority.ScopeFromWire(req.DelegateScope, nil),
 		SpawnDepth: req.SpawnDepth, MaxDescendants: req.MaxDescendants,
 	}
+	if err := conditionsOnto(&r.Scope, conds, true); err != nil {
+		return grantRequest{}, err
+	}
+	return r, nil
 }
 
-func rekeyGrantRequest(req *protocol.CredentialRekeyRequest) grantRequest {
-	return grantRequest{
+func rekeyGrantRequest(req *protocol.CredentialRekeyRequest, conds protocol.GrantConditions) (grantRequest, error) {
+	r := grantRequest{
 		Caps: req.RequestedCaps, Scope: authority.ScopeFromWire(req.Scope, req.Overrides),
 		DelegateCaps: req.DelegateCaps, DelegateScope: authority.ScopeFromWire(req.DelegateScope, nil),
 		CapsPresent: req.CapsPresent(), ScopePresent: req.ScopePresent(),
@@ -117,6 +147,10 @@ func rekeyGrantRequest(req *protocol.CredentialRekeyRequest) grantRequest {
 		SpawnDepth: req.SpawnDepth, MaxDescendants: req.MaxDescendants,
 		SpawnDepthPresent: req.SpawnDepthPresent(), MaxDescendantsPresent: req.MaxDescendantsPresent(),
 	}
+	if err := conditionsOnto(&r.Scope, conds, req.ScopePresent()); err != nil {
+		return grantRequest{}, err
+	}
+	return r, nil
 }
 
 func credentialOK(id string, expiresAt time.Time) protocol.CredentialResponse {
@@ -127,7 +161,7 @@ func credentialOK(id string, expiresAt time.Time) protocol.CredentialResponse {
 // (D13): a child of the caller, holding at most what the caller may delegate
 // within its scope, counted against its spawn limits. The expiry is the
 // server's clock plus the ttl, never a client's absolute time.
-func (h *TaskHandler) credentialIssue(cid objproto.ConnectionID, req *protocol.CredentialIssueRequest, now time.Time) protocol.CredentialResponse {
+func (h *TaskHandler) credentialIssue(cid objproto.ConnectionID, req *protocol.CredentialIssueRequest, now time.Time, conds protocol.GrantConditions) protocol.CredentialResponse {
 	ttl, refusal := credentialTTL(req.TtlMs)
 	if refusal != nil {
 		return *refusal
@@ -141,8 +175,12 @@ func (h *TaskHandler) credentialIssue(cid objproto.ConnectionID, req *protocol.C
 	if refusal := maskedRefusal(req.RequestedCaps | req.DelegateCaps); refusal != nil {
 		return *refusal
 	}
+	greq, err := issueGrantRequest(req, conds)
+	if err != nil {
+		return credentialRefusal(protocol.CredentialStatus_BadGrantConditions, "%s", err.Error())
+	}
 	g := h.granter(cid, h.callerCaps(cid))
-	u, err := h.grantFor(g, issueGrantRequest(req), "")
+	u, err := h.grantFor(g, greq, "")
 	if err != nil {
 		return credentialRefusal(protocol.CredentialStatus_ScopeNotPermitted, "%s", err.Error())
 	}
@@ -161,7 +199,7 @@ func (h *TaskHandler) credentialIssue(cid objproto.ConnectionID, req *protocol.C
 // creator-tree ancestor (rekeyReaches), and must be able to issue the
 // credential's authority now — the recorded grant, or the narrowed one the
 // request writes — so a re-key confers nothing a fresh issue would not.
-func (h *TaskHandler) credentialRekey(cid objproto.ConnectionID, req *protocol.CredentialRekeyRequest, now time.Time) protocol.CredentialResponse {
+func (h *TaskHandler) credentialRekey(cid objproto.ConnectionID, req *protocol.CredentialRekeyRequest, now time.Time, conds protocol.GrantConditions) protocol.CredentialResponse {
 	idHex := hex.EncodeToString(req.TaskId.Id[:])
 	if !h.inScope(cid, requiredCentral(protocol.TaskControlKind_CredentialRekey), idHex) || !h.rekeyReaches(cid, idHex) {
 		return credentialRefusal(protocol.CredentialStatus_NoSuchTask, "")
@@ -195,9 +233,13 @@ func (h *TaskHandler) credentialRekey(cid objproto.ConnectionID, req *protocol.C
 		return *refusal
 	}
 
+	greq, err := rekeyGrantRequest(req, conds)
+	if err != nil {
+		return credentialRefusal(protocol.CredentialStatus_BadGrantConditions, "%s", err.Error())
+	}
 	callerCaps := h.callerCaps(cid)
 	g := h.granter(cid, callerCaps)
-	u, err := h.grantFor(g, rekeyGrantRequest(req), idHex)
+	u, err := h.grantFor(g, greq, idHex)
 	if err != nil {
 		return credentialRefusal(protocol.CredentialStatus_ScopeNotPermitted, "%s", err.Error())
 	}

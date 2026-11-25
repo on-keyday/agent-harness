@@ -527,9 +527,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			h.denyTaskControl(conn, req.Header.Kind, req.Header.RequestId, want)
 			// A refused request's body would otherwise sit in the receive
 			// buffer until the connection ends.
-			if id := payloadStreamOf(&req); id != 0 {
-				go discardPayloadStream(conn, id)
-			}
+			discardPayloadStreams(conn, &req)
 			return
 		}
 	}
@@ -606,13 +604,11 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			return
 		}
 		// A refused open's prompt body is cancelled, not left buffered until
-		// the connection ends (the central gate does the same, payloadStreamOf).
+		// the connection ends (the central gate does the same, discardPayloadStreams).
 		deny := func(want protocol.Capability) {
 			// Off the receive loop: the stream's frames arrive on the loop
 			// this runs on, as the central gate's discard knows.
-			if id := payloadStreamOf(&req); id != 0 {
-				go discardPayloadStream(conn, id)
-			}
+			discardPayloadStreams(conn, &req)
 			h.denyTaskControl(conn, req.Header.Kind, req.Header.RequestId, want)
 		}
 		// The request-dependent gate (authority.ResumeCap): spawn for a fresh
@@ -646,8 +642,8 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			resp.SetOpenInteractive(r)
 			conn.SendMessage(resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})) //nolint:errcheck
 		}
-		open := func(oi *protocol.OpenInteractiveRequest, prompt string) {
-			oresp, body := h.handleOpenInteractive(cid, conn, oi, origin, creator, oiCreatorCaps, prompt)
+		open := func(oi *protocol.OpenInteractiveRequest, prompt string, conds protocol.GrantConditions) {
+			oresp, body := h.handleOpenInteractiveWith(cid, conn, oi, origin, creator, oiCreatorCaps, prompt, conds)
 			if body != nil {
 				respondWithBody(conn, "open candidates", body, func(streamID uint64) {
 					oresp.SetCandidatesStreamId(streamID)
@@ -657,39 +653,51 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 				send(oresp)
 			}
 		}
-		if !oi.PromptPresent() {
-			open(oi, "")
+		condStream := openGrantConditionsStream(oi)
+		if !oi.PromptPresent() && condStream == 0 {
+			open(oi, "", protocol.GrantConditions{})
 			break
 		}
-		// Off the receive loop: the prompt arrives on a stream the client
-		// writes AFTER this request (A-D17), and that stream's frames are
-		// delivered by the very loop this handler runs on — exec_run's shape.
-		// The request is the decoded frame; a re-decoded copy owns its bytes.
+		// Off the receive loop: the prompt and the grant conditions arrive on
+		// streams the client writes AFTER this request (A-D17, grant
+		// conditions C6), and those streams' frames are delivered by the very
+		// loop this handler runs on — exec_run's shape. The request is the
+		// decoded frame; a re-decoded copy owns its bytes.
 		var oiCopy protocol.OpenInteractiveRequest
 		if err := oiCopy.DecodeExact(oi.MustAppend(nil)); err != nil {
-			discardPayloadStream(conn, func() uint64 {
-				id := oi.PromptStreamId()
-				if id == nil {
-					return 0
-				}
-				return *id
-			}())
+			for _, id := range payloadStreamsOf(&req) {
+				discardPayloadStream(conn, id)
+			}
 			send(protocol.OpenInteractiveResponse{Status: protocol.OpenInteractiveStatus_InternalError})
 			break
 		}
 		go func() {
-			var streamID uint64
-			if id := oiCopy.PromptStreamId(); id != nil {
-				streamID = *id
+			var prompt string
+			if oiCopy.PromptPresent() {
+				var streamID uint64
+				if id := oiCopy.PromptStreamId(); id != nil {
+					streamID = *id
+				}
+				var st protocol.OpenInteractiveStatus
+				var msg string
+				if prompt, st, msg = readOpenPrompt(conn, streamID); st != protocol.OpenInteractiveStatus_Ok {
+					if condStream != 0 {
+						discardPayloadStream(conn, condStream)
+					}
+					r := protocol.OpenInteractiveResponse{Status: st}
+					r.SetErrorMsg([]byte(msg))
+					send(r)
+					return
+				}
 			}
-			prompt, st, msg := readOpenPrompt(conn, streamID)
-			if st != protocol.OpenInteractiveStatus_Ok {
-				r := protocol.OpenInteractiveResponse{Status: st}
-				r.SetErrorMsg([]byte(msg))
+			conds, err := readGrantConditions(conn, condStream)
+			if err != nil {
+				r := protocol.OpenInteractiveResponse{Status: protocol.OpenInteractiveStatus_BadGrantConditions}
+				r.SetErrorMsg([]byte(err.Error()))
 				send(r)
 				return
 			}
-			open(&oiCopy, prompt)
+			open(&oiCopy, prompt, conds)
 		}()
 
 	case protocol.TaskControlKind_OpenFileTransfer:
@@ -1325,7 +1333,28 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("TaskHandler: SetCaps variant is nil")
 			return
 		}
-		h.handleSetCaps(conn, req.Header.RequestId, cid, sc)
+		// The grant conditions are read first (grant conditions C6), off the
+		// receive loop when a stream is named; that needs an owned copy.
+		requestID := req.Header.RequestId
+		refuse := func(err error) {
+			resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_SetCaps, RequestId: requestID}
+			body := protocol.SetCapsResponse{Status: protocol.SetCapsStatus_BadGrantConditions}
+			body.SetMessage([]byte(err.Error()))
+			resp.SetSetCaps(body)
+			conn.SendMessage(resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})) //nolint:errcheck
+		}
+		own, err := ownCopy(sc)
+		if err != nil {
+			discardStream(conn, sc.GrantConditionsStreamId)
+			slog.Error("TaskHandler: SetCaps copy", "err", err)
+			resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_SetCaps, RequestId: requestID}
+			resp.SetSetCaps(protocol.SetCapsResponse{Status: protocol.SetCapsStatus_InternalError})
+			conn.SendMessage(resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})) //nolint:errcheck
+			return
+		}
+		withGrantConditions(conn, own.GrantConditionsStreamId, refuse, func(conds protocol.GrantConditions) {
+			h.handleSetCaps(conn, requestID, cid, own, conds)
+		})
 
 	case protocol.TaskControlKind_SetParent:
 		// Same operator-identity gate as SetCaps; deliberately NOT in
@@ -1449,8 +1478,12 @@ type grantRequest struct {
 	SpawnDepthPresent, MaxDescendantsPresent bool
 }
 
-func openGrantRequest(req *protocol.OpenInteractiveRequest) grantRequest {
-	return grantRequest{
+// openGrantRequest reads an open as a grant request, with its grant
+// conditions attached to the scope (a fresh open always writes its scope; a
+// resume only behind scope_present). A refused body is a
+// *BadGrantConditionsError.
+func openGrantRequest(req *protocol.OpenInteractiveRequest, conds protocol.GrantConditions) (grantRequest, error) {
+	r := grantRequest{
 		Caps: req.RequestedCaps, Scope: authority.ScopeFromWire(req.Scope, req.Overrides),
 		DelegateCaps: req.DelegateCaps, DelegateScope: authority.ScopeFromWire(req.DelegateScope, nil),
 		CapsPresent: req.ResumeCapsOverride(), ScopePresent: req.ScopePresent(),
@@ -1458,6 +1491,26 @@ func openGrantRequest(req *protocol.OpenInteractiveRequest) grantRequest {
 		SpawnDepth: req.SpawnDepth, MaxDescendants: req.MaxDescendants,
 		SpawnDepthPresent: req.SpawnDepthPresent(), MaxDescendantsPresent: req.MaxDescendantsPresent(),
 	}
+	if err := conditionsOnto(&r.Scope, conds, isZeroTaskID(req.ResumeTaskId) || req.ScopePresent()); err != nil {
+		return grantRequest{}, err
+	}
+	return r, nil
+}
+
+// openGrantConditionsStream is the grant-conditions stream an open names in
+// its ext byte, or 0.
+func openGrantConditionsStream(req *protocol.OpenInteractiveRequest) uint64 {
+	if !req.ExtPresent() {
+		return 0
+	}
+	ext := req.Ext()
+	if ext == nil || !ext.GrantConditionsPresent() {
+		return 0
+	}
+	if id := ext.GrantConditionsStreamId(); id != nil {
+		return *id
+	}
+	return 0
 }
 
 // grantFor is the authority g writes for r onto the task idHex ("" = a task
@@ -1697,7 +1750,15 @@ func isZeroTaskID(t protocol.TaskID) bool {
 // does not pick it up for a parallel AssignTask. The runner finalizes the task
 // lifecycle by sending TaskStarted (worktree dir filled in) and TaskFinished
 // (exit code from claude) over the regular RunnerControl path.
+// handleOpenInteractive is handleOpenInteractiveWith for an open that names no
+// grant conditions.
 func (h *TaskHandler) handleOpenInteractive(cid objproto.ConnectionID, tuiConn ConnHandle, req *protocol.OpenInteractiveRequest, origin protocol.ClientKind, creator protocol.TaskID, creatorCaps protocol.Capability, prompt string) (protocol.OpenInteractiveResponse, *protocol.RunnerCandidatesBody) {
+	return h.handleOpenInteractiveWith(cid, tuiConn, req, origin, creator, creatorCaps, prompt, protocol.GrantConditions{})
+}
+
+// handleOpenInteractiveWith opens with conds, the grant conditions the open's
+// stream carried (grant conditions C6).
+func (h *TaskHandler) handleOpenInteractiveWith(cid objproto.ConnectionID, tuiConn ConnHandle, req *protocol.OpenInteractiveRequest, origin protocol.ClientKind, creator protocol.TaskID, creatorCaps protocol.Capability, prompt string, conds protocol.GrantConditions) (protocol.OpenInteractiveResponse, *protocol.RunnerCandidatesBody) {
 	// repo is the one the runner search uses: req.RepoPath on a fresh open,
 	// the task's recorded repo on a resume (whose request carries none). The
 	// log names it once it is known, so a resume refusal does not read repo="".
@@ -1724,7 +1785,13 @@ func (h *TaskHandler) handleOpenInteractive(cid objproto.ConnectionID, tuiConn C
 	if !isZeroTaskID(req.ResumeTaskId) {
 		grantTarget = hex.EncodeToString(req.ResumeTaskId.Id[:])
 	}
-	grant, err := h.grantFor(h.granter(cid, creatorCaps), openGrantRequest(req), grantTarget)
+	greq, err := openGrantRequest(req, conds)
+	if err != nil {
+		resp, body := errResp(protocol.OpenInteractiveStatus_BadGrantConditions)
+		resp.SetErrorMsg([]byte(err.Error()))
+		return resp, body
+	}
+	grant, err := h.grantFor(h.granter(cid, creatorCaps), greq, grantTarget)
 	if err != nil {
 		resp, body := errResp(protocol.OpenInteractiveStatus_ScopeNotPermitted)
 		resp.SetErrorMsg([]byte(err.Error()))

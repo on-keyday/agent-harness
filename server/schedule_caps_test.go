@@ -99,7 +99,7 @@ func TestScheduleRunUsesItsOwnScope(t *testing.T) {
 			if r := e.h.scheduleDelete(e.connIDOf(conn), schedHexID(t, sc.ID)); r.Status != protocol.ScheduleStatus_NoSuchSchedule {
 				t.Fatalf("run reach authorized delete: %v", r.Status)
 			}
-			if r, deny := e.h.scheduleEdit(e.connIDOf(conn), schedHexID(t, sc.ID), &protocol.ScheduleSpec{}, ""); deny != 0 || r.Status != protocol.ScheduleStatus_NoSuchSchedule {
+			if r, deny := e.h.scheduleEdit(e.connIDOf(conn), schedHexID(t, sc.ID), &protocol.ScheduleSpec{}, "", protocol.GrantConditions{}); deny != 0 || r.Status != protocol.ScheduleStatus_NoSuchSchedule {
 				t.Fatalf("run reach authorized edit: %v %v", r.Status, deny)
 			}
 		}

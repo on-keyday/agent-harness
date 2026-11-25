@@ -25,7 +25,7 @@ import (
 // delegation bound bound every half, so nothing here lets a task raise itself
 // or anyone outside its subtree. Every refusal of R1 is not_found, so the
 // answer is no existence oracle (R4).
-func (h *TaskHandler) handleSetCaps(conn ConnHandle, requestID uint32, cid objproto.ConnectionID, req *protocol.SetCapsRequest) {
+func (h *TaskHandler) handleSetCaps(conn ConnHandle, requestID uint32, cid objproto.ConnectionID, req *protocol.SetCapsRequest, conds protocol.GrantConditions) {
 	respondMsg := func(status protocol.SetCapsStatus, affected []string, connsClosed uint32, msg string) {
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_SetCaps, RequestId: requestID}
 		body := protocol.SetCapsResponse{Status: status, ConnsClosed: connsClosed}
@@ -79,12 +79,17 @@ func (h *TaskHandler) handleSetCaps(conn ConnHandle, requestID uint32, cid objpr
 	var u GrantUpdate
 	if operator {
 		var refused bool
-		if u, refused = h.operatorCapsUpdate(cid, req, respond); refused {
+		if u, refused = h.operatorCapsUpdate(cid, req, conds, respondMsg); refused {
 			return
 		}
 	} else {
-		var err error
-		u, err = h.grantFor(h.granter(cid, h.callerCaps(cid)), setCapsGrantRequest(req), targetHex)
+		greq, err := setCapsGrantRequest(req, conds)
+		if err != nil {
+			slog.Warn("set_caps denied: grant conditions", "cid", cid, "task", targetHex, "err", err)
+			respondMsg(protocol.SetCapsStatus_BadGrantConditions, nil, 0, err.Error())
+			return
+		}
+		u, err = h.grantFor(h.granter(cid, h.callerCaps(cid)), greq, targetHex)
 		if err != nil {
 			slog.Warn("set_caps denied: re-grant outside the caller's bound", "cid", cid, "task", targetHex, "err", err)
 			respondMsg(protocol.SetCapsStatus_InvalidScope, nil, 0, err.Error())
@@ -105,8 +110,8 @@ func (h *TaskHandler) handleSetCaps(conn ConnHandle, requestID uint32, cid objpr
 // operatorCapsUpdate builds the operator's update: every present half written
 // as given, after validation only (no attenuation — the operator may widen
 // past its own reach). refused reports that a response was already sent.
-func (h *TaskHandler) operatorCapsUpdate(cid objproto.ConnectionID, req *protocol.SetCapsRequest,
-	respond func(protocol.SetCapsStatus, []string, uint32)) (GrantUpdate, bool) {
+func (h *TaskHandler) operatorCapsUpdate(cid objproto.ConnectionID, req *protocol.SetCapsRequest, conds protocol.GrantConditions,
+	respondMsg func(protocol.SetCapsStatus, []string, uint32, string)) (GrantUpdate, bool) {
 	// The spawn limits are written on the target only: the cascade below
 	// never sets their bits, so no descendant's limits change (spec D13).
 	u := GrantUpdate{
@@ -116,8 +121,13 @@ func (h *TaskHandler) operatorCapsUpdate(cid objproto.ConnectionID, req *protoco
 		To: authority.Grant{Caps: req.Caps, DelegateCaps: req.DelegateCaps,
 			SpawnDepth: req.SpawnDepth, MaxDescendants: req.MaxDescendants},
 	}
+	newScope := authority.ScopeFromWire(req.Scope, req.Overrides)
+	if err := conditionsOnto(&newScope, conds, req.ScopePresent()); err != nil {
+		slog.Warn("set_caps denied: grant conditions", "cid", cid, "err", err)
+		respondMsg(protocol.SetCapsStatus_BadGrantConditions, nil, 0, err.Error())
+		return GrantUpdate{}, true
+	}
 	if req.ScopePresent() {
-		newScope := authority.ScopeFromWire(req.Scope, req.Overrides)
 		// Operator identity is a licence to grant any AUTHORITY, not to store
 		// an incoherent value: an empty or overlapping override mask would
 		// make ForCap's "at most one entry matches" false, and a non-canonical
@@ -128,7 +138,7 @@ func (h *TaskHandler) operatorCapsUpdate(cid objproto.ConnectionID, req *protoco
 		// carrying scopes the spawn path would have refused.
 		if err := authority.Validate(newScope); err != nil {
 			slog.Warn("set_caps denied: inconsistent scope", "cid", cid, "err", err)
-			respond(protocol.SetCapsStatus_InvalidScope, nil, 0)
+			respondMsg(protocol.SetCapsStatus_InvalidScope, nil, 0, "")
 			return GrantUpdate{}, true
 		}
 		u.To.Scope = newScope
@@ -139,7 +149,7 @@ func (h *TaskHandler) operatorCapsUpdate(cid objproto.ConnectionID, req *protoco
 		bound := authority.ScopeFromWire(req.DelegateScope, nil)
 		if err := authority.Validate(bound); err != nil {
 			slog.Warn("set_caps denied: inconsistent delegate scope", "cid", cid, "err", err)
-			respond(protocol.SetCapsStatus_InvalidScope, nil, 0)
+			respondMsg(protocol.SetCapsStatus_InvalidScope, nil, 0, "")
 			return GrantUpdate{}, true
 		}
 		u.To.DelegateScope = bound
@@ -148,9 +158,11 @@ func (h *TaskHandler) operatorCapsUpdate(cid objproto.ConnectionID, req *protoco
 }
 
 // setCapsGrantRequest reads a set_caps request as the re-grant request a
-// resume carries: each half behind its own presence bit.
-func setCapsGrantRequest(req *protocol.SetCapsRequest) grantRequest {
-	return grantRequest{
+// resume carries: each half behind its own presence bit, the grant conditions
+// on the scope when scope_present writes it. A refused body is a
+// *BadGrantConditionsError.
+func setCapsGrantRequest(req *protocol.SetCapsRequest, conds protocol.GrantConditions) (grantRequest, error) {
+	r := grantRequest{
 		Caps: req.Caps, Scope: authority.ScopeFromWire(req.Scope, req.Overrides),
 		DelegateCaps: req.DelegateCaps, DelegateScope: authority.ScopeFromWire(req.DelegateScope, nil),
 		CapsPresent: req.CapsPresent(), ScopePresent: req.ScopePresent(),
@@ -158,6 +170,10 @@ func setCapsGrantRequest(req *protocol.SetCapsRequest) grantRequest {
 		SpawnDepth: req.SpawnDepth, MaxDescendants: req.MaxDescendants,
 		SpawnDepthPresent: req.SpawnDepthPresent(), MaxDescendantsPresent: req.MaxDescendantsPresent(),
 	}
+	if err := conditionsOnto(&r.Scope, conds, req.ScopePresent()); err != nil {
+		return grantRequest{}, err
+	}
+	return r, nil
 }
 
 // regrantReaches is R1: a task may re-grant (or rename) only a STRICT

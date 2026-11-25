@@ -287,29 +287,77 @@ func discardPayloadStream(conn ConnHandle, id uint64) {
 	}
 }
 
-// payloadStreamOf is the body stream a task-control request names, or 0.
-func payloadStreamOf(req *protocol.TaskControlRequest) uint64 {
+// payloadStreamsOf is every client-created body stream a task-control request
+// names: an exec's or a message's body, an open's prompt, and the grant
+// conditions of the five grant-writing requests (an open's and a schedule
+// spec's beside their prompt). Empty when it names none.
+func payloadStreamsOf(req *protocol.TaskControlRequest) []uint64 {
+	var out []uint64
+	add := func(id uint64) {
+		if id != 0 {
+			out = append(out, id)
+		}
+	}
+	spec := func(s *protocol.ScheduleSpec) {
+		if s.PromptPresent() {
+			if id := s.PromptStreamId(); id != nil {
+				add(*id)
+			}
+		}
+		add(s.GrantConditionsStreamId)
+	}
 	switch req.Header.Kind {
 	case protocol.TaskControlKind_OpenExecRun:
 		if r := req.OpenExecRun(); r != nil {
-			return r.PayloadStreamId
+			add(r.PayloadStreamId)
 		}
 	case protocol.TaskControlKind_BoardSend:
 		if r := req.BoardSend(); r != nil {
-			return r.PayloadStreamId
+			add(r.PayloadStreamId)
 		}
 	case protocol.TaskControlKind_AgentSend:
 		if r := req.AgentSend(); r != nil {
-			return r.PayloadStreamId
+			add(r.PayloadStreamId)
 		}
 	case protocol.TaskControlKind_OpenInteractive:
-		if r := req.OpenInteractive(); r != nil && r.PromptPresent() {
-			if id := r.PromptStreamId(); id != nil {
-				return *id
+		if r := req.OpenInteractive(); r != nil {
+			if r.PromptPresent() {
+				if id := r.PromptStreamId(); id != nil {
+					add(*id)
+				}
 			}
+			add(openGrantConditionsStream(r))
+		}
+	case protocol.TaskControlKind_CredentialIssue:
+		if r := req.CredentialIssue(); r != nil {
+			add(r.GrantConditionsStreamId)
+		}
+	case protocol.TaskControlKind_CredentialRekey:
+		if r := req.CredentialRekey(); r != nil {
+			add(r.GrantConditionsStreamId)
+		}
+	case protocol.TaskControlKind_SetCaps:
+		if r := req.SetCaps(); r != nil {
+			add(r.GrantConditionsStreamId)
+		}
+	case protocol.TaskControlKind_ScheduleCreate:
+		if r := req.ScheduleCreate(); r != nil {
+			spec(&r.Spec)
+		}
+	case protocol.TaskControlKind_ScheduleEdit:
+		if r := req.ScheduleEdit(); r != nil {
+			spec(&r.Spec)
 		}
 	}
-	return 0
+	return out
+}
+
+// discardPayloadStreams cancels every body stream a refused request named,
+// off the receive loop that delivers their frames.
+func discardPayloadStreams(conn ConnHandle, req *protocol.TaskControlRequest) {
+	for _, id := range payloadStreamsOf(req) {
+		go discardPayloadStream(conn, id)
+	}
 }
 
 // agentHandleReadSeq answers a request for one retained message by seq.

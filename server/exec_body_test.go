@@ -63,21 +63,56 @@ func TestDiscardPayloadStreamCancels(t *testing.T) {
 	}
 }
 
-// Which requests carry a payload stream: the central denial cancels it.
-func TestPayloadStreamOf(t *testing.T) {
+// Which requests carry payload streams: the central denial cancels them.
+func TestPayloadStreamsOf(t *testing.T) {
+	one := func(what string, req *protocol.TaskControlRequest, want ...uint64) {
+		t.Helper()
+		got := payloadStreamsOf(req)
+		if len(got) != len(want) {
+			t.Errorf("%s: %v, want %v", what, got, want)
+			return
+		}
+		for i := range got {
+			if got[i] != want[i] {
+				t.Errorf("%s: %v, want %v", what, got, want)
+			}
+		}
+	}
 	ex := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_OpenExecRun}}
 	ex.SetOpenExecRun(protocol.ExecRunRequest{PayloadStreamId: 9})
-	if got := payloadStreamOf(ex); got != 9 {
-		t.Errorf("exec: %d, want 9", got)
-	}
+	one("exec", ex, 9)
 	bs := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_BoardSend}}
 	bs.SetBoardSend(protocol.BoardSendRequest{PayloadStreamId: 7})
-	if got := payloadStreamOf(bs); got != 7 {
-		t.Errorf("board send: %d, want 7", got)
-	}
-	if got := payloadStreamOf(&protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_Whoami}}); got != 0 {
-		t.Errorf("whoami: %d, want 0", got)
-	}
+	one("board send", bs, 7)
+	one("whoami", &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_Whoami}})
+
+	// The grant-writing requests' grant-conditions streams (grant conditions C6).
+	oi := protocol.OpenInteractiveRequest{}
+	oi.SetPromptPresent(true)
+	oi.SetPromptStreamId(3)
+	var ext protocol.OpenInteractiveExt
+	ext.SetGrantConditionsPresent(true)
+	ext.SetGrantConditionsStreamId(4)
+	oi.SetExtPresent(true)
+	oi.SetExt(ext)
+	op := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_OpenInteractive}}
+	op.SetOpenInteractive(oi)
+	one("open", op, 3, 4)
+	sc := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_SetCaps}}
+	sc.SetSetCaps(protocol.SetCapsRequest{GrantConditionsStreamId: 5})
+	one("set_caps", sc, 5)
+	ci := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_CredentialIssue}}
+	ci.SetCredentialIssue(protocol.CredentialIssueRequest{GrantConditionsStreamId: 6})
+	one("credential issue", ci, 6)
+	cr := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_CredentialRekey}}
+	cr.SetCredentialRekey(protocol.CredentialRekeyRequest{GrantConditionsStreamId: 7})
+	one("credential rekey", cr, 7)
+	spec := protocol.ScheduleSpec{GrantConditionsStreamId: 9}
+	spec.SetPromptPresent(true)
+	spec.SetPromptStreamId(8)
+	se := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_ScheduleEdit}}
+	se.SetScheduleEdit(protocol.ScheduleEditRequest{Spec: spec})
+	one("schedule edit", se, 8, 9)
 }
 
 // fakeSend fails AppendData and records Close.

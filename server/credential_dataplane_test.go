@@ -95,7 +95,7 @@ func TestCredentialEndWithdrawsItsDataPlaneGrants(t *testing.T) {
 		"rekey": func(t *testing.T, s *Server, _ string, tid protocol.TaskID) {
 			_, newPub := newCredentialKey(t)
 			r := s.taskHandler.credentialRekey(tcid("ws:127.0.0.1:9619-1"),
-				&protocol.CredentialRekeyRequest{TaskId: tid, Pubkey: newPub, TtlMs: uint64(time.Hour / time.Millisecond)}, time.Now())
+				&protocol.CredentialRekeyRequest{TaskId: tid, Pubkey: newPub, TtlMs: uint64(time.Hour / time.Millisecond)}, time.Now(), protocol.GrantConditions{})
 			if r.Status != protocol.CredentialStatus_Ok {
 				t.Fatalf("re-key: %v", r.Status)
 			}

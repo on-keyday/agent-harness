@@ -135,9 +135,7 @@ func (h *TaskHandler) handleSchedule(cid objproto.ConnectionID, conn ConnHandle,
 		conn.SendMessage(resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})) //nolint:errcheck
 	}
 	if h.Sched == nil || h.Sched.Store == nil {
-		if id := payloadStreamOf(req); id != 0 {
-			go discardPayloadStream(conn, id)
-		}
+		discardPayloadStreams(conn, req)
 		send(scheduleRefusal(protocol.ScheduleStatus_InternalError, "this server keeps no schedules"))
 		return
 	}
@@ -148,8 +146,8 @@ func (h *TaskHandler) handleSchedule(cid objproto.ConnectionID, conn ConnHandle,
 			send(scheduleRefusal(protocol.ScheduleStatus_InternalError, "empty request"))
 			return
 		}
-		h.withSpecPrompt(conn, &cr.Spec, send, func(spec *protocol.ScheduleSpec, prompt string) {
-			r, c := h.scheduleCreate(cid, spec, prompt)
+		h.withSpecBodies(conn, &cr.Spec, send, func(spec *protocol.ScheduleSpec, prompt string, conds protocol.GrantConditions) {
+			r, c := h.scheduleCreate(cid, spec, prompt, conds)
 			if c != 0 {
 				deny(c)
 				return
@@ -163,8 +161,8 @@ func (h *TaskHandler) handleSchedule(cid objproto.ConnectionID, conn ConnHandle,
 			return
 		}
 		id := er.Id
-		h.withSpecPrompt(conn, &er.Spec, send, func(spec *protocol.ScheduleSpec, prompt string) {
-			r, c := h.scheduleEdit(cid, id, spec, prompt)
+		h.withSpecBodies(conn, &er.Spec, send, func(spec *protocol.ScheduleSpec, prompt string, conds protocol.GrantConditions) {
+			r, c := h.scheduleEdit(cid, id, spec, prompt, conds)
 			if c != 0 {
 				deny(c)
 				return
@@ -213,38 +211,56 @@ func (h *TaskHandler) handleSchedule(cid objproto.ConnectionID, conn ConnHandle,
 	}
 }
 
-// withSpecPrompt runs then with the spec and its prompt. A spec that names a
-// prompt stream has it read first, on its own goroutine, with the open's cap
+// withSpecBodies runs then with the spec, its prompt and its grant
+// conditions. A spec that names a prompt stream or a grant-conditions stream
+// has them read first, on their own goroutine, the prompt with the open's cap
 // (readOpenPrompt); a refusal is answered, nothing is created or changed, and
-// the stream is cancelled (Review Focus 5).
-func (h *TaskHandler) withSpecPrompt(conn ConnHandle, spec *protocol.ScheduleSpec, send func(protocol.ScheduleResponse), then func(*protocol.ScheduleSpec, string)) {
-	if !spec.PromptPresent() {
-		then(spec, "")
+// the streams not yet read are cancelled (Review Focus 5, grant conditions C6).
+func (h *TaskHandler) withSpecBodies(conn ConnHandle, spec *protocol.ScheduleSpec, send func(protocol.ScheduleResponse), then func(*protocol.ScheduleSpec, string, protocol.GrantConditions)) {
+	condStream := spec.GrantConditionsStreamId
+	if !spec.PromptPresent() && condStream == 0 {
+		then(spec, "", protocol.GrantConditions{})
 		return
 	}
 	// The decoded frame is borrowed; a re-decoded copy owns its bytes.
 	var own protocol.ScheduleSpec
 	if err := own.DecodeExactCopy(spec.MustAppend(nil)); err != nil {
-		if id := spec.PromptStreamId(); id != nil {
+		if id := spec.PromptStreamId(); spec.PromptPresent() && id != nil {
 			go discardPayloadStream(conn, *id)
+		}
+		if condStream != 0 {
+			go discardPayloadStream(conn, condStream)
 		}
 		send(scheduleRefusal(protocol.ScheduleStatus_InternalError, "spec: %v", err))
 		return
 	}
 	go func() {
-		var streamID uint64
-		if id := own.PromptStreamId(); id != nil {
-			streamID = *id
+		var prompt string
+		if own.PromptPresent() {
+			var streamID uint64
+			if id := own.PromptStreamId(); id != nil {
+				streamID = *id
+			}
+			var st protocol.OpenInteractiveStatus
+			var msg string
+			if prompt, st, msg = readOpenPrompt(conn, streamID); st != protocol.OpenInteractiveStatus_Ok {
+				if condStream != 0 {
+					discardPayloadStream(conn, condStream)
+				}
+				if st == protocol.OpenInteractiveStatus_PromptTooLarge {
+					send(scheduleRefusal(protocol.ScheduleStatus_PromptTooLarge, "%s", msg))
+				} else {
+					send(scheduleRefusal(protocol.ScheduleStatus_InternalError, "%s", msg))
+				}
+				return
+			}
 		}
-		prompt, st, msg := readOpenPrompt(conn, streamID)
-		switch st {
-		case protocol.OpenInteractiveStatus_Ok:
-			then(&own, prompt)
-		case protocol.OpenInteractiveStatus_PromptTooLarge:
-			send(scheduleRefusal(protocol.ScheduleStatus_PromptTooLarge, "%s", msg))
-		default:
-			send(scheduleRefusal(protocol.ScheduleStatus_InternalError, "%s", msg))
+		conds, err := readGrantConditions(conn, condStream)
+		if err != nil {
+			send(scheduleRefusal(protocol.ScheduleStatus_BadGrantConditions, "%s", err.Error()))
+			return
 		}
+		then(&own, prompt, conds)
 	}()
 }
 
@@ -349,7 +365,9 @@ func scheduleGrantRefusal(err error) protocol.ScheduleResponse {
 
 // specGrantRequest is the authority half of a spec, as grantFor reads an
 // open's: a half the spec does not carry is zero with its presence bit off.
-func specGrantRequest(spec *protocol.ScheduleSpec) grantRequest {
+// conds attach to the scope the spec writes; a refused body is a
+// *BadGrantConditionsError.
+func specGrantRequest(spec *protocol.ScheduleSpec, conds protocol.GrantConditions) (grantRequest, error) {
 	var r grantRequest
 	if spec.RequestedCapsPresent() && spec.RequestedCaps() != nil {
 		r.Caps, r.CapsPresent = *spec.RequestedCaps(), true
@@ -373,21 +391,27 @@ func specGrantRequest(spec *protocol.ScheduleSpec) grantRequest {
 	if spec.MaxDescendantsPresent() && spec.MaxDescendants() != nil {
 		r.MaxDescendants, r.MaxDescendantsPresent = *spec.MaxDescendants(), true
 	}
-	return r
+	if err := conditionsOnto(&r.Scope, conds, r.ScopePresent); err != nil {
+		return grantRequest{}, err
+	}
+	return r, nil
 }
 
 // grantRequestOver is the request an edit makes: the stored grant, every half
 // present, with the halves the spec names replaced. An edit always recomputes
 // the grant with the editor as granter (S-D16), so the stored one is the
 // request, not the result.
-func grantRequestOver(stored authority.Grant, spec *protocol.ScheduleSpec) grantRequest {
+func grantRequestOver(stored authority.Grant, spec *protocol.ScheduleSpec, conds protocol.GrantConditions) (grantRequest, error) {
 	r := grantRequest{
 		Caps: stored.Caps, Scope: stored.Scope, DelegateCaps: stored.DelegateCaps, DelegateScope: stored.DelegateScope,
 		SpawnDepth: stored.SpawnDepth, MaxDescendants: stored.MaxDescendants,
 		CapsPresent: true, ScopePresent: true, DelegateCapsPresent: true, DelegateScopePresent: true,
 		SpawnDepthPresent: true, MaxDescendantsPresent: true,
 	}
-	n := specGrantRequest(spec)
+	n, err := specGrantRequest(spec, conds)
+	if err != nil {
+		return grantRequest{}, err
+	}
 	if n.CapsPresent {
 		r.Caps = n.Caps
 	}
@@ -406,7 +430,7 @@ func grantRequestOver(stored authority.Grant, spec *protocol.ScheduleSpec) grant
 	if n.MaxDescendantsPresent {
 		r.MaxDescendants = n.MaxDescendants
 	}
-	return r
+	return r, nil
 }
 
 // storedGrant is the grant a schedule stores for r written onto task idHex
@@ -750,17 +774,17 @@ func (h *TaskHandler) scheduleRunPower(cid objproto.ConnectionID, sc *Schedule) 
 	return 0, nil
 }
 
-func (h *TaskHandler) scheduleCreate(cid objproto.ConnectionID, spec *protocol.ScheduleSpec, prompt string) (protocol.ScheduleResponse, protocol.Capability) {
+func (h *TaskHandler) scheduleCreate(cid objproto.ConnectionID, spec *protocol.ScheduleSpec, prompt string, conds protocol.GrantConditions) (protocol.ScheduleResponse, protocol.Capability) {
 	if c, refusal := h.schedulePower(cid, nil, scheduleSpecTask(spec)); c != 0 || refusal != nil {
 		if refusal != nil {
 			return *refusal, 0
 		}
 		return protocol.ScheduleResponse{}, c
 	}
-	return h.scheduleCreateChecked(cid, spec, prompt), 0
+	return h.scheduleCreateChecked(cid, spec, prompt, conds), 0
 }
 
-func (h *TaskHandler) scheduleCreateChecked(cid objproto.ConnectionID, spec *protocol.ScheduleSpec, prompt string) protocol.ScheduleResponse {
+func (h *TaskHandler) scheduleCreateChecked(cid objproto.ConnectionID, spec *protocol.ScheduleSpec, prompt string, conds protocol.GrantConditions) protocol.ScheduleResponse {
 	ops := h.Sched
 	now := ops.now()
 	d, refusal := h.applySpec(cid, Schedule{}, spec, prompt, true, now)
@@ -780,12 +804,15 @@ func (h *TaskHandler) scheduleCreateChecked(cid objproto.ConnectionID, spec *pro
 	// Authority (S-D16): as for a new child of the creator, or as a resume over
 	// the bound task.
 	g := h.granter(cid, h.callerCaps(cid))
-	req := specGrantRequest(spec)
-	if d.bindTask != "" {
+	req, err := specGrantRequest(spec, conds)
+	if err == nil && d.bindTask != "" {
 		// Every half present (R15): the task's own grant is only the starting
 		// point, so the stored grant is bounded by the creator.
 		rec, _ := h.Tasks.Get(d.bindTask)
-		req = grantRequestOver(rec.Grant(), spec)
+		req, err = grantRequestOver(rec.Grant(), spec, conds)
+	}
+	if err != nil {
+		return scheduleRefusal(protocol.ScheduleStatus_BadGrantConditions, "%s", err.Error())
 	}
 	grant, err := h.storedGrant(g, req, d.bindTask)
 	if err != nil {
@@ -863,11 +890,11 @@ func (o *ScheduleOps) boundChanged(taskHex string) {
 	}
 }
 
-func (h *TaskHandler) scheduleEdit(cid objproto.ConnectionID, id protocol.ScheduleID, spec *protocol.ScheduleSpec, prompt string) (resp protocol.ScheduleResponse, deny protocol.Capability) {
+func (h *TaskHandler) scheduleEdit(cid objproto.ConnectionID, id protocol.ScheduleID, spec *protocol.ScheduleSpec, prompt string, conds protocol.GrantConditions) (resp protocol.ScheduleResponse, deny protocol.Capability) {
 	ops := h.Sched
 	idHex := hex.EncodeToString(id.Id[:])
 	ops.withFiringMutex(idHex, func() {
-		resp, deny = h.scheduleEditLocked(cid, id, idHex, spec, prompt)
+		resp, deny = h.scheduleEditLocked(cid, id, idHex, spec, prompt, conds)
 	})
 	if deny == 0 && resp.Status == protocol.ScheduleStatus_Ok {
 		ops.poke()
@@ -875,7 +902,7 @@ func (h *TaskHandler) scheduleEdit(cid objproto.ConnectionID, id protocol.Schedu
 	return resp, deny
 }
 
-func (h *TaskHandler) scheduleEditLocked(cid objproto.ConnectionID, id protocol.ScheduleID, idHex string, spec *protocol.ScheduleSpec, prompt string) (protocol.ScheduleResponse, protocol.Capability) {
+func (h *TaskHandler) scheduleEditLocked(cid objproto.ConnectionID, id protocol.ScheduleID, idHex string, spec *protocol.ScheduleSpec, prompt string, conds protocol.GrantConditions) (protocol.ScheduleResponse, protocol.Capability) {
 	cur, refusal := h.scheduleFor(cid, id)
 	if refusal != nil {
 		return *refusal, 0
@@ -889,10 +916,10 @@ func (h *TaskHandler) scheduleEditLocked(cid objproto.ConnectionID, id protocol.
 		}
 		return protocol.ScheduleResponse{}, c
 	}
-	return h.scheduleEditChecked(cid, id, idHex, spec, prompt, cur), 0
+	return h.scheduleEditChecked(cid, id, idHex, spec, prompt, conds, cur), 0
 }
 
-func (h *TaskHandler) scheduleEditChecked(cid objproto.ConnectionID, id protocol.ScheduleID, idHex string, spec *protocol.ScheduleSpec, prompt string, cur Schedule) protocol.ScheduleResponse {
+func (h *TaskHandler) scheduleEditChecked(cid objproto.ConnectionID, id protocol.ScheduleID, idHex string, spec *protocol.ScheduleSpec, prompt string, conds protocol.GrantConditions, cur Schedule) protocol.ScheduleResponse {
 	ops := h.Sched
 	now := ops.now()
 	d, refusal := h.applySpec(cid, cur, spec, prompt, false, now)
@@ -907,7 +934,11 @@ func (h *TaskHandler) scheduleEditChecked(cid objproto.ConnectionID, id protocol
 	if next.State == protocol.ScheduleTaskState_Bound {
 		boundHex = next.TaskID // the task the grant is written over: the new one on a rebind
 	}
-	grant, err := h.storedGrant(g, grantRequestOver(cur.Grant, spec), boundHex)
+	greq, err := grantRequestOver(cur.Grant, spec, conds)
+	if err != nil {
+		return scheduleRefusal(protocol.ScheduleStatus_BadGrantConditions, "%s", err.Error())
+	}
+	grant, err := h.storedGrant(g, greq, boundHex)
 	if err != nil {
 		return scheduleGrantRefusal(err)
 	}
