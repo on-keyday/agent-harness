@@ -157,7 +157,6 @@ the author chose it while writing; those rows are the ones to check.
   | `OpenInteractiveRequest`, `CredentialIssueRequest`, `CredentialRekeyRequest`, `SetCapsRequest`, `ScheduleSpec` | writes a grant | gains `conditions_stream_id :u64` (0 = no conditions); the bodies (`GrantConditions { n ≤ 8, GrantCondition… }`) are read from that stream before the request is processed |
   | `TaskInfo` (in `ListResultBody`), `ScheduleDetail` | read; travels on a stream | gains the bodies |
   | `WhoAmIResponse` | read; inline, unguarded today | marker only; `whoami` on the CLI fetches the caller's own row through the list path to print the bodies |
-  | `SubmitRequest` | retired verb (pillar A, G7); the server answers it as retired | unchanged |
 
   A schedule carries its own authority and writes it onto its task at each
   firing (grand design G36, G38), so its conditions are stored and written
