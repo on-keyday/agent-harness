@@ -906,6 +906,28 @@ func (h tuiVerbs) Diag(v verb.ScreenAction) tea.Cmd {
 	return nil
 }
 
+// Display shows or sets DISPLAY for this TUI process, which its X11 opens
+// read (D and `session new --x11`). A value is checked the way D checks one
+// before it is set; nothing outside this process changes.
+func (h tuiVerbs) Display(v verb.ScreenAction) tea.Cmd {
+	a := h.a
+	if v.Arg == "" {
+		cur := os.Getenv("DISPLAY")
+		if cur == "" {
+			cur = "(unset; on Windows D looks for an X server on localhost:6000-6009)"
+		}
+		a.cmdresult.Append("display: DISPLAY=" + cur)
+		return nil
+	}
+	if err := cli.CheckX11Display(v.Arg); err != nil {
+		a.cmdresult.Append(ErrorStyle.Render(fmt.Sprintf("display %s: %v", v.Arg, err)))
+		return nil
+	}
+	_ = os.Setenv("DISPLAY", v.Arg)
+	a.cmdresult.Append(fmt.Sprintf("display: DISPLAY=%s for this TUI's X11 opens (this process only)", v.Arg))
+	return nil
+}
+
 func (h tuiVerbs) Repo(v verb.ScreenAction) tea.Cmd {
 	a := h.a
 	// The repo string is treated as an opaque identifier — server

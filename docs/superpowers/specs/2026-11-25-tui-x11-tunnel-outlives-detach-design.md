@@ -134,3 +134,27 @@ an in-flight turn is never hidden behind a single unconfirmed key.
   decision): a task's end now reaps its forwards
   (`reapTaskPortForwards`; amendment in
   `2026-07-30-port-forward-registry-design.md`), so the sentence holds.
+
+## Amendment 2: the TUI finds the X server itself (operator, 2026-11-25)
+
+Why: on the Windows client the first `D` answered `DISPLAY is empty`; the
+operator had to set `$env:DISPLAY` in the shell before every TUI start, and
+the check `D` made before a restart looked at the DISPLAY string only, so a
+stopped X server still cost a restarted agent.
+
+- **`D` probes before it asks or resumes.** With `$DISPLAY` set, it dials
+  what the value names (the unix path or TCP `host:6000+N`); nothing
+  answering is a refusal (`is the X server running?`). With `$DISPLAY` empty
+  on Windows, it dials `localhost:6000` to `:6009` and takes the first that
+  answers, sets `DISPLAY` in the TUI process (where the open and `xauth`
+  read it) and says so: `x11: using DISPLAY=localhost:N (an X server
+  answered there)`. Never silent. Empty elsewhere stays a refusal: on Linux
+  it means there is no X. The probe runs as a command, off the UI loop.
+  A connect is the whole test; something else on 6000+N would pass it and
+  fail at the GUI's first request (accepted: a handshake check is more than
+  this needs).
+- **`display [<value>]`** on the TUI command line shows or sets `DISPLAY`
+  for the TUI process. It is the TUI's own environment, so it changes nothing
+  outside it and lasts until the TUI exits. A value is checked the way `D`
+  checks one (a host-less value on Windows is refused). TUI only: the CLI
+  process ends with its command, and a browser has no X server.

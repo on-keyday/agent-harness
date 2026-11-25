@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"net"
 	"os"
 	"runtime"
 	"strconv"
@@ -76,15 +77,54 @@ func localXServerDialSpec(display string) (network, host string, port int, err e
 	return "tcp", hostPart, 6000 + n, nil
 }
 
-// LocalX11Display returns this client's $DISPLAY once it names a local X
-// server an X11 forward can dial, or why it does not. A caller about to do
-// something costly for X11 (the TUI restarts a live session with it) asks
-// first, so it does not pay and then fail at the open.
-func LocalX11Display() (string, error) {
-	return localX11DisplayFor(os.Getenv("DISPLAY"), runtime.GOOS)
+// CheckX11Display reports why display could not name a local X server an X11
+// forward can dial on this OS, or nil. It reads the form only; see
+// ProbeLocalX11Display for whether anything answers there.
+func CheckX11Display(display string) error {
+	_, err := localX11DisplayFor(display, runtime.GOOS)
+	return err
 }
 
-// localX11DisplayFor is LocalX11Display for a given DISPLAY and GOOS. A
+// x11ProbeMax is the last display number ProbeLocalX11Display tries when it
+// has to find the X server (Windows, DISPLAY unset): TCP 6000 to 6000+x11ProbeMax.
+const x11ProbeMax = 9
+
+// ProbeLocalX11Display finds the X server an X11 forward would dial, before a
+// caller does something costly for one (the TUI restarts a live session with
+// it). With $DISPLAY set it dials what the value names and fails when nothing
+// answers. With $DISPLAY empty on Windows, where no X server sets it, it dials
+// localhost:6000 to 6000+x11ProbeMax and returns the first that answers with
+// found=true; the caller must say which one it is using. Empty elsewhere is
+// an error: there it means there is no X. dial is net.Dial with a short
+// timeout in production; a connect is the whole test.
+func ProbeLocalX11Display(dial func(network, address string) error) (display string, found bool, err error) {
+	return probeX11DisplayFor(os.Getenv("DISPLAY"), runtime.GOOS, dial)
+}
+
+func probeX11DisplayFor(display, goos string, dial func(network, address string) error) (string, bool, error) {
+	if display == "" && goos == "windows" {
+		for n := 0; n <= x11ProbeMax; n++ {
+			if dial("tcp", net.JoinHostPort("localhost", strconv.Itoa(6000+n))) == nil {
+				return fmt.Sprintf("localhost:%d", n), true, nil
+			}
+		}
+		return "", false, fmt.Errorf("x11: DISPLAY is empty and no X server answered on localhost:6000-%d; start one (XLaunch) or set it with `display localhost:N`", 6000+x11ProbeMax)
+	}
+	if _, err := localX11DisplayFor(display, goos); err != nil {
+		return "", false, err
+	}
+	network, host, port, _ := localXServerDialSpec(display)
+	addr := host
+	if network == "tcp" {
+		addr = net.JoinHostPort(host, strconv.Itoa(port))
+	}
+	if err := dial(network, addr); err != nil {
+		return "", false, fmt.Errorf("x11: nothing answered at DISPLAY=%s (%s %s): is the X server running? %w", display, network, addr, err)
+	}
+	return display, false, nil
+}
+
+// localX11DisplayFor checks display's form for goos. A
 // host-less DISPLAY means the fixed unix socket path /tmp/.X11-unix/XN
 // (localXServerDialSpec). Windows has AF_UNIX, but on Windows that path is
 // \tmp\.X11-unix\XN on the current drive, where an X server there would not

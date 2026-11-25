@@ -2,6 +2,8 @@ package tui
 
 import (
 	"fmt"
+	"net"
+	"os"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -23,9 +25,32 @@ func (a *App) heldX11(taskID string) bool {
 	return len(selectForwards(a.activeForwards, taskID, ForwardX11)) > 0
 }
 
-// `D` gives the selected task X11 (x11OpenAction decides how). $DISPLAY is
-// checked before anything that would cost the task: a restart that cannot
-// open X11 afterwards must not cancel the agent first.
+// probeX11Display finds the X server a D open would use (cli
+// ProbeLocalX11Display, dialling with a short timeout). A variable so a test
+// can answer for it.
+var probeX11Display = func() (string, bool, error) {
+	return cli.ProbeLocalX11Display(func(network, address string) error {
+		c, err := net.DialTimeout(network, address, 300*time.Millisecond)
+		if err == nil {
+			_ = c.Close()
+		}
+		return err
+	})
+}
+
+// x11ProbedMsg is the probe's answer for D on TaskID.
+type x11ProbedMsg struct {
+	TaskID  string
+	Display string
+	Found   bool
+	Err     error
+}
+
+// `D` gives the selected task X11 (x11OpenAction decides how). Before a
+// resume or a restart it probes for the X server (off the UI loop): a restart
+// that cannot open X11 afterwards must not cancel the agent first, and on
+// Windows an unset DISPLAY is found rather than required. A reattach needs
+// no probe: its tunnel is already up.
 func (a *App) onX11Open(msg tea.KeyMsg) (tea.Cmd, bool) {
 	t := a.tasks.SelectedTask()
 	id := a.tasks.SelectedID()
@@ -36,21 +61,51 @@ func (a *App) onX11Open(msg tea.KeyMsg) (tea.Cmd, bool) {
 	case actionNone:
 		a.cmdresult.Append(WarnStyle.Render(act.Hint))
 		return nil, true
+	case actionX11Restart:
+		if a.x11Restarts[id] {
+			a.cmdresult.Append(WarnStyle.Render("D " + shortTaskID(id) + ": already restarting with X11"))
+			return nil, true
+		}
 	}
-	if _, err := cli.LocalX11Display(); err != nil {
-		a.cmdresult.Append(ErrorStyle.Render("D: " + err.Error()))
-		return nil, true
+	return func() tea.Msg {
+		d, found, err := probeX11Display()
+		return x11ProbedMsg{TaskID: id, Display: d, Found: found, Err: err}
+	}, true
+}
+
+// onX11Probed carries D on once the probe answered. A found display is set in
+// this process, where the open and `xauth` read it, and named. The task's
+// state is decided again: it may have moved while the probe ran.
+func (a *App) onX11Probed(msg x11ProbedMsg) tea.Cmd {
+	if msg.Err != nil {
+		a.cmdresult.Append(ErrorStyle.Render("D: " + msg.Err.Error()))
+		return nil
 	}
-	if act.Kind == actionResume {
-		return a.openX11Resume(*t), true
+	if msg.Found {
+		_ = os.Setenv("DISPLAY", msg.Display)
+		a.cmdresult.Append(OKStyle.Render("x11: using DISPLAY="+msg.Display) + " (an X server answered there; `display` shows or changes it)")
 	}
-	if a.x11Restarts[id] {
-		a.cmdresult.Append(WarnStyle.Render("D " + shortTaskID(id) + ": already restarting with X11"))
-		return nil, true
+	t, ok := a.tasksByID[msg.TaskID]
+	if !ok {
+		a.cmdresult.Append(WarnStyle.Render("D " + shortTaskID(msg.TaskID) + ": the task is no longer listed"))
+		return nil
 	}
-	a.x11RestartAsk = id
-	a.cmdresult.Append(WarnStyle.Render(x11RestartPrompt(id)))
-	return nil, true
+	switch act := x11OpenAction(&t, a.heldX11(msg.TaskID)); act.Kind {
+	case actionReattach:
+		return DoAttachSession(a.client, msg.TaskID, protocol.AttachMode_Control)
+	case actionResume:
+		return a.openX11Resume(t)
+	case actionX11Restart:
+		if a.x11Restarts[msg.TaskID] {
+			a.cmdresult.Append(WarnStyle.Render("D " + shortTaskID(msg.TaskID) + ": already restarting with X11"))
+			return nil
+		}
+		a.x11RestartAsk = msg.TaskID
+		a.cmdresult.Append(WarnStyle.Render(x11RestartPrompt(msg.TaskID)))
+	default:
+		a.cmdresult.Append(WarnStyle.Render(act.Hint))
+	}
+	return nil
 }
 
 func x11RestartPrompt(id string) string {

@@ -850,7 +850,7 @@ type ScheduleSpecAction struct {
 	ID          string
 }
 
-// ScreenAction is built by: clear, diag, exit, help, quit, reconnect, refresh, repo, sync, trsf.
+// ScreenAction is built by: clear, diag, display, exit, help, quit, reconnect, refresh, repo, sync, trsf.
 type ScreenAction struct {
 	ActionMarker
 	Sub string
@@ -3263,6 +3263,14 @@ func init() {
 		"repo\x00tui": func(b Bound) (Action, error) {
 			a := ScreenAction{}
 			a.Sub = "repo"
+			if len(b.Args) > 0 {
+				a.Arg = b.Args[0]
+			}
+			return a, nil
+		},
+		"display\x00tui": func(b Bound) (Action, error) {
+			a := ScreenAction{}
+			a.Sub = "display"
 			if len(b.Args) > 0 {
 				a.Arg = b.Args[0]
 			}
@@ -5827,6 +5835,7 @@ const (
 	CmdTrsf                   = "trsf"
 	CmdDiag                   = "diag"
 	CmdRepo                   = "repo"
+	CmdDisplay                = "display"
 	CmdCapsSet                = "caps set"
 	CmdCapsAudit              = "caps audit"
 	CmdCapsReach              = "caps reach"
@@ -5909,6 +5918,7 @@ const (
 	SubDetach          = "detach"
 	SubDiag            = "diag"
 	SubDiff            = "diff"
+	SubDisplay         = "display"
 	SubEdit            = "edit"
 	SubFile            = "file"
 	SubFlush           = "flush"
@@ -7984,6 +7994,27 @@ func ParseCmdRepo(sf Surface, args []string, ctx map[string]string) (ScreenActio
 	sp, ok := Lookup("repo")
 	if !ok {
 		return zero, fmt.Errorf("repo: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(ScreenAction)
+	return a, nil
+}
+
+func ParseCmdDisplay(sf Surface, args []string, ctx map[string]string) (ScreenAction, error) {
+	var zero ScreenAction
+	sp, ok := Lookup("display")
+	if !ok {
+		return zero, fmt.Errorf("display: not in the verb table")
 	}
 	sp = sp.For(sf)
 	fs := sp.NewFlagSet(flag.ContinueOnError)
@@ -11657,6 +11688,8 @@ type TUIDispatch[R any] interface {
 	Diag(ScreenAction) R
 	// repo
 	Repo(ScreenAction) R
+	// display
+	Display(ScreenAction) R
 	// caps set
 	CapsSet(SetCapsAction) R
 	// caps audit
@@ -12102,6 +12135,12 @@ func DispatchTUI[R any](h TUIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.Repo(a), true, nil
+	case CmdDisplay:
+		a, perr := ParseCmdDisplay(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.Display(a), true, nil
 	case CmdCapsSet:
 		a, perr := ParseCmdCapsSet(TUI, args, ctx)
 		if perr != nil {
@@ -12537,6 +12576,8 @@ func DispatchTUIAction[R any](h TUIDispatch[R], act Action) (r R, handled bool) 
 			return h.Diag(a), true
 		case "repo":
 			return h.Repo(a), true
+		case "display":
+			return h.Display(a), true
 		}
 	case SetCapsAction:
 		return h.CapsSet(a), true
@@ -12981,6 +13022,12 @@ func ParseTUICommand(tokens []string, ctx map[string]string) (act Action, handle
 			return a, true, nil
 		case CmdRepo:
 			a, perr := ParseCmdRepo(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdDisplay:
+			a, perr := ParseCmdDisplay(TUI, tokens[n:], ctx)
 			if perr != nil {
 				return nil, true, perr
 			}

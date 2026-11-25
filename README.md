@@ -923,8 +923,14 @@ exits. **`D`** on a task row gives that task X11:
 - a finished task: resume it with X11, conversation kept;
 - a live session without one: after a y/n, cancel it and resume it with X11
   once it has finished, conversation kept (a running agent cannot gain
-  `DISPLAY`; a turn in flight is lost). `$DISPLAY` is checked before the
-  question, so nothing is cancelled when X11 could not open afterwards.
+  `DISPLAY`; a turn in flight is lost).
+
+Before a resume or a restart, `D` connects to the X server it would use, so
+nothing is cancelled when no X server answers. With `$DISPLAY` unset on
+Windows it looks on `localhost:6000`–`6009`, takes the first that answers and
+says so (`x11: using DISPLAY=localhost:N`), so the shell needs no
+`$env:DISPLAY`. `display` on the TUI command line shows `DISPLAY`, and
+`display localhost:0` sets it for that TUI process only.
 
 The TUI also picks the display number: the lowest from the requested one
 (`--x11-display`, else 10) that none of its own tunnels uses, so two X11
@@ -2305,7 +2311,7 @@ The cmdline accepts `session {new,attach,ls,kill}
 / forward {ls,kill,tap} / conns
 / grid / overview / caps / scope
 / caps set / caps set-parent / caps audit / caps reach / caps what-if / workspace {save,apply,detach,ls,show,rm} / workspace forward {add,rm}
-/ server dial-runner / runner {enroll,keys,unenroll,kick} / runner dial {add,ls,rm} / ssh-gateway / cancel / prune / repo / clear / help / quit`.
+/ server dial-runner / runner {enroll,keys,unenroll,kick} / runner dial {add,ls,rm} / ssh-gateway / cancel / prune / repo / display / clear / help / quit`.
 `exec <task-id> [--] <cmd>...` runs a command in that task's worktree and prints
 its output into the cmdresult pane, stdout marked `1|` and stderr `2|`;
 `exec ls` / `exec kill <exec-id>` / `exec tap <exec-id>` list, stop and watch

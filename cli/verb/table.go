@@ -2558,6 +2558,18 @@ var Verbs = []VerbSpec{
 		Args:     []Arg{{Name: "path", Type: ArgString, Field: "Arg"}},
 		Examples: []string{"repo /r"},
 	},
+	{
+		// The TUI process's own DISPLAY, which its X11 opens (D, `session new
+		// --x11`) read. It is a TUI word: a CLI process ends with its command,
+		// so setting its environment would outlive nothing, and a browser has
+		// no X server.
+		Path: []string{"display"}, CmdlineSurfaces: TUI,
+		SurfaceNotes:   map[Surface][]string{TUI: {"show or set DISPLAY for this TUI's X11 opens (this process only; e.g. localhost:0 for an X server on Windows)"}},
+		NoModalSurface: "a command of the TUI's own line (there is no separate surface to reach: this IS the cmdline)",
+		Action:         "ScreenAction", Const: map[string]string{"Sub": "display"},
+		Args:     []Arg{{Name: "value", Type: ArgString, Variadic: true, MaxCount: 1, Field: "Arg"}},
+		Examples: []string{"display", "display localhost:0"},
+	},
 
 	// --- caps set / set-parent ---
 	{

@@ -3,6 +3,7 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 
@@ -153,6 +154,32 @@ func x11App(t *testing.T, st protocol.TaskStatus) (*App, protocol.TaskInfo) {
 
 func x11Out(a *App) string { return strings.Join(a.cmdresult.lines, "\n") }
 
+// stubProbe makes D's X-server probe answer display/found/err. DISPLAY is
+// saved and emptied first: a found display is set in this process.
+func stubProbe(t *testing.T, display string, found bool, err error) {
+	t.Setenv("DISPLAY", "")
+	old := probeX11Display
+	t.Cleanup(func() { probeX11Display = old })
+	probeX11Display = func() (string, bool, error) { return display, found, err }
+}
+
+// pressD presses D and, when D answers with its probe, delivers the probe's
+// result as the runtime would. It returns the command that follows. Only for
+// rows where D probes: any other command is returned unrun.
+func pressD(t *testing.T, a *App) tea.Cmd {
+	t.Helper()
+	_, cmd := a.Update(runeKey('D'))
+	if cmd == nil {
+		return nil
+	}
+	m, ok := cmd().(x11ProbedMsg)
+	if !ok {
+		t.Fatal("D did not probe for the X server")
+	}
+	_, cmd = a.Update(m)
+	return cmd
+}
+
 func TestDReattachesWhenThisTUIHoldsTheTunnel(t *testing.T) {
 	got := stubX11Open(t)
 	a, ti := x11App(t, protocol.TaskStatus_Running)
@@ -167,10 +194,10 @@ func TestDReattachesWhenThisTUIHoldsTheTunnel(t *testing.T) {
 }
 
 func TestDResumesAFinishedTaskWithX11(t *testing.T) {
-	t.Setenv("DISPLAY", "localhost:0")
+	stubProbe(t, "localhost:0", false, nil)
 	got := stubX11Open(t)
 	a, ti := x11App(t, protocol.TaskStatus_Cancelled)
-	a.Update(runeKey('D'))
+	pressD(t, a)
 	// retry: a runner that restarted has a new RunnerID, so the pin fails on
 	// exactly the tasks a restart left to resume; r falls back to Any, and so
 	// does D.
@@ -181,11 +208,11 @@ func TestDResumesAFinishedTaskWithX11(t *testing.T) {
 }
 
 func TestDAsksBeforeRestarting(t *testing.T) {
-	t.Setenv("DISPLAY", "localhost:0")
+	stubProbe(t, "localhost:0", false, nil)
 	got := stubX11Open(t)
 	a, ti := x11App(t, protocol.TaskStatus_Running)
 	a.Update(tea.WindowSizeMsg{Width: 200, Height: 50})
-	_, cmd := a.Update(runeKey('D'))
+	cmd := pressD(t, a)
 	if a.x11RestartAsk != FormatTaskID(ti.Id) || cmd != nil {
 		t.Fatalf("D did not just ask: ask=%q cmd=%v", a.x11RestartAsk, cmd != nil)
 	}
@@ -205,24 +232,50 @@ func TestDAsksBeforeRestarting(t *testing.T) {
 	}
 }
 
-func TestDRefusesWithoutADisplay(t *testing.T) {
-	t.Setenv("DISPLAY", "")
+// No X server answering is a refusal before the question: a restart then
+// would kill the agent's turn for an X11 session that cannot work.
+func TestDRefusesWhenNoXServerAnswers(t *testing.T) {
+	stubProbe(t, "", false, errors.New("x11: nothing answered at DISPLAY=localhost:0: is the X server running?"))
+	got := stubX11Open(t)
 	a, _ := x11App(t, protocol.TaskStatus_Running)
-	a.Update(runeKey('D'))
+	pressD(t, a)
 	if a.x11RestartAsk != "" {
-		t.Fatal("D asked to restart with no usable DISPLAY: the agent would be killed for nothing")
+		t.Fatal("D asked to restart with no X server answering: the agent would be killed for nothing")
 	}
-	if !strings.Contains(x11Out(a), "DISPLAY") {
-		t.Fatalf("the refusal does not name DISPLAY: %s", x11Out(a))
+	if !strings.Contains(x11Out(a), "is the X server running") {
+		t.Fatalf("the refusal is not shown: %s", x11Out(a))
+	}
+	b, _ := x11App(t, protocol.TaskStatus_Cancelled)
+	pressD(t, b)
+	if len(*got) != 0 {
+		t.Fatalf("D resumed a finished task with no X server answering: %v", *got)
+	}
+}
+
+// On Windows the TUI finds an X server nobody told it about; it must use it
+// for the open (DISPLAY in this process) and say which one it took.
+func TestDUsesTheXServerItFound(t *testing.T) {
+	stubProbe(t, "localhost:2", true, nil)
+	got := stubX11Open(t)
+	a, _ := x11App(t, protocol.TaskStatus_Cancelled)
+	pressD(t, a)
+	if d := os.Getenv("DISPLAY"); d != "localhost:2" {
+		t.Fatalf("DISPLAY = %q; want the found localhost:2 set for the open", d)
+	}
+	if !strings.Contains(x11Out(a), "using DISPLAY=localhost:2") {
+		t.Fatalf("the found display is not reported: %s", x11Out(a))
+	}
+	if len(*got) != 1 {
+		t.Fatalf("opens = %v; want the resume", *got)
 	}
 }
 
 func TestDRestartCancelsThenResumes(t *testing.T) {
-	t.Setenv("DISPLAY", "localhost:0")
+	stubProbe(t, "localhost:0", false, nil)
 	got := stubX11Open(t)
 	a, ti := x11App(t, protocol.TaskStatus_Running)
 	id := FormatTaskID(ti.Id)
-	a.Update(runeKey('D'))
+	pressD(t, a)
 	_, cmd := a.Update(runeKey('y'))
 	if cmd == nil || !a.x11Restarts[id] {
 		t.Fatalf("y did not cancel: cmd=%v pending=%v", cmd != nil, a.x11Restarts)
@@ -273,13 +326,13 @@ func TestDRestartGivesUpAfterTimeout(t *testing.T) {
 // second PortForwardStartedMsg overwrote the first registry entry. One
 // allocator serves every site now.
 func TestX11ForwardIDDoesNotReuseAModalForwardsID(t *testing.T) {
-	t.Setenv("DISPLAY", "localhost:0")
+	stubProbe(t, "localhost:0", false, nil)
 	got := stubX11Open(t)
 	a, _ := x11App(t, protocol.TaskStatus_Cancelled)
 	// As the modal leaves it after starting a `b` forward: bumped to 5, used 5.
 	a.nextForwardID = 5
 	a.activeForwards[5] = &PortForwardSession{ID: 5, TaskID: x11TaskID, Direction: ForwardRemote}
-	a.Update(runeKey('D'))
+	pressD(t, a)
 	if len(*got) != 1 || (*got)[0].fwdID == 5 {
 		t.Fatalf("the X11 open took registry id %v, which the modal forward holds", *got)
 	}
@@ -331,5 +384,28 @@ func TestStoppedForwardReleasesItsContext(t *testing.T) {
 	a.Update(PortForwardStoppedMsg{ID: 7, TaskID: x11TaskID})
 	if !cancelled {
 		t.Fatal("the stopped forward's context was left open")
+	}
+}
+
+// `display` is the TUI process's own DISPLAY: shown bare, set with a value
+// checked the way D checks one, and nothing set when the check refuses.
+func TestDisplayCommandShowsAndSets(t *testing.T) {
+	t.Setenv("DISPLAY", "")
+	a := New(Config{})
+	h := tuiVerbs{a}
+	h.Display(verb.ScreenAction{})
+	if !strings.Contains(x11Out(a), "unset") {
+		t.Fatalf("bare display with nothing set: %s", x11Out(a))
+	}
+	h.Display(verb.ScreenAction{Arg: "localhost:1"})
+	if d := os.Getenv("DISPLAY"); d != "localhost:1" {
+		t.Fatalf("DISPLAY = %q after `display localhost:1`", d)
+	}
+	h.Display(verb.ScreenAction{Arg: "nonsense"})
+	if d := os.Getenv("DISPLAY"); d != "localhost:1" {
+		t.Fatalf("a refused value was set: DISPLAY = %q", d)
+	}
+	if !strings.Contains(x11Out(a), "nonsense") {
+		t.Fatalf("the refusal does not name the value: %s", x11Out(a))
 	}
 }

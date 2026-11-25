@@ -1304,6 +1304,9 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.cmdresult.Append(OKStyle.Render("cancelled ") + short)
 		return a, nil
 
+	case x11ProbedMsg:
+		return a, a.onX11Probed(msg)
+
 	case x11RestartTimeoutMsg:
 		if a.x11Restarts[msg.TaskID] {
 			delete(a.x11Restarts, msg.TaskID)

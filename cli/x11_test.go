@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -90,20 +91,63 @@ func TestLocalXServerDialSpec(t *testing.T) {
 	}
 }
 
-// The TUI asks this before it cancels a live session to restart it with X11:
-// a restart that cannot open X afterwards must not kill the agent first.
-func TestLocalX11Display(t *testing.T) {
-	t.Setenv("DISPLAY", "")
-	if _, err := LocalX11Display(); err == nil || !strings.Contains(err.Error(), "empty") {
-		t.Fatalf("empty DISPLAY: err = %v", err)
+// CheckX11Display is what the TUI's `display` command applies to a typed
+// value before it sets it.
+func TestCheckX11Display(t *testing.T) {
+	if err := CheckX11Display(""); err == nil || !strings.Contains(err.Error(), "empty") {
+		t.Fatalf("empty: err = %v", err)
 	}
-	t.Setenv("DISPLAY", "localhost:0")
-	if d, err := LocalX11Display(); err != nil || d != "localhost:0" {
-		t.Fatalf("localhost:0: %q, %v", d, err)
+	if err := CheckX11Display("localhost:0"); err != nil {
+		t.Fatalf("localhost:0: %v", err)
 	}
-	t.Setenv("DISPLAY", "nonsense")
-	if _, err := LocalX11Display(); err == nil {
+	if err := CheckX11Display("nonsense"); err == nil {
 		t.Fatal("a DISPLAY without a display number was accepted")
+	}
+}
+
+type dialRec struct {
+	tried []string
+	ok    map[string]bool
+}
+
+func (d *dialRec) dial(network, address string) error {
+	d.tried = append(d.tried, network+" "+address)
+	if d.ok[network+" "+address] {
+		return nil
+	}
+	return errors.New("connection refused")
+}
+
+// The TUI probes before D asks or resumes: a restart must not cost the agent
+// when no X server would answer afterwards, and on Windows an empty DISPLAY
+// is found rather than required.
+func TestProbeX11Display(t *testing.T) {
+	d := &dialRec{ok: map[string]bool{"unix /tmp/.X11-unix/X0": true}}
+	if got, found, err := probeX11DisplayFor(":0", "linux", d.dial); err != nil || got != ":0" || found {
+		t.Fatalf(":0 linux, answering: %q %v %v", got, found, err)
+	}
+	d = &dialRec{}
+	if _, _, err := probeX11DisplayFor("localhost:3", "windows", d.dial); err == nil || !strings.Contains(err.Error(), "is the X server running") ||
+		len(d.tried) != 1 || d.tried[0] != "tcp localhost:6003" {
+		t.Fatalf("set but silent: err=%v tried=%v", err, d.tried)
+	}
+	d = &dialRec{ok: map[string]bool{"tcp localhost:6002": true}}
+	got, found, err := probeX11DisplayFor("", "windows", d.dial)
+	if err != nil || got != "localhost:2" || !found || len(d.tried) != 3 {
+		t.Fatalf("empty windows, :2 answers: %q %v %v tried=%v", got, found, err, d.tried)
+	}
+	d = &dialRec{}
+	if _, _, err := probeX11DisplayFor("", "windows", d.dial); err == nil || !strings.Contains(err.Error(), "6000") ||
+		!strings.Contains(err.Error(), "6009") || !strings.Contains(err.Error(), "display") || len(d.tried) != 10 {
+		t.Fatalf("empty windows, none answers: err=%v tried=%d", err, len(d.tried))
+	}
+	d = &dialRec{}
+	if _, _, err := probeX11DisplayFor("", "linux", d.dial); err == nil || !strings.Contains(err.Error(), "empty") || len(d.tried) != 0 {
+		t.Fatalf("empty linux: err=%v tried=%v; want a refusal without dialing", err, d.tried)
+	}
+	d = &dialRec{}
+	if _, _, err := probeX11DisplayFor(":0", "windows", d.dial); err == nil || len(d.tried) != 0 {
+		t.Fatalf(":0 windows: err=%v tried=%v; want the host-less refusal without dialing", err, d.tried)
 	}
 }
 
