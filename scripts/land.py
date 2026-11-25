@@ -20,8 +20,8 @@ Run it from the worktree (or checkout) whose HEAD is the work to land. In order:
    slot and `harness-cli` on PATH run from).
 5. `make build` in that checkout: bin/ is what runners execute, and nothing
    else refreshes it.
-6. Print which running parts the landed paths touch (server, runners, WebUI),
-   since only those need a restart.
+6. Print which running parts the landed paths touch: the daemons need a
+   restart, the WebUI a browser reload.
 
 Each step that fails stops the run with nothing after it done, and says which
 step and why. LAND_IDENT_CMD / LAND_SKEW_CMD / LAND_WASM_CMD / LAND_BUILD_CMD replace those
@@ -56,40 +56,54 @@ def main_checkout(cwd: Path) -> Path:
     raise LandError("git worktree list printed no worktree")
 
 
-def go_deps(root: Path, cmd: str) -> set[str] | None:
+def go_deps(root: Path, cmd: str, env: dict[str, str] | None = None) -> set[str] | None:
     """Import paths of every package `./cmd/<cmd>` builds, or None if unknown."""
     p = subprocess.run(["go", "list", "-deps", f"./cmd/{cmd}"], cwd=str(root),
-                       capture_output=True, text=True)
+                       capture_output=True, text=True,
+                       env={**os.environ, **env} if env else None)
     return set(p.stdout.split()) if p.returncode == 0 else None
 
 
-def restart_hints(paths: list[str], module: str,
-                  server_deps: set[str] | None, runner_deps: set[str] | None) -> list[str]:
-    """Which running daemons the landed paths reach.
+def restart_hints(paths: list[str], module: str, server_deps: set[str] | None,
+                  runner_deps: set[str] | None, wasm_deps: set[str] | None = None) -> list[str]:
+    """Which running parts the landed paths reach.
 
-    Decided by which daemon BUILDS a changed Go package, not by its directory
-    name: runner/protocol, appwire and pubsub are in both, agentboard only in
-    the server. webui/ is embedded in the server. A dependency bump (go.mod /
-    go.sum) can change either. Shipped skill text under runner/agentskills is
-    read from disk on every task (--agentskills-dir), so it needs nothing.
+    Decided by which binary BUILDS a changed Go package, not by its directory
+    name: runner/protocol, appwire and pubsub are in both daemons, agentboard
+    only in the server. A dependency bump (go.mod / go.sum) can change either.
+    Shipped skill text under runner/agentskills is read from disk on every
+    task (--agentskills-dir), so it needs nothing.
+
+    webui/ is NOT a server restart, although the server imports the package
+    (its //go:embed copy): a server run with --webui-dir serves webui/ from
+    disk, and `make build` has already rewritten main.wasm there, so a browser
+    reload shows the change. The same holds for a package the WebUI's wasm
+    builds (wasm_deps, GOOS=js). Only a server serving its embedded copy needs
+    the restart, and the hint names that case rather than prescribing it --
+    printing "restart the server" for every WebUI change got it relayed as a
+    need, and a restart costs live tasks.
     """
     if server_deps is None or runner_deps is None:
         return ["could not compute which daemons the change reaches (go list failed); check by hand"]
-    server = runner = False
+    server = runner = webui = False
     for p in paths:
         if p in ("go.mod", "go.sum"):
             server = runner = True
         elif p.startswith("webui/"):
-            server = True
+            webui = True
         elif p.endswith(".go"):
             pkg = module + "/" + p.rsplit("/", 1)[0] if "/" in p else module
             server |= pkg in server_deps
             runner |= pkg in runner_deps
+            webui |= wasm_deps is not None and pkg in wasm_deps
     out = []
     if server:
         out.append("restart the server (a package it builds changed)")
     if runner:
         out.append("restart the runner slots (a package agent-runner builds changed)")
+    if webui:
+        out.append("reload the WebUI in the browser (a --webui-dir server serves webui/ from disk; "
+                   "only a server serving its embedded copy needs a restart for it)")
     return out
 
 
@@ -135,8 +149,8 @@ def land(cwd: Path, *, dry_run: bool = False) -> int:
     run_step("build", build, main)
     module = next((l.split()[1] for l in (root / "go.mod").read_text().splitlines()
                    if l.startswith("module ")), "") if (root / "go.mod").is_file() else ""
-    hints = restart_hints(paths, module, go_deps(root, "harness-server"),
-                          go_deps(root, "agent-runner")) if paths else []
+    hints = restart_hints(paths, module, go_deps(root, "harness-server"), go_deps(root, "agent-runner"),
+                          go_deps(root, "harness-webui-wasm", {"GOOS": "js", "GOARCH": "wasm"})) if paths else []
     print(f"land: landed {head[:12]} and built {main}/bin")
     for h in hints:
         print(f"land: {h}")

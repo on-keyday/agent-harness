@@ -65,8 +65,8 @@ class LandTest(unittest.TestCase):
         return g(self.origin, "rev-parse", "main")
 
     def test_lands_fast_forwards_the_main_checkout_and_builds_there(self) -> None:
-        deps = {"harness-server": {"example.com/m/server"}, "agent-runner": set()}
-        with mock.patch.object(land, "go_deps", side_effect=lambda root, cmd: deps[cmd]):
+        deps = {"harness-server": {"example.com/m/server"}, "agent-runner": set(), "harness-webui-wasm": set()}
+        with mock.patch.object(land, "go_deps", side_effect=lambda root, cmd, env=None: deps[cmd]):
             rc, out, err = self.run_land()
         self.assertEqual(rc, 0, err)
         self.assertEqual(self.origin_main(), self.head)
@@ -147,9 +147,20 @@ class RestartHintsTest(unittest.TestCase):
     def test_shipped_skill_text_needs_no_restart(self) -> None:
         self.assertEqual(self.hints(["runner/agentskills/harness-cli/SKILL.md"]), [])
 
-    def test_webui_assets_are_embedded_in_the_server(self) -> None:
-        h = self.hints(["webui/static/main.js"])
-        self.assertTrue(any("server" in x for x in h), h)
+    def test_webui_assets_are_a_browser_reload_not_a_server_restart(self) -> None:
+        # The server imports webui (its //go:embed copy), but a --webui-dir
+        # server serves the files from disk: "restart the server" here was
+        # relayed as a need, and a restart costs live tasks.
+        for p in ("webui/static/main.js", "webui/embed.go"):
+            h = self.hints([p])
+            self.assertEqual(len(h), 1, h)
+            self.assertTrue(h[0].startswith("reload the WebUI"), h)
+
+    def test_a_package_the_wasm_builds_is_a_browser_reload(self) -> None:
+        h = land.restart_hints(["cmd/harness-webui-wasm/main.go"], self.M, self.SERVER, self.RUNNER,
+                               {self.M + "/cmd/harness-webui-wasm"})
+        self.assertEqual(len(h), 1, h)
+        self.assertTrue(h[0].startswith("reload the WebUI"), h)
 
     def test_a_dependency_bump_needs_both(self) -> None:
         self.assertEqual(len(self.hints(["go.mod"])), 2)
