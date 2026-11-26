@@ -567,3 +567,51 @@ implementation: that spec keeps its own additions off inline responses (C6),
 and the operator accepts control-message loss for now. Revisit when a hang is
 traced to an oversized response, or when control-message loss stops being
 acceptable — the stream shape answers both.
+
+---
+
+## Read the server's and the runners' process logs through the harness (Pillar C)
+
+**What.** Pillar C of `2026-11-12-run-modes-and-records-grand-design.md`
+("host logs"). Its problem P6: a process log is readable only on its own host.
+Remote management needs the server's log and each runner's.
+
+**Already decided in that spec:**
+
+- G12: the runner writes its own log file, named by a flag; the harness does
+  not guess the path a launcher chose. The server does the same.
+- G12: reading needs a new grantable capability bit; it is not reserved to the
+  operator.
+- G13 and Pillar C: logs are served on a stream, as a tail or a range, never
+  the whole file.
+- Pillar C: before anything is exposed, audit what the logs contain. No
+  credential may appear in them, because a grantable bit puts them in more hands
+  than the host's owner.
+
+**Still open:** O6, the default for the runner's log-file flag, and who holds
+the new log-read bit by default.
+
+**Evidence** (2026-11-26):
+
+```
+$ ls docs/superpowers/specs docs/superpowers/plans | grep -i pillar
+```
+
+lists plans for pillars 0, A, S and B and specs for A, S and B; nothing for C. Neither
+`cli/verb/table.go` nor `RunnerRequestType` (`runner/protocol/message.bgn`)
+has a verb or a request that reads a process log. Today the logs are read on
+their host: the runner's under `bin/.run/` when `scripts/runner.sh` started it,
+or in the journal under a systemd unit.
+
+**What the spec has to settle beyond O6:**
+
+- Reading a runner's log adds a `RunnerRequestType`. That is a runner-decoded
+  format, so Pitfall 10's server-first rollout applies. The server's own log is
+  a server-only change.
+- The source of the log: a file the process writes (G12), or an in-process ring
+  buffer. A ring buffer would not depend on the launcher, but it is lost on
+  restart.
+
+**Why deferred.** The other pillars went first, and C was not picked up after
+them. The operator chose to do it later (2026-11-26), after the
+grant-conditions spec's remaining plan (actions).
