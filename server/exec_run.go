@@ -404,6 +404,12 @@ func execRunInfo(e *execRun) protocol.ExecRunInfo {
 	info.StdinBytes, info.StdoutBytes, info.StderrBytes, info.LastActivityUnixMs = e.counters()
 	info.Taps = e.tapCount()
 	info.SetPty(e.pty)
+	if e.action != nil {
+		info.SetActionPresent(true)
+		info.SetActionId(protocol.ActionID{Id: e.action.id})
+		info.SetActionRevision(e.action.revision)
+		info.SetActionName([]byte(e.action.name))
+	}
 	return info
 }
 

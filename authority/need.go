@@ -138,6 +138,11 @@ var centralCap = map[protocol.TaskControlKind]protocol.Capability{
 	// one power; re-key is gated as issue, not as resume.
 	protocol.TaskControlKind_CredentialIssue: protocol.Capability_CredentialIssue,
 	protocol.TaskControlKind_CredentialRekey: protocol.Capability_CredentialIssue,
+	// Server-defined actions (grant conditions spec C13): defining, editing and
+	// deleting one. An edit is additionally gated per holder in the handler
+	// (C11); action_list is a request-determined clause below.
+	protocol.TaskControlKind_ActionPut:    protocol.Capability_ActionAdmin,
+	protocol.TaskControlKind_ActionRemove: protocol.Capability_ActionAdmin,
 	protocol.TaskControlKind_PruneTasks:      protocol.Capability_Prune,
 	protocol.TaskControlKind_Notify:          protocol.Capability_Notify,
 	// Emptying another task's progress line: whoever may end the task may
@@ -315,6 +320,12 @@ func RequestNeed(req *protocol.TaskControlRequest) Need {
 		})
 	case protocol.TaskControlKind_OpenPortForward:
 		n.Clauses = append(n.Clauses, same(protocol.Capability_ForwardLocal))
+	case protocol.TaskControlKind_ActionList:
+		// Who may define actions, and who may run them, may read them (C13).
+		n.Clauses = append(n.Clauses, Clause{
+			AnyOf:  protocol.Capability_ActionAdmin | protocol.Capability_ExecRun,
+			Report: protocol.Capability_ExecRun,
+		})
 	case protocol.TaskControlKind_RegisterPortForward:
 		n.Clauses = append(n.Clauses, same(ForwardCap(bodyOf(req.RegisterPortForward()).Direction)))
 	case protocol.TaskControlKind_RecordSwitch:

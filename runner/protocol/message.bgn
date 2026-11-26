@@ -830,6 +830,11 @@ enum TaskControlKind:
     task_rename             # appended: set a task's display name (delegated-regrant
                             # spec R3). The operator on any task; a task only on a
                             # strict descendant within its resume scope, never itself.
+    # Server-defined actions (grant conditions spec C8, C13). put / remove need
+    # action_admin; list needs action_admin or exec_run.
+    action_put              # appended: create or edit one action
+    action_remove           # appended: delete one action
+    action_list             # appended: every action, on a stream
 
 # ClientKind tags the kind of caller that opened a TaskControl session.
 # `agent` is an in-task harness-cli that proves its identity via agent_info;
@@ -3315,6 +3320,9 @@ format TaskControlRequest:
         TaskControlKind.credential_issue         => credential_issue         :CredentialIssueRequest
         TaskControlKind.credential_rekey         => credential_rekey         :CredentialRekeyRequest
         TaskControlKind.task_rename              => task_rename              :TaskRenameRequest
+        TaskControlKind.action_put               => action_put               :ActionPutRequest
+        TaskControlKind.action_remove            => action_remove            :ActionRemoveRequest
+        TaskControlKind.action_list              => action_list              :ActionListRequest
         .. => error("Unexpected task")
 
 # --- credential tasks (docs/superpowers/specs/2026-11-21-credential-tasks-design.md) ---
@@ -3528,6 +3536,9 @@ format TaskControlResponse:
         TaskControlKind.credential_issue         => credential_issue         :CredentialResponse
         TaskControlKind.credential_rekey         => credential_rekey         :CredentialResponse
         TaskControlKind.task_rename              => task_rename              :TaskRenameResponse
+        TaskControlKind.action_put               => action_put               :ActionPutResponse
+        TaskControlKind.action_remove            => action_remove            :ActionRemoveResponse
+        TaskControlKind.action_list              => action_list              :ActionListResponse
 
 # --- runner enrollment (2026-10-27-runner-enrollment-design.md) --------------
 # The server lets a runner register under AuthRole.runner only when it signs
@@ -5128,6 +5139,12 @@ enum Capability:
     # someone else's credential over by reparenting it. A credential can never
     # hold it (D14). Default-off, appended.
     credential_issue = 0x80000000, "credential_issue"
+    # action_admin defines, edits and deletes server-defined actions (grant
+    # conditions spec C13). No scope: an action is server configuration, not a
+    # task. An edit changes what every holder of the action runs, so it is
+    # additionally gated, per holder, as a set_caps on that holder would be
+    # (C11). Default-off, appended.
+    action_admin = 0x100000000, "action_admin"
     # `all` is a LITERAL, not "every defined bit", so it widens by hand — the
     # same edit exec_view / exec_cowrite / exec_resize each needed. The WAL
     # persists the NUMBER, so a task already granted `all` holds 0xffff and
@@ -5135,14 +5152,15 @@ enum Capability:
     # forward_link; nor, at 0x7fffff, runner_enroll; nor, at 0xffffff,
     # board_persist; nor, at 0x1ffffff, board_member; nor, at 0xfffffff,
     # record_delete and record_persist; nor, at 0xfffffff, transcript_read; nor, at
-    # 0x1fffffff, schedule_edit; nor, at 0x3fffffff, schedule_run; nor, at 0x7fffffff, credential_issue).
+    # 0x1fffffff, schedule_edit; nor, at 0x3fffffff, schedule_run; nor, at 0x7fffffff, credential_issue;
+    # nor, at 0xffffffff, action_admin).
     # That is the safe
     # direction and needs no migration.
     #
     # Widening it is REQUIRED, not stylistic: callerCaps hands operator
     # connections Capability_All, so a literal left at 0xffff would deny the
     # operator its own feature.
-    all            = 0xffffffff, "all"
+    all            = 0x1ffffffff, "all"
 
 # ScopeBase is the base target set a TaskScope starts from, before its explicit
 # id list is unioned in. Self joins that union unless exclude_self removes it,
@@ -5281,6 +5299,136 @@ format GrantCondition:
 format GrantConditions:
     conditions_len :u8
     conditions     :[conditions_len]GrantCondition
+
+# --- Actions (same spec, C8, C10-C13, C16, C17) ---
+# An action is a named command template kept by the server. An exec naming one
+# is resolved to an argv on the server and sent to the runner as any exec is,
+# so no runner-decoded format changes (C8). Every limit below is checked by
+# actiondef.Validate, the one rule the server and the clients share.
+
+enum ActionParamType:
+    :u8
+    choice = 1, "choice"   # one of the definition's literals
+    token  = 2, "token"    # 1-128 bytes of [0-9A-Za-z._-], no leading '-' (C12)
+
+# One argv element as written: 1-4096 bytes, no NUL. A choice is at most 255
+# bytes, so that ActionValue (len :u8) can carry it at invocation.
+format ActionLiteral:
+    len   :u16
+    bytes :[len]u8
+
+# A choice param's literals, 1-32 of them, no two equal. A sub-format because
+# a match arm holds one field here (the GrantCondition arms do the same).
+format ActionChoices:
+    choices_len :u8
+    choices     :[choices_len]ActionLiteral
+
+format ActionParam:
+    name_len :u8
+    name     :[name_len]u8                 # [a-z][a-z0-9_]{0,31}, unique in the definition
+    type     :ActionParamType
+    match type:
+        ActionParamType.choice => choices :ActionChoices
+        ActionParamType.token  => ..
+        .. => error("Unexpected action param type")
+
+enum ActionElementKind:
+    :u8
+    literal = 1, "literal"
+    param   = 2, "param"
+
+# A template element: a literal, or a reference to a param whose value becomes
+# ONE whole argv element (C12). There is no partial substitution.
+format ActionElement:
+    kind :ActionElementKind
+    match kind:
+        ActionElementKind.literal => literal :ActionLiteral
+        ActionElementKind.param   => param_index :u8     # into params
+        .. => error("Unexpected action element kind")
+
+# What a client writes, on ActionPutRequest.payload_stream_id. template[0] is
+# a literal (C17): no parameter chooses the program. Every param is referenced
+# by the template at least once.
+format ActionDefinition:
+    name_len        :u8
+    name            :[name_len]u8          # [a-z0-9][a-z0-9._-]{0,63}, unique across the store
+    params_len      :u8                    # 0..16
+    params          :[params_len]ActionParam
+    template_len    :u8                    # 1..64
+    template        :[template_len]ActionElement
+    description_len :u16
+    description     :[description_len]u8   # 0..1024, display only
+
+# What the server reports. created_by / edited_by are "operator" or
+# "task:<32 hex>", as RunnerKeyRecord.EnrolledBy.
+format ActionRecord:
+    id             :ActionID
+    revision       :u32                    # 1 at create, +1 per edit
+    definition     :ActionDefinition
+    created_at_ms  :u64
+    edited_at_ms   :u64                    # = created_at_ms until the first edit
+    created_by_len :u8
+    created_by     :[created_by_len]u8
+    edited_by_len  :u8
+    edited_by      :[edited_by_len]u8
+
+# One parameter value at invocation.
+format ActionValue:
+    len   :u8
+    bytes :[len]u8
+
+# An exec naming an action: one value per param, in params order. It does not
+# pin a revision (C17): the exec row records which ran.
+format ActionInvocation:
+    id         :ActionID
+    values_len :u8
+    values     :[values_len]ActionValue
+
+# A create (zero id, expect_revision 0) and an edit (the id, the revision it
+# edits) are one request kind (C17). The definition rides a client send stream:
+# a template has no bound that fits one datagram.
+format ActionPutRequest:
+    id                :ActionID
+    expect_revision   :u32
+    payload_stream_id :u64
+
+enum ActionStatus:
+    :u8
+    ok                  = "ok"
+    not_found           = "not_found"            # unknown id
+    invalid_definition  = "invalid_definition"   # message says which rule
+    name_taken          = "name_taken"
+    stale_revision      = "stale_revision"       # edit: expect_revision is not current
+    holders_unreachable = "holders_unreachable"  # edit: C11 refused; holders_refused says how many
+    body_too_large      = "body_too_large"
+    bad_body            = "bad_body"
+
+# Inline, so message is cut to 256 bytes by the server: a control message is
+# one datagram.
+format ActionPutResponse:
+    status          :ActionStatus
+    id              :ActionID
+    revision        :u32
+    holders_refused :u32
+    message_len     :u16
+    message         :[message_len]u8
+
+format ActionRemoveRequest:
+    id :ActionID
+
+format ActionRemoveResponse:
+    status :ActionStatus
+
+format ActionListRequest:
+    reserved :u8
+
+format ActionListResponse:
+    status    :ActionStatus
+    stream_id :u64                         # server send stream carrying ActionListBody
+
+format ActionListBody:
+    actions_len :u16
+    actions     :[actions_len]ActionRecord
 
 enum OpenPortForwardStatus:
     :u8
@@ -6130,6 +6278,14 @@ format ExecRunBody:
     # ValidateExecTerm is the rule.
     term_len :u8
     term :[term_len]u8
+    # action_present=1 names a server-defined action instead of a command:
+    # argv must be empty, and the server resolves the action to the argv it
+    # sends the runner, with pty, shell_line, sshd_parent and stdin_enabled
+    # forced to 0 and term ignored (grant conditions spec C12, C17).
+    action_present :u1
+    reserved :u7
+    if action_present == 1:
+        action :ActionInvocation
 
 enum ExecRunStatus:
     :u8
@@ -6151,6 +6307,14 @@ enum ExecRunStatus:
     body_too_large
     # The command body could not be read from its stream or did not decode.
     bad_body
+    # The body names an action the server does not hold (deleted, or never
+    # created). Answered only for a target already in the caller's reach, so it
+    # is not an existence oracle for tasks.
+    no_such_action
+    # The target is in the caller's exec_run reach but its grant condition does
+    # not admit this object: an action outside its ActionSet, or a raw argv
+    # under an ActionSet-conditioned exec_run (grant conditions spec C7).
+    outside_condition
 
 format ExecRunResponse:
     status :ExecRunStatus
@@ -6233,7 +6397,15 @@ format ExecRunInfo:
     last_activity_unix_ms :u64 # 0 = no payload byte has ever crossed
     taps                  :u16 # taps open on this exec RIGHT NOW
     pty                   :u1  # runs under a PTY: stdout carries everything, stderr stays 0
-    reserved              :u7
+    action_present        :u1  # started from a server-defined action
+    reserved              :u6
+    # Which action, and which revision of it, this exec runs: an invocation
+    # does not pin a revision, so the row records the one that ran (C17).
+    if action_present == 1:
+        action_id       :ActionID
+        action_revision :u32
+        action_name_len :u8
+        action_name     :[action_name_len]u8
 
 format ExecRunListRequest:
     task_filter :TaskID  # all-zero = every exec the caller may see

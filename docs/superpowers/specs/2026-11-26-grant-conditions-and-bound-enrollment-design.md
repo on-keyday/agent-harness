@@ -250,8 +250,8 @@ format ActionParam:
     name     :[name_len]u8             # [a-z][a-z0-9_]{0,31}, unique in the definition
     type     :ActionParamType
     match type:
-        ActionParamType.choice => choices_len :u8                    # 1..32
-                                  choices :[choices_len]ActionLiteral
+        ActionParamType.choice => choices_len :u8                    # 1..32, each ≤ 255 bytes
+                                  choices :[choices_len]ActionLiteral # (ActionValue.len is u8; added while planning)
         ActionParamType.token  => ..
 
 enum ActionElementKind:
@@ -403,7 +403,8 @@ func ParseTemplate(words []string, params []protocol.ActionParam) ([]protocol.Ac
   `AnyOf: ActionAdmin | ExecRun`. `server/scope_completeness_test.go`: all
   three `noTarget`.
 - `server/exec_run.go` `openExecRun`: when `action_present`, look the action up
-  (missing → `not_found`), `actiondef.Resolve`, gate with
+  (missing → `no_such_action`; `not_found` reads as "no such task" to every
+  client — changed while planning), `actiondef.Resolve`, gate with
   `authorizeObject(cid, exec_run, task, action id)`, force the C17 flags, and
   continue with the resolved argv; record id, revision and name on the
   `execRun`. A raw argv against an `ActionSet`-conditioned `exec_run` fails the
@@ -454,7 +455,10 @@ while implementing),
 shown and an unenroll's printed restore carries it — `bound` on `RunnerKeyRow`,
 `RunnerUnenrollBody` and `RunnerInfo`, with `out_of_reach`, `binding_differs`
 and `bad_binding` on `RunnerKeyStatus`,
-`ExecRunBody`'s action variant, the action verbs. The
+`ExecRunBody`'s action variant, the action verbs, and — added while planning —
+`no_such_action` and `outside_condition` on `ExecRunStatus` (an action the
+server does not hold; an object outside the grant condition on a target in
+reach — neither is `not_found`, which names the task). The
 WAL gains condition bodies; the key store gains `bound_tasks`; the action store
 is new. Run `scripts/wire-skew-check.sh`. `RunnerHello` and every
 runner-decoded format are unchanged (C8), so a runner does not need a restart.

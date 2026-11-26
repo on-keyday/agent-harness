@@ -401,6 +401,7 @@ func TestExecRunInfoMapsEveryField(t *testing.T) {
 		clientCID:  objproto.MustParseConnectionID("ws:127.0.0.1:1-1"),
 		clientKind: protocol.ClientKind_Tui,
 		pty:        true,
+		action:     &execAction{id: [16]byte{1}, revision: 2, name: "deploy"},
 	}
 	e.startedAt = time.Now()
 	// Counters are atomics a literal cannot fill: drive them through the

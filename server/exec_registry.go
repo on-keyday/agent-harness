@@ -37,6 +37,10 @@ type execRun struct {
 	// pty: the exec runs under a terminal (ExecRunRequest.pty). Fixed at open;
 	// the listing reports it so a row whose stderr stays 0 says why.
 	pty bool
+	// action is the server-defined action this exec runs, nil for a raw argv.
+	// Fixed at open; the listing reports it, and kill's object gate reads its
+	// id (grant conditions spec C7, C17).
+	action *execAction
 
 	// Per-channel payload counters and last activity, written by the relay
 	// (exec_splice.go) and read by the listing and the stats sweep.
@@ -194,4 +198,12 @@ type publishedExecCounters struct {
 	stdin, stdout, stderr uint64
 	taps                  uint16
 	valid                 bool
+}
+
+// execAction is which action, and which revision of it, an exec runs: an
+// invocation does not pin a revision, so the exec records the one resolved.
+type execAction struct {
+	id       [16]byte
+	revision uint32
+	name     string
 }

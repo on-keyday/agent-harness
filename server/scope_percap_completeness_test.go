@@ -98,6 +98,10 @@ var capTargetClasses = map[protocol.Capability]capTargetClass{
 	// through this bit's scope, among the caller's own descendants
 	// (credential-tasks D18).
 	protocol.Capability_CredentialIssue: {kind: capResolvedVia, via: "requiredCentral(protocol.TaskControlKind_CredentialRekey)"},
+	protocol.Capability_ActionAdmin: {
+		kind:   capNoTargetResolution,
+		reason: "an action is server configuration, not a task; an edit's per-holder gate (C11) uses the editor's resume and exec_run scopes, not this bit's",
+	},
 	protocol.Capability_Notify: {
 		kind:   capNoTargetResolution,
 		reason: "a notification names no task; its origin is stamped from the sender",
