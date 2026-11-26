@@ -88,6 +88,12 @@ type ExecRunOpts struct {
 	// ends the exec — RemoteShell's detach key half-closes the stream and the
 	// child is hung up. For `exec -t`.
 	Terminal bool
+
+	// Action runs a server-defined action instead of argv, which must then
+	// be empty (grant conditions spec C8). The server resolves it, and runs it
+	// with no shell, PTY or stdin whatever else is set here (C17), so those
+	// options are refused beside it. Build it with ActionInvocationFor.
+	Action *protocol.ActionInvocation
 }
 
 // ExecRun runs argv in the task's worktree as its own process and blocks until
@@ -102,7 +108,14 @@ func (c *Client) ExecRun(ctx context.Context, taskIDHex string, argv []string, o
 	if err != nil {
 		return ExecRunResult{}, fmt.Errorf("exec: parse task id: %w", err)
 	}
-	if len(argv) == 0 {
+	if opts.Action != nil {
+		if len(argv) != 0 {
+			return ExecRunResult{}, errors.New("exec: an action is the whole command; give it or an argv, not both")
+		}
+		if opts.ShellLine || opts.SshdParent || opts.Pty || opts.Terminal || opts.Stdin != nil {
+			return ExecRunResult{}, errors.New("exec: an action runs with no shell, terminal or stdin (the server forces it)")
+		}
+	} else if len(argv) == 0 {
 		return ExecRunResult{}, errors.New("exec: empty command")
 	}
 	if opts.ShellLine && len(argv) != 1 {
@@ -130,8 +143,7 @@ func (c *Client) ExecRun(ctx context.Context, taskIDHex string, argv []string, o
 	if err := protocol.ValidateExecTerm(opts.Term); err != nil {
 		return ExecRunResult{}, fmt.Errorf("exec: %w", err)
 	}
-	execBody := protocol.ExecRunBody{Argv: buildExecArgv(argv)}
-	execBody.SetTerm([]byte(opts.Term))
+	execBody := execRunBody(argv, opts)
 	bodyBytes, err := execBody.EncodeCopy(nil)
 	if err != nil {
 		return ExecRunResult{}, fmt.Errorf("exec: encode command: %w", err)
@@ -446,9 +458,25 @@ func execRunStatusError(taskID string, st protocol.ExecRunStatus) error {
 		return errors.New("exec: command too large (the server reads at most 2 MiB)")
 	case protocol.ExecRunStatus_BadBody:
 		return errors.New("exec: the server could not read the command")
+	case protocol.ExecRunStatus_NoSuchAction:
+		return errors.New("exec: no such action (deleted, or never defined; `action ls` lists them)")
+	case protocol.ExecRunStatus_OutsideCondition:
+		return fmt.Errorf("exec: task %q is in your exec_run reach, but your grant condition does not admit this; an ActionSet grant runs only the actions it names (`exec <task> --action NAME`)", taskID)
 	default:
 		return fmt.Errorf("exec: %s", st.String())
 	}
+}
+
+// execRunBody is the command body ExecRun sends: the argv and TERM, or the
+// action invocation in place of an argv.
+func execRunBody(argv []string, opts ExecRunOpts) protocol.ExecRunBody {
+	b := protocol.ExecRunBody{Argv: buildExecArgv(argv)}
+	b.SetTerm([]byte(opts.Term))
+	if opts.Action != nil {
+		b.SetActionPresent(true)
+		b.SetAction(*opts.Action)
+	}
+	return b
 }
 
 // ExecArgvString renders a command line for display. Arguments containing
@@ -503,7 +531,7 @@ func ExecRunInfoLines(es []protocol.ExecRunInfo) []string {
 			hex.EncodeToString(e.TaskId.Id[:])[:12],
 			age,
 			ExecRunOrigin(e),
-			ExecRunArgvString(e.Argv)))
+			strings.TrimSpace(ExecRunArgvString(e.Argv)+"  "+ExecRunActionLabel(e))))
 		out = append(out, "       "+ExecRunTrafficLine(e))
 	}
 	return out
@@ -556,6 +584,10 @@ func ExecRunInfoJSONLine(e *protocol.ExecRunInfo) string {
 		LastActivityUnixMs uint64   `json:"last_activity_unix_ms"`
 		Taps               uint16   `json:"taps"`
 		Pty                bool     `json:"pty"`
+		// "" / 0 / "" for a raw argv: the fields are always present.
+		ActionID       string `json:"action_id"`
+		ActionRevision uint32 `json:"action_revision"`
+		ActionName     string `json:"action_name"`
 	}{
 		ExecID:             e.ExecId,
 		TaskID:             hex.EncodeToString(e.TaskId.Id[:]),
@@ -569,6 +601,9 @@ func ExecRunInfoJSONLine(e *protocol.ExecRunInfo) string {
 		LastActivityUnixMs: e.LastActivityUnixMs,
 		Taps:               e.Taps,
 		Pty:                e.Pty(),
+	}
+	if e.ActionPresent() && e.ActionId() != nil && e.ActionRevision() != nil && e.ActionName() != nil {
+		row.ActionID, row.ActionRevision, row.ActionName = ActionIDHex(*e.ActionId()), *e.ActionRevision(), string(*e.ActionName())
 	}
 	b, err := json.Marshal(row)
 	if err != nil {

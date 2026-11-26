@@ -570,6 +570,123 @@
       "destructiveHint": true,
       "readOnlyHint": false
     },
+    "description": "define a named command the server keeps; a grant can then name it with",
+    "inputSchema": {
+      "properties": {
+        "description": {
+          "default": "",
+          "type": "string"
+        },
+        "name": {
+          "default": "",
+          "type": "string"
+        },
+        "param": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "template": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "template"
+      ],
+      "type": "object"
+    },
+    "name": "action_new"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "replace an action's definition: the params and the command are given whole, as on new;",
+    "inputSchema": {
+      "properties": {
+        "action": {
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "type": "string"
+        },
+        "name": {
+          "default": "",
+          "type": "string"
+        },
+        "param": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "revision": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "template": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "action",
+        "template"
+      ],
+      "type": "object"
+    },
+    "name": "action_edit"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
+    "description": "delete an action, by name or id; a grant naming it then runs nothing",
+    "inputSchema": {
+      "properties": {
+        "action": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    },
+    "name": "action_rm"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "description": "list the server's actions: full id (the form --grant-condition takes), name, revision,",
+    "inputSchema": {
+      "properties": {
+        "json": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "name": "action_ls"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
     "description": "enroll a runner's public key: a runner signing with it may register",
     "inputSchema": {
       "properties": {

@@ -110,6 +110,12 @@ func TestToTaskInfoMapsEveryField(t *testing.T) {
 			}, {
 				Caps: protocol.Capability_ForwardLocal, Base: protocol.ScopeBase_Global,
 				Cond: &authority.Condition{Kind: protocol.ConditionKind_PortRange, Spans: []authority.PortSpan{{Lo: 22, Hi: 22}}},
+			}, {
+				// An ActionSet-conditioned exec_run over the base's id, which
+				// file_write also reaches: action_overlap is non-zero.
+				Caps: protocol.Capability_ExecRun, Base: protocol.ScopeBase_None, ExcludeSelf: true,
+				IDs:  []string{"00112233445566778899aabbccddeeff"},
+				Cond: &authority.Condition{Kind: protocol.ConditionKind_ActionSet, Actions: [][16]byte{{1}}},
 			}},
 		},
 		DelegateCaps:    protocol.Capability_FileRead,
@@ -152,7 +158,7 @@ func TestToTaskInfoMapsEveryField(t *testing.T) {
 		LastUsedAt: now.Add(-time.Minute),
 		Name:       "nightly",
 	}
-	info := toTaskInfo(e)
+	info := toTaskInfo(e, nil)
 	assertNoZeroFields(t, info, mergeSkips(map[string]string{
 		// Live-session telemetry: not part of the entry→wire copy. The list
 		// handler fills these from the session registry after toTaskInfo.
@@ -206,11 +212,12 @@ func TestToTaskInfoMapsEveryField(t *testing.T) {
 	}
 	// The conditioned marker is a bit inside an override, out of the sweep's
 	// reach; the body travels beside it (grant conditions C6).
-	if len(info.Overrides) != 2 || info.Overrides[0].Conditioned() || !info.Overrides[1].Conditioned() {
+	if len(info.Overrides) != 3 || info.Overrides[0].Conditioned() || !info.Overrides[1].Conditioned() || !info.Overrides[2].Conditioned() {
 		t.Errorf("TaskInfo override markers wrong: %+v", info.Overrides)
 	}
-	if len(info.GrantConditions) != 1 || info.GrantConditions[0].Caps != protocol.Capability_ForwardLocal {
-		t.Errorf("TaskInfo.GrantConditions = %+v, want the forward_local body", info.GrantConditions)
+	if len(info.GrantConditions) != 2 || info.GrantConditions[0].Caps != protocol.Capability_ForwardLocal ||
+		info.GrantConditions[1].Caps != protocol.Capability_ExecRun {
+		t.Errorf("TaskInfo.GrantConditions = %+v, want the forward_local and exec_run bodies", info.GrantConditions)
 	}
 }
 
@@ -342,7 +349,7 @@ func TestWhoamiResponseMapsEveryField(t *testing.T) {
 	h, _, c, _, _ := scopeFixture(t)
 	// A grandchild: non-zero principal AND non-zero creator.
 	_, pub := newCredentialKey(t)
-	child, err := h.Tasks.CreateCredential(hexToTaskID(t, c), protocol.ClientKind_Agent, authority.Grant{Caps: protocol.Capability_Spawn, Scope: authority.Scope{
+	child, err := h.Tasks.CreateCredential(hexToTaskID(t, c), protocol.ClientKind_Agent, authority.Grant{Caps: protocol.Capability_Spawn | protocol.Capability_ExecRun | protocol.Capability_FileWrite, Scope: authority.Scope{
 		Base: protocol.ScopeBase_None,
 
 		VisBase: protocol.ScopeBase_Global, VisBasePresent: true, ExcludeSelf: true,
@@ -350,6 +357,13 @@ func TestWhoamiResponseMapsEveryField(t *testing.T) {
 		Overrides: []authority.ScopeOverride{{Caps: protocol.Capability_Spawn, Base: protocol.ScopeBase_None}, {
 			Caps: protocol.Capability_ForwardLocal, Base: protocol.ScopeBase_Global,
 			Cond: &authority.Condition{Kind: protocol.ConditionKind_PortRange, Spans: []authority.PortSpan{{Lo: 22, Hi: 22}}},
+		}, {
+			// action_overlap: file_write and an ActionSet-conditioned exec_run
+			// both reach the principal itself.
+			Caps: protocol.Capability_ExecRun, Base: protocol.ScopeBase_Subtree,
+			Cond: &authority.Condition{Kind: protocol.ConditionKind_ActionSet, Actions: [][16]byte{{1}}},
+		}, {
+			Caps: protocol.Capability_FileWrite, Base: protocol.ScopeBase_Subtree,
 		}},
 	}, DelegateCaps: protocol.Capability_FileRead, DelegateScope: authority.Scope{Base: protocol.ScopeBase_None},
 		SpawnDepth: authority.LimitOf(2), MaxDescendants: authority.LimitOf(5)},
@@ -385,8 +399,11 @@ func TestWhoamiResponseMapsEveryField(t *testing.T) {
 	assertNoZeroFields(t, *w, map[string]string{})
 	// Marker only: whoami is an inline datagram, so the body never rides it
 	// (grant conditions C6).
-	if len(w.Overrides) != 2 || !w.Overrides[1].Conditioned() {
-		t.Errorf("whoami override markers = %+v, want the forward_local override marked", w.Overrides)
+	if len(w.Overrides) != 4 || !w.Overrides[1].Conditioned() || !w.Overrides[2].Conditioned() || w.Overrides[3].Conditioned() {
+		t.Errorf("whoami override markers = %+v, want forward_local and exec_run marked", w.Overrides)
+	}
+	if w.ActionOverlap != protocol.Capability_FileWrite {
+		t.Errorf("whoami action_overlap = %s, want file_write", w.ActionOverlap)
 	}
 }
 

@@ -56,7 +56,7 @@ func runExecAction(ctx context.Context, cid objproto.ConnectionID, run verb.Exec
 	// invocation that piped the terminal in would leave the child waiting on a
 	// tty nobody is typing into, which looks exactly like a hung command.
 	var stdin io.Reader
-	if !isTTY(os.Stdin) {
+	if !isTTY(os.Stdin) && run.Action == "" {
 		stdin = os.Stdin
 	}
 	opts := cli.ExecRunOpts{
@@ -77,6 +77,18 @@ func runExecAction(ctx context.Context, cid objproto.ConnectionID, run verb.Exec
 			Terminal:   true,
 			Term:       os.Getenv("TERM"),
 		}
+	}
+	// --action: the server-defined command, resolved by name or id and its
+	// values checked here with the server's rule, so a refused value never
+	// leaves this process. It runs with no stdin (C17).
+	if run.Action != "" {
+		inv, err := c.ActionInvocationFor(ectx, run.Action, run.Values)
+		if err != nil {
+			stopInterrupts()
+			c.Close()
+			return fmt.Errorf("exec: %w", err)
+		}
+		opts.Action = &inv
 	}
 	res, runErr := c.ExecRun(ectx, taskID, argv, opts)
 

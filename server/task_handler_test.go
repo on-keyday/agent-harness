@@ -1211,7 +1211,7 @@ func TestToTaskInfoCapabilities(t *testing.T) {
 		Capabilities: want,
 		CreatedAt:    time.Now(),
 	}
-	info := toTaskInfo(entry)
+	info := toTaskInfo(entry, nil)
 	if info.Capabilities != want {
 		t.Fatalf("toTaskInfo Capabilities = %#x, want %#x", info.Capabilities, want)
 	}

@@ -1171,6 +1171,9 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			PrincipalKind:       h.lookupClientKind(cid),
 			CredentialExpiresAt: credExpires,
 		}
+		if pid.Id != ([16]byte{}) {
+			w.ActionOverlap = authority.ActionOverlap(hex.EncodeToString(pid.Id[:]), caps, scope, h.childIndex())
+		}
 		// Which commit THIS server is running. Ungated with the rest of the
 		// answer: a build id is not authority, and the caller who most needs it
 		// is whoever is diagnosing a version skew — including a confined agent
@@ -2465,8 +2468,9 @@ func (h *TaskHandler) handleList(conn ConnHandle, requestID uint32, connID objpr
 	if h.Sched != nil && h.Sched.Store != nil {
 		scheduleOf = h.Sched.Store.BoundIDs()
 	}
+	children := h.childIndex()
 	for i, t := range filteredTasks {
-		taskInfos[i] = toTaskInfo(t)
+		taskInfos[i] = toTaskInfo(t, children)
 		if sid, ok := scheduleOf[t.ID]; ok {
 			taskInfos[i].SetSchedulePresent(true)
 			taskInfos[i].SetScheduleId(scheduleIDFromHex(sid))
@@ -2701,7 +2705,10 @@ func toRunnerInfo(r RunnerEntry) protocol.RunnerInfo {
 // toTaskInfo converts a TaskEntry value snapshot to the wire-format TaskInfo.
 // NOTE: TaskInfo.AssignedTo is filled with an IPv4 placeholder for the same reason
 // as RunnerInfo.Id — the real round-trip is deferred (see comment in toRunnerInfo).
-func toTaskInfo(t TaskEntry) protocol.TaskInfo {
+//
+// children is the live creator index: action_overlap (grant conditions spec,
+// § Surfaces) compares target sets, which subtree bases resolve through it.
+func toTaskInfo(t TaskEntry, children map[string][]string) protocol.TaskInfo {
 	var tid protocol.TaskID
 	raw, _ := hex.DecodeString(t.ID)
 	copy(tid.Id[:], raw)
@@ -2731,6 +2738,7 @@ func toTaskInfo(t TaskEntry) protocol.TaskInfo {
 	// The bodies of the conditioned overrides (grant conditions C6): TaskInfo
 	// travels on the list stream, never in a datagram.
 	info.SetGrantConditions(t.Scope.ConditionsToWire())
+	info.ActionOverlap = authority.ActionOverlap(t.ID, t.Capabilities, t.Scope, children)
 	info.SetRepoPath([]byte(t.RepoPath))
 	info.SetWorktreeDir([]byte(t.WorktreeDir))
 	info.SetPrompt([]byte(t.Prompt))

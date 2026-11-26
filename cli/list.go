@@ -454,6 +454,11 @@ func taskLine(t protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo) st
 	if cl := ConditionsLabel(t.Overrides, t.GrantConditions); cl != "" {
 		caps += "  conditions=" + cl
 	}
+	// An action is only as narrow as the files it reads: warn when this grant
+	// can also change them (grant conditions spec, § Surfaces).
+	if w := ActionOverlapLabel(t.ActionOverlap); w != "" {
+		caps += "  " + w
+	}
 	// The delegation bound: what this task may write onto the tasks it
 	// grants to. Always printed, the default (none / subtree) included — a
 	// supervisor that may hand down nothing is exactly what an operator scans
@@ -690,6 +695,8 @@ type taskJSON struct {
 	// Per bit like scope_by_cap, so a forward_local condition cannot read as
 	// covering forward_remote. Emitted always, empty included.
 	ConditionsByCap map[string]string `json:"conditions_by_cap"`
+	// ActionOverlap is the server's action_overlap as bit names, [] when none.
+	ActionOverlap []string `json:"action_overlap"`
 	// The delegation bound, in the forms caps and scope use.
 	DelegateCaps  string `json:"delegate_caps"`
 	DelegateScope string `json:"delegate_scope"`
@@ -883,6 +890,7 @@ func newTaskJSON(t *protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo
 		Scope:                ScopeLabel(t.Scope),
 		ScopeByCap:           ResolvedScopeByCap(t.Capabilities, t.Scope, t.Overrides),
 		ConditionsByCap:      ConditionsByCap(t.Capabilities, t.Overrides, t.GrantConditions),
+		ActionOverlap:        ActionOverlapNames(t.ActionOverlap),
 		DelegateCaps:         CapsLabel(t.DelegateCaps),
 		DelegateScope:        ScopeLabel(t.DelegateScope),
 		SpawnDepth:           LimitJSON(t.SpawnDepth),

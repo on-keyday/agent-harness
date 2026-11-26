@@ -526,7 +526,7 @@ var Verbs = []VerbSpec{
 		// so because the operator asked for shell interpretation -- which is
 		// why this verb keeps a Build.
 		Trailing: &Trailing{
-			Name: "command", List: true, AfterSeparator: true, Required: true, FieldArgs: "Argv", JoinWhen: "shell",
+			Name: "command", List: true, AfterSeparator: true, Required: true, UnlessFlag: "action", FieldArgs: "Argv", JoinWhen: "shell",
 			Reason: "everything after `--` is the argv verbatim; re-scanning it for flags is how a command whose own first word is --shell gets eaten",
 		},
 		Flags: []Flag{
@@ -538,6 +538,17 @@ var Verbs = []VerbSpec{
 				CmdlineSurfaces: CLI,
 				SurfaceReason:   "the TUI and WebUI run an exec with no stdin path, so a terminal has nothing to read from",
 				Help:            "run it under a terminal: this terminal goes raw and becomes the child's (Ctrl+] ends the exec)"},
+			// A server-defined action instead of a command (grant conditions
+			// spec C8): what an ActionSet-conditioned exec_run may run.
+			{Name: "action", Type: FlagString, Default: "", Field: "Action",
+				CmdlineSurfaces: CLI,
+				SurfaceReason:   "the TUI and WebUI exec rows gain --action with their own dispatch (next commit)",
+				Help:            "run this server-defined action (name or id, from `action ls`) instead of a command after --"},
+			{Name: "value", Type: FlagString, Custom: repeatedValue, Field: "Values",
+				FieldType: "map[string]string", Convert: "ParseActionValues",
+				CmdlineSurfaces: CLI,
+				SurfaceReason:   "the TUI and WebUI exec rows gain --action with their own dispatch (next commit)",
+				Help:            "a value for one of the action's params, NAME=VALUE, repeatable (each value is one whole argument)"},
 		},
 		// What it renames IS the shell, so it cannot rename an argv.
 		Requires: []Requirement{{Flags: []string{"sshd-parent"}, Needs: "shell"}},
@@ -548,9 +559,24 @@ var Verbs = []VerbSpec{
 			if sub := b.Args[0]; sub == "ls" || sub == "kill" || sub == "tap" {
 				return fmt.Errorf("exec: %q is a sub-verb; --shell / --sshd-parent / -t do not apply to it", sub)
 			}
+			// An action is the whole command, and runs with no shell, terminal
+			// or stdin whatever is asked (C17): naming those beside it is a
+			// mistake, not a request the server would honour.
+			if b.Str("action") != "" {
+				if len(b.TrailArgs) > 0 {
+					return fmt.Errorf("exec: --action is the whole command; drop the words after --")
+				}
+				for _, f := range []string{"shell", "sshd-parent", "t"} {
+					if b.Set[f] {
+						return fmt.Errorf("exec: --%s does not apply to --action (an action runs with no shell, terminal or stdin)", f)
+					}
+				}
+			} else if b.Set["value"] {
+				return fmt.Errorf("exec: --value needs --action")
+			}
 			return nil
 		},
-		Examples: []string{"exec aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -- ls -la"},
+		Examples: []string{"exec aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -- ls -la", "exec --action deploy --value env=prod aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 	},
 	{
 		Path: []string{"exec", "ls"},
@@ -883,6 +909,84 @@ var Verbs = []VerbSpec{
 				Help: "relay through this registered runner, by its 32-hex identity (the id= column of `harness-cli ls`)"},
 		},
 		Examples: []string{"server dial-runner ws:127.0.0.1:9000-abcd"},
+	},
+
+	// --- server-defined actions (2026-11-26-grant-conditions-and-bound-enrollment-design.md, C8, C13) ---
+	{
+		Path: []string{"action", "new"},
+		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_ActionPut},
+		NoModalSurface: "an administrative verb run a handful of times, like runner enroll: the command line is the way in",
+		Notes: []string{
+			"define a named command the server keeps; a grant can then name it with",
+			"--grant-condition exec_run=actions:<id>, and its holder runs only that command (exec --action)",
+			"the program (the first word) is always literal; a param value is always one whole argument",
+			"needs action_admin",
+		},
+		Action:          "ActionPutAction",
+		Const:           map[string]string{"Sub": "new"},
+		CmdlineSurfaces: CLI,
+		Flags:           actionPutFlags(true, ""),
+		Trailing: &Trailing{Name: "template", List: true, AfterSeparator: true, Required: true, FieldArgs: "Template",
+			Reason: actionTemplateHelp},
+		Examples: []string{
+			"action new --name deploy --param env=choice:staging,prod --param ref=token -- ./deploy.sh --env {env} --ref {ref}",
+		},
+	},
+	{
+		Path: []string{"action", "edit"},
+		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_ActionList, protocol.TaskControlKind_ActionPut},
+		NoModalSurface: "an administrative verb, like runner enroll: the command line is the way in",
+		Notes: []string{
+			"replace an action's definition: the params and the command are given whole, as on new;",
+			"--name and --description keep the current ones when omitted",
+			"--revision is the one you read (`action ls`): an edit of an older one is refused",
+			"every task and schedule whose grant names the action runs the new command, so the edit",
+			"is refused unless you could re-grant each of them (as caps set would need), and when",
+			"your own grant names it; the operator may always edit",
+			"needs action_admin",
+		},
+		Action:          "ActionPutAction",
+		Const:           map[string]string{"Sub": "edit"},
+		CmdlineSurfaces: CLI,
+		Args:            []Arg{{Name: "action", Type: ArgString, Field: "Ref"}},
+		Flags: append(actionPutFlags(false, " (default: keep the current name)"),
+			Flag{Name: "revision", Type: FlagUint, Default: uint(0), Field: "Revision", FieldType: "uint32", Required: true,
+				Help: "the revision being edited, from `action ls`"}),
+		Trailing: &Trailing{Name: "template", List: true, AfterSeparator: true, Required: true, FieldArgs: "Template",
+			Reason: actionTemplateHelp},
+		Examples: []string{"action edit --revision 1 --param env=choice:staging,prod deploy -- ./deploy.sh --env {env}"},
+	},
+	{
+		Path: []string{"action", "rm"},
+		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_ActionList, protocol.TaskControlKind_ActionRemove},
+		NoModalSurface: "an administrative verb, like runner unenroll: the command line is the way in",
+		Notes: []string{
+			"delete an action, by name or id; a grant naming it then runs nothing",
+			"needs action_admin",
+		},
+		Action:          "ActionRemoveAction",
+		CmdlineSurfaces: CLI,
+		Args:            []Arg{{Name: "action", Type: ArgString, Field: "Ref"}},
+		Examples:        []string{"action rm deploy"},
+	},
+	{
+		Path: []string{"action", "ls"},
+		MCP:  &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_ActionList},
+		NoModalSurface: "an administrative listing, like runner keys: the command line is the way in",
+		Notes: []string{
+			"list the server's actions: full id (the form --grant-condition takes), name, revision,",
+			"the command each runs and its params; then the number of actions",
+			"needs action_admin or exec_run",
+		},
+		Action:          "ActionListAction",
+		CmdlineSurfaces: CLI,
+		Flags: []Flag{
+			{Name: "json", Type: FlagBool, Default: false, Field: "JSON",
+				CmdlineSurfaces: CLI,
+				SurfaceReason:   "the TUI and WebUI answer into a results pane, not a pipe, so there is nothing for JSON to be read by",
+				Help:            "one JSON object per action"},
+		},
+		Examples: []string{"action ls", "action ls --json"},
 	},
 
 	// --- runner keys (2026-10-27-runner-enrollment-design.md) ---

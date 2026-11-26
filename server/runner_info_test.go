@@ -30,7 +30,7 @@ func TestToRunnerInfoEchoesAgentProfiles(t *testing.T) {
 // RunnerInfo bug above; caught by driving a codex resume in the live TUI.
 func TestToTaskInfoEchoesAgentProfile(t *testing.T) {
 	e := TaskEntry{ID: "00112233445566778899aabbccddeeff", AgentProfile: "codex"}
-	info := toTaskInfo(e)
+	info := toTaskInfo(e, nil)
 	if string(info.AgentProfile) != "codex" {
 		t.Fatalf("TaskInfo.AgentProfile = %q, want codex", info.AgentProfile)
 	}

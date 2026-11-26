@@ -1415,6 +1415,13 @@ format TaskInfo:
     # in a datagram. A marked override with no body here reaches nothing (C7).
     grant_conditions_len :u8
     grant_conditions     :[grant_conditions_len]GrantCondition
+    # Appended (grant conditions spec, § Surfaces): the bits among file_write,
+    # exec_cowrite and exec_control this grant holds over a target its
+    # ActionSet-conditioned exec_run also reaches. An action is only as narrow
+    # as the files it reads, so those bits can change what it runs. Computed by
+    # the server, which holds the whole task tree (authority.ActionOverlap);
+    # 0 when exec_run is not ActionSet-conditioned.
+    action_overlap :Capability
 
 format ListResult:
     # Server-initiated send-stream id; client reads ListResultBody bytes
@@ -2881,6 +2888,9 @@ format WhoAmIResponse:
     # not a credential task).
     principal_kind    :ClientKind
     credential_expires_at :u64
+    # Appended: TaskInfo.action_overlap for the principal's own grant. Inline,
+    # a fixed 8 bytes.
+    action_overlap :Capability
 # await_idle: one-shot idle-edge watch on an interactive session's PTY output.
 # Fires when now - last_output >= threshold (byte-level quiescence; measured
 # claude busy-side max gap is ~0.5s, so the 2500ms default has wide margin),

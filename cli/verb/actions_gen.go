@@ -18,6 +18,38 @@ import (
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
+// ActionListAction is built by: action ls.
+type ActionListAction struct {
+	ActionMarker
+	// one JSON object per action
+	JSON bool
+}
+
+// ActionPutAction is built by: action edit, action new.
+type ActionPutAction struct {
+	ActionMarker
+	// the action's name, [a-z0-9][a-z0-9._-]{0,63}, unique
+	Name string
+	// whether --description was typed, which its zero value cannot say
+	DescriptionSet bool
+	// free text shown by `action ls` (at most 1024 bytes; on edit, omitted keeps the current one)
+	Description string
+	// a parameter, repeatable: NAME=token (1-128 bytes of [0-9A-Za-z._-], not starting with -) or NAME=cho…
+	Params []protocol.ActionParam
+	// the command after `--`: each word is one argv element; a word that is exactly {NAME} is replaced by …
+	Template []string
+	Sub      string
+	// the revision being edited, from `action ls`
+	Revision uint32
+	Ref      string
+}
+
+// ActionRemoveAction is built by: action rm.
+type ActionRemoveAction struct {
+	ActionMarker
+	Ref string
+}
+
 // AgentAction is built by: agent archives, agent contacts, agent inbox, agent purge, agent read, agent retained, agent retract, agent subscribe, agent subscriptions, agent thread, agent topics, agent unsubscribe, agent wait.
 type AgentAction struct {
 	ActionMarker
@@ -330,7 +362,11 @@ type ExecRunAction struct {
 	// run under the task's sshd parent process
 	SshdParent bool
 	// run it under a terminal: this terminal goes raw and becomes the child's (Ctrl+] ends the exec)
-	Tty    bool
+	Tty bool
+	// run this server-defined action (name or id, from `action ls`) instead of a command after --
+	Action string
+	// a value for one of the action's params, NAME=VALUE, repeatable (each value is one whole argument)
+	Values map[string]string
 	TaskID string
 	// everything after `--` is the argv verbatim; re-scanning it for flags is how a command whose own firs…
 	Argv []string
@@ -1793,6 +1829,14 @@ func init() {
 			a.Shell = b.Bool("shell")
 			a.SshdParent = b.Bool("sshd-parent")
 			a.Tty = b.Bool("t")
+			a.Action = b.Str("action")
+			if b.Set["value"] {
+				v, err := ParseActionValues(stringsOf(b.Custom["value"]))
+				if err != nil {
+					return nil, fmt.Errorf("exec: --value: %w", err)
+				}
+				a.Values = v
+			}
 			if len(b.Args) > 0 {
 				a.TaskID = b.Args[0]
 			}
@@ -2118,6 +2162,54 @@ func init() {
 			if len(b.Args) > 0 {
 				a.RunnerCID = b.Args[0]
 			}
+			return a, nil
+		},
+		"action new\x00cli": func(b Bound) (Action, error) {
+			a := ActionPutAction{}
+			a.Sub = "new"
+			a.Name = b.Str("name")
+			a.DescriptionSet = b.Set["description"]
+			a.Description = b.Str("description")
+			if b.Set["param"] {
+				v, err := parseParamList(stringsOf(b.Custom["param"]))
+				if err != nil {
+					return nil, fmt.Errorf("action new: --param: %w", err)
+				}
+				a.Params = v
+			}
+			a.Template = b.TrailArgs
+			return a, nil
+		},
+		"action edit\x00cli": func(b Bound) (Action, error) {
+			a := ActionPutAction{}
+			a.Sub = "edit"
+			a.Name = b.Str("name")
+			a.DescriptionSet = b.Set["description"]
+			a.Description = b.Str("description")
+			if b.Set["param"] {
+				v, err := parseParamList(stringsOf(b.Custom["param"]))
+				if err != nil {
+					return nil, fmt.Errorf("action edit: --param: %w", err)
+				}
+				a.Params = v
+			}
+			a.Revision = uint32(uintOf(b.Flags["revision"]))
+			if len(b.Args) > 0 {
+				a.Ref = b.Args[0]
+			}
+			a.Template = b.TrailArgs
+			return a, nil
+		},
+		"action rm\x00cli": func(b Bound) (Action, error) {
+			a := ActionRemoveAction{}
+			if len(b.Args) > 0 {
+				a.Ref = b.Args[0]
+			}
+			return a, nil
+		},
+		"action ls\x00cli": func(b Bound) (Action, error) {
+			a := ActionListAction{}
+			a.JSON = b.Bool("json")
 			return a, nil
 		},
 		"runner enroll\x00cli": func(b Bound) (Action, error) {
@@ -5912,6 +6004,10 @@ const (
 	CmdForwardKill            = "forward kill"
 	CmdForwardTap             = "forward tap"
 	CmdServerDialRunner       = "server dial-runner"
+	CmdActionNew              = "action new"
+	CmdActionEdit             = "action edit"
+	CmdActionRm               = "action rm"
+	CmdActionLs               = "action ls"
 	CmdRunnerEnroll           = "runner enroll"
 	CmdRunnerKeys             = "runner keys"
 	CmdRunnerUnenroll         = "runner unenroll"
@@ -6618,6 +6714,90 @@ func ParseCmdServerDialRunner(sf Surface, args []string, ctx map[string]string) 
 		return zero, err
 	}
 	a := act.(ServerDialRunnerAction)
+	return a, nil
+}
+
+func ParseCmdActionNew(sf Surface, args []string, ctx map[string]string) (ActionPutAction, error) {
+	var zero ActionPutAction
+	sp, ok := Lookup("action", "new")
+	if !ok {
+		return zero, fmt.Errorf("action new: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(ActionPutAction)
+	return a, nil
+}
+
+func ParseCmdActionEdit(sf Surface, args []string, ctx map[string]string) (ActionPutAction, error) {
+	var zero ActionPutAction
+	sp, ok := Lookup("action", "edit")
+	if !ok {
+		return zero, fmt.Errorf("action edit: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(ActionPutAction)
+	return a, nil
+}
+
+func ParseCmdActionRm(sf Surface, args []string, ctx map[string]string) (ActionRemoveAction, error) {
+	var zero ActionRemoveAction
+	sp, ok := Lookup("action", "rm")
+	if !ok {
+		return zero, fmt.Errorf("action rm: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(ActionRemoveAction)
+	return a, nil
+}
+
+func ParseCmdActionLs(sf Surface, args []string, ctx map[string]string) (ActionListAction, error) {
+	var zero ActionListAction
+	sp, ok := Lookup("action", "ls")
+	if !ok {
+		return zero, fmt.Errorf("action ls: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(ActionListAction)
 	return a, nil
 }
 
@@ -9493,6 +9673,14 @@ type CLIDispatch[R any] interface {
 	ForwardTap(ForwardTapAction) R
 	// server dial-runner
 	ServerDialRunner(ServerDialRunnerAction) R
+	// action new
+	ActionNew(ActionPutAction) R
+	// action edit
+	ActionEdit(ActionPutAction) R
+	// action rm
+	ActionRm(ActionRemoveAction) R
+	// action ls
+	ActionLs(ActionListAction) R
 	// runner enroll
 	RunnerEnroll(RunnerEnrollAction) R
 	// runner keys
@@ -9866,6 +10054,30 @@ func DispatchCLI[R any](h CLIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.ServerDialRunner(a), true, nil
+	case CmdActionNew:
+		a, perr := ParseCmdActionNew(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.ActionNew(a), true, nil
+	case CmdActionEdit:
+		a, perr := ParseCmdActionEdit(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.ActionEdit(a), true, nil
+	case CmdActionRm:
+		a, perr := ParseCmdActionRm(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.ActionRm(a), true, nil
+	case CmdActionLs:
+		a, perr := ParseCmdActionLs(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.ActionLs(a), true, nil
 	case CmdRunnerEnroll:
 		a, perr := ParseCmdRunnerEnroll(CLI, args, ctx)
 		if perr != nil {
@@ -10618,6 +10830,17 @@ func DispatchCLIAction[R any](h CLIDispatch[R], act Action) (r R, handled bool) 
 		return h.ForwardTap(a), true
 	case ServerDialRunnerAction:
 		return h.ServerDialRunner(a), true
+	case ActionPutAction:
+		switch a.Sub {
+		case "new":
+			return h.ActionNew(a), true
+		case "edit":
+			return h.ActionEdit(a), true
+		}
+	case ActionRemoveAction:
+		return h.ActionRm(a), true
+	case ActionListAction:
+		return h.ActionLs(a), true
 	case RunnerEnrollAction:
 		return h.RunnerEnroll(a), true
 	case RunnerKeysAction:
@@ -11034,6 +11257,30 @@ func ParseCLICommand(tokens []string, ctx map[string]string) (act Action, handle
 			return a, true, nil
 		case CmdServerDialRunner:
 			a, perr := ParseCmdServerDialRunner(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdActionNew:
+			a, perr := ParseCmdActionNew(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdActionEdit:
+			a, perr := ParseCmdActionEdit(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdActionRm:
+			a, perr := ParseCmdActionRm(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdActionLs:
+			a, perr := ParseCmdActionLs(CLI, tokens[n:], ctx)
 			if perr != nil {
 				return nil, true, perr
 			}

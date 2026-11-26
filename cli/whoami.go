@@ -143,13 +143,17 @@ func WriteWhoAmIWith(out io.Writer, resp protocol.WhoAmIResponse, conds []protoc
 		if err != nil {
 			return err
 		}
+		overlap, err := json.Marshal(ActionOverlapNames(resp.ActionOverlap))
+		if err != nil {
+			return err
+		}
 		// server_revision is the RAW value, empty string included: item 22's
 		// rule (a machine surface reports the value, a human surface labels
 		// it), so a script can compare it against a sha without parsing the
 		// "unknown …" prose the text form prints.
 		_, err = fmt.Fprintf(out,
-			"{\"operator\":%t,\"principal_task_id\":%q,\"creator_task_id\":%q,\"capabilities\":%q,\"scope\":%q,\"scope_by_cap\":%s,\"conditions_by_cap\":%s,\"delegate_caps\":%q,\"delegate_scope\":%q,\"spawn_depth\":%s,\"max_descendants\":%s,\"descendants\":%d,\"spawn_room\":%s,\"server_revision\":%q,\"server_dirty\":%t,\"principal_kind\":%q,\"credential_expires_at\":%q}\n",
-			operator, taskHex, creatorHex, CapsLabel(resp.Capabilities), ScopeLabel(resp.Scope), byCap, condByCap,
+			"{\"operator\":%t,\"principal_task_id\":%q,\"creator_task_id\":%q,\"capabilities\":%q,\"scope\":%q,\"scope_by_cap\":%s,\"conditions_by_cap\":%s,\"action_overlap\":%s,\"delegate_caps\":%q,\"delegate_scope\":%q,\"spawn_depth\":%s,\"max_descendants\":%s,\"descendants\":%d,\"spawn_room\":%s,\"server_revision\":%q,\"server_dirty\":%t,\"principal_kind\":%q,\"credential_expires_at\":%q}\n",
+			operator, taskHex, creatorHex, CapsLabel(resp.Capabilities), ScopeLabel(resp.Scope), byCap, condByCap, overlap,
 			CapsLabel(resp.DelegateCaps), ScopeLabel(resp.DelegateScope),
 			limitJSONText(resp.SpawnDepth), limitJSONText(resp.MaxDescendants), resp.Descendants, limitJSONText(resp.SpawnRoom),
 			string(resp.ServerRevision), resp.ServerDirty(), whoamiKindWord(resp), whoamiCredentialExpiry(resp))
@@ -166,6 +170,9 @@ func WriteWhoAmIWith(out io.Writer, resp protocol.WhoAmIResponse, conds []protoc
 	}
 	if cl := ConditionsLabel(resp.Overrides, conds); cl != "" {
 		caps += "  conditions=" + cl
+	}
+	if w := ActionOverlapLabel(resp.ActionOverlap); w != "" {
+		caps += "  " + w
 	}
 	// What this caller may hand to the tasks it spawns — the line to read
 	// before promising a worker a bit.
