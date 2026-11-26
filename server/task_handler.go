@@ -783,7 +783,10 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		requestID := req.Header.RequestId
 		go func() {
 			eresp := protocol.ExecRunResponse{Status: protocol.ExecRunStatus_NotFound}
-			if h.inScope(cid, requiredCentral(protocol.TaskControlKind_OpenExecRun), hex.EncodeToString(envCopy.TaskId.Id[:])) {
+			// The target is admitted with exec_run's grant condition left
+			// unapplied: the object (an action, or a raw argv) is only known
+			// once the body is read, and execGate decides it (C7).
+			if h.inScopeIgnoringCondition(cid, requiredCentral(protocol.TaskControlKind_OpenExecRun), hex.EncodeToString(envCopy.TaskId.Id[:])) {
 				eresp = h.handleOpenExecRun(conn, &envCopy)
 			} else {
 				discardPayloadStream(conn, envCopy.PayloadStreamId)

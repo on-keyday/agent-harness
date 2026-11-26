@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 
+	"github.com/on-keyday/agent-harness/actiondef"
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -32,7 +33,77 @@ func (h *TaskHandler) handleOpenExecRun(conn ConnHandle, req *protocol.ExecRunRe
 	if st != protocol.ExecRunStatus_Ok {
 		return errResp(st)
 	}
-	return h.openExecRun(conn, req, body)
+	argv, act, st := h.execGate(conn.ConnectionID(), hex.EncodeToString(req.TaskId.Id[:]), body)
+	if st != protocol.ExecRunStatus_Ok {
+		return errResp(st)
+	}
+	if act != nil {
+		req, body = actionRun(req, body, argv)
+	}
+	return h.openExecRun(conn, req, body, act)
+}
+
+// execGate is exec_run's object gate, decided once the body is in hand
+// (grant conditions spec C7). The dispatch admitted the target with the
+// condition left unapplied, so every answer here is about an object on a
+// target already in reach, and none is an existence oracle for tasks.
+//
+//   - An action: it must exist (no_such_action), the caller's exec_run
+//     condition must admit its id (outside_condition), and its values must
+//     fit its params; the argv is resolved here, on the server (C8).
+//   - A raw argv: it passes only through an unconditioned exec_run — inScope
+//     reaches nothing through a conditioned bit, so an ActionSet holder is
+//     refused outside_condition.
+func (h *TaskHandler) execGate(cid objproto.ConnectionID, targetHex string, body *protocol.ExecRunBody) ([]string, *execAction, protocol.ExecRunStatus) {
+	run := requiredCentral(protocol.TaskControlKind_OpenExecRun)
+	if !body.ActionPresent() {
+		if body.Argv.ArgvLen == 0 {
+			return nil, nil, protocol.ExecRunStatus_EmptyArgv
+		}
+		if !h.inScope(cid, run, targetHex) {
+			return nil, nil, protocol.ExecRunStatus_OutsideCondition
+		}
+		return execArgvStrings(body.Argv), nil, protocol.ExecRunStatus_Ok
+	}
+	inv := body.Action()
+	if inv == nil || body.Argv.ArgvLen != 0 {
+		return nil, nil, protocol.ExecRunStatus_BadBody
+	}
+	if h.Actions == nil {
+		return nil, nil, protocol.ExecRunStatus_NoSuchAction
+	}
+	rec, ok := h.Actions.Get(inv.Id.Id)
+	if !ok {
+		return nil, nil, protocol.ExecRunStatus_NoSuchAction
+	}
+	if !h.authorizeObject(cid, run, targetHex, authority.Object{Kind: protocol.ConditionKind_ActionSet, Action: inv.Id.Id}) {
+		return nil, nil, protocol.ExecRunStatus_OutsideCondition
+	}
+	argv, err := actiondef.Resolve(&rec.Definition, inv.Values)
+	if err != nil {
+		slog.Info("exec_run: action values refused", "action", string(rec.Definition.Name), "err", err)
+		return nil, nil, protocol.ExecRunStatus_BadBody
+	}
+	return argv, &execAction{id: inv.Id.Id, revision: rec.Revision, name: string(rec.Definition.Name)}, protocol.ExecRunStatus_Ok
+}
+
+// actionRun is the request and body an action runs as (C12, C17): the
+// resolved argv, no shell, no PTY, no stdin, no sshd parent and no TERM,
+// whatever the client asked for. Copies, so the caller's values are untouched.
+func actionRun(req *protocol.ExecRunRequest, body *protocol.ExecRunBody, argv []string) (*protocol.ExecRunRequest, *protocol.ExecRunBody) {
+	r := *req
+	r.SetShellLine(false)
+	r.SetSshdParent(false)
+	r.SetPty(false)
+	r.SetStdinEnabled(false)
+	b := protocol.ExecRunBody{}
+	for _, a := range argv {
+		var one protocol.ExecArg
+		one.SetArg([]byte(a))
+		b.Argv.Argv = append(b.Argv.Argv, one)
+	}
+	b.Argv.ArgvLen = uint16(len(b.Argv.Argv))
+	return &r, &b
 }
 
 // readExecBody reads and decodes an exec's command body, or says why not.
@@ -66,7 +137,9 @@ func writeRunnerExecBody(st trsf.SendStream, encoded []byte) error {
 }
 
 // openExecRun is handleOpenExecRun once the command body is in hand.
-func (h *TaskHandler) openExecRun(conn ConnHandle, req *protocol.ExecRunRequest, body *protocol.ExecRunBody) protocol.ExecRunResponse {
+// act is the action this exec runs (nil for a raw argv), recorded on the
+// registration for the listing and for kill's object gate.
+func (h *TaskHandler) openExecRun(conn ConnHandle, req *protocol.ExecRunRequest, body *protocol.ExecRunBody, act *execAction) protocol.ExecRunResponse {
 	errResp := func(s protocol.ExecRunStatus) protocol.ExecRunResponse {
 		return protocol.ExecRunResponse{Status: s}
 	}
@@ -122,6 +195,7 @@ func (h *TaskHandler) openExecRun(conn ConnHandle, req *protocol.ExecRunRequest,
 		clientCID:  conn.ConnectionID(),
 		clientKind: h.lookupClientKind(conn.ConnectionID()),
 		pty:        req.Pty(),
+		action:     act,
 	}
 	execID := h.execs().add(e)
 	if execID == 0 {
@@ -425,7 +499,17 @@ func (h *TaskHandler) handleExecRunKill(connID objproto.ConnectionID, req *proto
 	if !ok {
 		return protocol.ExecRunKillResponse{Status: protocol.ExecRunStatus_NotFound}
 	}
-	if !h.authorize(connID, authority.KindNeed(protocol.TaskControlKind_ExecRunKill).Clauses[0].AnyOf, e.taskIDHex) {
+	// Kill's object is what the exec was started with (grant conditions C7):
+	// an ActionSet-conditioned exec_run stops the actions it may run, and an
+	// exec started from a raw argv only through an unconditioned one.
+	want := authority.KindNeed(protocol.TaskControlKind_ExecRunKill).Clauses[0].AnyOf
+	allowed := false
+	if e.action != nil {
+		allowed = h.authorizeObject(connID, want, e.taskIDHex, authority.Object{Kind: protocol.ConditionKind_ActionSet, Action: e.action.id})
+	} else {
+		allowed = h.authorize(connID, want, e.taskIDHex)
+	}
+	if !allowed {
 		return protocol.ExecRunKillResponse{Status: protocol.ExecRunStatus_NotFound}
 	}
 	if _, still := h.removeExec(req.ExecId, protocol.ExecEventKind_Killed, -1); !still {

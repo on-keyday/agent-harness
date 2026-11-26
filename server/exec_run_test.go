@@ -168,7 +168,7 @@ func TestRunnerExecRunRequestCarriesEveryField(t *testing.T) {
 // to run and no reason to open three streams to discover that.
 func TestOpenExecRunRefusesEmptyArgv(t *testing.T) {
 	h := &TaskHandler{}
-	resp := h.openExecRun(nil, &protocol.ExecRunRequest{}, &protocol.ExecRunBody{})
+	resp := h.openExecRun(nil, &protocol.ExecRunRequest{}, &protocol.ExecRunBody{}, nil)
 	if resp.Status != protocol.ExecRunStatus_EmptyArgv {
 		t.Errorf("status = %v, want empty_argv", resp.Status)
 	}
