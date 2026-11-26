@@ -573,6 +573,10 @@
     "description": "enroll a runner's public key: a runner signing with it may register",
     "inputSchema": {
       "properties": {
+        "bind": {
+          "default": "",
+          "type": "string"
+        },
         "label": {
           "default": "",
           "type": "string"

@@ -583,7 +583,7 @@ async function runVerbCommandDispatch(tokens, ctx) {
       const b = parseOrHelp(ctx, tokens, {});
       let r;
       switch (b.path[1]) {
-        case "enroll": r = await ctx.harness.runnerEnroll(b.args[0], b.flags.label || ""); break;
+        case "enroll": r = await ctx.harness.runnerEnroll(b.args[0], b.flags.label || "", b.flags.bind || ""); break;
         case "keys": r = await ctx.harness.runnerKeys(); break;
         case "unenroll": r = await ctx.harness.runnerUnenroll(b.args[0], !!b.flags.force); break;
         case "kick": r = await ctx.harness.runnerKick(b.args[0], !!b.flags.force); break;

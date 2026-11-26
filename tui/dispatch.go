@@ -149,7 +149,7 @@ func (h tuiVerbs) RunnerEnroll(v verb.RunnerEnrollAction) tea.Cmd {
 		h.a.cmdresult.Append(ErrorStyle.Render("runner enroll: not connected to server"))
 		return nil
 	}
-	return DoRunnerEnroll(h.a.client, v.PubKey, v.Label)
+	return DoRunnerEnroll(h.a.client, v.PubKey, v.Label, v.Bind)
 }
 
 func (h tuiVerbs) RunnerKeys(verb.RunnerKeysAction) tea.Cmd {

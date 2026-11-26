@@ -293,6 +293,10 @@ function runnerRowModel(r) {
     // The enrolled key's label or its prefix — the same string `ls` prints
     // as key=, rendered by the bridge (cli.RunnerKeyStr).
     key: r.keyLabel || "-",
+    // The tasks the runner's key binds it to — the string `ls` prints as
+    // binding=, rendered by the bridge (cli.BindingLabel). "unbound" is an
+    // answer, so it is shown, never left out.
+    binding: r.binding || "unbound",
     // How it is connected — in / out / dial:<id> / via:<id>, the string `ls`
     // prints as link=, rendered by the bridge (cli.RunnerLinkStr).
     link: r.link || "-",
@@ -369,7 +373,7 @@ function renderRunnerRows(container, runners, via) {
 
     const meta = document.createElement("div");
     meta.className = "task-row-meta";
-    meta.textContent = `${m.id}…  key=${m.key}  link=${m.link}${m.target ? `  target=${m.target}` : ""}  ${m.cid}`;
+    meta.textContent = `${m.id}…  key=${m.key}  binding=${m.binding}  link=${m.link}${m.target ? `  target=${m.target}` : ""}  ${m.cid}`;
 
     row.append(line1, agents, roots, meta);
     // Nothing for a runner holding no task: its load already reads 0/N.

@@ -20,10 +20,10 @@ func testKey(b byte) ed25519.PublicKey {
 
 func TestFormatRunnerEnroll(t *testing.T) {
 	k := testKey(0xab)
-	if got := FormatRunnerEnroll(protocol.RunnerKeyStatus_Ok, k, "gmk"); got != "enrolled abababababababab label=gmk" {
+	if got := FormatRunnerEnroll(protocol.RunnerKeyStatus_Ok, k, "gmk", nil); got != "enrolled abababababababab label=gmk binding=unbound" {
 		t.Errorf("ok: %q", got)
 	}
-	if got := FormatRunnerEnroll(protocol.RunnerKeyStatus_AlreadyEnrolled, k, ""); got != "already enrolled abababababababab" {
+	if got := FormatRunnerEnroll(protocol.RunnerKeyStatus_AlreadyEnrolled, k, "", nil); got != "already enrolled abababababababab" {
 		t.Errorf("already: %q", got)
 	}
 }
@@ -38,9 +38,9 @@ func TestFormatRunnerKeysNeverElidesZero(t *testing.T) {
 	}
 	got := FormatRunnerKeys(rows)
 	for _, want := range []string{
-		"0101010101010101 label=gmk enrolled=2026-10-27T09:00:00Z by=operator runners=1",
+		"0101010101010101 label=gmk enrolled=2026-10-27T09:00:00Z by=operator binding=unbound runners=1",
 		"  aabbccdd host1",
-		"0202020202020202 label= enrolled=2026-10-27T10:00:00Z by=task:00ff runners=0",
+		"0202020202020202 label= enrolled=2026-10-27T10:00:00Z by=task:00ff binding=unbound runners=0",
 		"keys=2",
 	} {
 		if !strings.Contains(got, want) {
@@ -62,8 +62,8 @@ func TestFormatRunnerKeysJSON(t *testing.T) {
 	}
 	lines := strings.Split(strings.TrimSuffix(FormatRunnerKeysJSON(rows), "\n"), "\n")
 	want := []string{
-		`{"key":"` + strings.Repeat("01", 32) + `","label":"gmk","enrolled_at":"2026-10-27T09:00:00Z","enrolled_by":"operator","runners":[{"id":"aabbccdd000000000000000000000000","hostname":"host1"}]}`,
-		`{"key":"` + strings.Repeat("02", 32) + `","label":"","enrolled_at":"2026-10-27T10:00:00Z","enrolled_by":"task:00ff","runners":[]}`,
+		`{"key":"` + strings.Repeat("01", 32) + `","label":"gmk","enrolled_at":"2026-10-27T09:00:00Z","enrolled_by":"operator","runners":[{"id":"aabbccdd000000000000000000000000","hostname":"host1"}],"bound_tasks":[]}`,
+		`{"key":"` + strings.Repeat("02", 32) + `","label":"","enrolled_at":"2026-10-27T10:00:00Z","enrolled_by":"task:00ff","runners":[],"bound_tasks":[]}`,
 	}
 	if len(lines) != len(want) {
 		t.Fatalf("got %d lines, want %d:\n%s", len(lines), len(want), strings.Join(lines, "\n"))

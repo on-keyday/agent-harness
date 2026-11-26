@@ -869,19 +869,19 @@ test("a runner row: agents as a list, roots one per line, load and status", () =
     status: "Busy", hostname: "host1", goos: "linux", tasks: 8, maxTasks: 8,
     agentProfiles: ["claude", "codex"], skillsInjected: true, roots: ["/a", "/b"],
     id: "0123456789abcdef0123456789abcdef", cid: "ws:h:1-2", keyLabel: "gmk", link: "dial:3fa9c012",
-    linkTarget: "wss://agent-1.example.com/ws",
+    linkTarget: "wss://agent-1.example.com/ws", binding: "a1a1a1a1",
   }), {
     status: "Busy", host: "host1", os: "linux", load: "8/8", full: true,
     agents: ["claude", "codex"], skills: true, roots: ["/a", "/b"],
     id: "01234567", cid: "ws:h:1-2", key: "gmk", link: "dial:3fa9c012",
-    target: "wss://agent-1.example.com/ws",
+    target: "wss://agent-1.example.com/ws", binding: "a1a1a1a1",
   });
 });
 
 test("a runner row falls back where a runner reported nothing", () => {
   const legacy = page.runnerRowModel({ status: "Idle", tasks: 0, maxTasks: 4, agentBin: "claude" });
-  eq([legacy.host, legacy.os, legacy.agents, legacy.roots, legacy.id, legacy.cid, legacy.full, legacy.key, legacy.link, legacy.target],
-     ["-", "unknown", ["claude"], ["(any)"], "-", "-", false, "-", "-", ""]);
+  eq([legacy.host, legacy.os, legacy.agents, legacy.roots, legacy.id, legacy.cid, legacy.full, legacy.key, legacy.link, legacy.target, legacy.binding],
+     ["-", "unknown", ["claude"], ["(any)"], "-", "-", false, "-", "-", "", "unbound"]);
   eq(page.runnerRowModel({ status: "Idle", tasks: 0, maxTasks: 4 }).agents, []);
 });
 

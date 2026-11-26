@@ -166,6 +166,25 @@ func parseScopeAction(str string) (protocol.TaskScope, error) {
 
 // parseScopeIDs validates, sorts and dedupes one comma-separated id list.
 func parseScopeIDs(list, whole string) ([]protocol.TaskID, error) {
+	out, err := parseIDList(list, "scope id")
+	if err != nil {
+		return nil, err
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("scope %q: ids: with no ids after it", whole)
+	}
+	return out, nil
+}
+
+// ParseTaskIDList parses a comma-separated list of full task ids (32 hex):
+// validated, deduped and sorted; empty entries are skipped, and an empty list
+// is nil.
+func ParseTaskIDList(list string) ([]protocol.TaskID, error) {
+	return parseIDList(list, "task id")
+}
+
+// parseIDList is ParseTaskIDList with the noun its errors name.
+func parseIDList(list, noun string) ([]protocol.TaskID, error) {
 	seen := make(map[string]bool)
 	var ids []string
 	for _, raw := range strings.Split(list, ",") {
@@ -174,10 +193,10 @@ func parseScopeIDs(list, whole string) ([]protocol.TaskID, error) {
 			continue
 		}
 		if len(id) != scopeIDHexLen {
-			return nil, fmt.Errorf("scope id %q: want %d hex characters, got %d", raw, scopeIDHexLen, len(id))
+			return nil, fmt.Errorf("%s %q: want %d hex characters, got %d", noun, raw, scopeIDHexLen, len(id))
 		}
 		if _, err := hex.DecodeString(id); err != nil {
-			return nil, fmt.Errorf("scope id %q is not hex", raw)
+			return nil, fmt.Errorf("%s %q is not hex", noun, raw)
 		}
 		if seen[id] {
 			continue
@@ -186,7 +205,7 @@ func parseScopeIDs(list, whole string) ([]protocol.TaskID, error) {
 		ids = append(ids, id)
 	}
 	if len(ids) == 0 {
-		return nil, fmt.Errorf("scope %q: ids: with no ids after it", whole)
+		return nil, nil
 	}
 	sort.Strings(ids)
 	out := make([]protocol.TaskID, 0, len(ids))

@@ -24,7 +24,7 @@ func TestRunnerDialAndKickRoundTrip(t *testing.T) {
 	defer c.Close()
 
 	pub, _, _ := ed25519.GenerateKey(nil)
-	if st, err := cli.RunnerEnrollWith(ctx, c, pub, "aws"); err != nil || st != protocol.RunnerKeyStatus_Ok {
+	if st, err := cli.RunnerEnrollWith(ctx, c, pub, "aws", nil); err != nil || st != protocol.RunnerKeyStatus_Ok {
 		t.Fatalf("enroll: %v %v", st, err)
 	}
 	// Port 1 on loopback: nothing answers, so the record stays waiting.

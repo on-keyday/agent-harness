@@ -667,11 +667,11 @@ func (h cliVerbs) RunnerEnroll(a verb.RunnerEnrollAction) error {
 	if err != nil {
 		return fmt.Errorf("runner enroll: %w", err)
 	}
-	st, err := cli.RunnerEnroll(h.ctx, h.cid(), key, a.Label)
+	st, err := cli.RunnerEnroll(h.ctx, h.cid(), key, a.Label, a.Bind)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(h.stdout(), cli.FormatRunnerEnroll(st, key, a.Label))
+	fmt.Fprintln(h.stdout(), cli.FormatRunnerEnroll(st, key, a.Label, a.Bind))
 	if st != protocol.RunnerKeyStatus_Ok && st != protocol.RunnerKeyStatus_AlreadyEnrolled {
 		return exitCodeError{code: 1}
 	}

@@ -898,7 +898,10 @@ var Verbs = []VerbSpec{
 			"one key serves every slot that reads the same key file (by default, every",
 			"slot one user runs on one machine)",
 			"an already enrolled key keeps its record; --label replaces its label",
-			"needs runner_enroll",
+			"--bind ID,... binds the key to those tasks: a runner with it takes only them,",
+			"and no new foreground open or schedule; the binding is fixed at enroll",
+			"(unenroll + enroll to change it)",
+			"needs runner_enroll: global for an unbound key, else over every --bind task",
 		},
 		Action:          "RunnerEnrollAction",
 		CmdlineSurfaces: CLI | TUI | WebUI,
@@ -906,8 +909,14 @@ var Verbs = []VerbSpec{
 		Flags: []Flag{
 			{Name: "label", Type: FlagString, Default: "", Field: "Label",
 				Help: "a name for the key, shown by `runner keys` and on runner rows (empty keeps an enrolled key's label)"},
+			{Name: "bind", Type: FlagString, Default: "", Field: "Bind",
+				FieldType: "[]protocol.TaskID", Convert: "ParseBindFlag",
+				Help: "the tasks a runner with this key may take, as ID[,ID...] (full 32-hex ids, at most 16); omitted = unbound, which needs runner_enroll global"},
 		},
-		Examples: []string{"runner enroll 3f9c01ab7e2d4c5a9b8f6e1d0c2b3a4958675a4b3c2d1e0f9a8b7c6d5e4f3a2b --label host1"},
+		Examples: []string{
+			"runner enroll 3f9c01ab7e2d4c5a9b8f6e1d0c2b3a4958675a4b3c2d1e0f9a8b7c6d5e4f3a2b --label host1",
+			"runner enroll 3f9c01ab7e2d4c5a9b8f6e1d0c2b3a4958675a4b3c2d1e0f9a8b7c6d5e4f3a2b --label vm-T --bind 0123456789abcdef0123456789abcdef",
+		},
 	},
 	{
 		Path: []string{"runner", "keys"},

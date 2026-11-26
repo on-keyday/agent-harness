@@ -1038,6 +1038,19 @@ dial-runner`, the server's own network reach — and implies nothing here. The
 verbs are on the CLI, the TUI command line and the WebUI command input, and
 `ls` shows each runner's key as `key=<label>` (or its prefix).
 
+**A key can be bound to tasks.** `runner enroll <key> --bind ID[,ID…]` (full
+32-hex task ids, at most 16) makes a runner on that key a candidate only for
+those tasks: never for another queued task on the same repo, a new foreground
+open or a schedule, and a held task it reports outside them is not re-adopted.
+The binding is fixed at enroll; unenroll and enroll again to change it (the
+undo `runner unenroll` prints carries `--bind`). `runner_enroll` is scoped by
+it: an unbound key — and unenrolling, kicking or listing one — needs the bit at
+global scope; a key bound to tasks needs every one of them inside the caller's
+`runner_enroll` scope, and a key or runner outside answers as an unknown one.
+`runner keys` and `ls` show `binding=unbound` or the bound tasks' prefixes.
+Keeping a task off other runners while its own runner starts is the caller's
+job, with an ordinary selector (`--host`).
+
 **Rotating a key** overlaps the old and the new, so nothing is cut off:
 `--rotate-key`, `runner enroll` the new key, restart the runners that use the
 file when convenient, then `runner unenroll` the old one once `runner keys`

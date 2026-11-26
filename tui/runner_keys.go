@@ -28,7 +28,7 @@ func runnerKeyCtx() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), 30*time.Second)
 }
 
-func DoRunnerEnroll(c *cli.Client, pubkey, label string) tea.Cmd {
+func DoRunnerEnroll(c *cli.Client, pubkey, label string, bound []protocol.TaskID) tea.Cmd {
 	return func() tea.Msg {
 		key, err := hex.DecodeString(pubkey)
 		if err != nil {
@@ -36,12 +36,12 @@ func DoRunnerEnroll(c *cli.Client, pubkey, label string) tea.Cmd {
 		}
 		ctx, cancel := runnerKeyCtx()
 		defer cancel()
-		st, err := cli.RunnerEnrollWith(ctx, c, key, label)
+		st, err := cli.RunnerEnrollWith(ctx, c, key, label, bound)
 		if err != nil {
 			return RunnerKeyResultMsg{Verb: "runner enroll", Err: err}
 		}
 		ok := st == protocol.RunnerKeyStatus_Ok || st == protocol.RunnerKeyStatus_AlreadyEnrolled
-		return RunnerKeyResultMsg{Verb: "runner enroll", Text: cli.FormatRunnerEnroll(st, key, label), OK: ok, Refresh: ok}
+		return RunnerKeyResultMsg{Verb: "runner enroll", Text: cli.FormatRunnerEnroll(st, key, label, bound), OK: ok, Refresh: ok}
 	}
 }
 

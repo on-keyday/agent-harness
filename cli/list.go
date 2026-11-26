@@ -259,7 +259,7 @@ func renderListRunners(lr *protocol.ListResultBody, out io.Writer) map[string]pr
 		for i, ar := range r.AllowedRoots {
 			roots[i] = string(ar.Path)
 		}
-		fmt.Fprintf(out, "  %s  host=%s  os=%s  tasks=%d/%d  %s  roots=%s  key=%s  link=%s  id=%s  cid=%s\n",
+		fmt.Fprintf(out, "  %s  host=%s  os=%s  tasks=%d/%d  %s  roots=%s  key=%s  binding=%s  link=%s  id=%s  cid=%s\n",
 			runnerStatusStr(r.Status),
 			string(r.Hostname),
 			RunnerGOOSStr(r.Goos),
@@ -268,6 +268,7 @@ func renderListRunners(lr *protocol.ListResultBody, out io.Writer) map[string]pr
 			agentProfilesStr(r.AgentProfiles, string(r.AgentBin), r.SkillsInjected()),
 			strings.Join(roots, ","),
 			RunnerKeyStr(r),
+			BindingLabel(r.Bound),
 			RunnerLinkStr(r)+runnerLinkTargetSuffix(r),
 			r.Id.Hex(),
 			RunnerCIDStr(r.Cid),
@@ -504,7 +505,7 @@ func renderListTree(lr *protocol.ListResultBody, out io.Writer) {
 		for i, ar := range r.AllowedRoots {
 			roots[i] = string(ar.Path)
 		}
-		fmt.Fprintf(out, "  %s  host=%s  os=%s  tasks=%d/%d  %s  roots=%s  key=%s  link=%s  id=%s  cid=%s\n",
+		fmt.Fprintf(out, "  %s  host=%s  os=%s  tasks=%d/%d  %s  roots=%s  key=%s  binding=%s  link=%s  id=%s  cid=%s\n",
 			runnerStatusStr(r.Status),
 			string(r.Hostname),
 			RunnerGOOSStr(r.Goos),
@@ -513,6 +514,7 @@ func renderListTree(lr *protocol.ListResultBody, out io.Writer) {
 			agentProfilesStr(r.AgentProfiles, string(r.AgentBin), r.SkillsInjected()),
 			strings.Join(roots, ","),
 			RunnerKeyStr(r),
+			BindingLabel(r.Bound),
 			RunnerLinkStr(r)+runnerLinkTargetSuffix(r),
 			r.Id.Hex(),
 			RunnerCIDStr(r.Cid),
@@ -580,6 +582,9 @@ type runnerJSON struct {
 	// LinkTarget is the dial-record candidate the runner answered on, ""
 	// for any other link. Always present.
 	LinkTarget string `json:"link_target"`
+	// BoundTasks is the binding of the key the runner authenticated with
+	// (bound enrollment, C2): full ids, [] when unbound.
+	BoundTasks []string `json:"bound_tasks"`
 }
 
 // RunnerKeyStr is what a runner row shows for the key it authenticated with:
@@ -810,6 +815,7 @@ func renderListJSONGroups(lr *protocol.ListResultBody, out io.Writer, groups []s
 			LinkRecord:     runnerLinkRecordJSON(r),
 			LinkVia:        runnerLinkViaJSON(r),
 			LinkTarget:     string(r.LinkTarget),
+			BoundTasks:     boundTasksJSON(r.Bound),
 		})
 	}
 

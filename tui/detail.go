@@ -314,6 +314,13 @@ func formatRunnerDetail(r protocol.RunnerInfo) string {
 	// paths its roots are spelled in.
 	fmt.Fprintf(&sb, "os:            %s\n", cli.RunnerGOOSStr(r.Goos))
 	fmt.Fprintf(&sb, "key:           %s (%s)\n", string(r.KeyLabel), cli.KeyPrefix16(r.Key[:]))
+	// The tasks the key binds this runner to, in full (bound enrollment, C2);
+	// "unbound" is printed too: it is the widest answer, not an absence.
+	binding := "unbound"
+	if len(r.Bound) > 0 {
+		binding = cli.BindingIDs(r.Bound)
+	}
+	fmt.Fprintf(&sb, "binding:       %s\n", binding)
 	// How it is connected, at every width (the table shows it from 120 cells).
 	switch r.Link {
 	case protocol.RunnerLink_Via:

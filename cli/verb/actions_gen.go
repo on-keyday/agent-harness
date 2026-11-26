@@ -688,7 +688,9 @@ type RunnerDialRemoveAction struct {
 type RunnerEnrollAction struct {
 	ActionMarker
 	// a name for the key, shown by `runner keys` and on runner rows (empty keeps an enrolled key's label)
-	Label  string
+	Label string
+	// the tasks a runner with this key may take, as ID[,ID...] (full 32-hex ids, at most 16); omitted = un…
+	Bind   []protocol.TaskID
 	PubKey string
 }
 
@@ -2121,6 +2123,13 @@ func init() {
 		"runner enroll\x00cli": func(b Bound) (Action, error) {
 			a := RunnerEnrollAction{}
 			a.Label = b.Str("label")
+			if b.Set["bind"] {
+				v, err := ParseBindFlag(b.Str("bind"))
+				if err != nil {
+					return nil, fmt.Errorf("runner enroll: --bind: %w", err)
+				}
+				a.Bind = v
+			}
 			if len(b.Args) > 0 {
 				a.PubKey = b.Args[0]
 			}
@@ -2129,6 +2138,13 @@ func init() {
 		"runner enroll\x00tui": func(b Bound) (Action, error) {
 			a := RunnerEnrollAction{}
 			a.Label = b.Str("label")
+			if b.Set["bind"] {
+				v, err := ParseBindFlag(b.Str("bind"))
+				if err != nil {
+					return nil, fmt.Errorf("runner enroll: --bind: %w", err)
+				}
+				a.Bind = v
+			}
 			if len(b.Args) > 0 {
 				a.PubKey = b.Args[0]
 			}
@@ -2137,6 +2153,13 @@ func init() {
 		"runner enroll\x00webui": func(b Bound) (Action, error) {
 			a := RunnerEnrollAction{}
 			a.Label = b.Str("label")
+			if b.Set["bind"] {
+				v, err := ParseBindFlag(b.Str("bind"))
+				if err != nil {
+					return nil, fmt.Errorf("runner enroll: --bind: %w", err)
+				}
+				a.Bind = v
+			}
 			if len(b.Args) > 0 {
 				a.PubKey = b.Args[0]
 			}

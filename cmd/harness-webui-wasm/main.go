@@ -1768,6 +1768,10 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 			runners := make([]any, 0, len(lr.Runners))
 			for _, r := range lr.Runners {
 				roots := make([]any, 0, len(r.AllowedRoots))
+				boundTasks := make([]any, 0, len(r.Bound))
+				for _, id := range r.Bound {
+					boundTasks = append(boundTasks, hex.EncodeToString(id.Id[:]))
+				}
 				for _, root := range r.AllowedRoots {
 					roots = append(roots, string(root.Path))
 				}
@@ -1802,6 +1806,10 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					// (label, or key prefix); key is raw.
 					"keyLabel": cli.RunnerKeyStr(r),
 					"key":      hex.EncodeToString(r.Key[:]),
+					// binding is the display string ls prints as binding=
+					// (bound enrollment, C2); boundTasks the full ids.
+					"binding":    cli.BindingLabel(r.Bound),
+					"boundTasks": boundTasks,
 					// link is the display string ls prints as link=; the
 					// raw kind, record id and relay identity ride beside it.
 					"link":       cli.RunnerLinkStr(r),
@@ -3299,25 +3307,35 @@ func runnerKeyPromise(fn func(c *cli.Client) (string, bool, error)) any {
 	return js.Global().Get("Promise").New(executor)
 }
 
-// harness.runnerEnroll(pubkeyHex, label) -> Promise<{text, ok}>
+// harness.runnerEnroll(pubkeyHex, label, bind) -> Promise<{text, ok}>
+//
+// bind is --bind's raw text, parsed here by verb.ParseBindFlag so the browser
+// applies the same rule as the CLI.
 func harnessRunnerEnroll(this js.Value, args []js.Value) any {
-	var pubkey, label string
+	var pubkey, label, bindText string
 	if len(args) > 0 {
 		pubkey = args[0].String()
 	}
 	if len(args) > 1 && args[1].Type() == js.TypeString {
 		label = args[1].String()
 	}
+	if len(args) > 2 && args[2].Type() == js.TypeString {
+		bindText = args[2].String()
+	}
 	return runnerKeyPromise(func(c *cli.Client) (string, bool, error) {
 		key, err := hex.DecodeString(pubkey)
 		if err != nil {
 			return "", false, fmt.Errorf("runner enroll: %w", err)
 		}
-		st, err := cli.RunnerEnrollWith(rootCtx, c, key, label)
+		bound, err := verb.ParseBindFlag(bindText)
+		if err != nil {
+			return "", false, fmt.Errorf("runner enroll: %w", err)
+		}
+		st, err := cli.RunnerEnrollWith(rootCtx, c, key, label, bound)
 		if err != nil {
 			return "", false, err
 		}
-		return cli.FormatRunnerEnroll(st, key, label), st == protocol.RunnerKeyStatus_Ok || st == protocol.RunnerKeyStatus_AlreadyEnrolled, nil
+		return cli.FormatRunnerEnroll(st, key, label, bound), st == protocol.RunnerKeyStatus_Ok || st == protocol.RunnerKeyStatus_AlreadyEnrolled, nil
 	})
 }
 
