@@ -1064,6 +1064,64 @@ runner keeps retrying, so rebuilding its host brings it back. Neither the
 server nor `agent-runner` accepts `--psk` / `--psk-file` any more. Design:
 `docs/superpowers/specs/2026-10-27-runner-enrollment-design.md`.
 
+### Actions
+
+An **action** is a named command template the server keeps, in
+`<data-dir>/actions.json`; runners are never told about actions. A grant names
+the actions it may run — `exec_run` conditioned `actions:<id>,…` (see
+`--grant-condition` under **Capabilities and scope**) — and its holder runs
+only those, with `exec --action`. A raw `exec <task-id> -- <argv>` from that
+holder is refused `outside_condition`. An unconditioned `exec_run` may run
+actions too.
+
+```bash
+bin/harness-cli action new --name deploy --param env=choice:staging,prod \
+    --param ref=token -- ./deploy.sh --env {env} --ref {ref}
+bin/harness-cli action ls [--json]     # full id, name, revision, command, params; then actions=N
+bin/harness-cli session new -d --repo /abs/repo --caps exec_run \
+    --scope-for exec_run=ids:<target-id> --grant-condition exec_run=actions:<32-hex id>
+bin/harness-cli exec --action deploy --value env=prod --value ref=v1.2 <target-id>
+bin/harness-cli action edit --revision 1 --param env=choice:staging,prod \
+    deploy -- ./deploy.sh --env {env}
+bin/harness-cli action rm deploy
+```
+
+- **The template.** Each word after `--` is one argv element. A word that is
+  exactly `{NAME}` becomes that param's value as ONE element — never split,
+  never read by a shell. `{NAME}` inside other text (`--env={env}`) is
+  refused, and `\{` at the start of a word keeps it literal. The first word,
+  the program, is always literal.
+- **Params.** `NAME=token` takes 1–128 bytes of `[0-9A-Za-z._-]`, not starting
+  with `-`; `NAME=choice:A,B,…` takes one of the listed literals (each at most
+  255 bytes). Values are checked by the client and again by the server.
+- **No shell, no terminal, no stdin**, whatever is asked: `--shell`, `-t` and
+  `--sshd-parent` are refused beside `--action`.
+- **Capabilities.** `action_admin` (no scope) defines, edits and deletes;
+  `action ls` needs `action_admin` or `exec_run`. `action ls` prints the full
+  32-hex id, the form `--grant-condition` takes. An id is 16 random bytes, so
+  re-creating an action under the same name gives a NEW id that no old grant
+  names. Deleting needs `action_admin` only; a grant naming a deleted action
+  then runs nothing (`no such action`).
+- **An edit changes what every holder runs.** The definition is replaced
+  whole (`--name` and `--description` keep the current ones when omitted),
+  `--revision` must be the current one (`stale_revision` otherwise), and the
+  edit is refused `holders_unreachable`, with a count, unless the editor could
+  re-grant every holder as `caps set` would need. For each task whose grant
+  names the action — finished ones included — that means a strict descendant
+  inside the editor's `resume` scope, every target of whose `exec_run` the
+  editor's own unconditioned `exec_run` reaches; for each such schedule, what
+  a flag-less `schedule edit` of it by the editor needs. An editor whose own grant names
+  the action is always refused. The operator may always edit.
+- **An action is only as narrow as the files it reads.** A holder that can
+  also write the worktree or type into the task's session can change what the
+  command does. A grant holding an `actions:`-conditioned `exec_run` together
+  with `file_write`, `exec_cowrite` or `exec_control` over a target the
+  `exec_run` also reaches shows `warn=action_overlap:<bits>` on its `ls` and
+  `whoami` rows (`action_overlap` in `--json`).
+- **Listing.** `exec ls` shows `action=<name>@r<revision>` on an exec started
+  from an action; `--json` carries `action_id`, `action_revision` and
+  `action_name`.
+
 ### Dial records and runner kick
 
 For a runner the server must reach rather than the other way round — a cloud
@@ -1208,7 +1266,8 @@ board as the operator, keeping a board topic past its TTL (`board_persist`), put
 keeping a session's PTY record — switching recording on or keeping a record longer (`record_persist`) — and
 deleting one, switching recording off or shortening its retention (`record_delete`),
 reading the agents' own transcripts of a task's working directory (`transcript_read`),
-creating, editing, running and deleting a server-kept cron schedule and unbinding a task from one (`schedule_edit` / `schedule_run`, see **Schedules**) and issuing or re-keying a credential task (`credential_issue`, see **Credential tasks**)) — and a **target scope** bounding WHICH tasks those
+creating, editing, running and deleting a server-kept cron schedule and unbinding a task from one (`schedule_edit` / `schedule_run`, see **Schedules**), issuing or re-keying a credential task (`credential_issue`, see **Credential tasks**) and
+defining, editing and deleting server-defined actions (`action_admin`, no scope; `action ls` also admits `exec_run`; see **Actions**)) — and a **target scope** bounding WHICH tasks those
 capabilities may be pointed at.
 
 Attaching to a session is three capabilities, not one, because the three
@@ -1324,6 +1383,32 @@ drive itself". Repeatable; the capability lists must not overlap. It
 cannot carry a visibility half, which belongs to the task rather than
 to a verb, and it never GRANTS a verb: an override for a bit the task
 does not hold sits inert until `caps set` grants it.
+
+`--grant-condition CAPS=COND` narrows one override further: it bounds which
+OBJECT inside a target the override's capabilities reach. It attaches to the
+`--scope-for` whose capability list is exactly CAPS, so the same command line
+carries both. `ports:P[-Q][,…]` applies to `forward_local` (the port the
+runner dials) and `forward_remote` (the port it binds), and bounds the port
+only, not the host; `actions:<32-hex>[,…]` applies to `exec_run` (see
+**Actions**). Any other pairing is refused, as are more than 8 conditions, 32
+action ids or 8 port ranges in one request. `session new`, `schedule new` /
+`edit`, `credential new` / `rekey` and `caps set` take it; `caps what-if` does
+not.
+
+```bash
+bin/harness-cli caps set --caps forward_local --scope subtree \
+    --scope-for forward_local=ids:<target-id> \
+    --grant-condition forward_local=ports:8000-8100 <task-id>
+```
+
+A condition attenuates by containment: a child's must lie inside its
+granter's (a subset of the actions, ranges inside the ranges), a child that
+names none inherits the granter's, and narrowing a parent with `caps set
+--cascade` clamps its descendants. A conditioned bit reaches nothing except
+through a gate that checks the object (the port, the action), and a condition
+whose body is unknown shows as `(condition unknown)` and reaches nothing. Rows
+in `ls` and `whoami` show `conditions=CAPS:COND`; `--json` carries
+`conditions_by_cap`.
 
 All of it is visible per task in `ls`, `whoami`, the TUI detail popup
 and the WebUI task rows; `ls --json` and `whoami --json` additionally

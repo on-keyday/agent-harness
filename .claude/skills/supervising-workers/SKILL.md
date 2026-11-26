@@ -587,6 +587,29 @@ and the scope forms (`--json` for the machine-readable form).
   self. An override never GRANTS a verb — one naming a bit you do not hold sits
   inert until something grants it. `whoami --json` and `ls --json` carry
   `scope_by_cap`, the resolved map, so you never have to work the merge out.
+- **A grant condition bounds which object an override reaches.**
+  `--grant-condition CAPS=ports:P[-Q],…` (on `forward_local` /
+  `forward_remote`: the port, not the host) or `CAPS=actions:<32-hex id>,…`
+  (on `exec_run`) attaches to the `--scope-for` whose capability list is
+  exactly CAPS, so pass both together: `--scope-for forward_local=ids:<worker>
+  --grant-condition forward_local=ports:8000-8100`. `session new`, `schedule
+  new` / `edit`, `credential new` / `rekey` and `caps set` take it. It
+  attenuates like scope: a child's condition must lie inside yours for that bit
+  (a subset of your actions, ranges inside your ranges), and a child naming
+  none inherits yours. `whoami` shows yours as `conditions=CAPS:COND`; one
+  shown as `(condition unknown)` reaches nothing.
+- **Running an action — `exec --action`.** An `exec_run` conditioned
+  `actions:` runs only the server-defined actions it names:
+  `harness-cli exec --action deploy --value env=prod <task-id>` (flags before
+  the id; each value is one whole argument, never read by a shell, and the
+  action runs with no shell, terminal or stdin). A raw `exec <id> -- <cmd>` is
+  then refused `outside_condition` — the condition, not a missing bit. `action
+  ls` lists the actions with their params and full ids (needs `exec_run` or
+  `action_admin`). `no such action` means it was deleted; a re-created one has
+  a new id your grant does not name, so ask whoever granted you. Granting a
+  worker `file_write`, `exec_cowrite` or `exec_control` over the same target
+  undoes the narrowing — it can change what the action runs — and `ls` flags
+  that grant `warn=action_overlap:<bits>`.
 - **You also see your parent, redacted.** `ls` / `session ls` include one row
   for your direct creator so you can tell whether the task driving you is still
   running / idle. That row is deliberately sparse — `repo`, `prompt`,
@@ -653,7 +676,7 @@ Granular names: `spawn`, `resume_exact`, `resume`, `cancel`, `exec_view`, `exec_
 `exec_control`, `exec_resize`, `exec_run`, `exec_tap`, `file_read`, `file_write`,
 `forward_local`, `forward_remote`, `forward_link`, `forward_tap`, `notify`, `prune`,
 `runner_admin`, `board_observe`, `board_purge`, `board_send`, `board_peer`, `board_persist`, `board_member`,
-`record_persist`, `record_delete`, `transcript_read`, `schedule_edit`, `schedule_run` — plus the aliases `none` / `all`. `harness-cli caps`
+`record_persist`, `record_delete`, `transcript_read`, `schedule_edit`, `schedule_run`, `action_admin` — plus the aliases `none` / `all`. `harness-cli caps`
 prints the authoritative list with a line each; this one can fall behind it.
 `schedule_edit` creates, edits and deletes a server-kept cron schedule and
 unbinds a task from one. `schedule_run` independently authorizes explicit
