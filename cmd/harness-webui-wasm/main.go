@@ -3309,10 +3309,11 @@ func runnerKeyPromise(fn func(c *cli.Client) (string, bool, error)) any {
 
 // harness.runnerEnroll(pubkeyHex, label, bind) -> Promise<{text, ok}>
 //
-// bind is --bind's raw text, parsed here by verb.ParseBindFlag so the browser
-// applies the same rule as the CLI.
+// bind is --bind's raw text, or null when --bind was not given; parsed here
+// by verb.ParseBindFlag so the browser applies the same rule as the CLI.
 func harnessRunnerEnroll(this js.Value, args []js.Value) any {
 	var pubkey, label, bindText string
+	bindGiven := false
 	if len(args) > 0 {
 		pubkey = args[0].String()
 	}
@@ -3320,16 +3321,18 @@ func harnessRunnerEnroll(this js.Value, args []js.Value) any {
 		label = args[1].String()
 	}
 	if len(args) > 2 && args[2].Type() == js.TypeString {
-		bindText = args[2].String()
+		bindText, bindGiven = args[2].String(), true
 	}
 	return runnerKeyPromise(func(c *cli.Client) (string, bool, error) {
 		key, err := hex.DecodeString(pubkey)
 		if err != nil {
 			return "", false, fmt.Errorf("runner enroll: %w", err)
 		}
-		bound, err := verb.ParseBindFlag(bindText)
-		if err != nil {
-			return "", false, fmt.Errorf("runner enroll: %w", err)
+		var bound []protocol.TaskID
+		if bindGiven {
+			if bound, err = verb.ParseBindFlag(bindText); err != nil {
+				return "", false, fmt.Errorf("runner enroll: --bind: %w", err)
+			}
 		}
 		st, err := cli.RunnerEnrollWith(rootCtx, c, key, label, bound)
 		if err != nil {

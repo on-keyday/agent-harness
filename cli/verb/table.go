@@ -899,7 +899,7 @@ var Verbs = []VerbSpec{
 			"slot one user runs on one machine)",
 			"an already enrolled key keeps its record; --label replaces its label",
 			"--bind ID,... binds the key to those tasks: a runner with it takes only them,",
-			"and no new foreground open or schedule; the binding is fixed at enroll",
+			"and no new foreground open or schedule not bound to one of them; fixed at enroll",
 			"(unenroll + enroll to change it)",
 			"needs runner_enroll: global for an unbound key, else over every --bind task",
 		},

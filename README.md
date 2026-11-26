@@ -1041,7 +1041,9 @@ verbs are on the CLI, the TUI command line and the WebUI command input, and
 **A key can be bound to tasks.** `runner enroll <key> --bind ID[,ID…]` (full
 32-hex task ids, at most 16) makes a runner on that key a candidate only for
 those tasks: never for another queued task on the same repo, a new foreground
-open or a schedule, and a held task it reports outside them is not re-adopted.
+open or a schedule not bound to one of them, and a held task it reports
+outside them is not re-adopted. `--bind` with no id in it is refused; omit it
+for an unbound key.
 The binding is fixed at enroll; unenroll and enroll again to change it (the
 undo `runner unenroll` prints carries `--bind`). `runner_enroll` is scoped by
 it: an unbound key — and unenrolling, kicking or listing one — needs the bit at

@@ -583,7 +583,9 @@ async function runVerbCommandDispatch(tokens, ctx) {
       const b = parseOrHelp(ctx, tokens, {});
       let r;
       switch (b.path[1]) {
-        case "enroll": r = await ctx.harness.runnerEnroll(b.args[0], b.flags.label || "", b.flags.bind || ""); break;
+        // --bind crosses as null when not given: a given-but-empty --bind
+        // is refused in Go, never read as unbound.
+        case "enroll": r = await ctx.harness.runnerEnroll(b.args[0], b.flags.label || "", (b.set || {}).bind ? (b.flags.bind || "") : null); break;
         case "keys": r = await ctx.harness.runnerKeys(); break;
         case "unenroll": r = await ctx.harness.runnerUnenroll(b.args[0], !!b.flags.force); break;
         case "kick": r = await ctx.harness.runnerKick(b.args[0], !!b.flags.force); break;

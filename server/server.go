@@ -759,12 +759,12 @@ func New(cfg Config) *Server {
 		publishConnEvent(protocol.StatusEventKind_ConnIdentified, sc)
 	}
 	s.runnerHandler.AuthOf = s.authOf
-	s.runnerHandler.BindingOf = func(key ed25519.PublicKey) []protocol.TaskID {
+	s.runnerHandler.BindingOf = func(key ed25519.PublicKey) ([]protocol.TaskID, bool) {
 		if s.cfg.RunnerKeys == nil {
-			return nil
+			return nil, true
 		}
-		rec, _ := s.cfg.RunnerKeys.Lookup(key)
-		return rec.Bound
+		rec, ok := s.cfg.RunnerKeys.Lookup(key)
+		return rec.Bound, ok
 	}
 	s.runnerHandler.KickConn = s.kickConn
 	s.taskHandler.KickConn = s.kickConn

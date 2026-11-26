@@ -29,8 +29,12 @@ func TestParseBindFlag(t *testing.T) {
 	if err != nil || len(got) != 1 {
 		t.Errorf("a repeated id: %d ids, %v; want it deduped", len(got), err)
 	}
-	if got, err := ParseBindFlag(""); err != nil || got != nil {
-		t.Errorf("empty: %v, %v; want nil (unbound)", got, err)
+	// --bind given with nothing in it is refused, not read as unbound: a
+	// script's unset variable must not enroll the widest key.
+	for _, empty := range []string{"", ",", " , "} {
+		if _, err := ParseBindFlag(empty); err == nil {
+			t.Errorf("--bind %q: accepted, want refused", empty)
+		}
 	}
 }
 

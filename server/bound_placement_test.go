@@ -133,11 +133,11 @@ func TestRegistrationReadsBinding(t *testing.T) {
 	key := dialTestKey(7)
 	h.AuthOf = func(objproto.ConnectionID) ed25519.PublicKey { return key }
 	tid := hexToTaskID(t, taskT)
-	h.BindingOf = func(k ed25519.PublicKey) []protocol.TaskID {
+	h.BindingOf = func(k ed25519.PublicKey) ([]protocol.TaskID, bool) {
 		if k.Equal(key) {
-			return []protocol.TaskID{tid}
+			return []protocol.TaskID{tid}, true
 		}
-		return nil
+		return nil, false
 	}
 	h.KickConn = func(objproto.ConnectionID) {}
 	cid := pcid(t, "ws:127.0.0.1:9740-1")

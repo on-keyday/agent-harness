@@ -21,8 +21,11 @@ type RunnerHandler struct {
 	// with. nil (test wiring) registers the runner with no key.
 	AuthOf func(cid objproto.ConnectionID) ed25519.PublicKey
 	// BindingOf reports the tasks an enrolled key is bound to (bound
-	// enrollment, C2); nil = unbound. nil func (test wiring): unbound.
-	BindingOf func(key ed25519.PublicKey) []protocol.TaskID
+	// enrollment, C2); nil = unbound. ok is false when the key has no record
+	// any more -- unenrolled after the gate admitted it -- and registration is
+	// then refused: reading a missing record as "no binding" would register
+	// the runner unbound, the widest answer. nil func (test wiring): unbound.
+	BindingOf func(key ed25519.PublicKey) (ids []protocol.TaskID, ok bool)
 	// KickConn ends a connection from the server side (Server.kickConn).
 	KickConn func(cid objproto.ConnectionID)
 
@@ -163,7 +166,19 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 			entry.Key = h.AuthOf(conn.ConnectionID())
 		}
 		if h.BindingOf != nil && entry.Key != nil {
-			if ids := h.BindingOf(entry.Key); len(ids) > 0 {
+			ids, ok := h.BindingOf(entry.Key)
+			if !ok {
+				slog.Warn("runner registration refused: its key is no longer enrolled",
+					"key", keyPrefix(entry.Key), "identity", hello.RunnerId.Hex())
+				if origin != nil && origin.OnRefused != nil {
+					origin.OnRefused("key no longer enrolled: " + keyPrefix(entry.Key))
+				}
+				if h.KickConn != nil {
+					h.KickConn(conn.ConnectionID())
+				}
+				return
+			}
+			if len(ids) > 0 {
 				entry.Bound = make(map[string]struct{}, len(ids))
 				for _, id := range ids {
 					entry.Bound[hex.EncodeToString(id.Id[:])] = struct{}{}
