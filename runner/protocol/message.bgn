@@ -1173,6 +1173,10 @@ format RunnerInfo:
     # the server's 512-byte limit on a record's candidates.
     link_target_len :u16
     link_target :[link_target_len]u8
+    # Appended (bound enrollment, C1/C2 of 2026-11-26-grant-conditions-and-bound-enrollment-design.md):
+    # the tasks a runner authenticated with this key may take. Empty = unbound.
+    bound_len :u8
+    bound :[bound_len]TaskID
 
 enum RunnerLink:
     :u8
@@ -3538,11 +3542,20 @@ enum RunnerKeyStatus:
     ambiguous_prefix = "ambiguous_prefix"  # unenroll: more than one key has the prefix
     in_use           = "in_use"            # unenroll: runners use the key and force is unset
     invalid_key      = "invalid_key"       # enroll: not an Ed25519 public key; unenroll: prefix not 8-64 hex
+    # Appended (bound enrollment, C1/C2).
+    out_of_reach     = "out_of_reach"      # enroll: a bound task is outside the caller's runner_enroll scope, or the key is unbound and that scope is not global
+    binding_differs  = "binding_differs"   # enroll: the key is enrolled with another binding; unenroll + enroll to change it
+    bad_binding      = "bad_binding"       # enroll: more than 16 bound tasks, or an all-zero task id
 
 format RunnerEnrollRequest:
     key :[32]u8
     label_len :u8
     label :[label_len]u8   # empty = keep the label an enrolled key already has
+    # Appended (bound enrollment, C2): bind the key to these tasks, at most
+    # 16. Empty = unbound, which needs runner_enroll at global scope (C1).
+    # Fixed at enroll: changing it is unenroll + enroll.
+    bound_len :u8
+    bound :[bound_len]TaskID
 
 format RunnerEnrollResponse:
     status :RunnerKeyStatus
@@ -3570,6 +3583,10 @@ format RunnerUnenrollBody:
     # The dial records bound to the key, removed with it (on ok only).
     removed_dials_len :u8
     removed_dials :[removed_dials_len]u32
+    # Appended (bound enrollment, C1/C2 of 2026-11-26-grant-conditions-and-bound-enrollment-design.md):
+    # the tasks a runner authenticated with this key may take. Empty = unbound.
+    bound_len :u8
+    bound :[bound_len]TaskID
 
 format RunnerKeysRequest:
     reserved :u8
@@ -3591,6 +3608,10 @@ format RunnerKeyRow:
     enrolled_by :[enrolled_by_len]u8   # "operator" or "task:<32 hex>"
     runners_len :u16
     runners :[runners_len]RunnerKeyUser
+    # Appended (bound enrollment, C1/C2 of 2026-11-26-grant-conditions-and-bound-enrollment-design.md):
+    # the tasks a runner authenticated with this key may take. Empty = unbound.
+    bound_len :u8
+    bound :[bound_len]TaskID
 
 format RunnerKeyUser:
     id :RunnerID

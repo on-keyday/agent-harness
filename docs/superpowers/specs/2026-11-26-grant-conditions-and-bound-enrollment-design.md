@@ -450,7 +450,10 @@ port outside a `PortRange` on a target in reach: neither `no_such_task` nor a
 implementing),
 `ListQuery.task_id` (a List naming one task, for `whoami`'s own row — added
 while implementing),
-`RunnerEnrollRequest.bound`,
+`RunnerEnrollRequest.bound`, and — added while planning, so the binding can be
+shown and an unenroll's printed restore carries it — `bound` on `RunnerKeyRow`,
+`RunnerUnenrollBody` and `RunnerInfo`, with `out_of_reach`, `binding_differs`
+and `bad_binding` on `RunnerKeyStatus`,
 `ExecRunBody`'s action variant, the action verbs. The
 WAL gains condition bodies; the key store gains `bound_tasks`; the action store
 is new. Run `scripts/wire-skew-check.sh`. `RunnerHello` and every
