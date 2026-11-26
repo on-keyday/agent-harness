@@ -183,7 +183,7 @@ of 2026-11-26.
   | --- | --- | --- |
   | `OpenInteractiveRequest`, `CredentialIssueRequest`, `CredentialRekeyRequest`, `SetCapsRequest`, `ScheduleSpec` | writes a grant | gains `grant_conditions_stream_id :u64` (0 = no conditions; on the open it sits in `OpenInteractiveExt` behind `grant_conditions_present`); the bodies (`GrantConditions { n ≤ 8, GrantCondition… }`) are read from that stream before the request is processed |
   | `TaskInfo` (in `ListResultBody`), `ScheduleDetail` | read; travels on a stream | gains the bodies |
-  | `WhoAmIResponse` | read; inline, unguarded today | marker only; `whoami` on the CLI fetches the caller's own row through the list path to print the bodies |
+  | `WhoAmIResponse` | read; inline, unguarded today | marker only; `whoami` on the CLI fetches the caller's own row through a List naming its own task (`ListQuery.task_id`, appended while implementing: a full listing for one row grows with every task the caller may see) to print the bodies |
 
   A schedule carries its own authority and writes it onto its task at each
   firing (grand design G36, G38), so its conditions are stored and written
@@ -448,6 +448,8 @@ lists on `TaskInfo` and `ScheduleDetail` (both already on streams),
 port outside a `PortRange` on a target in reach: neither `no_such_task` nor a
 `permission_denied` naming a bit the caller holds is true of it — added while
 implementing),
+`ListQuery.task_id` (a List naming one task, for `whoami`'s own row — added
+while implementing),
 `RunnerEnrollRequest.bound`,
 `ExecRunBody`'s action variant, the action verbs. The
 WAL gains condition bodies; the key store gains `bound_tasks`; the action store

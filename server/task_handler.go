@@ -534,11 +534,11 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 
 	switch req.Header.Kind {
 	case protocol.TaskControlKind_List:
-		var finished uint32
-		if q := req.List(); q != nil {
-			finished = q.FinishedLimit
+		var q protocol.ListQuery
+		if l := req.List(); l != nil {
+			q = *l
 		}
-		h.handleList(conn, req.Header.RequestId, cid, finished)
+		h.handleList(conn, req.Header.RequestId, cid, q)
 
 	case protocol.TaskControlKind_ListConns:
 		h.handleListConns(conn, req.Header.RequestId, cid)
@@ -2372,10 +2372,10 @@ func (h *TaskHandler) sessionMux(taskID string) *SessionMux {
 	return h.Sessions.Get(taskID)
 }
 
-// handleList's finished is ListQuery.finished_limit: the bound is on history,
-// because with --task-retain unset nothing is forgotten and every client
-// lists on a poll. Which rows it keeps is listRows.
-func (h *TaskHandler) handleList(conn ConnHandle, requestID uint32, connID objproto.ConnectionID, finished uint32) {
+// handleList's q.finished_limit bounds history, because with --task-retain
+// unset nothing is forgotten and every client lists on a poll. Which rows it
+// keeps is listRows -- or, when q names a task, listOneRow.
+func (h *TaskHandler) handleList(conn ConnHandle, requestID uint32, connID objproto.ConnectionID, q protocol.ListQuery) {
 	respond := func(streamID uint64) {
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_List, RequestId: requestID}
 		resp.SetList(protocol.ListResult{StreamId: streamID})
@@ -2384,13 +2384,21 @@ func (h *TaskHandler) handleList(conn ConnHandle, requestID uint32, connID objpr
 	}
 
 	all, allowed, parentHex := h.listVisibleToCaller(connID)
-	tasks, omitted := listRows(h.Tasks.List(0), func(id string) bool { return all || allowed[id] }, finished)
+	one := q.TaskId.Id != ([16]byte{})
+	var tasks []TaskEntry
+	var omitted uint32
+	if one {
+		tasks, parentHex = h.listOneRow(q.TaskId, all, allowed, parentHex)
+	} else {
+		tasks, omitted = listRows(h.Tasks.List(0), func(id string) bool { return all || allowed[id] }, q.FinishedLimit)
+	}
 	// RUNNERS visibility rides the task-visibility answer: a confined caller
 	// (visibility rank below global, not an operator) sees zero runners, so it
 	// cannot enumerate the operator's runner topology (hostnames, dial addrs,
 	// AllowedRoots paths). Operators and global-visibility callers get the full list.
+	// A list naming one task carries none: the question is that task.
 	var runnerInfos []protocol.RunnerInfo
-	if all {
+	if all && !one {
 		runners := h.Registry.List()
 		runnerInfos = make([]protocol.RunnerInfo, len(runners))
 		for i, r := range runners {
@@ -2404,7 +2412,11 @@ func (h *TaskHandler) handleList(conn ConnHandle, requestID uint32, connID objpr
 	}
 	filteredTasks := tasks
 	redactedHex := ""
-	if parentHex != "" {
+	if one {
+		// listOneRow already chose the row; parentHex now says whether it is
+		// the parent, which is redacted as in a full list.
+		redactedHex = parentHex
+	} else if parentHex != "" {
 		// The one upward hop (see listVisibleToCaller), outside what the
 		// caller may see and so outside listRows. Prepended so the list stays
 		// in creation order: a parent is older than its child.

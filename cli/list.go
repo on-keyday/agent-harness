@@ -92,8 +92,27 @@ func (c *Client) Snapshot(ctx context.Context) (*protocol.ListResultBody, error)
 // count an ended task because a resume brings its recorded caps back -- asks
 // for all of it; a listing a person reads takes the default.
 func (c *Client) SnapshotFinished(ctx context.Context, finished uint32) (*protocol.ListResultBody, error) {
+	return c.snapshotQuery(ctx, protocol.ListQuery{FinishedLimit: finished})
+}
+
+// SnapshotTask is a List naming one task (ListQuery.task_id): that task's row
+// if the caller may see it, and no runners. ok is false when no row came back.
+func (c *Client) SnapshotTask(ctx context.Context, id protocol.TaskID) (row protocol.TaskInfo, ok bool, err error) {
+	body, err := c.snapshotQuery(ctx, protocol.ListQuery{TaskId: id})
+	if err != nil {
+		return protocol.TaskInfo{}, false, err
+	}
+	for _, t := range body.Tasks {
+		if t.Id == id {
+			return t, true, nil
+		}
+	}
+	return protocol.TaskInfo{}, false, nil
+}
+
+func (c *Client) snapshotQuery(ctx context.Context, q protocol.ListQuery) (*protocol.ListResultBody, error) {
 	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_List}}
-	req.SetList(protocol.ListQuery{FinishedLimit: finished})
+	req.SetList(q)
 	resp, err := c.RoundTripTaskControl(ctx, req)
 	if err != nil {
 		return nil, err

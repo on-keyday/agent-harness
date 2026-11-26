@@ -999,6 +999,15 @@ format ListQuery:
     # client that wants every finished task sends 0xffffffff, which is a
     # limit like any other: no store holds that many.
     finished_limit :u32
+    # Appended. All-zero = every task the caller may see (the rule above).
+    # Otherwise the list carries that one task's row, by the same visibility
+    # rule (the one-hop parent comes back redacted, as in a full list), or no
+    # row when the caller may not see it -- never an error, so this is not an
+    # existence oracle. finished_limit does not apply to it, and the list
+    # carries no runners: the question is one task. whoami uses it to read
+    # the bodies of its own grant conditions, which its answer carries only
+    # as markers (grant conditions spec, C6).
+    task_id :TaskID
 
 # RunnerID names WHICH RUNNER PROCESS, and nothing else.
 #
