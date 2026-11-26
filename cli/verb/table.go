@@ -986,7 +986,7 @@ var Verbs = []VerbSpec{
 		CmdlineSurfaces: CLI | TUI | WebUI,
 		Flags: []Flag{
 			{Name: "json", Type: FlagBool, Default: false, Field: "JSON",
-				CmdlineSurfaces: CLI | TUI | WebUI,
+				CmdlineSurfaces: CLI,
 				SurfaceReason:   "the TUI and WebUI answer into a results pane, not a pipe, so there is nothing for JSON to be read by",
 				Help:            "one JSON object per action"},
 		},

@@ -232,6 +232,10 @@ func Resolve(def *protocol.ActionDefinition, values []protocol.ActionValue) ([]s
 //   - a word that contains "{name}" for a declared param anywhere else (e.g.
 //     "--env={env}") is refused: there is no partial substitution, and
 //     passing it through as a literal would surprise whoever wrote it;
+//   - a word that is exactly "{name}" with a param-shaped name no param
+//     declares is refused: it is a forgotten --param far more often than a
+//     literal, and stored as one every grantee's value for it would fail
+//     (write "\{name}" for the literal);
 //   - every other word is a literal.
 func ParseTemplate(words []string, params []protocol.ActionParam) ([]protocol.ActionElement, error) {
 	index := map[string]uint8{}
@@ -244,12 +248,16 @@ func ParseTemplate(words []string, params []protocol.ActionParam) ([]protocol.Ac
 			out = append(out, literalElement(w[1:]))
 			continue
 		}
-		if strings.HasPrefix(w, "{") && strings.HasSuffix(w, "}") {
-			if i, ok := index[w[1:len(w)-1]]; ok {
+		if strings.HasPrefix(w, "{") && strings.HasSuffix(w, "}") && len(w) > 2 {
+			name := w[1 : len(w)-1]
+			if i, ok := index[name]; ok {
 				e := protocol.ActionElement{Kind: protocol.ActionElementKind_Param}
 				e.SetParamIndex(i)
 				out = append(out, e)
 				continue
+			}
+			if validParamName([]byte(name)) {
+				return nil, fmt.Errorf("word %q names no declared param (add --param %s=..., or write \\%s for the literal)", w, name, w)
 			}
 		}
 		for name := range index {

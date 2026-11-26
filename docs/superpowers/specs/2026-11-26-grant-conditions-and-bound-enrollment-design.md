@@ -373,6 +373,11 @@ func ValidToken(v []byte) bool
 //   - a word that contains "{name}" for a declared param anywhere else (e.g.
 //     "--env={env}") is refused: there is no partial substitution, and
 //     passing it through as a literal would surprise whoever wrote it;
+//   - a word that is exactly "{name}" with a param-shaped name no param
+//     declares is refused too (added in the final review: an edit replaces
+//     the params whole, so a forgotten --param stored it as a literal and
+//     every grantee's value for it failed, with nobody told); "\{name}" is
+//     the literal;
 //   - every other word is a literal.
 func ParseTemplate(words []string, params []protocol.ActionParam) ([]protocol.ActionElement, error)
 ```

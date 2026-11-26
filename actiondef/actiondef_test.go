@@ -190,7 +190,7 @@ func TestResolveOneElementPerValue(t *testing.T) {
 
 func TestParseTemplate(t *testing.T) {
 	params := []protocol.ActionParam{choiceParam("env", "a"), tokenParam("ref")}
-	els, err := ParseTemplate([]string{"./deploy.sh", "--env", "{env}", `\{env}`, "{other}", "{ref}"}, params)
+	els, err := ParseTemplate([]string{"./deploy.sh", "--env", "{env}", `\{env}`, `\{other}`, "{ref}"}, params)
 	if err != nil {
 		t.Fatalf("ParseTemplate: %v", err)
 	}
@@ -204,7 +204,7 @@ func TestParseTemplate(t *testing.T) {
 		t.Errorf(`\{env} = %+v, want the literal {env}`, els[3])
 	}
 	if l := els[4].Literal(); l == nil || string(l.Bytes) != "{other}" {
-		t.Errorf("{other} (undeclared) = %+v, want a literal", els[4])
+		t.Errorf(`\{other} = %+v, want the literal {other}`, els[4])
 	}
 	if p := els[5].ParamIndex(); p == nil || *p != 1 {
 		t.Errorf("{ref} = %+v, want param 1", els[5])
@@ -244,5 +244,20 @@ func TestValuesOrdersByParams(t *testing.T) {
 	}
 	if _, err := Values(&d, map[string]string{"env": "staging", "ref": "v1", "x": "y"}); err == nil || !strings.Contains(err.Error(), "x") {
 		t.Errorf("unknown x: err = %v", err)
+	}
+}
+
+// A whole word {name} naming no declared param is a forgotten --param far more
+// often than a literal: refused, pointing at the escape (final review I1).
+// Stored as a literal, every grantee's --value would fail and a run with no
+// values would pass "{env}" to the program, with nobody told.
+func TestParseTemplateRefusesUndeclaredReference(t *testing.T) {
+	_, err := ParseTemplate([]string{"./deploy.sh", "--env", "{env}"}, nil)
+	if err == nil || !strings.Contains(err.Error(), "{env}") || !strings.Contains(err.Error(), `\{`) {
+		t.Fatalf("undeclared {env}: err = %v, want a refusal naming it and the \\{ escape", err)
+	}
+	// Not a param-shaped name: a literal, as before ({} and {Bad} cannot be params).
+	if _, err := ParseTemplate([]string{"echo", "{}", "{Bad}", "{a b}"}, nil); err != nil {
+		t.Fatalf("non-param braces refused: %v", err)
 	}
 }

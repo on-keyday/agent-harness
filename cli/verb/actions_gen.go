@@ -2316,12 +2316,10 @@ func init() {
 		},
 		"action ls\x00tui": func(b Bound) (Action, error) {
 			a := ActionListAction{}
-			a.JSON = b.Bool("json")
 			return a, nil
 		},
 		"action ls\x00webui": func(b Bound) (Action, error) {
 			a := ActionListAction{}
-			a.JSON = b.Bool("json")
 			return a, nil
 		},
 		"runner enroll\x00cli": func(b Bound) (Action, error) {

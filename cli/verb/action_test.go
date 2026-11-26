@@ -54,3 +54,17 @@ func TestActionVerbsParse(t *testing.T) {
 		t.Fatalf("edit without --revision: %v", err)
 	}
 }
+
+// --json writes for a pipe; the TUI and WebUI answer into a results pane, so
+// the flag is the CLI's alone and typing it elsewhere is refused, not ignored
+// (final review: a typed option takes effect or errors).
+func TestActionLsJSONIsCLIOnly(t *testing.T) {
+	if _, err := ParseCmdActionLs(CLI, []string{"--json"}, nil); err != nil {
+		t.Fatalf("CLI --json: %v", err)
+	}
+	for _, sf := range []Surface{TUI, WebUI} {
+		if _, err := ParseCmdActionLs(sf, []string{"--json"}, nil); err == nil {
+			t.Errorf("%v accepted --json it would ignore", sf)
+		}
+	}
+}
