@@ -60,7 +60,7 @@ func (h *TaskHandler) execGate(cid objproto.ConnectionID, targetHex string, body
 		if body.Argv.ArgvLen == 0 {
 			return nil, nil, protocol.ExecRunStatus_EmptyArgv
 		}
-		if !h.inScope(cid, run, targetHex) {
+		if !h.inScope(cid, requiredCentral(protocol.TaskControlKind_OpenExecRun), targetHex) {
 			return nil, nil, protocol.ExecRunStatus_OutsideCondition
 		}
 		return execArgvStrings(body.Argv), nil, protocol.ExecRunStatus_Ok
