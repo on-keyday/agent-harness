@@ -216,7 +216,7 @@ func TestKickOutOfReachIsNotFound(t *testing.T) {
 	add := func(cid, ident string, key ed25519.PublicKey) {
 		id := pcid(t, cid)
 		if _, err := f.n.reg.Add(&RunnerEntry{ID: id, Identity: runnerIDOf(ident), Hostname: "h", Key: key,
-			Conn: &fakeConn{id: id}, MaxTasks: 1}); err != nil {
+			Bound: bindingOf(keys, key), Conn: &fakeConn{id: id}, MaxTasks: 1}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -251,7 +251,7 @@ func TestKickPrefixResolvesAmongReachableOnly(t *testing.T) {
 	}{{"ws:127.0.0.1:9710-1", "twin-a", kt}, {"ws:127.0.0.1:9711-1", "twin-b", ku}} {
 		id := pcid(t, r.cid)
 		if _, err := f.n.reg.Add(&RunnerEntry{ID: id, Identity: runnerIDOf(r.ident), Hostname: "h", Key: r.key,
-			Conn: &fakeConn{id: id}, MaxTasks: 1}); err != nil {
+			Bound: bindingOf(keys, r.key), Conn: &fakeConn{id: id}, MaxTasks: 1}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -260,4 +260,17 @@ func TestKickPrefixResolvesAmongReachableOnly(t *testing.T) {
 	if st == protocol.RunnerKickStatus_AmbiguousPrefix || body == nil || body.Runner.Id != runnerIDOf("twin-a") {
 		t.Fatalf("shared prefix: %v body=%+v, want the reachable runner twin-a", st, body)
 	}
+}
+
+// bindingOf is the RunnerEntry.Bound registration reads for key.
+func bindingOf(keys *RunnerKeyStore, key ed25519.PublicKey) map[string]struct{} {
+	rec, _ := keys.Lookup(key)
+	if len(rec.Bound) == 0 {
+		return nil
+	}
+	m := map[string]struct{}{}
+	for _, id := range rec.Bound {
+		m[hex.EncodeToString(id.Id[:])] = struct{}{}
+	}
+	return m
 }

@@ -92,7 +92,7 @@ func (h *TaskHandler) openBackground(b backgroundOpen) protocol.OpenInteractiveR
 	if !req.ConditionsPresent() {
 		wc = nil
 	}
-	if st, msg := h.checkBackgroundRun(kind, profile, wc, b.prompt, b.repo, req.Selector); st != protocol.OpenInteractiveStatus_Ok {
+	if st, msg := h.checkBackgroundRun(kind, profile, wc, b.prompt, b.repo, req.Selector, b.resumeHex); st != protocol.OpenInteractiveStatus_Ok {
 		return refuse(st, msg)
 	}
 
@@ -147,7 +147,10 @@ func (h *TaskHandler) openBackground(b backgroundOpen) protocol.OpenInteractiveR
 // so a schedule is refused for what a background open would be. It reads the
 // registry once, for the candidate set; a schedule's own "a candidate must
 // exist now" is its caller's check.
-func (h *TaskHandler) checkBackgroundRun(kind protocol.TaskKind, profile string, wc *protocol.BackgroundConditions, prompt, repo string, sel protocol.RunnerSelector) (protocol.OpenInteractiveStatus, string) {
+//
+// taskID is the task being run when it exists already (a resume), else "":
+// Candidates' binding rule (bound enrollment, C2).
+func (h *TaskHandler) checkBackgroundRun(kind protocol.TaskKind, profile string, wc *protocol.BackgroundConditions, prompt, repo string, sel protocol.RunnerSelector, taskID string) (protocol.OpenInteractiveStatus, string) {
 	if profile == "" {
 		return protocol.OpenInteractiveStatus_ProfileRequired, "a background open must name its agent"
 	}
@@ -163,7 +166,7 @@ func (h *TaskHandler) checkBackgroundRun(kind protocol.TaskKind, profile string,
 	case condBadTurnEnd:
 		return protocol.OpenInteractiveStatus_TurnEndUnsupported, msg
 	}
-	if cands := h.Registry.Candidates(repo, sel); len(cands) > 0 {
+	if cands := h.Registry.Candidates(repo, sel, taskID); len(cands) > 0 {
 		offered := false
 		for _, c := range cands {
 			if c.HasProfile(profile) {
@@ -209,7 +212,7 @@ func (h *TaskHandler) waitReasonFor(t TaskEntry) protocol.WaitReason {
 		return protocol.WaitReason_None
 	}
 	matching := 0
-	for _, c := range h.Registry.Candidates(t.RepoPath, t.Selector) {
+	for _, c := range h.Registry.Candidates(t.RepoPath, t.Selector, t.ID) {
 		if t.AgentProfile != "" && !c.HasProfile(t.AgentProfile) {
 			continue
 		}

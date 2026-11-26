@@ -1956,7 +1956,7 @@ func (h *TaskHandler) handleOpenInteractiveWith(cid objproto.ConnectionID, tuiCo
 		return errResp(protocol.OpenInteractiveStatus_DetachRequired)
 	}
 
-	cands := h.Registry.Candidates(repo, req.Selector)
+	cands := h.Registry.Candidates(repo, req.Selector, existingTaskIDHex)
 	if oneshot && len(cands) > 0 {
 		// Only a runner that said it runs --oneshot may take one; another
 		// would ignore the bit and start the interactive argv.
@@ -2637,6 +2637,7 @@ func toRunnerInfo(r RunnerEntry) protocol.RunnerInfo {
 	info.LinkRecord = r.LinkRecord
 	info.LinkVia = r.LinkVia
 	info.SetLinkTarget([]byte(r.LinkTarget))
+	info.SetBound(r.boundTaskIDs())
 	// WHERE it is reached, which id used to answer by being an address.
 	info.Cid = protocol.ConnIDFromObjproto(r.Conn.ConnectionID())
 

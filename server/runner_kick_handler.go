@@ -38,7 +38,7 @@ func (h *TaskHandler) handleRunnerKick(conn ConnHandle, requestID uint32, r *pro
 		// make a prefix ambiguous either.
 		all, allowed := h.enrollReach(conn.ConnectionID())
 		for _, e := range h.Registry.List() {
-			if !reachesBinding(all, allowed, h.keyBinding(e.Key)) {
+			if !reachesBinding(all, allowed, e.boundTaskIDs()) {
 				continue
 			}
 			if strings.HasPrefix(e.Identity.Hex(), prefix) {

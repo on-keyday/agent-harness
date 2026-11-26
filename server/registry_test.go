@@ -196,13 +196,13 @@ func TestRegistryCandidatesExactMatch(t *testing.T) {
 	r.Add(&RunnerEntry{ID: tcid("B"), Identity: testRunnerID("B"), Hostname: "h2", AllowedRoots: []string{"/srv/ws"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now})
 
 	any := protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}
-	if cs := r.Candidates("/home/u/ws/repo1", any); len(cs) != 1 || cs[0].ID != tcid("A") {
+	if cs := r.Candidates("/home/u/ws/repo1", any, ""); len(cs) != 1 || cs[0].ID != tcid("A") {
 		t.Fatalf("expected only A, got %v", cs)
 	}
-	if cs := r.Candidates("/home/u/ws/other", any); len(cs) != 0 {
+	if cs := r.Candidates("/home/u/ws/other", any, ""); len(cs) != 0 {
 		t.Fatalf("a repo below a root must have no candidate, got %v", cs)
 	}
-	if cs := r.Candidates("/srv/ws/foo", any); len(cs) != 0 {
+	if cs := r.Candidates("/srv/ws/foo", any, ""); len(cs) != 0 {
 		t.Fatalf("a repo below a root must have no candidate, got %v", cs)
 	}
 }
@@ -213,7 +213,7 @@ func TestRegistryCandidatesParentRootDoesNotServe(t *testing.T) {
 	r := NewRegistry()
 	now := time.Now()
 	r.Add(&RunnerEntry{ID: tcid("broad"), Identity: testRunnerID("broad"), Hostname: "h", AllowedRoots: []string{"/a"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
-	if cs := r.Candidates("/a/b", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}); len(cs) != 0 {
+	if cs := r.Candidates("/a/b", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}, ""); len(cs) != 0 {
 		t.Fatalf("parent-rooted runner must not serve /a/b, got %v", cs)
 	}
 }
@@ -223,7 +223,7 @@ func TestRegistryCandidatesAmbiguous(t *testing.T) {
 	now := time.Now()
 	r.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/shared"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now})
 	r.Add(&RunnerEntry{ID: tcid("B"), Identity: testRunnerID("B"), Hostname: "h2", AllowedRoots: []string{"/shared"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now})
-	cs := r.Candidates("/shared", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any})
+	cs := r.Candidates("/shared", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}, "")
 	if len(cs) != 2 {
 		t.Fatalf("expected 2 candidates (ambiguous), got %d", len(cs))
 	}
@@ -234,7 +234,7 @@ func TestRegistryCandidatesCapacityAgnostic(t *testing.T) {
 	now := time.Now()
 	r.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/x/repo"}, MaxTasks: 1,
 		ActiveTasks: map[string]struct{}{"existing": {}}, ConnectedAt: now, LastTaskActivity: now})
-	cs := r.Candidates("/x/repo", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any})
+	cs := r.Candidates("/x/repo", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}, "")
 	if len(cs) != 1 {
 		t.Fatalf("Candidates must include at-capacity runners (caller filters), got %d", len(cs))
 	}
@@ -268,7 +268,7 @@ func TestRegistryCandidatesSelectorByHostname(t *testing.T) {
 	h.SetName([]byte("host1"))
 	sel.SetHostname(h)
 
-	cs := r.Candidates("/x/repo", sel)
+	cs := r.Candidates("/x/repo", sel, "")
 	if len(cs) != 1 || cs[0].ID != tcid("A") {
 		t.Fatalf("expected only A (host1), got %v", cs)
 	}

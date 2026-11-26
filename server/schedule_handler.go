@@ -688,10 +688,10 @@ func (h *TaskHandler) applySpec(cid objproto.ConnectionID, base Schedule, spec *
 
 	// S-D12: the checks a background open makes, through the same function.
 	wc := sc.Run.Cond.Wire()
-	if st, msg := h.checkBackgroundRun(sc.runKind(), sc.Agent, &wc, sc.Prompt, sc.Repo, sc.Selector); st != protocol.OpenInteractiveStatus_Ok {
+	if st, msg := h.checkBackgroundRun(sc.runKind(), sc.Agent, &wc, sc.Prompt, sc.Repo, sc.Selector, ""); st != protocol.OpenInteractiveStatus_Ok {
 		return refuse(scheduleStatusFromOpen(st), "%s", msg)
 	}
-	if create && len(h.Registry.Candidates(sc.Repo, sc.Selector)) == 0 {
+	if create && len(h.Registry.Candidates(sc.Repo, sc.Selector, "")) == 0 {
 		return refuse(protocol.ScheduleStatus_NoCandidate, "no connected runner serves %s", sc.Repo)
 	}
 	return d, nil

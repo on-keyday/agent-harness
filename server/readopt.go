@@ -76,6 +76,12 @@ func (s *Server) readoptHeldTasks(identity protocol.RunnerID, report protocol.He
 			log.Warn("readopt: refused, assigned to another runner",
 				"task", taskID, "reported_by", identity.Hex(), "assigned_to", t.AssignedTo.Hex())
 			continue
+		case !readoptTakes(s.registry, identity, taskID):
+			// Readopt places tasks without Candidates, so the binding rule
+			// (bound enrollment, C2) is applied here.
+			log.Warn("readopt: refused, outside the runner key's binding",
+				"task", taskID, "runner", identity.Hex())
+			continue
 		}
 
 		// Capacity first: a re-adopted task occupies a slot on the new
@@ -290,4 +296,12 @@ func (s *Server) rebindHeldSessions(identity protocol.RunnerID, taskIDs []string
 		}
 		s.taskHandler.runModeMu.Unlock()
 	}
+}
+
+// readoptTakes is Candidates' binding rule for a held task: the reporting
+// runner's key binding must admit it. A runner not (or no longer) registered
+// is let through here; the capacity bind below says so in its own log line.
+func readoptTakes(reg *Registry, identity protocol.RunnerID, taskID string) bool {
+	e, ok := reg.GetByIdentity(identity)
+	return !ok || e.takes(taskID)
 }

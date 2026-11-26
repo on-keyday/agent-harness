@@ -78,7 +78,7 @@ func (s *Scheduler) Tick() {
 		if task.RunMode != protocol.RunMode_Background || s.start == nil {
 			continue
 		}
-		for _, c := range s.reg.Candidates(task.RepoPath, task.Selector) {
+		for _, c := range s.reg.Candidates(task.RepoPath, task.Selector, task.ID) {
 			if c.Status() != protocol.RunnerStatus_Idle || s.reg.displaced(c.ID) {
 				continue
 			}

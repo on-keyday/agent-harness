@@ -2,6 +2,7 @@ package server
 
 import (
 	"crypto/ed25519"
+	"encoding/hex"
 	"errors"
 	"maps"
 	"sort"
@@ -72,7 +73,13 @@ type RunnerEntry struct {
 	// Key is the enrolled Ed25519 key this connection authenticated with
 	// (AuthRole.runner). The gate admits no runner without one; nil only in
 	// test wiring that leaves RunnerHandler.AuthOf unset.
-	Key              ed25519.PublicKey
+	Key ed25519.PublicKey
+	// Bound is the binding of Key at registration (bound enrollment, C2): the
+	// task ids (hex) this runner may take; nil = unbound, any task. Read once
+	// from the key store: a binding is fixed at enroll, and unenrolling a key
+	// in use closes the runners on it, so it cannot go stale under a live
+	// entry. Never mutated after Add, so snapshot shares it.
+	Bound            map[string]struct{}
 	ActiveTasks      map[string]struct{} // task_id (hex) set; len() = current load
 	ConnectedAt      time.Time
 	LastTaskActivity time.Time
@@ -111,6 +118,38 @@ func (e *RunnerEntry) snapshot() RunnerEntry {
 	c := *e
 	c.ActiveTasks = maps.Clone(e.ActiveTasks)
 	return c
+}
+
+// takes reports whether the runner's key binding admits taskID (hex): any
+// task when unbound; when bound, only a task in the binding, never "" (no task
+// yet), which matches no binding.
+func (e RunnerEntry) takes(taskID string) bool {
+	if e.Bound == nil {
+		return true
+	}
+	_, ok := e.Bound[taskID]
+	return taskID != "" && ok
+}
+
+// boundTaskIDs is Bound as sorted task ids, for the wire; nil when unbound.
+func (e RunnerEntry) boundTaskIDs() []protocol.TaskID {
+	if e.Bound == nil {
+		return nil
+	}
+	hexes := make([]string, 0, len(e.Bound))
+	for id := range e.Bound {
+		hexes = append(hexes, id)
+	}
+	sort.Strings(hexes)
+	out := make([]protocol.TaskID, 0, len(hexes))
+	for _, s := range hexes {
+		var t protocol.TaskID
+		if b, err := hex.DecodeString(s); err == nil && len(b) == len(t.Id) {
+			copy(t.Id[:], b)
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // Status derives the wire-visible status from connection + slot occupancy.
@@ -422,18 +461,23 @@ func (r *Registry) UnbindTask(id objproto.ConnectionID, taskID string) {
 // This is the one answer to "who may take this task": an interactive open and
 // Scheduler.Tick both ask it (G17).
 //
+// taskID (hex) is the task being placed, "" when there is none yet (a new
+// foreground open, a schedule checked at creation). A runner whose key is
+// bound to a set of tasks is listed only for a task in that set, and never
+// for "" (bound enrollment, C2).
+//
 // The slice is capacity-agnostic: at-capacity runners are still listed so
 // callers can detect ambiguity even when matching runners are all busy.
 //
 // The result is sorted by ConnectedAt asc then ID asc for deterministic
 // behavior in tests and dispatch.
-func (r *Registry) Candidates(repo string, sel protocol.RunnerSelector) []RunnerEntry {
+func (r *Registry) Candidates(repo string, sel protocol.RunnerSelector, taskID string) []RunnerEntry {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	var out []RunnerEntry
 	for _, e := range r.runners {
-		if !r.selects(sel, e) || !servesRepo(e.AllowedRoots, repo) {
+		if !r.selects(sel, e) || !servesRepo(e.AllowedRoots, repo) || !e.takes(taskID) {
 			continue
 		}
 		out = append(out, e.snapshot())

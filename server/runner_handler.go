@@ -20,6 +20,9 @@ type RunnerHandler struct {
 	// AuthOf reports the enrolled runner key the connection authenticated
 	// with. nil (test wiring) registers the runner with no key.
 	AuthOf func(cid objproto.ConnectionID) ed25519.PublicKey
+	// BindingOf reports the tasks an enrolled key is bound to (bound
+	// enrollment, C2); nil = unbound. nil func (test wiring): unbound.
+	BindingOf func(key ed25519.PublicKey) []protocol.TaskID
 	// KickConn ends a connection from the server side (Server.kickConn).
 	KickConn func(cid objproto.ConnectionID)
 
@@ -158,6 +161,14 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 		}
 		if h.AuthOf != nil {
 			entry.Key = h.AuthOf(conn.ConnectionID())
+		}
+		if h.BindingOf != nil && entry.Key != nil {
+			if ids := h.BindingOf(entry.Key); len(ids) > 0 {
+				entry.Bound = make(map[string]struct{}, len(ids))
+				for _, id := range ids {
+					entry.Bound[hex.EncodeToString(id.Id[:])] = struct{}{}
+				}
+			}
 		}
 		// A dial record names the key its runner must prove. Checked BEFORE
 		// the registry: the gate has already answered ok, so a refusal here is

@@ -42,16 +42,6 @@ func reachesBinding(all bool, allowed map[string]bool, bound []protocol.TaskID) 
 	return true
 }
 
-// keyBinding is the binding of the key a runner authenticated with; nil
-// (unbound) for a key the store no longer holds.
-func (h *TaskHandler) keyBinding(key ed25519.PublicKey) []protocol.TaskID {
-	if h.RunnerKeys == nil || key == nil {
-		return nil
-	}
-	rec, _ := h.RunnerKeys.Lookup(key)
-	return rec.Bound
-}
-
 // enrolledBy names who enrolled a key: the caller's principal task, or the
 // operator for a connection that has none.
 func (h *TaskHandler) enrolledBy(cid objproto.ConnectionID) string {
