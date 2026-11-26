@@ -75,6 +75,10 @@ type Config struct {
 	// nil → New starts an empty in-memory set.
 	RunnerKeys *RunnerKeyStore
 
+	// Actions is the set of server-defined actions (harness-server loads
+	// <data-dir>/actions.json). nil → New starts an empty in-memory set.
+	Actions *ActionStore
+
 	// Schedules is the set of cron schedules (harness-server loads
 	// <data-dir>/schedules.json). nil → New starts an empty in-memory set.
 	Schedules *ScheduleStore
@@ -265,6 +269,9 @@ func New(cfg Config) *Server {
 	if cfg.RunnerKeys == nil {
 		cfg.RunnerKeys, _ = LoadRunnerKeyStore("", nil)
 	}
+	if cfg.Actions == nil {
+		cfg.Actions, _ = LoadActionStore("")
+	}
 	if cfg.Schedules == nil {
 		cfg.Schedules, _ = LoadScheduleStore("")
 	}
@@ -325,6 +332,7 @@ func New(cfg Config) *Server {
 	})
 	s.taskHandler = &TaskHandler{
 		RunnerKeys:  cfg.RunnerKeys,
+		Actions:     cfg.Actions,
 		RunnerDials: cfg.RunnerDials,
 		Dials:       s.dials,
 		DialLegs: func(transport string) bool {

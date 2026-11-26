@@ -156,6 +156,22 @@ func loadRunnerKeys(dataDir string) (*server.RunnerKeyStore, error) {
 	return server.LoadRunnerKeyStore(filepath.Join(dataDir, runnerKeysFileName), nil)
 }
 
+const actionsFileName = "actions.json"
+
+// loadActions reads <data-dir>/actions.json. A file that does not parse, or
+// holds a definition the shared rule refuses, is a startup error. With no data
+// dir the set lives in memory only.
+func loadActions(dataDir string) (*server.ActionStore, error) {
+	if dataDir == "" {
+		slog.Warn("no --data-dir: actions will not survive a restart")
+		return server.LoadActionStore("")
+	}
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		return nil, err
+	}
+	return server.LoadActionStore(filepath.Join(dataDir, actionsFileName))
+}
+
 const runnerDialsFileName = "runner-dials.json"
 
 // loadRunnerDials reads <data-dir>/runner-dials.json, the runners this server
@@ -312,6 +328,11 @@ func main() {
 		fmt.Fprintf(os.Stderr, "harness-server: %v\n", err)
 		os.Exit(1)
 	}
+	actions, err := loadActions(*dataDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "harness-server: %v\n", err)
+		os.Exit(1)
+	}
 	schedules, err := loadSchedules(*dataDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "harness-server: %v\n", err)
@@ -372,6 +393,7 @@ func main() {
 		OperatorPSK:          operatorPSKBytes,
 		ServerKey:            serverKey,
 		RunnerKeys:           runnerKeys,
+		Actions:              actions,
 		Schedules:            schedules,
 		RunnerDials:          runnerDials,
 		WebUIFS:              webUIFS,

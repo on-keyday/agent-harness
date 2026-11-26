@@ -23,6 +23,9 @@ type TaskHandler struct {
 	// RunnerKeys is the enrollment store: the runner key verbs act on it, and
 	// the list handler reads a runner's key label from it.
 	RunnerKeys *RunnerKeyStore
+	// Actions is the server-defined action store: the action verbs act on it,
+	// and an exec naming an action resolves through it.
+	Actions *ActionStore
 	// RunnerDials / Dials: the dial records and the loops dialing them;
 	// DialLegs says whether this server can dial a transport at all.
 	RunnerDials *RunnerDialStore
