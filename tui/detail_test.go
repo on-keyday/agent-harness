@@ -164,3 +164,15 @@ func TestFormatTaskDetailShowsAuthority(t *testing.T) {
 		t.Errorf("spawned task lacks its authority line:\n%s", got)
 	}
 }
+
+// The overlap warning (grant conditions spec, § Surfaces) is a line of its own
+// when the server reports one, and absent otherwise.
+func TestFormatTaskDetailActionOverlap(t *testing.T) {
+	task := protocol.TaskInfo{Status: protocol.TaskStatus_Running, ActionOverlap: protocol.Capability_FileWrite}
+	if got := formatTaskDetail(task, nil); !strings.Contains(got, "warning:       warn=action_overlap:file_write") {
+		t.Fatalf("detail lacks the warning:\n%s", got)
+	}
+	if got := formatTaskDetail(protocol.TaskInfo{}, nil); strings.Contains(got, "action_overlap") {
+		t.Fatalf("a grant with no overlap warns:\n%s", got)
+	}
+}

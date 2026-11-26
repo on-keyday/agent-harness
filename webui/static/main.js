@@ -2122,8 +2122,9 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       const cmd = document.createElement("span");
       cmd.className = "forward-cell exec-command";
       if (expandedExecCommands.has(e.exec_id)) cmd.classList.add("expanded");
-      cmd.textContent = e.command;
-      cmd.title = e.command;
+      const cmdText = e.action ? `${e.command}  ${e.action}` : e.command;
+      cmd.textContent = cmdText;
+      cmd.title = cmdText;
       cmd.addEventListener("click", () => {
         if (expandedExecCommands.has(e.exec_id)) {
           expandedExecCommands.delete(e.exec_id);
@@ -3549,10 +3550,10 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // A non-zero exit is reported, not thrown: the command ran and said what it
   // meant. Only a refusal (no such task, no worktree, denied) reaches the catch.
   const execRunToOutput = async (taskId, argv, flags = {}) => {
-    const { shell = false, sshdParent = false } = flags;
+    const { shell = false, sshdParent = false, action = "", valueSpecs = [] } = flags;
     const out = makeExecSink("1| ");
     const err = makeExecSink("2| ");
-    const label = `exec ${taskId.slice(0, 12)}…: ${window.harness.execArgvText(argv)}`;
+    const label = `exec ${taskId.slice(0, 12)}…: ${action ? `action ${action}` : window.harness.execArgvText(argv)}`;
     try {
       const res = await window.harness.execRun(taskId, argv, {
         onStdout: (c) => out.write(c),
@@ -3563,6 +3564,8 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
         // A parent process named sshd, for a client that checks its own
         // ancestry by process name. Windows only.
         sshdParent,
+        // A server-defined action instead of argv (grant conditions spec C8).
+        ...(action ? { action, valueSpecs } : {}),
       });
       out.flush();
       err.flush();
@@ -7301,6 +7304,9 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       if (t.scopeFor) metaText += `  +${t.scopeFor}`;
       // The grant conditions on those overrides, as ls prints them.
       if (t.grantConditions) metaText += `  conditions=${t.grantConditions}`;
+      // An action is only as narrow as the files it reads: the server says
+      // when this grant can change them (warn=action_overlap:<bits>).
+      if (t.actionOverlap) metaText += `  ${t.actionOverlap}`;
       // The bound, always — the default too, as ls prints it.
       if (t.delegateCaps !== undefined) metaText += `  delegate=${t.delegateCaps} delegate-scope=${t.delegateScope}`;
       // The spawn limits and the subtree's record count, unbounded included.

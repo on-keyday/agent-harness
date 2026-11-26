@@ -479,8 +479,12 @@ func (h tuiVerbs) Exec(v verb.ExecRunAction) tea.Cmd {
 		a.cmdresult.Append(ErrorStyle.Render("exec: " + errStr))
 		return nil
 	}
-	a.cmdresult.Append(fmt.Sprintf("exec %s: %s …", pfShortID(full), execArgvLabel(v.Argv)))
-	return DoExecRun(a.client, full, v.Argv, ExecRunFlags{Shell: v.Shell, SshdParent: v.SshdParent}, a.program)
+	what := execArgvLabel(v.Argv)
+	if v.Action != "" {
+		what = "action " + v.Action
+	}
+	a.cmdresult.Append(fmt.Sprintf("exec %s: %s …", pfShortID(full), what))
+	return DoExecRun(a.client, full, v.Argv, ExecRunFlags{Shell: v.Shell, SshdParent: v.SshdParent, Action: v.Action, Values: v.Values}, a.program)
 }
 
 func (h tuiVerbs) ExecLs(v verb.ExecRunAction) tea.Cmd {

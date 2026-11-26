@@ -458,7 +458,11 @@ and `bad_binding` on `RunnerKeyStatus`,
 `ExecRunBody`'s action variant, the action verbs, and — added while planning —
 `no_such_action` and `outside_condition` on `ExecRunStatus` (an action the
 server does not hold; an object outside the grant condition on a target in
-reach — neither is `not_found`, which names the task). The
+reach — neither is `not_found`, which names the task); and — added while
+implementing — `internal_error` on `ActionStatus` (the action store could not
+be written), and `action_overlap :Capability` on `TaskInfo` and
+`WhoAmIResponse`: the § Surfaces overlap warning, computed by the server,
+which holds the task tree a client listing one row (`whoami`) does not. The
 WAL gains condition bodies; the key store gains `bound_tasks`; the action store
 is new. Run `scripts/wire-skew-check.sh`. `RunnerHello` and every
 runner-decoded format are unchanged (C8), so a runner does not need a restart.

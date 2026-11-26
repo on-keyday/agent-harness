@@ -1852,6 +1852,14 @@ func init() {
 			a.Sub = "run"
 			a.Shell = b.Bool("shell")
 			a.SshdParent = b.Bool("sshd-parent")
+			a.Action = b.Str("action")
+			if b.Set["value"] {
+				v, err := ParseActionValues(stringsOf(b.Custom["value"]))
+				if err != nil {
+					return nil, fmt.Errorf("exec: --value: %w", err)
+				}
+				a.Values = v
+			}
 			if len(b.Args) > 0 {
 				a.TaskID = b.Args[0]
 			}
@@ -1867,6 +1875,14 @@ func init() {
 			a.Sub = "run"
 			a.Shell = b.Bool("shell")
 			a.SshdParent = b.Bool("sshd-parent")
+			a.Action = b.Str("action")
+			if b.Set["value"] {
+				v, err := ParseActionValues(stringsOf(b.Custom["value"]))
+				if err != nil {
+					return nil, fmt.Errorf("exec: --value: %w", err)
+				}
+				a.Values = v
+			}
 			if len(b.Args) > 0 {
 				a.TaskID = b.Args[0]
 			}
@@ -2180,7 +2196,79 @@ func init() {
 			a.Template = b.TrailArgs
 			return a, nil
 		},
+		"action new\x00tui": func(b Bound) (Action, error) {
+			a := ActionPutAction{}
+			a.Sub = "new"
+			a.Name = b.Str("name")
+			a.DescriptionSet = b.Set["description"]
+			a.Description = b.Str("description")
+			if b.Set["param"] {
+				v, err := parseParamList(stringsOf(b.Custom["param"]))
+				if err != nil {
+					return nil, fmt.Errorf("action new: --param: %w", err)
+				}
+				a.Params = v
+			}
+			a.Template = b.TrailArgs
+			return a, nil
+		},
+		"action new\x00webui": func(b Bound) (Action, error) {
+			a := ActionPutAction{}
+			a.Sub = "new"
+			a.Name = b.Str("name")
+			a.DescriptionSet = b.Set["description"]
+			a.Description = b.Str("description")
+			if b.Set["param"] {
+				v, err := parseParamList(stringsOf(b.Custom["param"]))
+				if err != nil {
+					return nil, fmt.Errorf("action new: --param: %w", err)
+				}
+				a.Params = v
+			}
+			a.Template = b.TrailArgs
+			return a, nil
+		},
 		"action edit\x00cli": func(b Bound) (Action, error) {
+			a := ActionPutAction{}
+			a.Sub = "edit"
+			a.Name = b.Str("name")
+			a.DescriptionSet = b.Set["description"]
+			a.Description = b.Str("description")
+			if b.Set["param"] {
+				v, err := parseParamList(stringsOf(b.Custom["param"]))
+				if err != nil {
+					return nil, fmt.Errorf("action edit: --param: %w", err)
+				}
+				a.Params = v
+			}
+			a.Revision = uint32(uintOf(b.Flags["revision"]))
+			if len(b.Args) > 0 {
+				a.Ref = b.Args[0]
+			}
+			a.Template = b.TrailArgs
+			return a, nil
+		},
+		"action edit\x00tui": func(b Bound) (Action, error) {
+			a := ActionPutAction{}
+			a.Sub = "edit"
+			a.Name = b.Str("name")
+			a.DescriptionSet = b.Set["description"]
+			a.Description = b.Str("description")
+			if b.Set["param"] {
+				v, err := parseParamList(stringsOf(b.Custom["param"]))
+				if err != nil {
+					return nil, fmt.Errorf("action edit: --param: %w", err)
+				}
+				a.Params = v
+			}
+			a.Revision = uint32(uintOf(b.Flags["revision"]))
+			if len(b.Args) > 0 {
+				a.Ref = b.Args[0]
+			}
+			a.Template = b.TrailArgs
+			return a, nil
+		},
+		"action edit\x00webui": func(b Bound) (Action, error) {
 			a := ActionPutAction{}
 			a.Sub = "edit"
 			a.Name = b.Str("name")
@@ -2207,7 +2295,31 @@ func init() {
 			}
 			return a, nil
 		},
+		"action rm\x00tui": func(b Bound) (Action, error) {
+			a := ActionRemoveAction{}
+			if len(b.Args) > 0 {
+				a.Ref = b.Args[0]
+			}
+			return a, nil
+		},
+		"action rm\x00webui": func(b Bound) (Action, error) {
+			a := ActionRemoveAction{}
+			if len(b.Args) > 0 {
+				a.Ref = b.Args[0]
+			}
+			return a, nil
+		},
 		"action ls\x00cli": func(b Bound) (Action, error) {
+			a := ActionListAction{}
+			a.JSON = b.Bool("json")
+			return a, nil
+		},
+		"action ls\x00tui": func(b Bound) (Action, error) {
+			a := ActionListAction{}
+			a.JSON = b.Bool("json")
+			return a, nil
+		},
+		"action ls\x00webui": func(b Bound) (Action, error) {
 			a := ActionListAction{}
 			a.JSON = b.Bool("json")
 			return a, nil
@@ -12015,6 +12127,14 @@ type TUIDispatch[R any] interface {
 	ForwardTap(ForwardTapAction) R
 	// server dial-runner
 	ServerDialRunner(ServerDialRunnerAction) R
+	// action new
+	ActionNew(ActionPutAction) R
+	// action edit
+	ActionEdit(ActionPutAction) R
+	// action rm
+	ActionRm(ActionRemoveAction) R
+	// action ls
+	ActionLs(ActionListAction) R
 	// runner enroll
 	RunnerEnroll(RunnerEnrollAction) R
 	// runner keys
@@ -12310,6 +12430,30 @@ func DispatchTUI[R any](h TUIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.ServerDialRunner(a), true, nil
+	case CmdActionNew:
+		a, perr := ParseCmdActionNew(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.ActionNew(a), true, nil
+	case CmdActionEdit:
+		a, perr := ParseCmdActionEdit(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.ActionEdit(a), true, nil
+	case CmdActionRm:
+		a, perr := ParseCmdActionRm(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.ActionRm(a), true, nil
+	case CmdActionLs:
+		a, perr := ParseCmdActionLs(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.ActionLs(a), true, nil
 	case CmdRunnerEnroll:
 		a, perr := ParseCmdRunnerEnroll(TUI, args, ctx)
 		if perr != nil {
@@ -12862,6 +13006,17 @@ func DispatchTUIAction[R any](h TUIDispatch[R], act Action) (r R, handled bool) 
 		return h.ForwardTap(a), true
 	case ServerDialRunnerAction:
 		return h.ServerDialRunner(a), true
+	case ActionPutAction:
+		switch a.Sub {
+		case "new":
+			return h.ActionNew(a), true
+		case "edit":
+			return h.ActionEdit(a), true
+		}
+	case ActionRemoveAction:
+		return h.ActionRm(a), true
+	case ActionListAction:
+		return h.ActionLs(a), true
 	case RunnerEnrollAction:
 		return h.RunnerEnroll(a), true
 	case RunnerKeysAction:
@@ -13197,6 +13352,30 @@ func ParseTUICommand(tokens []string, ctx map[string]string) (act Action, handle
 			return a, true, nil
 		case CmdServerDialRunner:
 			a, perr := ParseCmdServerDialRunner(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdActionNew:
+			a, perr := ParseCmdActionNew(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdActionEdit:
+			a, perr := ParseCmdActionEdit(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdActionRm:
+			a, perr := ParseCmdActionRm(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdActionLs:
+			a, perr := ParseCmdActionLs(TUI, tokens[n:], ctx)
 			if perr != nil {
 				return nil, true, perr
 			}

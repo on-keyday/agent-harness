@@ -1481,6 +1481,9 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.cmdresult.Append(OKStyle.Render(cli.SetParentMessage(msg.Opts, msg.Res)))
 		return a, a.refreshSnapshot()
 
+	case ActionResultMsg:
+		a.appendRunnerKeyResult(RunnerKeyResultMsg(msg))
+		return a, nil
 	case RunnerKeyResultMsg:
 		a.appendRunnerKeyResult(msg)
 		if msg.Refresh {

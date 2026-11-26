@@ -576,6 +576,34 @@ async function runVerbCommandDispatch(tokens, ctx) {
       out = await runGitAction(g.taskId, g);
       break;
     }
+    case "action": {
+      // Server-defined actions (grant conditions spec C8, C13). The params
+      // and the template cross raw; Go parses them with the CLI's rule and
+      // puts the definition through the same funnel (cli.RunActionPut).
+      const b = parseOrHelp(ctx, tokens, {});
+      let r;
+      switch (b.path[1]) {
+        case "new":
+        case "edit":
+          r = await ctx.harness.actionPut({
+            edit: b.path[1] === "edit",
+            ref: b.args[0] || "",
+            revision: Number(b.flags.revision || 0),
+            name: b.flags.name || "",
+            description: b.flags.description || "",
+            descriptionSet: !!(b.set || {}).description,
+            params: (b.custom && b.custom.param) || [],
+            template: b.trailArgs || [],
+          });
+          break;
+        case "rm": r = await ctx.harness.actionRemove(b.args[0]); break;
+        case "ls": r = await ctx.harness.actionList(); break;
+        default: throw new Error(`action: unknown sub-verb ${b.path[1]}`);
+      }
+      if (!r.ok) throw new Error(r.text.trimEnd());
+      out = r.text.trimEnd();
+      break;
+    }
     case "runner": {
       // runner enroll / keys / unenroll / kick and runner dial add / ls / rm:
       // the text is rendered by the same Go function the CLI prints with, so
@@ -659,7 +687,7 @@ async function runVerbCommandDispatch(tokens, ctx) {
         out = es.length
           ? (b.flags.json
               ? es.map((e) => JSON.stringify(e)).join("\n")
-              : es.map((e) => `#${e.execId}  ${String(e.taskId).slice(0, 8)}…  ${e.argvText}\n    ${e.traffic || ""}`).join("\n"))
+              : es.map((e) => `#${e.execId}  ${String(e.taskId).slice(0, 8)}…  ${e.argvText}${e.actionLabel ? "  " + e.actionLabel : ""}\n    ${e.traffic || ""}`).join("\n"))
           : "(no running execs)";
       } else if (sub === "kill") {
         // Every id, as on the CLI: this killed args[0] and reported
@@ -687,7 +715,14 @@ async function runVerbCommandDispatch(tokens, ctx) {
         });
         out = ctx.execTapOpen(id) ? `tapping exec ${id}` : `stopped tapping exec ${id}`;
       } else {
-        out = await ctx.execRunToOutput(b.args[0], b.trailArgs, { shell: !!b.flags.shell, sshdParent: !!b.flags["sshd-parent"] });
+        out = await ctx.execRunToOutput(b.args[0], b.trailArgs || [], {
+          shell: !!b.flags.shell,
+          sshdParent: !!b.flags["sshd-parent"],
+          // A server-defined action instead of argv; the --value words cross
+          // raw and are parsed in Go.
+          action: b.flags.action || "",
+          valueSpecs: (b.custom && b.custom.value) || [],
+        });
       }
       break;
     }

@@ -541,13 +541,9 @@ var Verbs = []VerbSpec{
 			// A server-defined action instead of a command (grant conditions
 			// spec C8): what an ActionSet-conditioned exec_run may run.
 			{Name: "action", Type: FlagString, Default: "", Field: "Action",
-				CmdlineSurfaces: CLI,
-				SurfaceReason:   "the TUI and WebUI exec rows gain --action with their own dispatch (next commit)",
 				Help:            "run this server-defined action (name or id, from `action ls`) instead of a command after --"},
 			{Name: "value", Type: FlagString, Custom: repeatedValue, Field: "Values",
 				FieldType: "map[string]string", Convert: "ParseActionValues",
-				CmdlineSurfaces: CLI,
-				SurfaceReason:   "the TUI and WebUI exec rows gain --action with their own dispatch (next commit)",
 				Help:            "a value for one of the action's params, NAME=VALUE, repeatable (each value is one whole argument)"},
 		},
 		// What it renames IS the shell, so it cannot rename an argv.
@@ -914,6 +910,8 @@ var Verbs = []VerbSpec{
 	// --- server-defined actions (2026-11-26-grant-conditions-and-bound-enrollment-design.md, C8, C13) ---
 	{
 		Path: []string{"action", "new"},
+		WebUIDispatch: WebUIDispatch{Fn: "actionPut"},
+		SurfaceNotes:  map[Surface][]string{WebUI: {"define a server-defined action (the command an ActionSet grant may run)"}, TUI: {"define a server-defined action (the command an ActionSet grant may run)"}},
 		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_ActionPut},
 		NoModalSurface: "an administrative verb run a handful of times, like runner enroll: the command line is the way in",
 		Notes: []string{
@@ -924,7 +922,7 @@ var Verbs = []VerbSpec{
 		},
 		Action:          "ActionPutAction",
 		Const:           map[string]string{"Sub": "new"},
-		CmdlineSurfaces: CLI,
+		CmdlineSurfaces: CLI | TUI | WebUI,
 		Flags:           actionPutFlags(true, ""),
 		Trailing: &Trailing{Name: "template", List: true, AfterSeparator: true, Required: true, FieldArgs: "Template",
 			Reason: actionTemplateHelp},
@@ -934,6 +932,8 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"action", "edit"},
+		WebUIDispatch: WebUIDispatch{Fn: "actionPut"},
+		SurfaceNotes:  map[Surface][]string{WebUI: {"replace an action's definition; refused unless you could re-grant every holder"}, TUI: {"replace an action's definition; refused unless you could re-grant every holder"}},
 		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_ActionList, protocol.TaskControlKind_ActionPut},
 		NoModalSurface: "an administrative verb, like runner enroll: the command line is the way in",
 		Notes: []string{
@@ -947,7 +947,7 @@ var Verbs = []VerbSpec{
 		},
 		Action:          "ActionPutAction",
 		Const:           map[string]string{"Sub": "edit"},
-		CmdlineSurfaces: CLI,
+		CmdlineSurfaces: CLI | TUI | WebUI,
 		Args:            []Arg{{Name: "action", Type: ArgString, Field: "Ref"}},
 		Flags: append(actionPutFlags(false, " (default: keep the current name)"),
 			Flag{Name: "revision", Type: FlagUint, Default: uint(0), Field: "Revision", FieldType: "uint32", Required: true,
@@ -958,6 +958,8 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"action", "rm"},
+		WebUIDispatch: WebUIDispatch{Fn: "actionRemove"},
+		SurfaceNotes:  map[Surface][]string{WebUI: {"delete a server-defined action"}, TUI: {"delete a server-defined action"}},
 		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_ActionList, protocol.TaskControlKind_ActionRemove},
 		NoModalSurface: "an administrative verb, like runner unenroll: the command line is the way in",
 		Notes: []string{
@@ -965,12 +967,14 @@ var Verbs = []VerbSpec{
 			"needs action_admin",
 		},
 		Action:          "ActionRemoveAction",
-		CmdlineSurfaces: CLI,
+		CmdlineSurfaces: CLI | TUI | WebUI,
 		Args:            []Arg{{Name: "action", Type: ArgString, Field: "Ref"}},
 		Examples:        []string{"action rm deploy"},
 	},
 	{
 		Path: []string{"action", "ls"},
+		WebUIDispatch: WebUIDispatch{Fn: "actionList"},
+		SurfaceNotes:  map[Surface][]string{WebUI: {"list the server's actions: full id, name, revision, command, params"}, TUI: {"list the server's actions: full id, name, revision, command, params"}},
 		MCP:  &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_ActionList},
 		NoModalSurface: "an administrative listing, like runner keys: the command line is the way in",
 		Notes: []string{
@@ -979,10 +983,10 @@ var Verbs = []VerbSpec{
 			"needs action_admin or exec_run",
 		},
 		Action:          "ActionListAction",
-		CmdlineSurfaces: CLI,
+		CmdlineSurfaces: CLI | TUI | WebUI,
 		Flags: []Flag{
 			{Name: "json", Type: FlagBool, Default: false, Field: "JSON",
-				CmdlineSurfaces: CLI,
+				CmdlineSurfaces: CLI | TUI | WebUI,
 				SurfaceReason:   "the TUI and WebUI answer into a results pane, not a pipe, so there is nothing for JSON to be read by",
 				Help:            "one JSON object per action"},
 		},

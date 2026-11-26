@@ -194,6 +194,10 @@ func (a *App) runExecRunAction(v verb.ExecRunAction) tea.Cmd {
 type ExecRunFlags struct {
 	Shell      bool
 	SshdParent bool
+	// Action runs a server-defined action (name or id) instead of argv, with
+	// Values by param name; resolved and checked through the cli funnel.
+	Action string
+	Values map[string]string
 }
 
 func DoExecRun(c *cli.Client, taskID string, argv []string, flags ExecRunFlags, program *tea.Program) tea.Cmd {
@@ -229,12 +233,23 @@ func DoExecRun(c *cli.Client, taskID string, argv []string, flags ExecRunFlags, 
 
 		go func() {
 			defer cancel()
-			res, err := c.ExecRun(context.Background(), taskID, argv, cli.ExecRunOpts{
+			opts := cli.ExecRunOpts{
 				ShellLine:  flags.Shell,
 				SshdParent: flags.SshdParent,
 				Stdout:     out,
 				Stderr:     errw,
-			})
+			}
+			var res cli.ExecRunResult
+			var err error
+			if flags.Action != "" {
+				var inv protocol.ActionInvocation
+				if inv, err = c.ActionInvocationFor(context.Background(), flags.Action, flags.Values); err == nil {
+					opts.Action = &inv
+				}
+			}
+			if err == nil {
+				res, err = c.ExecRun(context.Background(), taskID, argv, opts)
+			}
 			out.flush()
 			errw.flush()
 			program.Send(ExecRunDoneMsg{

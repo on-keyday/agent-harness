@@ -30,6 +30,7 @@ import (
 	"flag"
 	"io"
 
+	"github.com/on-keyday/agent-harness/actiondef"
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/cli"
@@ -166,6 +167,9 @@ func main() {
 		"serverDialRunner":   js.FuncOf(harnessServerDialRunner),
 		"runnerEnroll":       js.FuncOf(harnessRunnerEnroll),
 		"runnerKeys":         js.FuncOf(harnessRunnerKeys),
+		"actionPut":          js.FuncOf(harnessActionPut),
+		"actionRemove":       js.FuncOf(harnessActionRemove),
+		"actionList":         js.FuncOf(harnessActionList),
 		"runnerUnenroll":     js.FuncOf(harnessRunnerUnenroll),
 		"runnerDialAdd":      js.FuncOf(harnessRunnerDialAdd),
 		"runnerDialList":     js.FuncOf(harnessRunnerDialList),
@@ -1898,7 +1902,10 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					// per bit for machine readers, and the raw "CAPS=COND"
 					// list the dialogs send back beside scopeForSpecs.
 					// "grant" because "conditions" is the background run's.
-					"grantConditions":      cli.ConditionsLabel(t.Overrides, t.GrantConditions),
+					"grantConditions": cli.ConditionsLabel(t.Overrides, t.GrantConditions),
+					// The overlap warning (grant conditions spec, § Surfaces),
+					// rendered by the CLI's function: "" when there is none.
+					"actionOverlap":        cli.ActionOverlapLabel(t.ActionOverlap),
 					"grantConditionsByCap": stringMapJS(cli.ConditionsByCap(t.Capabilities, t.Overrides, t.GrantConditions)),
 					"grantConditionSpecs":  grantConditionSpecs(t.Overrides, t.GrantConditions),
 					// The delegation bound: labels for the row and sheet, raw
@@ -3370,6 +3377,74 @@ func harnessRunnerUnenroll(this js.Value, args []js.Value) any {
 		}
 		text, ok := cli.FormatRunnerUnenroll(st, res)
 		return text, ok, nil
+	})
+}
+
+// --- server-defined actions (grant conditions spec C8, C13) ---------------
+
+// jsStringArray reads a JS array of strings; anything else is empty.
+func jsStringArray(v js.Value) []string {
+	if v.Type() != js.TypeObject {
+		return nil
+	}
+	out := make([]string, 0, v.Length())
+	for i := 0; i < v.Length(); i++ {
+		out = append(out, v.Index(i).String())
+	}
+	return out
+}
+
+// harness.actionPut({edit, ref, revision, name, description, descriptionSet,
+// params: [--param specs], template: [words]}) -> Promise<{text, ok}>
+//
+// The params are parsed here with the CLI's rule and the definition goes
+// through the same funnel (cli.RunActionPut), so the browser cannot accept a
+// definition the CLI would refuse.
+func harnessActionPut(this js.Value, args []js.Value) any {
+	in := js.Undefined()
+	if len(args) > 0 {
+		in = args[0]
+	}
+	return runnerKeyPromise(func(c *cli.Client) (string, bool, error) {
+		if in.Type() != js.TypeObject {
+			return "", false, errors.New("actionPut: missing options")
+		}
+		var params []protocol.ActionParam
+		for _, spec := range jsStringArray(in.Get("params")) {
+			p, err := actiondef.ParseParam(spec)
+			if err != nil {
+				return "", false, err
+			}
+			params = append(params, p)
+		}
+		rev := 0
+		if r := in.Get("revision"); r.Type() == js.TypeNumber {
+			rev = r.Int()
+		}
+		return c.RunActionPut(rootCtx, cli.ActionPutInput{
+			Edit: optBool(in, "edit"), Ref: optString(in, "ref"), Revision: uint32(rev),
+			Name: optString(in, "name"), Description: optString(in, "description"), DescriptionSet: optBool(in, "descriptionSet"),
+			Params: params, Template: jsStringArray(in.Get("template")),
+		})
+	})
+}
+
+// harness.actionRemove(ref) -> Promise<{text, ok}>
+func harnessActionRemove(this js.Value, args []js.Value) any {
+	ref := jsArgString(args, 0)
+	return runnerKeyPromise(func(c *cli.Client) (string, bool, error) {
+		return c.RunActionRemove(rootCtx, ref)
+	})
+}
+
+// harness.actionList() -> Promise<{text, ok}>, the text `action ls` prints.
+func harnessActionList(this js.Value, args []js.Value) any {
+	return runnerKeyPromise(func(c *cli.Client) (string, bool, error) {
+		list, err := cli.ActionListWith(rootCtx, c)
+		if err != nil {
+			return "", false, err
+		}
+		return cli.FormatActions(list), true, nil
 	})
 }
 
@@ -5129,7 +5204,18 @@ func harnessExecRun(this js.Value, args []js.Value) any {
 			}
 			taskID := args[0].String()
 			argvJS := args[1]
-			if argvJS.Type() != js.TypeObject || argvJS.Length() == 0 {
+			opts := js.Undefined()
+			if len(args) > 2 {
+				opts = args[2]
+			}
+			// opts.action names a server-defined action (grant conditions
+			// spec C8); argv is then empty and opts.valueSpecs are the raw
+			// --value NAME=VALUE words, parsed here so the parse stays in Go.
+			action := ""
+			if opts.Type() == js.TypeObject && opts.Get("action").Type() == js.TypeString {
+				action = opts.Get("action").String()
+			}
+			if argvJS.Type() != js.TypeObject || (argvJS.Length() == 0 && action == "") {
 				rejectErr(reject, errors.New("execRun: argv must be a non-empty array"))
 				return
 			}
@@ -5137,9 +5223,19 @@ func harnessExecRun(this js.Value, args []js.Value) any {
 			for i := 0; i < argvJS.Length(); i++ {
 				argv = append(argv, argvJS.Index(i).String())
 			}
-			opts := js.Undefined()
-			if len(args) > 2 {
-				opts = args[2]
+			var actionInv *protocol.ActionInvocation
+			if action != "" {
+				values, err := verb.ParseActionValues(jsStringArray(opts.Get("valueSpecs")))
+				if err != nil {
+					rejectErr(reject, err)
+					return
+				}
+				inv, err := c.ActionInvocationFor(rootCtx, action, values)
+				if err != nil {
+					rejectErr(reject, err)
+					return
+				}
+				actionInv = &inv
 			}
 			var onOut, onErr js.Value
 			shellLine, sshdParent := false, false
@@ -5158,6 +5254,7 @@ func harnessExecRun(this js.Value, args []js.Value) any {
 				SshdParent: sshdParent,
 				Stdout:     jsChunkWriter{fn: onOut},
 				Stderr:     jsChunkWriter{fn: onErr},
+				Action:     actionInv,
 			})
 			if err != nil {
 				rejectErr(reject, err)
@@ -5241,6 +5338,8 @@ func harnessExecRunList(this js.Value, args []js.Value) any {
 					"originKind":    e.OriginKind.String(),
 					"originCid":     string(e.OriginCid),
 					"traffic":       cli.ExecRunTrafficLine(e),
+					// "action=<name>@r<rev>", "" for a raw argv (cli.ExecRunActionLabel).
+					"actionLabel": cli.ExecRunActionLabel(e),
 				})
 			}
 			resolve.Invoke(js.ValueOf(rows))

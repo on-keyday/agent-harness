@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -85,5 +86,18 @@ func TestExecsModalRowShowsTheIOMode(t *testing.T) {
 	e.SetPty(true)
 	if row := execRunInfoRow(&e, time.Now()); len(row) < 9 || row[8] != "pty" {
 		t.Fatalf("pty exec row = %v, want io cell \"pty\" at 8", row)
+	}
+}
+
+// An exec started from an action says which, after its command.
+func TestExecRunInfoRowNamesTheAction(t *testing.T) {
+	var e protocol.ExecRunInfo
+	e.SetActionPresent(true)
+	e.SetActionId(protocol.ActionID{Id: [16]byte{1}})
+	e.SetActionRevision(2)
+	e.SetActionName([]byte("deploy"))
+	row := execRunInfoRow(&e, time.Now())
+	if last := row[len(row)-1]; !strings.Contains(last, "action=deploy@r2") {
+		t.Fatalf("command cell %q lacks the action", last)
 	}
 }

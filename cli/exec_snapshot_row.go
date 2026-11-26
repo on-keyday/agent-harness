@@ -28,5 +28,7 @@ func ExecSnapshotRow(e *protocol.ExecRunInfo) map[string]any {
 		"taps":                  float64(e.Taps),
 		"pty":                   e.Pty(),
 		"traffic":               ExecRunTrafficLine(e),
+		// "action=<name>@r<rev>", "" for a raw argv (ExecRunActionLabel).
+		"action": ExecRunActionLabel(e),
 	}
 }

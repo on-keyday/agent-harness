@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/table"
@@ -40,7 +41,7 @@ func execRunInfoRow(e *protocol.ExecRunInfo, now time.Time) table.Row {
 		fmt.Sprintf("%d", e.Taps),
 		cli.ExecRunIOMode(e),
 		cli.ExecRunOrigin(e),
-		cli.ExecRunArgvString(e.Argv),
+		strings.TrimSpace(cli.ExecRunArgvString(e.Argv) + "  " + cli.ExecRunActionLabel(e)),
 	}
 }
 

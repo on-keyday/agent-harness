@@ -510,6 +510,11 @@ func formatTaskDetail(t protocol.TaskInfo, runnerByID map[string]protocol.Runner
 	if cl := cli.ConditionsLabel(t.Overrides, t.GrantConditions); cl != "" {
 		fmt.Fprintf(&sb, "conditions:    %s\n", cl)
 	}
+	// An action is only as narrow as the files it reads (grant conditions
+	// spec, § Surfaces): present only when this grant can change them.
+	if w := cli.ActionOverlapLabel(t.ActionOverlap); w != "" {
+		fmt.Fprintf(&sb, "warning:       %s\n", w)
+	}
 	fmt.Fprintf(&sb, "delegate:      %s\n", cli.CapsLabel(t.DelegateCaps))
 	fmt.Fprintf(&sb, "delegate-scope: %s\n", cli.ScopeLabel(t.DelegateScope))
 	fmt.Fprintf(&sb, "spawn limits:  depth=%s max-descendants=%s descendants=%d\n",
