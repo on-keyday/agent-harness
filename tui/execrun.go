@@ -27,8 +27,11 @@ type ExecRunOutputMsg struct {
 // ExecRunDoneMsg reports how the command ended. Err is a transport or refusal
 // failure (nothing ran); Result is what the command itself did.
 type ExecRunDoneMsg struct {
-	TaskID  string
-	Argv    []string
+	TaskID string
+	Argv   []string
+	// Label is what ran, as the start line named it: the argv, or
+	// "action <name>" for a server-defined action (whose argv is empty here).
+	Label   string
 	Result  cli.ExecRunResult
 	Dropped uint64
 	Err     error
@@ -128,8 +131,8 @@ func execArgvLabel(argv []string) string { return cli.ExecArgvString(argv) }
 // A non-zero exit is a WARNING, not an error: the command ran and said what it
 // meant, and `make test` returning 1 is a result the operator asked for. Only a
 // command that never ran is red.
-func execResultLine(taskID string, argv []string, res cli.ExecRunResult) string {
-	head := fmt.Sprintf("exec %s: %s: ", pfShortID(taskID), execArgvLabel(argv))
+func execResultLine(taskID, label string, res cli.ExecRunResult) string {
+	head := fmt.Sprintf("exec %s: %s: ", pfShortID(taskID), label)
 	if res.Kind == protocol.ExecEventKind_Exited {
 		if res.ExitCode == 0 {
 			return head + OKStyle.Render("exit 0")
@@ -201,9 +204,13 @@ type ExecRunFlags struct {
 }
 
 func DoExecRun(c *cli.Client, taskID string, argv []string, flags ExecRunFlags, program *tea.Program) tea.Cmd {
+	label := execArgvLabel(argv)
+	if flags.Action != "" {
+		label = "action " + flags.Action
+	}
 	return func() tea.Msg {
 		if c == nil {
-			return ExecRunDoneMsg{TaskID: taskID, Argv: argv, Err: fmt.Errorf("not connected to server")}
+			return ExecRunDoneMsg{TaskID: taskID, Argv: argv, Label: label, Err: fmt.Errorf("not connected to server")}
 		}
 		ch := make(chan ExecRunOutputMsg, 4096)
 		ctx, cancel := context.WithCancel(context.Background())
@@ -253,7 +260,7 @@ func DoExecRun(c *cli.Client, taskID string, argv []string, flags ExecRunFlags, 
 			out.flush()
 			errw.flush()
 			program.Send(ExecRunDoneMsg{
-				TaskID: taskID, Argv: argv, Result: res, Dropped: dropped.Load(), Err: err,
+				TaskID: taskID, Argv: argv, Label: label, Result: res, Dropped: dropped.Load(), Err: err,
 			})
 		}()
 		return nil

@@ -826,7 +826,7 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.cmdresult.Append(WarnStyle.Render(fmt.Sprintf(
 				"exec: %d output line(s) dropped — the UI could not keep up", msg.Dropped)))
 		}
-		a.cmdresult.Append(execResultLine(msg.TaskID, msg.Argv, msg.Result))
+		a.cmdresult.Append(execResultLine(msg.TaskID, msg.Label, msg.Result))
 		return a, nil
 
 	case ExecRunListMsg:

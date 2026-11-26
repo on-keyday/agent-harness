@@ -101,3 +101,11 @@ func TestExecRunInfoRowNamesTheAction(t *testing.T) {
 		t.Fatalf("command cell %q lacks the action", last)
 	}
 }
+
+// An action exec ends with the same label it started with, not an empty argv.
+func TestExecResultLineNamesTheAction(t *testing.T) {
+	got := execResultLine("9be9bdf47232f8f1d045cb0eb2a6eb6b", "action greet", cli.ExecRunResult{Kind: protocol.ExecEventKind_Exited})
+	if !strings.Contains(got, "exec 9be9bdf47232: action greet: ") {
+		t.Fatalf("done line %q", got)
+	}
+}
