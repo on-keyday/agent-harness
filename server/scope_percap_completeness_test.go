@@ -106,10 +106,9 @@ var capTargetClasses = map[protocol.Capability]capTargetClass{
 		kind:   capNoTargetResolution,
 		reason: "server dial-runner names a RUNNER, which the task scope does not contain",
 	},
-	protocol.Capability_RunnerEnroll: {
-		kind:   capNoTargetResolution,
-		reason: "runner enroll / keys / unenroll name a KEY and the runners on it, which the task scope does not contain",
-	},
+	// The key verbs and kick resolve the scope against a key's binding
+	// (bound enrollment, C1), through enrollReach.
+	protocol.Capability_RunnerEnroll: {kind: capResolvedVia, via: "requiredCentral(protocol.TaskControlKind_RunnerEnroll)"},
 	protocol.Capability_BoardPersist: {
 		kind:   capNoTargetResolution,
 		reason: "board retain names a TOPIC, which the task hierarchy does not contain; a task caller is bounded by the board reach check instead",

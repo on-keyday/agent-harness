@@ -33,7 +33,14 @@ func (h *TaskHandler) handleRunnerKick(conn ConnHandle, requestID uint32, r *pro
 	prefix := strings.ToLower(string(r.Prefix))
 	var matches []RunnerEntry
 	if len(prefix) >= 8 && len(prefix) <= 32 {
+		// Only runners whose key the caller's runner_enroll scope reaches
+		// (bound enrollment, C1): one outside answers not_found, and cannot
+		// make a prefix ambiguous either.
+		all, allowed := h.enrollReach(conn.ConnectionID())
 		for _, e := range h.Registry.List() {
+			if !reachesBinding(all, allowed, h.keyBinding(e.Key)) {
+				continue
+			}
 			if strings.HasPrefix(e.Identity.Hex(), prefix) {
 				matches = append(matches, e)
 			}

@@ -124,7 +124,10 @@ func TestRunnerEnrollRecordsEnrolledBy(t *testing.T) {
 
 	agent := keyVerbConn()
 	tid := f.h.Tasks.Create("r", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_RunnerEnroll}, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil,
+		// Global: an unbound key needs runner_enroll at global scope (bound
+		// enrollment, C1); the scoped cases are runner_keys_scope_test.go's.
+		authority.Grant{Caps: protocol.Capability_RunnerEnroll, Scope: authority.Scope{Base: protocol.ScopeBase_Global}}, "")
 	if f.h.principals == nil {
 		f.h.principals = map[objproto.ConnectionID]protocol.TaskID{}
 	}

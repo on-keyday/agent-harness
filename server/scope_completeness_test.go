@@ -81,11 +81,13 @@ var kindTargetClass = map[protocol.TaskControlKind]targetClass{
 	// progress_clear names another task and resolves it through cancel's
 	// scope before touching it.
 	protocol.TaskControlKind_ProgressClear: targetGated,
-	// The runner key verbs name keys and runners, which the task scope does
-	// not contain.
-	protocol.TaskControlKind_RunnerEnroll:   noTarget,
-	protocol.TaskControlKind_RunnerUnenroll: noTarget,
-	protocol.TaskControlKind_RunnerKeys:     noTarget,
+	// The runner key verbs name keys and runners, and a key's binding names
+	// tasks (bound enrollment, C1): each resolves the caller's runner_enroll
+	// scope against the binding, and out of reach answers as an unknown key
+	// or runner -- not_found, or absent from the listing.
+	protocol.TaskControlKind_RunnerEnroll:   targetGated,
+	protocol.TaskControlKind_RunnerUnenroll: targetGated,
+	protocol.TaskControlKind_RunnerKeys:     targetGated,
 	// prune names a set of tasks, or sweeps by age; filtered to the caller's
 	// scope in the PruneFn closure.
 	protocol.TaskControlKind_PruneTasks: targetGated,
@@ -165,7 +167,7 @@ var kindTargetClass = map[protocol.TaskControlKind]targetClass{
 	protocol.TaskControlKind_RunnerDialAdd:    noTarget,
 	protocol.TaskControlKind_RunnerDialList:   noTarget,
 	protocol.TaskControlKind_RunnerDialRemove: noTarget,
-	protocol.TaskControlKind_RunnerKick:       noTarget,
+	protocol.TaskControlKind_RunnerKick:       targetGated, // the runner's key binding, as the key verbs
 	// session_mode names a task and checks cancel on it, as cancel does.
 	protocol.TaskControlKind_SessionMode: targetGated,
 	// The record verbs name a task and gate it on their bit's own scope. A

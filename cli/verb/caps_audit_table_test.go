@@ -54,7 +54,7 @@ func TestTierTableMatchesTheSpec(t *testing.T) {
 			}
 		}
 	}
-	none := []protocol.Capability{protocol.Capability_Spawn, protocol.Capability_Notify, protocol.Capability_RunnerAdmin, protocol.Capability_RunnerEnroll, protocol.Capability_BoardObserve, protocol.Capability_BoardSend, protocol.Capability_BoardPersist}
+	none := []protocol.Capability{protocol.Capability_Spawn, protocol.Capability_Notify, protocol.Capability_RunnerAdmin, protocol.Capability_BoardObserve, protocol.Capability_BoardSend, protocol.Capability_BoardPersist}
 	for _, c := range granularCaps() {
 		isNone := false
 		for _, n := range none {

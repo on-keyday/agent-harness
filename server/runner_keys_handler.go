@@ -14,7 +14,43 @@ import (
 )
 
 // The three runner key verbs (runner enroll / keys / unenroll). Each is gated
-// on runner_enroll by authority.CentralCap before it reaches here.
+// on runner_enroll by authority.CentralCap before it reaches here, and then by
+// that bit's SCOPE (bound enrollment, C1): an unbound key needs it global, a
+// key bound to S needs every task in S inside it. Out of reach answers as an
+// unknown key does, so a scoped caller cannot learn what lies outside.
+
+// enrollReach is the caller's runner_enroll target set.
+func (h *TaskHandler) enrollReach(cid objproto.ConnectionID) (all bool, allowed map[string]bool) {
+	return h.scopeSet(cid, requiredCentral(protocol.TaskControlKind_RunnerEnroll))
+}
+
+// reachesBinding reports whether a runner_enroll target set covers a key
+// bound to bound: all of it when unbound (an unbound runner takes any task,
+// including ones not created yet), else every bound task.
+func reachesBinding(all bool, allowed map[string]bool, bound []protocol.TaskID) bool {
+	if all {
+		return true
+	}
+	if len(bound) == 0 {
+		return false
+	}
+	for _, id := range bound {
+		if !allowed[hex.EncodeToString(id.Id[:])] {
+			return false
+		}
+	}
+	return true
+}
+
+// keyBinding is the binding of the key a runner authenticated with; nil
+// (unbound) for a key the store no longer holds.
+func (h *TaskHandler) keyBinding(key ed25519.PublicKey) []protocol.TaskID {
+	if h.RunnerKeys == nil || key == nil {
+		return nil
+	}
+	rec, _ := h.RunnerKeys.Lookup(key)
+	return rec.Bound
+}
 
 // enrolledBy names who enrolled a key: the caller's principal task, or the
 // operator for a connection that has none.
@@ -33,18 +69,30 @@ func (h *TaskHandler) handleRunnerEnroll(conn ConnHandle, requestID uint32, r *p
 	case h.RunnerKeys == nil || bytes.Equal(key, make([]byte, ed25519.PublicKeySize)):
 		status = protocol.RunnerKeyStatus_InvalidKey
 	default:
+		bound, berr := normalizeBinding(r.Bound)
+		if berr != nil {
+			status = protocol.RunnerKeyStatus_BadBinding
+			break
+		}
+		if all, allowed := h.enrollReach(conn.ConnectionID()); !reachesBinding(all, allowed, bound) {
+			status = protocol.RunnerKeyStatus_OutOfReach
+			break
+		}
 		added, err := h.RunnerKeys.Enroll(RunnerKeyRecord{
 			Key: key, Label: string(r.Label), EnrolledAt: time.Now().UTC(),
-			EnrolledBy: h.enrolledBy(conn.ConnectionID()),
+			EnrolledBy: h.enrolledBy(conn.ConnectionID()), Bound: bound,
 		})
-		if err != nil {
+		switch {
+		case errors.Is(err, ErrBindingDiffers):
+			status = protocol.RunnerKeyStatus_BindingDiffers
+		case err != nil:
 			slog.Error("runner enroll: store write failed", "err", err)
 			status = protocol.RunnerKeyStatus_InvalidKey
-		} else if !added {
+		case !added:
 			status = protocol.RunnerKeyStatus_AlreadyEnrolled
-		} else {
+		default:
 			slog.Info("runner key enrolled", "key", keyPrefix(key), "label", string(r.Label),
-				"by", h.enrolledBy(conn.ConnectionID()))
+				"bound", len(bound), "by", h.enrolledBy(conn.ConnectionID()))
 		}
 	}
 	resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_RunnerEnroll, RequestId: requestID}
@@ -91,7 +139,8 @@ func (h *TaskHandler) handleRunnerUnenroll(conn ConnHandle, requestID uint32, r 
 		reply(protocol.RunnerKeyStatus_InvalidKey, nil)
 		return
 	}
-	rec, err := h.RunnerKeys.Resolve(prefix)
+	all, allowed := h.enrollReach(conn.ConnectionID())
+	rec, err := h.RunnerKeys.ResolveIn(prefix, func(r RunnerKeyRecord) bool { return reachesBinding(all, allowed, r.Bound) })
 	switch {
 	case errors.Is(err, ErrAmbiguousPrefix):
 		reply(protocol.RunnerKeyStatus_AmbiguousPrefix, nil)
@@ -106,6 +155,7 @@ func (h *TaskHandler) handleRunnerUnenroll(conn ConnHandle, requestID uint32, r 
 	copy(body.Key[:], rec.Key)
 	body.SetLabel([]byte(rec.Label))
 	body.SetRunners(users)
+	body.SetBound(rec.Bound)
 	// One key serves every slot of a machine by default, so removing one that
 	// is in use cuts the whole machine off — including any agent on it that
 	// would re-enroll. That takes --force.
@@ -134,8 +184,13 @@ func (h *TaskHandler) handleRunnerKeys(conn ConnHandle, requestID uint32) {
 	body := &protocol.RunnerKeysBody{}
 	var rows []protocol.RunnerKeyRow
 	if h.RunnerKeys != nil {
+		all, allowed := h.enrollReach(conn.ConnectionID())
 		for _, rec := range h.RunnerKeys.List() {
+			if !reachesBinding(all, allowed, rec.Bound) {
+				continue
+			}
 			row := protocol.RunnerKeyRow{EnrolledAtUnixMs: uint64(rec.EnrolledAt.UnixMilli())}
+			row.SetBound(rec.Bound)
 			copy(row.Key[:], rec.Key)
 			row.SetLabel([]byte(rec.Label))
 			row.SetEnrolledBy([]byte(rec.EnrolledBy))

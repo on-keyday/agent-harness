@@ -150,7 +150,8 @@ func CapDescription(c protocol.Capability) string {
 		return "runner administration: server dial-runner, and the dial records the server keeps dialing (runner dial add, runner dial ls, runner dial rm)"
 	case protocol.Capability_RunnerEnroll:
 		return "decide which runner keys may register: runner enroll, runner keys, runner unenroll; " +
-			"and make one runner leave (runner kick); NOT implied by runner_admin"
+			"and make one runner leave (runner kick); NOT implied by runner_admin. " +
+			"Its scope is the tasks a key may be bound to (runner enroll --bind): an unbound key, and a runner on one, need it global"
 	case protocol.Capability_BoardObserve:
 		return "list board topics, read a topic's retained messages, list its subscribers, list and read archives (board archives, board read --archive) -- " +
 			"the overview's board section (overview) reads topics and each one's newest message this way; " +
@@ -472,14 +473,17 @@ type capAuditEntry struct {
 // written down. Every granular bit has an explicit entry
 // (TestEveryGrantableCapHasATier).
 var capAuditTable = map[protocol.Capability]capAuditEntry{
-	protocol.Capability_Spawn:         {tier: TierStrong, scope: ScopeNone},
-	protocol.Capability_Resume:        {tier: TierStrong},
-	protocol.Capability_ExecControl:   {tier: TierStrong},
-	protocol.Capability_BoardPurge:    {tier: TierStrong},
-	protocol.Capability_Prune:         {tier: TierStrong},
-	protocol.Capability_BoardSend:     {tier: TierStrong, scope: ScopeNone},
-	protocol.Capability_RunnerAdmin:   {tier: TierStrong, scope: ScopeNone},
-	protocol.Capability_RunnerEnroll:  {tier: TierStrong, scope: ScopeNone},
+	protocol.Capability_Spawn:       {tier: TierStrong, scope: ScopeNone},
+	protocol.Capability_Resume:      {tier: TierStrong},
+	protocol.Capability_ExecControl: {tier: TierStrong},
+	protocol.Capability_BoardPurge:  {tier: TierStrong},
+	protocol.Capability_Prune:       {tier: TierStrong},
+	protocol.Capability_BoardSend:   {tier: TierStrong, scope: ScopeNone},
+	protocol.Capability_RunnerAdmin: {tier: TierStrong, scope: ScopeNone},
+	// Scoped (bound enrollment, C1): a key bound to S needs every task in S
+	// in scope; an unbound key needs it global. Strong: a key bound to T hands
+	// whoever holds its private half T's prompt and a ticket with T's caps.
+	protocol.Capability_RunnerEnroll:  {tier: TierStrong},
 	protocol.Capability_ExecTap:       {tier: TierStrong},
 	protocol.Capability_ForwardTap:    {tier: TierStrong},
 	protocol.Capability_ForwardLocal:  {tier: TierStrong},
