@@ -1387,6 +1387,34 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 
 	case protocol.TaskControlKind_RunnerKeys:
 		h.handleRunnerKeys(conn, req.Header.RequestId)
+	case protocol.TaskControlKind_ActionPut:
+		// action_admin is checked centrally before dispatch. Off the receive
+		// loop: the definition arrives on a stream the client writes after this
+		// request, whose frames this loop delivers (OpenExecRun's shape).
+		ap := req.ActionPut()
+		if ap == nil {
+			return
+		}
+		apCopy, requestID := *ap, req.Header.RequestId
+		go func() {
+			resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_ActionPut, RequestId: requestID}
+			resp.SetActionPut(h.handleActionPut(conn, cid, apCopy))
+			respondAgent(conn, resp)
+		}()
+	case protocol.TaskControlKind_ActionRemove:
+		if r := req.ActionRemove(); r != nil {
+			resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_ActionRemove, RequestId: req.Header.RequestId}
+			resp.SetActionRemove(h.handleActionRemove(cid, *r))
+			respondAgent(conn, resp)
+		}
+	case protocol.TaskControlKind_ActionList:
+		// Either bit lists actions (C13): who may define them and who may run
+		// them. Not central, as list_files' either-bit clause is not.
+		if c := authority.RequestNeed(&req).Clauses[0]; !hasAnyCap(h.callerCaps(cid), c.AnyOf) {
+			h.denyTaskControl(conn, req.Header.Kind, req.Header.RequestId, c.Report)
+			return
+		}
+		h.handleActionList(conn, req.Header.RequestId)
 	case protocol.TaskControlKind_RunnerDialAdd:
 		if r := req.RunnerDialAdd(); r != nil {
 			h.handleRunnerDialAdd(conn, req.Header.RequestId, r)

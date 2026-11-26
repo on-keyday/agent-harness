@@ -340,6 +340,10 @@ func payloadStreamsOf(req *protocol.TaskControlRequest) []uint64 {
 		if r := req.SetCaps(); r != nil {
 			add(r.GrantConditionsStreamId)
 		}
+	case protocol.TaskControlKind_ActionPut:
+		if r := req.ActionPut(); r != nil {
+			add(r.PayloadStreamId)
+		}
 	case protocol.TaskControlKind_ScheduleCreate:
 		if r := req.ScheduleCreate(); r != nil {
 			spec(&r.Spec)

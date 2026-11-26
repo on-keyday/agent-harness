@@ -5402,6 +5402,7 @@ enum ActionStatus:
     holders_unreachable = "holders_unreachable"  # edit: C11 refused; holders_refused says how many
     body_too_large      = "body_too_large"
     bad_body            = "bad_body"
+    internal_error      = "internal_error"       # the store could not be written; nothing changed
 
 # Inline, so message is cut to 256 bytes by the server: a control message is
 # one datagram.

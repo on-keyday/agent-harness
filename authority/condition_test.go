@@ -360,3 +360,21 @@ func TestWiderThanParentSeesACondition(t *testing.T) {
 		t.Fatalf("narrower condition: wider bits = %s, want none", CapsLabel(w.Bits))
 	}
 }
+
+// NamesAction finds an action id in any action_set condition, and nowhere
+// else: a port range never names an action, and the base clause has none.
+func TestScopeNamesAction(t *testing.T) {
+	s := Scope{Base: protocol.ScopeBase_Subtree, Overrides: []ScopeOverride{
+		{Caps: protocol.Capability_ForwardLocal, Base: protocol.ScopeBase_Global, Cond: &Condition{Kind: protocol.ConditionKind_PortRange, Spans: []PortSpan{{1, 2}}}},
+		{Caps: protocol.Capability_ExecRun, Base: protocol.ScopeBase_Subtree, Cond: &Condition{Kind: protocol.ConditionKind_ActionSet, Actions: [][16]byte{aid(1), aid(2)}}},
+	}}
+	if !s.NamesAction(aid(2)) {
+		t.Fatal("NamesAction(2) = false")
+	}
+	if s.NamesAction(aid(3)) {
+		t.Fatal("NamesAction(3) = true")
+	}
+	if (Scope{}).NamesAction(aid(1)) {
+		t.Fatal("an empty scope names an action")
+	}
+}

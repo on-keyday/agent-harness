@@ -316,6 +316,23 @@ func (s Scope) CondFor(bit protocol.Capability) *Condition {
 	return nil
 }
 
+// NamesAction reports whether any action_set condition in s lists id: s's
+// holder is then one of the action's holders (C11), whose runs an edit of it
+// changes.
+func (s Scope) NamesAction(id [16]byte) bool {
+	for _, o := range s.Overrides {
+		if o.Cond == nil || o.Cond.Kind != protocol.ConditionKind_ActionSet {
+			continue
+		}
+		for _, a := range o.Cond.Actions {
+			if a == id {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // validateCond is Validate's check of one override's condition.
 func validateCond(o ScopeOverride) error {
 	if o.Cond == nil {
