@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 // RunnerKeyRecord is one enrolled runner key. The server knows keys only,
@@ -21,6 +23,11 @@ type RunnerKeyRecord struct {
 	Label      string
 	EnrolledAt time.Time
 	EnrolledBy string // "operator" or "task:<32 hex>"
+	// Bound is the set of tasks a runner authenticated with this key may take
+	// (bound enrollment, C2): sorted by id, unique, at most maxBoundTasks.
+	// nil = unbound, which is every key enrolled before the binding existed.
+	// Fixed at enroll: changing it is unenroll + enroll.
+	Bound []protocol.TaskID
 }
 
 type runnerKeyJSON struct {
@@ -28,6 +35,53 @@ type runnerKeyJSON struct {
 	Label      string    `json:"label"`
 	EnrolledAt time.Time `json:"enrolled_at"`
 	EnrolledBy string    `json:"enrolled_by"`
+	BoundTasks []string  `json:"bound_tasks,omitempty"` // 32-hex task ids
+}
+
+// maxBoundTasks is RunnerEnrollRequest.bound's limit.
+const maxBoundTasks = 16
+
+// ErrBindingDiffers: Enroll named an enrolled key with another binding. The
+// record is left as it was.
+var ErrBindingDiffers = errors.New("the key is enrolled with another binding")
+
+// normalizeBinding sorts and dedupes a requested binding, refusing an
+// all-zero id or more than maxBoundTasks. Empty in, nil out: unbound.
+func normalizeBinding(ids []protocol.TaskID) ([]protocol.TaskID, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	seen := make(map[protocol.TaskID]bool, len(ids))
+	var out []protocol.TaskID
+	for _, id := range ids {
+		if id.Id == ([16]byte{}) {
+			return nil, errors.New("an all-zero task id cannot be bound")
+		}
+		if !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	if len(out) > maxBoundTasks {
+		return nil, fmt.Errorf("at most %d bound tasks, got %d", maxBoundTasks, len(out))
+	}
+	sort.Slice(out, func(i, j int) bool { return bytes.Compare(out[i].Id[:], out[j].Id[:]) < 0 })
+	return out, nil
+}
+
+// sameBinding compares two bindings as sets.
+func sameBinding(a, b []protocol.TaskID) bool {
+	na, errA := normalizeBinding(a)
+	nb, errB := normalizeBinding(b)
+	if errA != nil || errB != nil || len(na) != len(nb) {
+		return false
+	}
+	for i := range na {
+		if na[i] != nb[i] {
+			return false
+		}
+	}
+	return true
 }
 
 var (
@@ -63,7 +117,17 @@ func LoadRunnerKeyStore(path string, initial []RunnerKeyRecord) (*RunnerKeyStore
 				if err != nil || len(k) != ed25519.PublicKeySize {
 					return nil, fmt.Errorf("runner keys %s: key %q is not a hex Ed25519 public key", path, r.Key)
 				}
-				st.keys[r.Key] = RunnerKeyRecord{Key: k, Label: r.Label, EnrolledAt: r.EnrolledAt, EnrolledBy: r.EnrolledBy}
+				rec := RunnerKeyRecord{Key: k, Label: r.Label, EnrolledAt: r.EnrolledAt, EnrolledBy: r.EnrolledBy}
+				for _, b := range r.BoundTasks {
+					raw, err := hex.DecodeString(b)
+					if err != nil || len(raw) != 16 {
+						return nil, fmt.Errorf("runner keys %s: key %q: bound task %q is not a 32-hex task id", path, r.Key, b)
+					}
+					var id protocol.TaskID
+					copy(id.Id[:], raw)
+					rec.Bound = append(rec.Bound, id)
+				}
+				st.keys[r.Key] = rec
 			}
 		case !errors.Is(err, os.ErrNotExist):
 			return nil, fmt.Errorf("runner keys %s: %w", path, err)
@@ -92,12 +156,19 @@ func (st *RunnerKeyStore) Lookup(pub ed25519.PublicKey) (RunnerKeyRecord, bool) 
 }
 
 // Enroll adds rec. An already enrolled key keeps its record, except that a
-// non-empty rec.Label replaces the label; added reports which happened.
+// non-empty rec.Label replaces the label; added reports which happened. An
+// enrolled key whose binding is not rec.Bound is refused with
+// ErrBindingDiffers and left untouched, label included: the binding is fixed
+// at enroll (C2), and keeping it while answering as a plain re-enroll would
+// let the caller believe its binding applied.
 func (st *RunnerKeyStore) Enroll(rec RunnerKeyRecord) (added bool, err error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	id := hex.EncodeToString(rec.Key)
 	if cur, ok := st.keys[id]; ok {
+		if !sameBinding(cur.Bound, rec.Bound) {
+			return false, ErrBindingDiffers
+		}
 		if rec.Label == "" || rec.Label == cur.Label {
 			return false, nil
 		}
@@ -111,6 +182,14 @@ func (st *RunnerKeyStore) Enroll(rec RunnerKeyRecord) (added bool, err error) {
 
 // Resolve finds the one enrolled key whose hex starts with prefixHex.
 func (st *RunnerKeyStore) Resolve(prefixHex string) (RunnerKeyRecord, error) {
+	return st.ResolveIn(prefixHex, nil)
+}
+
+// ResolveIn is Resolve over the records keep admits (nil admits all). A
+// caller resolving for a scoped principal passes its reach, so a key outside
+// it can neither be found nor make the prefix ambiguous -- either answer
+// would tell the caller that key exists.
+func (st *RunnerKeyStore) ResolveIn(prefixHex string, keep func(RunnerKeyRecord) bool) (RunnerKeyRecord, error) {
 	p := strings.ToLower(strings.TrimSpace(prefixHex))
 	if len(p) < 8 {
 		return RunnerKeyRecord{}, ErrPrefixTooShort
@@ -119,6 +198,9 @@ func (st *RunnerKeyStore) Resolve(prefixHex string) (RunnerKeyRecord, error) {
 	defer st.mu.Unlock()
 	var found []RunnerKeyRecord
 	for id, r := range st.keys {
+		if keep != nil && !keep(r) {
+			continue
+		}
 		if strings.HasPrefix(id, p) {
 			found = append(found, r)
 		}
@@ -166,7 +248,11 @@ func (st *RunnerKeyStore) saveLocked() error {
 	}
 	rows := make([]runnerKeyJSON, 0, len(st.keys))
 	for id, r := range st.keys {
-		rows = append(rows, runnerKeyJSON{Key: id, Label: r.Label, EnrolledAt: r.EnrolledAt, EnrolledBy: r.EnrolledBy})
+		row := runnerKeyJSON{Key: id, Label: r.Label, EnrolledAt: r.EnrolledAt, EnrolledBy: r.EnrolledBy}
+		for _, b := range r.Bound {
+			row.BoundTasks = append(row.BoundTasks, hex.EncodeToString(b.Id[:]))
+		}
+		rows = append(rows, row)
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].Key < rows[j].Key })
 	data, err := json.MarshalIndent(rows, "", "  ")
