@@ -1,6 +1,6 @@
 ---
 name: surface-parity-checklist
-description: Use BEFORE adding, changing, or displaying any operator-visible task/runner field (caps, scope, status, agent, repo, …), adding an option to any verb family, or wiring a new operator action's result reporting — AND before adding/renaming an agent or changing its bin, argv templates, credential mode, egress domains, or launch env. NUMBERED checklists that must be walked item by item with a verdict per number — never summarized: 1–39 for every input surface, display surface, per-path semantics axis, result/display convention across CLI/TUI/WebUI/wasm, and the feature spec's own surface matrix, plus S1–S6 for preset↔podman-sandbox agent-launch parity.
+description: Use BEFORE adding, changing, or displaying any operator-visible task/runner field (caps, scope, status, agent, repo, …), adding an option to any verb family, or wiring a new operator action's result reporting — AND before adding/renaming an agent or changing its bin, argv templates, credential mode, egress domains, or launch env. NUMBERED checklists that must be walked item by item with a verdict per number — never summarized — 1–39 for every input surface, display surface, per-path semantics axis, result/display convention across CLI/TUI/WebUI/wasm, and the feature spec's own surface matrix, plus S1–S6 for preset↔podman-sandbox agent-launch parity.
 ---
 
 # Surface-parity checklist
@@ -349,17 +349,19 @@ whole snapshot.
 36. Agent-facing skill texts — `runner/agentskills/*/SKILL.md` is the
     go:embed source of truth; mirror to `.claude/skills/` and
     `.agents/skills/` in the same commit. Repo-dev skills
-    (`implementation-pitfalls`, `dummy-harness`, this file) live in
-    `.claude/` only. **Now test-enforced** — `runner/agentskills`'
+    (`implementation-pitfalls`, `dummy-harness`, this file) live canonically
+    in `.claude/skills/` and are symlinked from `.agents/skills/` so
+    non-Claude agents working in this repo can discover them (they are NOT
+    embedded into `runner/agentskills/`, so other repos never receive them).
+    **Now test-enforced** — `runner/agentskills`'
     `TestMirrorsMatchEmbeddedSkills` fails on a byte difference and
-    `TestAgentsMirrorHasNoExtraSkills` fails on a `.agents/` skill this
-    package does not embed, so this item is a reminder rather than the only
-    guard. It became one because the manual form drifted three times at
-    once: `.agents/` shipped an older `harness-cli`, `landing-to-main` and
-    `supervising-workers` than the embed FS, which meant agents in OTHER
-    repositories were reading instructions this repo had already replaced.
-    Editing only the copy you happen to be reading is the way in — the
-    embedded file is the one to edit, then copy it over both mirrors.
+    `TestAgentsMirrorHasNoExtraSkills` fails on a `.agents/` skill that is
+    neither embedded nor present in `.claude/skills/`, so this item is a
+    reminder rather than the only guard. It became one because the manual
+    form drifted three times at once: `.agents/` shipped an older
+    `harness-cli`, `landing-to-main` and `supervising-workers` than the
+    embed FS. Editing only the copy you happen to be reading is the way in —
+    the embedded file is the one to edit, then copy it over both mirrors.
 37. The feature's spec under `docs/superpowers/specs/` — semantic changes
     land as an Amendment section there, so the spec never contradicts the
     shipped behaviour a later reader verifies against.

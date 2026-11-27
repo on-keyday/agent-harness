@@ -241,12 +241,10 @@ func TestMirrorsMatchEmbeddedSkills(t *testing.T) {
 }
 
 // TestAgentsMirrorHasNoExtraSkills guards the other direction for .agents/,
-// which is read by agents in OTHER repositories: a skill there that this
-// package does not embed is either a stale copy of a removed skill or a
-// repo-dev skill that leaked out of .claude/ (implementation-pitfalls,
-// surface-parity-checklist and dummy-harness are about THIS repository and are
-// deliberately .claude-only). Either way the agents reading it are being told
-// about something that is not theirs.
+// which is read by non-Claude agents working in THIS repository (other
+// repositories receive only the embedded skills via runner/agentskills): a
+// skill there that is neither embedded nor a repo-local skill in
+// .claude/skills/ is a stale copy of a removed skill (or a broken symlink).
 func TestAgentsMirrorHasNoExtraSkills(t *testing.T) {
 	names, err := List()
 	if err != nil {
@@ -261,11 +259,24 @@ func TestAgentsMirrorHasNoExtraSkills(t *testing.T) {
 		t.Fatalf("read .agents/skills: %v", err)
 	}
 	for _, e := range entries {
-		if !e.IsDir() || embedded[e.Name()] {
+		name := e.Name()
+		full := filepath.Join(repoRoot, ".agents/skills", name)
+		info, err := os.Stat(full)
+		if err != nil {
+			t.Errorf(".agents/skills/%s: %v", name, err)
 			continue
 		}
-		t.Errorf(".agents/skills/%s is not an embedded skill: remove it, or add it to "+
-			"runner/agentskills if agents in other repos are meant to have it", e.Name())
+		if !info.IsDir() || embedded[name] {
+			continue
+		}
+		// Repo-local skills (dummy-harness, implementation-pitfalls,
+		// surface-parity-checklist) live canonically in .claude/skills/ and may
+		// be symlinked into .agents/skills/ for non-Claude agents in this repo.
+		if _, err := os.Stat(filepath.Join(repoRoot, ".claude/skills", name, "SKILL.md")); err == nil {
+			continue
+		}
+		t.Errorf(".agents/skills/%s is neither an embedded skill nor a repo-local "+
+			"skill in .claude/skills/: remove it, or add it to runner/agentskills", name)
 	}
 }
 

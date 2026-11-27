@@ -1,6 +1,6 @@
 ---
 name: dummy-harness
-description: Use when a change needs checking against a running harness rather than a unit test — interactive wake, TUI/WebUI behaviour across a reconnect, "does the operator actually see this". Covers scripts/dummy-harness.sh, the environment traps that make a dummy instance fail in misleading ways, and the two-instance topology needed to test a client across a server restart. Repo-local: this skill is about THIS repository's binaries and scripts.
+description: Use when a change needs checking against a running harness rather than a unit test — interactive wake, TUI/WebUI behaviour across a reconnect, "does the operator actually see this". Covers scripts/dummy-harness.sh, the environment traps that make a dummy instance fail in misleading ways, and the two-instance topology needed to test a client across a server restart. Repo-local — this skill is about THIS repository's binaries and scripts.
 ---
 
 # Standing up a throwaway harness to verify against
