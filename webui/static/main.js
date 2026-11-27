@@ -8462,6 +8462,9 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       setActiveTab("files");
       refreshFilePicker();
     });
+    // Not gated on a live session as the file picker is: a finished task
+    // still answers git queries through its retained harness/<id> branch.
+    addItem("⎇ Git", "", () => window.__openGitTabFor(t.id, "", {}));
 
     // Cancel — non-terminal only.
     if (!isTerminal) {
