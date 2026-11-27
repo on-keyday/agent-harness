@@ -109,6 +109,16 @@ func (r *execRegistry) markConnGone(connID objproto.ConnectionID) {
 	r.gone[connID] = now
 }
 
+// connOpened forgets connID's drop: a new connection is up on that cid. A
+// client that reconnects comes back on the SAME cid (harness-tui resolves its
+// `-*` id once and keeps one endpoint), so the old connection's drop would
+// otherwise refuse the new one's execs.
+func (r *execRegistry) connOpened(connID objproto.ConnectionID) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.gone, connID)
+}
+
 // execs returns the registry, creating it on first use so struct-literal
 // construction in tests need not set it — the same shape as pforwards().
 func (h *TaskHandler) execs() *execRegistry {
@@ -127,7 +137,9 @@ func (h *TaskHandler) execs() *execRegistry {
 func (r *execRegistry) add(e *execRun) uint64 {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if _, gone := r.gone[e.clientCID]; gone && e.clientCID != (objproto.ConnectionID{}) {
+	// Only a drop within goneTTL refuses: older records are pruned only by
+	// the next markConnGone, which may never come.
+	if at, gone := r.gone[e.clientCID]; gone && e.clientCID != (objproto.ConnectionID{}) && time.Since(at) <= goneTTL {
 		return 0
 	}
 	r.next++

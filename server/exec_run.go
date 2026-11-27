@@ -544,6 +544,13 @@ func (h *TaskHandler) stopExecOnRunner(e *execRun, why string) {
 	}
 }
 
+// ExecConnOpened is DropExecRunsForConn's other end: a connection is up on
+// connID, so an earlier connection's drop on the same cid no longer refuses
+// its execs (a reconnecting client reuses its cid).
+func (h *TaskHandler) ExecConnOpened(connID objproto.ConnectionID) {
+	h.execs().connOpened(connID)
+}
+
 // DropExecRunsForConn kills every exec this connection started, and is what
 // makes "an exec dies with its caller" true rather than merely intended.
 //

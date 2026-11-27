@@ -1583,6 +1583,11 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 	s.activeConnsMu.Lock()
 	s.activeConns[session.ConnectionID()] = wrapped
 	s.activeConnsMu.Unlock()
+	// A reconnecting client comes back on the same cid; its old connection's
+	// exec drop must not refuse this one (see execRegistry.connOpened).
+	if s.taskHandler != nil {
+		s.taskHandler.ExecConnOpened(session.ConnectionID())
+	}
 	// conn_opened: fires before authentication so failed-handshake / probe /
 	// half-open conns are visible (role Unspecified, Identified=false).
 	if s.onConnEvent != nil {

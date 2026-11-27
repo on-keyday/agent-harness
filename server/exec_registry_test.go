@@ -119,3 +119,27 @@ func TestExecRegistryForgetsOldDroppedConnections(t *testing.T) {
 		t.Fatal("a connection dropped two minutes ago is still remembered")
 	}
 }
+
+// A client that reconnects comes back on the SAME cid: harness-tui resolves
+// its `-*` id once and keeps one endpoint for its life. The drop of its old
+// connection must not refuse the new one's execs (which surfaced through the
+// TUI's ssh-gateway as `exec: InternalError` after a sleep and resume).
+func TestExecRegistryAcceptsAReconnectOnTheSameCID(t *testing.T) {
+	r := newExecRegistry()
+	r.markConnGone(tcid("tui"))
+	r.connOpened(tcid("tui"))
+	if id := r.add(&execRun{clientCID: tcid("tui")}); id == 0 {
+		t.Fatal("refused an exec from a new connection on a reused cid")
+	}
+}
+
+// The drop record is kept only while an open can be in flight (goneTTL); an
+// older one must not refuse anything, even when no later drop has pruned it.
+func TestExecRegistryIgnoresADropOlderThanGoneTTL(t *testing.T) {
+	r := newExecRegistry()
+	r.markConnGone(tcid("tui"))
+	r.gone[tcid("tui")] = time.Now().Add(-2 * goneTTL)
+	if id := r.add(&execRun{clientCID: tcid("tui")}); id == 0 {
+		t.Fatal("a drop older than goneTTL still refuses the cid")
+	}
+}
