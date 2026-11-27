@@ -627,37 +627,49 @@ function scheduleFailureLine(verbName, id, err) {
 
 // The 新規作成 (Compose) form's tabs. The tab alone decides what the button
 // does, and the button names it: no field's content changes the action.
-const COMPOSE_TABS = ["interactive", "oneshot", "background", "schedule"];
+// The tabs are WHAT the button makes: a session, or a schedule. The task
+// kind (interactive / one-shot / event-stream) and the run mode (foreground /
+// background) are one choice each inside them, as `session new` takes them
+// (--oneshot / --stream, --background): one value each, so a pair the server
+// refuses (one-shot with event-stream) cannot be picked.
+const COMPOSE_TABS = ["session", "schedule"];
 
 // The fields every tab reads, and each tab's own. Keys are composeForm()'s;
 // the authority panel and the PTY record are shared and always read.
 const COMPOSE_SHARED_FIELDS = ["repo", "host", "agent", "agentArgs", "prompt", "record",
   "caps", "scope", "scopeFor", "grantConditions", "delegateCaps", "delegateScope", "spawnDepth", "maxDescendants"];
 const COMPOSE_COND_FIELDS = ["deadline", "turnEnd", "quiet", "blocked", "queueTimeout"];
-const COMPOSE_TAB_DEFS = {
-  interactive: { label: "session を開く", action: "open-session", fields: ["stream", "pty"] },
-  oneshot: { label: "one-shot を実行", action: "open-session", fields: ["pty"] },
-  background: { label: "background で投入", action: "open-session", fields: [...COMPOSE_COND_FIELDS, "oneshot", "stream", "pty"] },
-  schedule: { label: "schedule を作る", action: "create-schedule",
-    fields: [...COMPOSE_COND_FIELDS, "cron", "tz", "task", "oneshot", "stream", "pty", "resumeConversation"] },
-};
 
-// composeTabModel is a tab's button label, its action and the fields it reads.
-function composeTabModel(tab) {
-  const d = COMPOSE_TAB_DEFS[tab] || COMPOSE_TAB_DEFS.interactive;
-  return { label: d.label, action: d.action, fields: [...COMPOSE_SHARED_FIELDS, ...d.fields] };
+// composeTabModel is a tab's button label, its action and the fields it reads,
+// given the kind and run mode chosen in it (choice: {kind, runMode}). The end
+// conditions belong to a run nobody watches (background, a schedule's
+// firings); an event-stream session has no PTY to configure.
+function composeTabModel(tab, choice) {
+  const kind = (choice && choice.kind) || "interactive";
+  const background = !!choice && choice.runMode === "background";
+  const pty = kind === "stream" ? [] : ["pty"];
+  if (tab === "schedule") {
+    return { label: "schedule を作る", action: "create-schedule",
+      fields: [...COMPOSE_SHARED_FIELDS, ...COMPOSE_COND_FIELDS, "cron", "tz", "task", "kind", ...pty, "resumeConversation"] };
+  }
+  const label = background ? "background で投入" : kind === "oneshot" ? "one-shot を実行" : kind === "stream" ? "chat を開く" : "session を開く";
+  return { label, action: "open-session",
+    fields: [...COMPOSE_SHARED_FIELDS, "kind", "runMode", ...pty, ...(background ? COMPOSE_COND_FIELDS : [])] };
 }
 
-// composeFormFor is raw (composeForm()) with every field the tab does not read
-// reset to its empty value: what a hidden tab holds is never sent.
+// composeFormFor is raw (composeForm()) with every field the tab and its
+// choices do not read reset to its empty value — what is not shown is never
+// sent — and the kind spelled as the two flags the requests take.
 function composeFormFor(tab, raw) {
-  const read = new Set(composeTabModel(tab).fields);
+  const read = new Set(composeTabModel(tab, raw).fields);
   const out = { ...raw };
   for (const k of Object.keys(out)) {
     if (read.has(k)) continue;
     const v = out[k];
     out[k] = typeof v === "boolean" ? false : Array.isArray(v) ? [] : k === "pty" || k === "record" ? "default" : "";
   }
+  out.oneshot = read.has("kind") && raw.kind === "oneshot";
+  out.stream = read.has("kind") && raw.kind === "stream";
   return out;
 }
 
@@ -911,5 +923,25 @@ function credentialSecretModel(r) {
     filename: `credential-${id8}.cred`,
     once: "shown once: copy or download it now. Closing this dialog removes it, and nothing here keeps a copy.",
     hint: "save it as a file only you can read (chmod 600), then run the script with HARNESS_CREDENTIAL_FILE=<that file>",
+  };
+}
+
+// scheduleFormFromCompose is Compose's schedule fields (composeFormFor) in the
+// shape and spellings of cli.ScheduleForm, which ScheduleEditArgs compares:
+// the controls' "default" / "" mean the verb's unset, unbounded or subtree.
+function scheduleFormFromCompose(f, extra) {
+  const tri = (v) => (v === "on" || v === "off" ? v : "");
+  return {
+    cron: f.cron || "", tz: f.tz || "", repo: f.repo || "", task: f.task || "", host: f.host || "",
+    agent: f.agent || "", agentArgs: [...(f.agentArgs || [])],
+    prompt: f.prompt || "", promptHidden: !!(extra && extra.promptHidden),
+    kind: f.kind || "interactive", record: tri(f.record), pty: tri(f.pty),
+    resumeConversation: !!f.resumeConversation,
+    deadline: f.deadline || "", turnEnd: f.turnEnd || "", quiet: f.quiet || "", blocked: f.blocked || "",
+    queueTimeout: f.queueTimeout || "",
+    caps: f.caps || "none", scope: f.scope || "subtree",
+    scopeFor: [...(f.scopeFor || [])], grantConditions: [...(f.grantConditions || [])],
+    delegateCaps: f.delegateCaps || "none", delegateScope: f.delegateScope || "subtree",
+    spawnDepth: f.spawnDepth || "unbounded", maxDescendants: f.maxDescendants || "unbounded",
   };
 }

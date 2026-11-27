@@ -346,3 +346,39 @@ func (a *App) onScheduleShowMsg(msg ScheduleShowMsg) {
 	}
 	a.detail.OpenWrapped("Schedule detail", strings.TrimRight(cli.ScheduleDetailText(msg.Detail, time.Now()), "\n"))
 }
+
+// ScheduleFormMsg carries a schedule read for editing (E on the schedules
+// table): its values as the schedule form holds them.
+type ScheduleFormMsg struct {
+	ID   string
+	Form cli.ScheduleForm
+	Err  error
+}
+
+// DoScheduleForm reads schedule id for the edit form.
+func DoScheduleForm(c *cli.Client, id string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		d, err := c.ScheduleShow(ctx, id)
+		if err != nil {
+			return ScheduleFormMsg{ID: id, Err: err}
+		}
+		return ScheduleFormMsg{ID: id, Form: cli.ScheduleFormOf(d)}
+	}
+}
+
+// onScheduleEdit (E on the schedules table) opens the schedule form on the
+// selected schedule, filled with what it holds.
+func (a *App) onScheduleEdit(msg tea.KeyMsg) (tea.Cmd, bool) {
+	id := a.schedules.SelectedID()
+	if id == "" {
+		a.cmdresult.Append(WarnStyle.Render("schedule edit: no schedule selected"))
+		return nil, true
+	}
+	if a.client == nil {
+		a.cmdresult.Append(WarnStyle.Render("schedule edit: not connected"))
+		return nil, true
+	}
+	return DoScheduleForm(a.client, id), true
+}

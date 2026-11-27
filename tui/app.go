@@ -1258,7 +1258,8 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return a, nil
 	case RecordResultMsg:
-		if a.bgform.Pending() && a.bgform.IsSchedule() && msg.Verb == "schedule "+verb.SubNew {
+		if a.bgform.Pending() && a.bgform.IsSchedule() &&
+			(msg.Verb == "schedule "+verb.SubNew || msg.Verb == "schedule "+verb.SubEdit) {
 			a.bgform.Answered(msg.Err)
 		}
 		if msg.Err != nil {
@@ -1506,6 +1507,13 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.actionsModal.status = strings.TrimSpace(msg.Text)
 			}
 		}
+		return a, nil
+	case ScheduleFormMsg:
+		if msg.Err != nil {
+			a.cmdresult.Append(ErrorStyle.Render(fmt.Sprintf("schedule edit %s: %v", shortTaskID(msg.ID), msg.Err)))
+			return a, nil
+		}
+		a.bgform.OpenScheduleEdit(msg.ID, msg.Form)
 		return a, nil
 	case ActionViewsMsg:
 		switch msg.For {

@@ -908,11 +908,12 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   const schedulesBack = document.getElementById("schedules-modal-back");
   const schedulesRunBtn = document.getElementById("schedules-modal-run");
   const schedulesDeleteBtn = document.getElementById("schedules-modal-delete");
+  const schedulesEditBtn = document.getElementById("schedules-modal-edit");
   let schedulesViewing = ""; // the schedule id whose detail is open, "" = the list
   const schedulesLatest = latestLoad(); // only the newest load renders
   const scheduleNote = (cls, text) => transcriptLine(cls, text);
   const setScheduleButtons = () => {
-    schedulesBack.hidden = schedulesRunBtn.hidden = schedulesDeleteBtn.hidden = schedulesViewing === "";
+    schedulesBack.hidden = schedulesRunBtn.hidden = schedulesDeleteBtn.hidden = schedulesEditBtn.hidden = schedulesViewing === "";
   };
   const loadScheduleList = async () => {
     schedulesViewing = "";
@@ -1016,6 +1017,14 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   document.getElementById("schedules-modal-close").addEventListener("click", () => schedulesModal.close());
   document.getElementById("schedules-modal-refresh").addEventListener("click", refreshSchedulesDialog);
   schedulesBack.addEventListener("click", () => loadScheduleList());
+  // ✎ Edit: the schedule opens in Compose's schedule tab, the form it was made
+  // with, filled with what it holds (editScheduleInCompose).
+  schedulesEditBtn.addEventListener("click", (e) => {
+    e.preventDefault();
+    const id = schedulesViewing;
+    schedulesModal.close();
+    editScheduleInCompose(id);
+  });
   schedulesRunBtn.addEventListener("click", async (e) => {
     e.preventDefault();
     const id = schedulesViewing;
@@ -5113,21 +5122,28 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   };
 
   // composeRequest assembles the shared fields from the Compose section.
-  const spawnStreamBox = document.getElementById("spawn-stream");
+  // The kind and run mode chosen in Compose: one radio group each.
+  const composeChoice = (name, dflt) => {
+    const el = document.querySelector(`#compose input[name="${name}"]:checked`);
+    return el ? el.value : dflt;
+  };
+  const setComposeChoice = (name, value) => {
+    const el = document.querySelector(`#compose input[name="${name}"][value="${value}"]`);
+    if (el) el.checked = true;
+  };
   const resumeConvBox  = document.getElementById("resume-conversation");
   // Background run (pillar A, A-D15): the prompt and the conditions.
   const composePrompt = document.getElementById("compose-prompt");
   // session new --oneshot (A3, A-D29): the profile's print-mode argv in the
   // session, which ends when it answers.
-  const composeOneshotBox = document.getElementById("compose-oneshot");
   const composeBg     = document.getElementById("compose-bg");
   const bgInput = (id) => document.getElementById(id);
 
   // composeRunMode is Compose's run-mode half of a session request; throws on
   // a malformed duration.
-  function composeRunMode(tab, f) {
+  function composeRunMode(f) {
     const r = { prompt: f.prompt };
-    if (tab !== "background") return r;
+    if (f.runMode !== "background") return r;
     r.runMode = "background";
     r.deadlineMs = parseDurationMs("deadline", f.deadline);
     r.quietMs = parseDurationMs("quiet", f.quiet);
@@ -5165,24 +5181,34 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   const composeTarget = document.getElementById("compose-target");
   const composeTargetId = document.getElementById("compose-target-id");
   const composeTargetNote = document.getElementById("compose-target-note");
-  let composeTab = "interactive";
+  let composeTab = "session";
+  // The schedule the schedule tab is editing ({ id, was, promptHidden }), null
+  // when it creates one (editScheduleInCompose).
+  let composeEditing = null;
   try {
+    // A tab remembered from the four-tab layout is its choice in the session tab.
     const saved = localStorage.getItem(COMPOSE_TAB_KEY);
     if (COMPOSE_TABS.includes(saved)) composeTab = saved;
+    else if (saved === "oneshot") setComposeChoice("compose-kind", "oneshot");
+    else if (saved === "background") setComposeChoice("compose-runmode", "background");
   } catch (_) { /* storage blocked */ }
   function setComposeTab(tab) {
-    composeTab = COMPOSE_TABS.includes(tab) ? tab : "interactive";
+    composeTab = COMPOSE_TABS.includes(tab) ? tab : "session";
     try { localStorage.setItem(COMPOSE_TAB_KEY, composeTab); } catch (_) { /* storage blocked */ }
-    const m = composeTabModel(composeTab);
+    const m = composeTabModel(composeTab, { kind: composeChoice("compose-kind", "interactive"), runMode: composeChoice("compose-runmode", "foreground") });
     const read = new Set(m.fields);
     for (const b of document.querySelectorAll(".compose-tab")) b.classList.toggle("is-active", b.dataset.tab === composeTab);
     for (const el of document.querySelectorAll("#compose [data-field]")) el.hidden = !read.has(el.dataset.field);
     // A target task's repo is the one used: the dropdown would only mislead.
     const bound = composeTab === "schedule" && composeTarget && composeTarget.value !== "";
-    runnerSelect.disabled = bound;
-    openBtn.textContent = m.label;
+    runnerSelect.disabled = bound || composeEditing !== null;
+    openBtn.textContent = composeEditing ? "schedule を保存" : m.label;
   }
   for (const b of document.querySelectorAll(".compose-tab")) b.addEventListener("click", () => setComposeTab(b.dataset.tab));
+  // A choice changes which fields show and what the button says.
+  for (const r of document.querySelectorAll('#compose input[name="compose-kind"], #compose input[name="compose-runmode"]')) {
+    r.addEventListener("change", () => setComposeTab(composeTab));
+  }
   setComposeTab(composeTab);
   // The schedule target select: rebuilt from each snapshot, keeping the pick.
   // It looks the select up itself: the first snapshot renders before this
@@ -5234,11 +5260,11 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     agent: agentSelect ? (agentSelect.value || "") : "",
     agentArgs: currentAgentArgs(),
     prompt: composePrompt ? composePrompt.value : "",
-    oneshot: !!(composeOneshotBox && composeOneshotBox.checked),
+    kind: composeChoice("compose-kind", "interactive"),
+    runMode: composeChoice("compose-runmode", "foreground"),
     record: (document.getElementById("compose-record") || {}).value,
     pty: (document.getElementById("compose-pty") || {}).value,
     resumeConversation: !!(resumeConvBox && resumeConvBox.checked),
-    stream: !!(spawnStreamBox && spawnStreamBox.checked),
     deadline: bgInput("bg-deadline").value.trim(),
     turnEnd: bgInput("bg-turn-end").value,
     quiet: bgInput("bg-quiet").value.trim(),
@@ -5262,9 +5288,9 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     return sessionReq({
       repo: f.repo, host: f.host, agent: f.agent, agentArgs: f.agentArgs,
       eventStream: f.stream,
-      ...composeRunMode(tab, f),
+      ...composeRunMode(f),
       record: composeRecordOption(f.record),
-      oneshot: tab === "oneshot" || f.oneshot,
+      oneshot: f.oneshot,
       pty: composePtyOption(f.pty),
     });
   };
@@ -6646,11 +6672,117 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     }
   };
 
+  // --- Editing a schedule in Compose's schedule tab --------------------------
+  //
+  // The schedule's values (cli.ScheduleFormOf) fill the tab; the form is then
+  // read back as "before", so a spelling the controls normalise is not a
+  // change. Saving sends only what differs (cli.ScheduleEditArgs) as
+  // `schedule edit`'s line; an untouched form sends nothing (a bare edit would
+  // still re-grant the stored authority). The repo and a bound task cannot be
+  // changed by an edit, so their controls are locked.
+  const composeEditBanner = document.getElementById("compose-edit-banner");
+  const composeEditText = document.getElementById("compose-edit-text");
+  const ensureOption = (sel, value, label) => {
+    if (!sel || !value || [...sel.options].some((o) => o.value === value)) return;
+    sel.add(new Option(label || value, value));
+  };
+  const lockComposeForEdit = (on) => {
+    for (const b of document.querySelectorAll(".compose-tab")) b.disabled = on;
+    runnerSelect.disabled = on;
+    if (composeTarget) composeTarget.disabled = on;
+    composeEditBanner.hidden = !on;
+  };
+  async function editScheduleInCompose(id) {
+    let f;
+    try {
+      f = await window.harness.scheduleForm(id);
+    } catch (e) {
+      appendCmdOutput(scheduleFailureLine("schedule edit", id, e), true);
+      return;
+    }
+    const parsed = window.harness.parseAuthority({ caps: f.caps, scope: f.scope, delegateCaps: f.delegateCaps,
+      delegateScope: f.delegateScope, spawnDepth: f.spawnDepth, maxDescendants: f.maxDescendants });
+    if (parsed.error) {
+      appendCmdOutput(`schedule edit ${id.slice(0, 8)}: its stored authority does not parse here: ${parsed.error}`, true);
+      return;
+    }
+    setActiveTab("tasks");
+    setComposeTab("schedule");
+    composeCron.value = f.cron;
+    ensureOption(composeZone, f.tz);
+    composeZone.value = f.tz;
+    ensureOption(runnerSelect, f.repo);
+    runnerSelect.value = f.repo;
+    ensureOption(hostSelect, f.host);
+    hostSelect.value = f.host;
+    ensureOption(agentSelect, f.agent);
+    agentSelect.value = f.agent;
+    agentArgs.value = (f.agentArgs || []).map((a) => (/[\s"'\\]/.test(a) ? JSON.stringify(a) : a)).join(" ");
+    // A prompt the editor may not read stays empty; typing one replaces it.
+    composePrompt.value = f.prompt;
+    composePrompt.placeholder = f.promptHidden ? "(hidden: you could not read the bound task's prompt; type to replace it)" : "エージェントの最初のターン";
+    setComposeChoice("compose-kind", f.kind);
+    document.getElementById("compose-record").value = f.record || "default";
+    document.getElementById("compose-pty").value = f.pty || "default";
+    if (resumeConvBox) resumeConvBox.checked = f.resumeConversation;
+    bgInput("bg-deadline").value = f.deadline;
+    bgInput("bg-turn-end").value = f.turnEnd;
+    bgInput("bg-quiet").value = f.quiet;
+    bgInput("bg-blocked").value = f.blocked;
+    bgInput("bg-queue").value = f.queueTimeout;
+    if (composeTarget) {
+      ensureOption(composeTarget, f.task, f.task ? `${f.task.slice(0, 8)} (bound)` : "");
+      composeTarget.value = f.task || "";
+      composeTargetId.hidden = true;
+    }
+    setSpawnDefaults(parsed);
+    overrideRowsFor.spawn = (f.scopeFor || []).map((spec) => {
+      const r = parseOverrideSpec(spec);
+      if (r) r.cond = conditionForOverride(spec.slice(0, spec.indexOf("=")), f.grantConditions);
+      return r;
+    }).filter((r) => r !== null);
+    buildOverrideRows("spawn", "spawn-scope-for-rows", updateSpawnScope);
+    updateSpawnScope();
+    setComposeTab("schedule");
+    composeEditing = { id, promptHidden: f.promptHidden,
+      was: scheduleFormFromCompose(composeFormFor("schedule", composeForm()), { promptHidden: f.promptHidden }) };
+    composeEditText.textContent = `schedule ${id.slice(0, 8)} を編集中`;
+    lockComposeForEdit(true);
+    openBtn.textContent = "schedule を保存";
+    document.getElementById("compose").scrollIntoView();
+  }
+  const leaveScheduleEdit = () => {
+    composeEditing = null;
+    composePrompt.placeholder = "エージェントの最初のターン";
+    lockComposeForEdit(false);
+    setComposeTab(composeTab);
+  };
+  document.getElementById("compose-edit-cancel").addEventListener("click", () => leaveScheduleEdit());
+
   // openInteractive is the Compose button: every interactive PTY is a
   // detachable, takeover-able session (the one-shot/non-detachable variant
   // was removed; a session you cannot re-enter had no upside).
   const openInteractive = async (label) => {
     // The tab decides the action; the button already says which.
+    if (composeEditing) {
+      const { id, was, promptHidden } = composeEditing;
+      try {
+        const now = scheduleFormFromCompose(composeFormFor("schedule", composeForm()), { promptHidden });
+        const r = window.harness.scheduleEditArgs(id, was, now);
+        if (r.error) throw new Error(r.error);
+        if (r.args.length === 1) {
+          appendCmdOutput(`schedule edit ${id.slice(0, 8)}: nothing changed; nothing sent`, true);
+        } else {
+          appendCmdOutput(await window.harness.scheduleEdit(r.args), true);
+        }
+        leaveScheduleEdit();
+        refreshSnapshot();
+        refreshSchedulesDialog();
+      } catch (e) {
+        alert(e.message);
+      }
+      return;
+    }
     if (composeTabModel(composeTab).action === "create-schedule") {
       try {
         const tokens = composeScheduleTokens(composeFormFor("schedule", composeForm()));

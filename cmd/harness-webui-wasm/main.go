@@ -182,6 +182,8 @@ func main() {
 		"runnerUnenrollOffer": js.FuncOf(harnessRunnerUnenrollOffer),
 		"runnerKickOffer":     js.FuncOf(harnessRunnerKickOffer),
 		"actionFormCheck":     js.FuncOf(harnessActionFormCheck),
+		"scheduleForm":        js.FuncOf(harnessScheduleForm),
+		"scheduleEditArgs":    js.FuncOf(harnessScheduleEditArgs),
 		"actionTokenValid":    js.FuncOf(harnessActionTokenValid),
 		"help":                js.FuncOf(harnessHelp),
 		"dispatch":            js.FuncOf(harnessDispatch),
@@ -3563,6 +3565,50 @@ func harnessActionFormCheck(this js.Value, args []js.Value) any {
 		return err.Error()
 	}
 	return ""
+}
+
+// harness.scheduleForm(id) -> Promise<cli.ScheduleForm>: a stored schedule as
+// the Compose schedule tab holds it, for editing it there.
+func harnessScheduleForm(this js.Value, args []js.Value) any {
+	id := jsArgString(args, 0)
+	return jsonPromise(func(c *cli.Client) (any, error) {
+		d, err := c.ScheduleShow(rootCtx, id)
+		if err != nil {
+			return nil, err
+		}
+		return cli.ScheduleFormOf(d), nil
+	})
+}
+
+// harness.scheduleEditArgs(id, was, now) -> {args} | {error}: `schedule edit`'s
+// argument line for what changed between two cli.ScheduleForm objects
+// (cli.ScheduleEditArgs), to be run through harness.scheduleEdit like a typed
+// line.
+func harnessScheduleEditArgs(this js.Value, args []js.Value) any {
+	decode := func(i int) (cli.ScheduleForm, error) {
+		var f cli.ScheduleForm
+		if len(args) <= i || args[i].Type() != js.TypeObject {
+			return f, errors.New("scheduleEditArgs: missing form")
+		}
+		return f, json.Unmarshal([]byte(js.Global().Get("JSON").Call("stringify", args[i]).String()), &f)
+	}
+	was, err := decode(1)
+	if err != nil {
+		return map[string]any{"error": err.Error()}
+	}
+	now, err := decode(2)
+	if err != nil {
+		return map[string]any{"error": err.Error()}
+	}
+	line, err := cli.ScheduleEditArgs(jsArgString(args, 0), was, now)
+	if err != nil {
+		return map[string]any{"error": err.Error()}
+	}
+	out := make([]any, len(line))
+	for i, a := range line {
+		out[i] = a
+	}
+	return map[string]any{"args": out}
 }
 
 // harness.actionTokenValid(value) -> bool, the C12 token rule.

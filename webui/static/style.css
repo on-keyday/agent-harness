@@ -791,6 +791,27 @@ body[data-active-tab="overview"] [data-tabgroup]:not([data-tabgroup="overview"])
   accent-color: #2d5;
   cursor: pointer;
 }
+/* 新規作成's one-of choices (種類, 実行): a radio group on one wrapping line */
+.compose-choice {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.2em 0.8em;
+  margin: 0 1rem 0.5rem 0;
+  font-size: 0.82rem;
+  color: #bbb;
+}
+.compose-choice label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3em;
+  cursor: pointer;
+  user-select: none;
+}
+.compose-choice input[type="radio"] {
+  accent-color: #2d5;
+  cursor: pointer;
+}
 @media (max-width: 600px) {
   .cap-chip, .cap-quick {
     min-height: 2.2rem;

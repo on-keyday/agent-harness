@@ -112,7 +112,7 @@ export async function loadPage(dir) {
   // for every name, so checking the wrapped one made the question meaningless
   // -- a dispatch entry naming `streamFinsh` passed.
   ctx.bridge = ctx.harness;
-  for (const name of ["RUNCMD_DISPATCH", "TRSF_COLUMNS"]) {
+  for (const name of ["RUNCMD_DISPATCH", "TRSF_COLUMNS", "COMPOSE_TABS"]) {
     ctx[name] = vm.runInContext(`typeof ${name} !== "undefined" ? ${name} : undefined`, ctx);
   }
   return ctx;

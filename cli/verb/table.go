@@ -3504,7 +3504,7 @@ var Verbs = []VerbSpec{
 		Path: []string{"schedule", "new"}, CmdlineSurfaces: CLI | TUI | WebUI,
 		MCP: &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_ScheduleCreate},
 		WebUIDispatch: WebUIDispatch{Fn: "scheduleCreate"},
-		ModalSurfaces: []ModalSurface{{Surface: WebUI, At: "webui/index.html#compose-cron"}},
+		ModalSurfaces: []ModalSurface{{Surface: WebUI, At: "webui/index.html#compose-cron"}, {Surface: TUI, At: "tui/bgform.go:OpenSchedule"}},
 		Notes: []string{
 			"create a server-kept cron schedule: each firing resumes the schedule's background task (the first firing creates it, or --task binds one now)",
 			"needs the schedule_edit capability; the stored authority is bounded by yours, from the same --caps / --scope / --scope-for / --delegate-* flags as session new",
@@ -3529,7 +3529,8 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"schedule", "edit"}, CmdlineSurfaces: CLI | TUI | WebUI,
-		MCP: &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_ScheduleEdit},
+		ModalSurfaces: []ModalSurface{{Surface: WebUI, At: "webui/index.html#schedules-modal-edit"}, {Surface: TUI, At: "tui/schedules.go:onScheduleEdit"}},
+		MCP:           &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_ScheduleEdit},
 		WebUIDispatch: WebUIDispatch{Fn: "scheduleEdit"},
 		Notes: []string{
 			"change a schedule's future firings: only the flags named are changed (--cron or --tz recomputes the next firing; --task binds a task to a schedule with none)",

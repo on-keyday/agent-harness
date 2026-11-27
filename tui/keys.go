@@ -403,6 +403,8 @@ var mainKeyBindings = []keyBinding{
 	// --- schedules pane ---
 	{Keys: []string{mainKeys.ScheduleRunNow}, Scope: scopeSchedules, Do: (*App).onScheduleRunNow,
 		Short: "n run now", Long: "fire the selected schedule now (schedule run): its next firing is unchanged"},
+	{Keys: []string{mainKeys.RunMode}, Scope: scopeSchedules, Do: (*App).onScheduleEdit,
+		Short: "E edit", Long: "edit the selected schedule in the schedule form, filled with what it holds (schedule edit): only what you change is sent"},
 	{Keys: []string{mainKeys.ScheduleDelete}, Scope: scopeSchedules, Do: (*App).onScheduleDelete,
 		Short: "x delete", Long: "delete the selected schedule after a y/n confirm (schedule rm): its task stays and a run in progress is not cancelled"},
 

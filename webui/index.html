@@ -135,11 +135,12 @@
            are hidden and never sent (composeFormFor). Remembered per browser
            (composeTab). -->
       <div class="compose-tabs" role="tablist">
-        <button type="button" class="compose-tab" data-tab="interactive">interactive</button>
-        <button type="button" class="compose-tab" data-tab="oneshot">one-shot</button>
-        <button type="button" class="compose-tab" data-tab="background">background</button>
+        <button type="button" class="compose-tab" data-tab="session">session</button>
         <button type="button" class="compose-tab" data-tab="schedule">schedule</button>
       </div>
+      <!-- Shown while the schedule tab edits an existing schedule (Schedules → ✎ Edit). -->
+      <div id="compose-edit-banner" class="compose-edit-banner" hidden><span id="compose-edit-text"></span>
+        <button type="button" id="compose-edit-cancel">編集をやめる</button></div>
       <label for="runner-select">Repo:</label>
       <select id="runner-select"><option value="">(no runners)</option></select>
       <label for="host-select">Host pin:</label>
@@ -162,8 +163,13 @@
           <select id="compose-target"></select></label>
           <input id="compose-target-id" type="text" size="20" placeholder="task id (先頭だけでも可)" hidden>
           <span id="compose-target-note" class="hint"></span></span>
-        <span data-field="oneshot"><label class="compose-toggle" title="エージェントの one-shot (print-mode) 起動で走らせ、答えたら終わる"><input type="checkbox" id="compose-oneshot"> one-shot で</label></span>
-        <span data-field="stream"><label class="compose-toggle" title="PTY ではなく構造化イベントのセッションを開く。承認は端末のキー入力ではなくボタンで答える"><input type="checkbox" id="spawn-stream"> event-stream (チャット)</label></span>
+        <span data-field="kind" class="compose-choice" role="radiogroup" aria-label="種類">種類
+          <label><input type="radio" name="compose-kind" value="interactive" checked> interactive</label>
+          <label title="エージェントの one-shot (print-mode) 起動で走らせ、答えたら終わる"><input type="radio" name="compose-kind" value="oneshot"> one-shot</label>
+          <label title="PTY ではなく構造化イベントのセッションを開く。承認は端末のキー入力ではなくボタンで答える"><input type="radio" name="compose-kind" value="stream"> event-stream (チャット)</label></span>
+        <span data-field="runMode" class="compose-choice" role="radiogroup" aria-label="実行のしかた">実行
+          <label title="この画面で開いて見ながら使う"><input type="radio" name="compose-runmode" value="foreground" checked> foreground</label>
+          <label title="キューに入れて走らせ、終了条件 (deadline など) で終わる"><input type="radio" name="compose-runmode" value="background"> background</label></span>
         <span data-field="resumeConversation"><label class="compose-toggle" title="発火ごとにエージェントの会話も引き継ぐ (--resume-conversation)"><input type="checkbox" id="resume-conversation"> 会話も再開</label></span>
         <span data-field="pty">
       <label class="limit-field" title="子プロセスに PTY を与えるか。server 既定 = 対話 session は PTY あり、one-shot は PTY なし (stdin は /dev/null、出力はバイトそのまま)。off の対話 session は stdin がパイプで、入力はエコーされない。stream には PTY がない">PTY
@@ -747,6 +753,7 @@
     <div id="schedules-modal-body" class="schedules-body"></div>
     <menu class="picker-actions">
       <button type="button" id="schedules-modal-back" hidden>← 一覧</button>
+      <button type="button" id="schedules-modal-edit" hidden>✎ Edit</button>
       <button type="button" id="schedules-modal-run" hidden>▶ Run now</button>
       <button type="button" id="schedules-modal-delete" hidden>🗑 Delete</button>
       <button type="button" id="schedules-modal-refresh">↻ 更新</button>

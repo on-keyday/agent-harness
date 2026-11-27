@@ -74,6 +74,12 @@ type BgFormModel struct {
 	// open until the server answers, so a refusal keeps what was typed.
 	pending bool
 	errMsg  string
+	// editID is the schedule this form edits ("" = a new schedule); editBase
+	// its stored values, which carry what the form has no field for
+	// (authority, agent args, runner); editWas the form as opened, read back.
+	editID   string
+	editBase cli.ScheduleForm
+	editWas  cli.ScheduleForm
 }
 
 func NewBgForm() BgFormModel {
@@ -117,10 +123,13 @@ func NewBgForm() BgFormModel {
 func (m *BgFormModel) IsOpen() bool     { return m.open }
 func (m *BgFormModel) IsSwitch() bool   { return m.purpose == bgSwitch }
 func (m *BgFormModel) IsSchedule() bool { return m.purpose == bgSchedule }
-func (m *BgFormModel) ResumeID() string { return m.resumeID }
-func (m *BgFormModel) SwitchID() string { return m.switchID }
-func (m *BgFormModel) Repo() string     { return m.repo }
-func (m *BgFormModel) Stream() bool     { return m.stream }
+
+// IsScheduleEdit: the schedule form edits an existing schedule.
+func (m *BgFormModel) IsScheduleEdit() bool { return m.purpose == bgSchedule && m.editID != "" }
+func (m *BgFormModel) ResumeID() string     { return m.resumeID }
+func (m *BgFormModel) SwitchID() string     { return m.switchID }
+func (m *BgFormModel) Repo() string         { return m.repo }
+func (m *BgFormModel) Stream() bool         { return m.stream }
 func (m *BgFormModel) ResumeConversation() bool {
 	return m.resumeConversation
 }
@@ -129,6 +138,7 @@ func (m *BgFormModel) reset(purpose bgFormPurpose) {
 	m.open, m.purpose = true, purpose
 	m.repo, m.resumeID, m.switchID, m.stream, m.resumeConversation = "", "", "", false, false
 	m.pin, m.pending, m.errMsg = protocol.RunnerID{}, false, ""
+	m.editID, m.editBase, m.editWas = "", cli.ScheduleForm{}, cli.ScheduleForm{}
 	m.prompt.Reset()
 	for i := range m.fields {
 		m.fields[i].SetValue("")
@@ -184,6 +194,97 @@ func (m *BgFormModel) OpenSchedule(repo string) {
 	m.setFocus(bgFieldCron)
 }
 
+// OpenScheduleEdit opens the schedule form on an existing schedule, filled
+// with its values (cli.ScheduleFormOf). Saving sends only what changed
+// (ScheduleEditArgs); the repo and the bound task are not editable, and what
+// the form has no field for is kept as stored.
+func (m *BgFormModel) OpenScheduleEdit(id string, f cli.ScheduleForm) {
+	m.reset(bgSchedule)
+	m.editID, m.editBase = id, f
+	yesNo := func(b bool) string {
+		if b {
+			return "yes"
+		}
+		return "no"
+	}
+	orDefault := func(s string) string {
+		if s == "" {
+			return "default"
+		}
+		return s
+	}
+	for i, v := range map[int]string{
+		bgFieldCron: f.Cron, bgFieldZone: f.Tz, bgFieldRepo: f.Repo, bgFieldTarget: f.Task, bgFieldAgent: f.Agent,
+		bgFieldDeadline: f.Deadline, bgFieldTurnEnd: f.TurnEnd, bgFieldQuiet: f.Quiet, bgFieldBlocked: f.Blocked,
+		bgFieldQueue: f.QueueTimeout, bgFieldRecord: orDefault(f.Record), bgFieldPty: orDefault(f.Pty),
+		bgFieldOneshot: yesNo(f.Kind == "oneshot"), bgFieldStream: yesNo(f.Kind == "stream"),
+		bgFieldConv: yesNo(f.ResumeConversation),
+	} {
+		m.fields[i].SetValue(v)
+	}
+	m.prompt.SetValue(f.Prompt)
+	m.editWas, _ = m.scheduleFormValue()
+	m.setFocus(bgFieldCron)
+}
+
+// scheduleFormValue is the form's fields over editBase: the schedule as it
+// would be saved.
+func (m *BgFormModel) scheduleFormValue() (cli.ScheduleForm, error) {
+	val := func(i int) string { return strings.TrimSpace(m.fields[i].Value()) }
+	f := m.editBase
+	f.Cron, f.Tz, f.Agent, f.Prompt = val(bgFieldCron), val(bgFieldZone), val(bgFieldAgent), m.prompt.Value()
+	f.Deadline, f.TurnEnd, f.Quiet, f.Blocked, f.QueueTimeout =
+		val(bgFieldDeadline), val(bgFieldTurnEnd), val(bgFieldQuiet), val(bgFieldBlocked), val(bgFieldQueue)
+	for _, t := range []struct {
+		i   int
+		out *string
+	}{{bgFieldRecord, &f.Record}, {bgFieldPty, &f.Pty}} {
+		switch v := val(t.i); v {
+		case "", "default":
+			*t.out = ""
+		case "on", "off":
+			*t.out = v
+		default:
+			return f, fmt.Errorf("%s: %q: want default, on or off", bgFieldLabels[t.i], v)
+		}
+	}
+	yes := map[int]bool{}
+	for _, i := range []int{bgFieldOneshot, bgFieldStream, bgFieldConv} {
+		switch v := val(i); v {
+		case "", "no":
+		case "yes":
+			yes[i] = true
+		default:
+			return f, fmt.Errorf("%s: %q: want no or yes", bgFieldLabels[i], v)
+		}
+	}
+	switch {
+	case yes[bgFieldOneshot] && yes[bgFieldStream]:
+		return f, fmt.Errorf("one-shot and stream: a schedule runs one kind of session")
+	case yes[bgFieldOneshot]:
+		f.Kind = "oneshot"
+	case yes[bgFieldStream]:
+		f.Kind = "stream"
+	default:
+		f.Kind = "interactive"
+	}
+	f.ResumeConversation = yes[bgFieldConv]
+	return f, nil
+}
+
+// ScheduleEditArgs is `schedule edit`'s line for what the operator changed
+// (cli.ScheduleEditArgs); just the id when nothing did.
+func (m *BgFormModel) ScheduleEditArgs() ([]string, error) {
+	now, err := m.scheduleFormValue()
+	if err != nil {
+		return nil, err
+	}
+	return cli.ScheduleEditArgs(m.editID, m.editWas, now)
+}
+
+// EditID is the schedule being edited.
+func (m *BgFormModel) EditID() string { return m.editID }
+
 // OpenSwitch asks for the conditions of a running session going background;
 // it has no prompt (the run is under way) and no agent.
 func (m *BgFormModel) OpenSwitch(idHex string) {
@@ -208,6 +309,11 @@ func msDuration(ms uint64) string {
 func (m *BgFormModel) order() []int {
 	if m.purpose == bgSwitch {
 		return []int{bgFieldDeadline, bgFieldTurnEnd, bgFieldQuiet, bgFieldBlocked}
+	}
+	if m.purpose == bgSchedule && m.editID != "" {
+		// An edit cannot move a schedule to another repo or task.
+		return []int{bgFieldCron, bgFieldZone, -1, bgFieldAgent, bgFieldDeadline, bgFieldTurnEnd,
+			bgFieldQuiet, bgFieldBlocked, bgFieldQueue, bgFieldRecord, bgFieldPty, bgFieldOneshot, bgFieldStream, bgFieldConv}
 	}
 	if m.purpose == bgSchedule {
 		return []int{bgFieldCron, bgFieldZone, bgFieldRepo, bgFieldTarget, -1, bgFieldAgent, bgFieldDeadline, bgFieldTurnEnd,
@@ -419,7 +525,12 @@ func (m *BgFormModel) View() string {
 	case bgSwitch:
 		fmt.Fprintf(&sb, "Switch %s to background\n\n", shortTaskID(m.switchID))
 	case bgSchedule:
-		sb.WriteString("new schedule — each firing resumes its task in background\n\n")
+		if m.editID != "" {
+			fmt.Fprintf(&sb, "edit schedule %s — repo %s, task %s (an edit keeps both); only what you change is sent\n\n",
+				shortTaskID(m.editID), m.editBase.Repo, orNone(m.editBase.Task))
+		} else {
+			sb.WriteString("new schedule — each firing resumes its task in background\n\n")
+		}
 	}
 	if m.purpose != bgSwitch && m.purpose != bgSchedule {
 		sb.WriteString("prompt:\n" + m.prompt.View() + "\n")
@@ -439,7 +550,9 @@ func (m *BgFormModel) View() string {
 	case m.errMsg != "":
 		sb.WriteString("\n" + ErrorStyle.Render(m.errMsg))
 	}
-	if m.purpose == bgSchedule {
+	if m.purpose == bgSchedule && m.editID != "" {
+		sb.WriteString("\nTab/Shift+Tab move · Ctrl+J save · Esc cancel")
+	} else if m.purpose == bgSchedule {
 		sb.WriteString("\nTab/Shift+Tab move · Ctrl+J create schedule · Esc cancel")
 	} else {
 		sb.WriteString("\nTab/Shift+Tab move · Ctrl+J start · Esc cancel")
@@ -448,3 +561,10 @@ func (m *BgFormModel) View() string {
 }
 
 func (m *BgFormModel) Pin() protocol.RunnerID { return m.pin }
+
+func orNone(s string) string {
+	if s == "" {
+		return "(created at the first firing)"
+	}
+	return shortTaskID(s)
+}

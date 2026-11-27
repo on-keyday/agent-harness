@@ -143,7 +143,7 @@ test("Compose with a cron refuses what a firing cannot carry, with a message", (
 // A schedule carries its task kind (2026-11-17-schedule-stream-kind-design.md):
 // the schedule tab reads the event-stream box and sends --stream.
 test("Compose: the schedule tab sends --stream from the event-stream box", () => {
-  assert.ok(page.composeTabModel("schedule").fields.includes("stream"));
+  assert.ok(page.composeTabModel("schedule", { kind: "stream" }).fields.includes("kind"));
   const t = page.composeScheduleTokens(form({ stream: true }));
   assert.ok(t.includes("--stream"), t.join(" "));
   const b = page.bridge.parseCommand(["schedule", "new", ...t], {});
@@ -271,4 +271,24 @@ test("only the latest load renders", () => {
   const a = l.begin(), b = l.begin();
   assert.equal(l.current(a), false);
   assert.equal(l.current(b), true);
+});
+
+// Editing a schedule in Compose: the form read back right after it was filled
+// is the "before"; only what the operator then changed is sent, by Go's
+// ScheduleEditArgs, as `schedule edit`'s argument line.
+test("schedule edit from Compose: only what changed, in the verb's spelling", () => {
+  const base = { cron: "0 9 * * *", tz: "Asia/Tokyo", repo: "/r", task: "", host: "", agent: "claude", agentArgs: [],
+    prompt: "p", kind: "oneshot", record: "default", pty: "default", resumeConversation: true,
+    deadline: "30m0s", turnEnd: "any", quiet: "", blocked: "", queueTimeout: "",
+    caps: "spawn", scope: "", scopeFor: [], grantConditions: [], delegateCaps: "none", delegateScope: "subtree",
+    spawnDepth: "", maxDescendants: "" };
+  const was = page.scheduleFormFromCompose(base);
+  eq([was.record, was.scope, was.spawnDepth, was.kind], ["", "subtree", "unbounded", "oneshot"]);
+  const id = "ab".repeat(16);
+  eq(page.bridge.scheduleEditArgs(id, was, was), { args: [id] });
+  const now = page.scheduleFormFromCompose({ ...base, cron: "@daily", kind: "interactive", deadline: "", resumeConversation: false });
+  const r = page.bridge.scheduleEditArgs(id, was, now);
+  eq(r.args, [id, "--cron", "@daily", "--deadline", "0", "--oneshot=false", "--resume-conversation=false"]);
+  const back = page.scheduleFormFromCompose({ ...base, record: "on" });
+  assert.match(page.bridge.scheduleEditArgs(id, back, was).error, /record/);
 });

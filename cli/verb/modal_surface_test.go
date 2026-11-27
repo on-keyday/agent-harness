@@ -187,8 +187,6 @@ var screenGaps = map[string]Surface{
 	"record on":                TUI,
 	"record rm":                TUI,
 	"restore":                  TUI | WebUI, // before the rule: the TUI has an action for this (Do…) but dispatch.go is its only caller, so it IS the command line running the verb — already CmdlineSurfaces
-	"schedule edit":            TUI | WebUI, // before the rule: looked for: the TUI Schedules table and the WebUI dialog show, run and delete a schedule; editing is by the command line on both (spec, Surfaces)
-	"schedule new":             TUI,
 	"session kill":             TUI,
 	"session ls":               TUI,         // before the rule: DoSessionList has no caller but dispatch.go, so it is the command line running the verb. The grid was considered and is NOT this: it tiles live sessions selected from the TASK list (gridLiveTasks over []TaskInfo), where this verb enumerates the server's session registry
 	"session rename":           TUI | WebUI, // before the rule: looked for: a name is one typed value; every surface's command line runs the verb, and the WebUI task sheet's rename item only prompts for the name and calls the same bridge function

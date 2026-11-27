@@ -1388,6 +1388,29 @@ func (a *App) inBgForm(msg tea.KeyMsg) tea.Cmd {
 		if a.bgform.Pending() {
 			return nil // one request at a time
 		}
+		if a.bgform.IsScheduleEdit() {
+			// Only what changed, as `schedule edit`'s line, through the verb's
+			// own parser; an untouched form sends nothing (a bare edit would
+			// still re-grant the stored authority).
+			args, err := a.bgform.ScheduleEditArgs()
+			if err == nil && len(args) == 1 {
+				a.cmdresult.Append(fmt.Sprintf("schedule edit %s: nothing changed; nothing sent", shortTaskID(args[0])))
+				a.bgform.Close()
+				return nil
+			}
+			if err == nil {
+				var v verb.ScheduleSpecAction
+				if v, err = verb.ParseCmdScheduleEdit(verb.TUI, args, nil); err == nil {
+					a.bgform.Submitted()
+					if cmd := (tuiVerbs{a}).ScheduleEdit(v); cmd != nil {
+						return cmd
+					}
+					err = errors.New("not connected to server")
+				}
+			}
+			a.bgform.Answered(err)
+			return nil
+		}
 		if a.bgform.IsSchedule() {
 			// The form becomes the `schedule new` line the command line would
 			// parse, so the one request builder is the verb's.

@@ -1009,34 +1009,51 @@ test("resumeRegrantFlags: what was given is what is re-granted", () => {
   eq(f({ resumeTaskId: ID, resumeExact: true, caps: "all" }), { resumeCapsOverride: false, scopePresent: false });
 });
 
-// Compose's tabs: the tab alone decides the action, and names it.
-test("composeTabModel: one action per tab, named on its button", () => {
-  eq(["interactive", "oneshot", "background", "schedule"].map((t) => page.composeTabModel(t).label),
-    ["session を開く", "one-shot を実行", "background で投入", "schedule を作る"]);
-  eq(page.composeTabModel("schedule").action, "create-schedule");
-  eq(page.composeTabModel("background").action, "open-session");
+// Compose's tabs are WHAT is made — a session or a schedule. The task kind
+// (interactive / one-shot / event-stream) and the run mode (foreground /
+// background) are one choice each inside them, so one-shot and event-stream
+// cannot both be picked; the button names what the choices make.
+test("composeTabModel: two tabs, the button named by the choices", () => {
+  eq(page.COMPOSE_TABS, ["session", "schedule"]);
+  const label = (tab, kind, runMode) => page.composeTabModel(tab, { kind, runMode }).label;
+  eq([label("session", "interactive", "foreground"), label("session", "oneshot", "foreground"),
+    label("session", "stream", "foreground"), label("session", "interactive", "background"), label("schedule", "oneshot", "")],
+    ["session を開く", "one-shot を実行", "chat を開く", "background で投入", "schedule を作る"]);
+  eq(page.composeTabModel("schedule", {}).action, "create-schedule");
+  eq(page.composeTabModel("session", { runMode: "background" }).action, "open-session");
+});
+
+test("composeTabModel: the end conditions only for background, no pty for event-stream", () => {
+  const f = (tab, kind, runMode) => page.composeTabModel(tab, { kind, runMode }).fields;
+  assert.ok(!f("session", "interactive", "foreground").includes("deadline"));
+  assert.ok(f("session", "interactive", "background").includes("deadline"));
+  assert.ok(f("schedule", "interactive", "").includes("deadline"));
+  assert.ok(f("session", "interactive", "foreground").includes("pty"));
+  assert.ok(!f("session", "stream", "foreground").includes("pty"));
+  assert.ok(!f("schedule", "stream", "").includes("pty"));
+  assert.ok(!f("session", "oneshot", "foreground").includes("cron"));
 });
 
 const raw = (over) => ({
   cron: "@daily", tz: "Asia/Tokyo", repo: "/r", task: ID, host: "", agent: "claude", agentArgs: ["--x"],
-  prompt: "p", oneshot: true, record: "on", pty: "off", resumeConversation: true, stream: true,
+  prompt: "p", kind: "oneshot", runMode: "foreground", record: "on", pty: "off", resumeConversation: true,
   deadline: "1h", turnEnd: "quiet", quiet: "2m", blocked: "3m", queueTimeout: "4m",
   caps: "none", scope: "subtree", ...over,
 });
 
 // Review Focus 1: a field of a tab not shown is not sent.
-test("composeFormFor: what another tab holds is not read", () => {
-  const i = page.composeFormFor("interactive", raw());
-  eq([i.cron, i.task, i.oneshot, i.deadline, i.resumeConversation], ["", "", false, "", false]);
-  eq([i.stream, i.pty, i.prompt, i.agentArgs, i.record, i.caps], [true, "off", "p", ["--x"], "on", "none"]);
-  const o = page.composeFormFor("oneshot", raw());
-  eq([o.stream, o.oneshot, o.pty, o.cron], [false, false, "off", ""]);
-  const b = page.composeFormFor("background", raw());
-  eq([b.oneshot, b.stream, b.deadline, b.turnEnd, b.cron, b.task], [true, true, "1h", "quiet", "", ""]);
-  // The schedule tab reads the event-stream box since schedules carry a task
-  // kind (2026-11-17-schedule-stream-kind-design.md).
-  const s = page.composeFormFor("schedule", raw());
-  eq([s.cron, s.tz, s.task, s.oneshot, s.resumeConversation, s.stream, s.deadline], ["@daily", "Asia/Tokyo", ID, true, true, true, "1h"]);
+test("composeFormFor: what the tab and its choices do not show is not read", () => {
+  const i = page.composeFormFor("session", raw({ kind: "interactive" }));
+  eq([i.cron, i.task, i.oneshot, i.stream, i.deadline, i.resumeConversation], ["", "", false, false, "", false]);
+  eq([i.pty, i.prompt, i.agentArgs, i.record, i.caps], ["off", "p", ["--x"], "on", "none"]);
+  const o = page.composeFormFor("session", raw());
+  eq([o.oneshot, o.stream, o.pty, o.cron], [true, false, "off", ""]);
+  const st = page.composeFormFor("session", raw({ kind: "stream" }));
+  eq([st.oneshot, st.stream, st.pty], [false, true, "default"]);
+  const b = page.composeFormFor("session", raw({ runMode: "background" }));
+  eq([b.oneshot, b.deadline, b.turnEnd, b.cron, b.task], [true, "1h", "quiet", "", ""]);
+  const s = page.composeFormFor("schedule", raw({ kind: "stream" }));
+  eq([s.cron, s.tz, s.task, s.oneshot, s.stream, s.resumeConversation, s.deadline], ["@daily", "Asia/Tokyo", ID, false, true, true, "1h"]);
 });
 
 test("composeTargetOptions: tasks a schedule can bind, after 新規に作る", () => {
