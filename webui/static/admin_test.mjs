@@ -110,3 +110,20 @@ test("condition checklist: no actions and no condition says so", () => {
   // unchecked rows only: no condition, not "actions:" with nothing after it
   assert.equal(page.conditionFromChecklist(page.conditionChecklistModel(VIEWS, "").rows), "");
 });
+
+test("force is offered only after in_use, naming what is in the way", () => {
+  eq(page.forceStep({ text: "unenrolled …", ok: true, needsForce: false, inTheWay: [] }), { done: true, confirmForce: null });
+  eq(page.forceStep({ text: "no such key", ok: false, needsForce: false, inTheWay: [] }), { done: true, confirmForce: null });
+  const s = page.forceStep({ text: "in use", ok: false, needsForce: true, inTheWay: ["aa000000 h1", "bb000000 h2"] });
+  assert.equal(s.done, false);
+  assert.ok(s.confirmForce.includes("aa000000 h1") && s.confirmForce.includes("bb000000 h2"), s.confirmForce);
+});
+
+test("enroll and dial forms refuse what the server would", () => {
+  assert.ok(page.enrollFormErrors({ pubkey: "ab".repeat(31) + "a" }).length > 0);
+  assert.ok(page.enrollFormErrors({ pubkey: "zz".repeat(32) }).length > 0);
+  eq(page.enrollFormErrors({ pubkey: "AB".repeat(32) }), []);
+  assert.ok(page.dialFormErrors({ candidates: "h:7001", keyPrefix: "" }).join(" ").includes("key"));
+  assert.ok(page.dialFormErrors({ candidates: " ", keyPrefix: "abcd1234" }).join(" ").includes("candidate"));
+  eq(page.dialFormErrors({ candidates: "h:7001", keyPrefix: "abcd1234" }), []);
+});

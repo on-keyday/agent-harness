@@ -48,7 +48,7 @@
       <div id="overview-body" class="ov-body"></div>
     </section>
     <section id="runners" data-tabgroup="tasks">
-      <h2>Runners</h2>
+      <h2>Runners <button type="button" id="runner-keys-btn" class="task-chip" title="enrolled runner keys and the server's dial records: list, enroll, unenroll, add, remove, dial once">🔐 Runner keys</button></h2>
       <div id="runner-list"></div>
     </section>
     <section id="tasks" data-tabgroup="tasks">
@@ -797,6 +797,24 @@
     <menu class="picker-actions">
       <button type="button" id="action-run-modal-run">▶ 実行</button>
       <button type="button" id="action-run-modal-close">Close</button>
+    </menu>
+  </form>
+</dialog>
+<!-- Runner keys: `runner keys` with Unenroll, the enroll form, `runner dial
+     ls` with Remove, the dial-record form, and a one-off reverse dial
+     (`server dial-runner`). An unenroll that the server refuses as in use is
+     offered again with force, listing the runners on the key. -->
+<dialog id="runner-keys-modal" class="picker-modal schedules-modal">
+  <form method="dialog" class="picker-form">
+    <h3 class="picker-title" id="runner-keys-modal-title">Runner keys</h3>
+    <div id="runner-keys-modal-body" class="schedules-body"></div>
+    <menu class="picker-actions">
+      <button type="button" id="runner-keys-modal-back" hidden>← 一覧</button>
+      <button type="button" id="runner-keys-modal-enroll">＋ Enroll</button>
+      <button type="button" id="runner-keys-modal-dial">＋ Dial record</button>
+      <button type="button" id="runner-keys-modal-dial-once">⇄ Dial once</button>
+      <button type="button" id="runner-keys-modal-refresh">↻ 更新</button>
+      <button type="button" id="runner-keys-modal-close">Close</button>
     </menu>
   </form>
 </dialog>

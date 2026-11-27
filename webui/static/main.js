@@ -1608,6 +1608,207 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   };
   actionRunBtn.addEventListener("click", () => { if (actionRunGo) actionRunGo(); });
   document.getElementById("action-run-modal-close").addEventListener("click", () => actionRunModal.close());
+
+  // --- Runner keys (runner enroll / keys / unenroll, runner dial *, server
+  // dial-runner, runner kick) ---------------------------------------------
+  //
+  // Lists are the cli views (harness.runnerKeyViews / runnerDialViews); every
+  // write is the bridge function the command line's verb calls, and its line
+  // goes to the command output. Unenroll and kick never force on the first
+  // request: an in_use refusal (cli.ForceOffer) is offered again with force,
+  // listing what the server named (forceStep).
+  const rkModal = document.getElementById("runner-keys-modal");
+  const rkBody = document.getElementById("runner-keys-modal-body");
+  const rkTitle = document.getElementById("runner-keys-modal-title");
+  const rkBack = document.getElementById("runner-keys-modal-back");
+  const rkListButtons = ["runner-keys-modal-enroll", "runner-keys-modal-dial", "runner-keys-modal-dial-once", "runner-keys-modal-refresh"]
+    .map((id) => document.getElementById(id));
+  let rkView = "list";
+  let rkKeys = [];
+  const rkLatest = latestLoad();
+  const setRkView = (view, title) => {
+    rkView = view;
+    rkTitle.textContent = title;
+    rkBack.hidden = view === "list";
+    for (const b of rkListButtons) b.hidden = view !== "list";
+  };
+  // runForceFlow runs a destructive request, then — only if the server
+  // refused it as in use and the operator agrees — once more with force.
+  const runForceFlow = async (call) => {
+    try {
+      let o = await call(false);
+      appendCmdOutput(o.text.trimEnd(), true);
+      const s = forceStep(o);
+      if (!s.done && confirm(s.confirmForce)) {
+        o = await call(true);
+        appendCmdOutput(o.text.trimEnd(), true);
+      }
+    } catch (err) {
+      appendCmdOutput(err.message, true);
+    }
+  };
+  const rkRow = (head, texts, acts) => {
+    const el = document.createElement("div");
+    el.className = "schedule-row credential-row";
+    const id = document.createElement("span");
+    id.className = "schedule-id";
+    id.textContent = head;
+    const cells = document.createElement("div");
+    cells.className = "schedule-cells";
+    for (const text of texts) {
+      const c = document.createElement("span");
+      c.textContent = text;
+      cells.appendChild(c);
+    }
+    const a = document.createElement("div");
+    a.className = "credential-actions";
+    a.append(...acts);
+    el.append(id, cells, a);
+    return el;
+  };
+  const loadRunnerKeys = async () => {
+    setRkView("list", "Runner keys");
+    rkBody.replaceChildren(credentialNote("schedule-note", "読み込み中…"));
+    const tok = rkLatest.begin();
+    try {
+      const [keys, dials] = await Promise.all([window.harness.runnerKeyViews(), window.harness.runnerDialViews()]);
+      if (!rkLatest.current(tok) || rkView !== "list") return;
+      rkKeys = keys.views;
+      const out = [credentialNote("notify-meta", `keys=${keys.views.length}`)];
+      for (const k of keys.views) {
+        out.push(rkRow(k.prefix, [
+          `label=${k.label || "-"}`, `by=${k.enrolledBy}`,
+          k.bound.length ? `bound=${k.bound.map((id) => id.slice(0, 8)).join(",")}` : "unbound",
+          `runners=${k.runners.length}${k.runners.length ? `: ${k.runners.join(", ")}` : ""}`,
+        ], [credentialButton("✕ Unenroll", async () => {
+          if (!confirm(`Unenroll key ${k.prefix}${k.label ? ` (${k.label})` : ""}?\nA runner holding it can no longer register; the dial records on it are removed.`)) return;
+          await runForceFlow((force) => window.harness.runnerUnenrollOffer(k.key, force));
+          refreshSnapshot();
+          loadRunnerKeys();
+        }, "danger")]));
+      }
+      out.push(credentialNote("notify-meta", `dial records=${dials.views.length}`));
+      for (const d of dials.views) {
+        out.push(rkRow(d.id, [
+          `key=${d.keyPrefix}`, `label=${d.label || "-"}`, `state=${d.state}`,
+          `candidates=${d.candidates.join(",")}`, ...(d.lastError ? [`last_error=${d.lastError}`] : []),
+        ], [credentialButton("✕ Remove", async () => {
+          if (!confirm(`Remove dial record ${d.id}?\nThe server stops dialing ${d.candidates.join(", ")}.`)) return;
+          try {
+            appendCmdOutput((await window.harness.runnerDialRemove(d.id)).text.trimEnd(), true);
+          } catch (err) {
+            appendCmdOutput(err.message, true);
+          }
+          loadRunnerKeys();
+        }, "danger")]));
+      }
+      rkBody.replaceChildren(...out);
+    } catch (e) {
+      if (rkLatest.current(tok)) rkBody.replaceChildren(credentialNote("schedule-note", e.message));
+    }
+  };
+  const rkForm = (title, fields, errsOf, send) => {
+    setRkView("form", title);
+    const form = document.createElement("div");
+    form.className = "credential-form";
+    const errLine = credentialNote("schedule-note", "");
+    const go = credentialButton("実行", async (b) => {
+      const errs = errsOf();
+      if (errs.length) {
+        errLine.textContent = errs.join(" / ");
+        return;
+      }
+      b.disabled = true;
+      try {
+        const r = await send();
+        appendCmdOutput(r.text.trimEnd(), true);
+        if (r.ok) {
+          refreshSnapshot();
+          loadRunnerKeys();
+          return;
+        }
+        errLine.textContent = r.text;
+      } catch (err) {
+        errLine.textContent = err.message;
+      }
+      b.disabled = false;
+    });
+    for (const [label, el] of fields) {
+      const row = document.createElement("div");
+      row.className = "credential-field";
+      const l = document.createElement("span");
+      l.textContent = label;
+      row.append(l, el);
+      form.appendChild(row);
+    }
+    form.append(errLine, go);
+    rkBody.replaceChildren(form);
+  };
+  const rkText = (placeholder) => {
+    const i = document.createElement("input");
+    i.type = "text";
+    i.placeholder = placeholder;
+    i.autocomplete = "off";
+    i.spellcheck = false;
+    return i;
+  };
+  const openEnrollForm = () => {
+    const pub = rkText("64 hex: agent-runner --print-pubkey on the runner host");
+    const label = rkText("optional");
+    const bindIds = new Set();
+    const bindBox = document.createElement("div");
+    bindBox.className = "task-checklist";
+    const bindNote = credentialNote("notify-meta", "none checked = unbound: the runner takes any task");
+    const bindWrap = document.createElement("div");
+    bindWrap.append(bindNote, bindBox);
+    buildTaskChecklist(bindBox, bindIds, "", () => {
+      bindNote.textContent = bindIds.size ? `bound to ${bindIds.size} task(s): the runner takes only them` : "none checked = unbound: the runner takes any task";
+    });
+    rkForm("runner enroll", [["public key", pub], ["label", label], ["bind", bindWrap]],
+      () => enrollFormErrors({ pubkey: pub.value }),
+      () => window.harness.runnerEnroll(pub.value.trim(), label.value, bindIds.size ? [...bindIds].join(",") : null));
+  };
+  const openDialForm = () => {
+    const cands = rkText("host:port[,host:port…] — tried in order, ws:// and wss:// URLs too");
+    const key = document.createElement("select");
+    for (const k of rkKeys) key.add(new Option(`${k.prefix}${k.label ? ` (${k.label})` : ""}`, k.key));
+    const label = rkText("optional");
+    const fields = [["candidates", cands], ["key", key], ["label", label]];
+    if (!rkKeys.length) fields.splice(1, 1, ["key", credentialNote("schedule-note", "no enrolled key — ＋ Enroll one first")]);
+    rkForm("runner dial add", fields,
+      () => dialFormErrors({ candidates: cands.value, keyPrefix: rkKeys.length ? key.value : "" }),
+      () => window.harness.runnerDialAdd(cands.value, key.value, label.value));
+  };
+  const openDialOnceForm = () => {
+    const cid = rkText("the listening runner's address, e.g. udp:host:7001 (not registered yet, so typed)");
+    const via = document.createElement("select");
+    via.add(new Option("direct (the server dials it)", ""));
+    for (const r of lastRunnerRows || []) via.add(new Option(`via ${runnerRowModel(r).host} (${String(r.id).slice(0, 8)})`, r.id));
+    rkForm("server dial-runner", [["runner", cid], ["route", via]],
+      () => (cid.value.trim() ? [] : ["the runner's address"]),
+      async () => {
+        const status = await window.harness.serverDialRunner(cid.value.trim(), via.value || undefined);
+        return { text: `server dial-runner ${cid.value.trim()}${via.value ? ` --via=${via.value}` : ""}: ${status}`, ok: status === "Ok" || status === "ok" };
+      });
+  };
+  const openRunnerKeys = () => {
+    if (!rkModal.open) rkModal.showModal();
+    loadRunnerKeys();
+  };
+  // kickRunner is the runner row's ⏏ Kick (renderRunnerRows' onKick).
+  const kickRunner = async (r) => {
+    const host = runnerRowModel(r).host;
+    if (!confirm(`Kick runner ${String(r.id).slice(0, 8)} (${host})?\nIt ends its tasks and exits; it comes back after its host restarts unless its key is unenrolled.`)) return;
+    await runForceFlow((force) => window.harness.runnerKickOffer(r.id, force));
+    refreshSnapshot();
+  };
+  document.getElementById("runner-keys-btn").addEventListener("click", () => openRunnerKeys());
+  document.getElementById("runner-keys-modal-close").addEventListener("click", () => rkModal.close());
+  document.getElementById("runner-keys-modal-refresh").addEventListener("click", () => loadRunnerKeys());
+  document.getElementById("runner-keys-modal-enroll").addEventListener("click", () => openEnrollForm());
+  document.getElementById("runner-keys-modal-dial").addEventListener("click", () => openDialForm());
+  document.getElementById("runner-keys-modal-dial-once").addEventListener("click", () => openDialOnceForm());
+  rkBack.addEventListener("click", () => loadRunnerKeys());
   credentialsBack.addEventListener("click", () => loadCredentialList());
   credentialsNewBtn.addEventListener("click", () => openCredentialForm("new", ""));
 
@@ -1824,7 +2025,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     renderTaskHistoryNote(snap.finishedOmitted || 0);
     // After renderTaskList, so a task line's jump finds the row it opens.
     renderRunnerRows(runnerList, sortedRunners, {
-      tasks: snap.tasks, statusColor: taskStatusColor, repoTail, onTask: revealTaskInList,
+      tasks: snap.tasks, statusColor: taskStatusColor, repoTail, onTask: revealTaskInList, onKick: kickRunner,
     });
     drawTaskTree();
     renderFileTaskSelect(snap.tasks);

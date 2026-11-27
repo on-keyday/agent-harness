@@ -113,3 +113,27 @@ function conditionFromChecklist(rows) {
   const ids = rows.filter((r) => r.checked).map((r) => r.id);
   return ids.length ? `actions:${ids.join(",")}` : "";
 }
+
+// forceStep is what a screen does with a destructive answer (cli.ForceOffer):
+// done, or — only on in_use — the second confirmation offering force, which
+// lists what the refusal named. The first request is never forced.
+function forceStep(offer) {
+  if (!offer.needsForce) return { done: true, confirmForce: null };
+  const way = (offer.inTheWay || []).map((x) => `  ${x}`).join("\n");
+  return { done: false, confirmForce: `${offer.text}\n\nForce it anyway? In the way:\n${way}` };
+}
+
+// enrollFormErrors: the key is an Ed25519 public key, 64 hex, as
+// `agent-runner --print-pubkey` prints it. The server checks the key itself.
+function enrollFormErrors(f) {
+  return /^[0-9a-fA-F]{64}$/.test((f.pubkey || "").trim()) ? [] : ["public key: 64 hex characters (agent-runner --print-pubkey)"];
+}
+
+// dialFormErrors: a dial record needs at least one candidate and an enrolled
+// key — the server refuses a record whose key does not resolve.
+function dialFormErrors(f) {
+  const errs = [];
+  if (!(f.candidates || "").split(",").some((c) => c.trim())) errs.push("at least one candidate address");
+  if (!(f.keyPrefix || "").trim()) errs.push("an enrolled key: a runner answering under another key is refused");
+  return errs;
+}

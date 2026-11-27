@@ -361,6 +361,15 @@ function renderRunnerRows(container, runners, via) {
     st.style.color = runnerStatusColor(m.status);
     const load = span(m.full ? "runner-load is-full" : "runner-load", m.load);
     line1.append(dot, st, span("runner-host", m.host), load, span("runner-os", m.os));
+    if (v.onKick) {
+      const kick = document.createElement("button");
+      kick.type = "button";
+      kick.className = "cap-quick";
+      kick.textContent = "⏏ Kick";
+      kick.title = "make this runner leave: it ends its tasks and exits (runner kick)";
+      kick.addEventListener("click", (e) => { e.stopPropagation(); v.onKick(r); });
+      line1.appendChild(kick);
+    }
 
     const agents = document.createElement("div");
     agents.className = "runner-agents";

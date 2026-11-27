@@ -880,8 +880,9 @@ var Verbs = []VerbSpec{
 
 	// --- server ---
 	{
-		Path: []string{"server", "dial-runner"},
-		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_DialRunner},
+		Path:          []string{"server", "dial-runner"},
+		ModalSurfaces: []ModalSurface{{Surface: WebUI, At: "webui/index.html#runner-keys-modal"}},
+		MCP:           &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_DialRunner},
 		WebUIDispatch: WebUIDispatch{Fn: "serverDialRunner"},
 		SurfaceNotes:  map[Surface][]string{WebUI: {"ask the server to reverse-dial a Listen-mode runner; --via routes through a registered relay-runner"}, TUI: {"ask the server to reverse-dial a runner that is listening instead of dialing out — for a runner an outbound ACL blocks"}},
 		Notes: []string{
@@ -993,8 +994,9 @@ var Verbs = []VerbSpec{
 
 	// --- runner keys (2026-10-27-runner-enrollment-design.md) ---
 	{
-		Path: []string{"runner", "enroll"},
-		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_RunnerEnroll},
+		Path:          []string{"runner", "enroll"},
+		ModalSurfaces: []ModalSurface{{Surface: WebUI, At: "webui/index.html#runner-keys-modal"}},
+		MCP:           &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_RunnerEnroll},
 		WebUIDispatch: WebUIDispatch{Fn: "runnerEnroll"},
 		SurfaceNotes:  map[Surface][]string{WebUI: {"enroll a runner's public key so a runner holding it may register"}, TUI: {"enroll a runner's public key so a runner holding it may register"}},
 		Notes: []string{
@@ -1024,8 +1026,9 @@ var Verbs = []VerbSpec{
 		},
 	},
 	{
-		Path: []string{"runner", "keys"},
-		MCP:  &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_RunnerKeys},
+		Path:          []string{"runner", "keys"},
+		ModalSurfaces: []ModalSurface{{Surface: WebUI, At: "webui/index.html#runner-keys-modal"}},
+		MCP:           &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_RunnerKeys},
 		WebUIDispatch: WebUIDispatch{Fn: "runnerKeys"},
 		SurfaceNotes:  map[Surface][]string{WebUI: {"list enrolled runner keys and the runners on each"}, TUI: {"list enrolled runner keys and the runners on each"}},
 		Notes: []string{
@@ -1044,8 +1047,9 @@ var Verbs = []VerbSpec{
 		Examples: []string{"runner keys", "runner keys --json"},
 	},
 	{
-		Path: []string{"runner", "unenroll"},
-		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_RunnerUnenroll},
+		Path:          []string{"runner", "unenroll"},
+		ModalSurfaces: []ModalSurface{{Surface: WebUI, At: "webui/index.html#runner-keys-modal"}},
+		MCP:           &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_RunnerUnenroll},
 		WebUIDispatch: WebUIDispatch{Fn: "runnerUnenroll"},
 		SurfaceNotes:  map[Surface][]string{WebUI: {"remove an enrolled runner key; --force if runners use it"}, TUI: {"remove an enrolled runner key; --force if runners use it"}},
 		Notes: []string{
@@ -1067,8 +1071,9 @@ var Verbs = []VerbSpec{
 
 	// --- dial records and kick (2026-11-04-persistent-reverse-dial-and-runner-kick-design.md) ---
 	{
-		Path: []string{"runner", "dial", "add"},
-		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_RunnerDialAdd},
+		Path:          []string{"runner", "dial", "add"},
+		ModalSurfaces: []ModalSurface{{Surface: WebUI, At: "webui/index.html#runner-keys-modal"}},
+		MCP:           &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_RunnerDialAdd},
 		WebUIDispatch: WebUIDispatch{Fn: "runnerDialAdd"},
 		SurfaceNotes:  map[Surface][]string{WebUI: {"have the server keep dialing a listening runner, across drops and its own restarts"}, TUI: {"have the server keep dialing a listening runner, across drops and its own restarts"}},
 		Notes: []string{
@@ -1098,8 +1103,9 @@ var Verbs = []VerbSpec{
 			"runner dial add wss://agent-1.example.com/ws --key 3f9c01ab --label edge-1"},
 	},
 	{
-		Path: []string{"runner", "dial", "ls"},
-		MCP:  &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_RunnerDialList},
+		Path:          []string{"runner", "dial", "ls"},
+		ModalSurfaces: []ModalSurface{{Surface: WebUI, At: "webui/index.html#runner-keys-modal"}},
+		MCP:           &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_RunnerDialList},
 		WebUIDispatch: WebUIDispatch{Fn: "runnerDialList"},
 		SurfaceNotes:  map[Surface][]string{WebUI: {"list dial records: connected, dialing, waiting (when and why), or duplicate"}, TUI: {"list dial records: connected, dialing, waiting (when and why), or duplicate"}},
 		Notes: []string{
@@ -1119,8 +1125,9 @@ var Verbs = []VerbSpec{
 		Examples: []string{"runner dial ls", "runner dial ls --json"},
 	},
 	{
-		Path: []string{"runner", "dial", "rm"},
-		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_RunnerDialRemove},
+		Path:          []string{"runner", "dial", "rm"},
+		ModalSurfaces: []ModalSurface{{Surface: WebUI, At: "webui/index.html#runner-keys-modal"}},
+		MCP:           &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_RunnerDialRemove},
 		WebUIDispatch: WebUIDispatch{Fn: "runnerDialRemove"},
 		SurfaceNotes:  map[Surface][]string{WebUI: {"stop re-dialing a runner; its live connection stays"}, TUI: {"stop re-dialing a runner; its live connection stays"}},
 		Notes: []string{
@@ -1134,8 +1141,9 @@ var Verbs = []VerbSpec{
 		Examples:        []string{"runner dial rm 3fa9c012"},
 	},
 	{
-		Path: []string{"runner", "kick"},
-		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_RunnerKick},
+		Path:          []string{"runner", "kick"},
+		ModalSurfaces: []ModalSurface{{Surface: WebUI, At: "webui/static/main.js:kickRunner"}},
+		MCP:           &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_RunnerKick},
 		WebUIDispatch: WebUIDispatch{Fn: "runnerKick"},
 		SurfaceNotes:  map[Surface][]string{WebUI: {"make one runner leave: it ends its tasks and exits"}, TUI: {"make one runner leave: it ends its tasks and exits"}},
 		Notes: []string{
