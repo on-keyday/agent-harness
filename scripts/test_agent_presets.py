@@ -128,16 +128,37 @@ class ExpandAgentsPresetTest(unittest.TestCase):
         self.assertEqual(oc["bin"], "opencode")
         # `run` is a SUBCOMMAND and the prompt is its positional message, so
         # {prompt} carries no flag of its own — codex's shape, not claude's.
-        self.assertEqual(oc["oneshotArgv"], ["run", "{args}", "{prompt}"])
+        self.assertEqual(oc["oneshotArgv"], ["run", "--standalone", "{args}", "{prompt}"])
         self.assertEqual(
-            oc["resumeOneshotArgv"], ["run", "--continue", "{args}", "{prompt}"]
+            oc["resumeOneshotArgv"],
+            ["run", "--standalone", "--continue", "{args}", "{prompt}"],
         )
         # The resume flag must stay on the `run` subcommand for the one-shot
         # and on the bare binary for the TUI — opencode accepts --continue in
         # both places and they are different launch paths.
         self.assertEqual(
-            oc["resumeInteractiveArgv"], ["{args}", "--continue", "--prompt={prompt}"]
+            oc["interactiveArgv"], ["--standalone", "{args}", "--prompt={prompt}"]
         )
+        self.assertEqual(
+            oc["resumeInteractiveArgv"],
+            ["--standalone", "{args}", "--continue", "--prompt={prompt}"],
+        )
+
+    def test_opencode_opens_bypass_the_shared_service(self) -> None:
+        # opencode 2.x attaches to one per-user `serve --service`: the TUI
+        # starts it, `run` joins one already running. Tool processes then
+        # live under that service, outside the task, and survive a cancel.
+        # Unlike codex's `exec`, `run` accepts the opt-out, so all four carry it.
+        for agent in ("opencode", "sandbox-opencode"):
+            preset = agent_presets.KNOWN_AGENT_PRESETS[agent]
+            for key in (
+                "oneshotArgv",
+                "resumeOneshotArgv",
+                "interactiveArgv",
+                "resumeInteractiveArgv",
+            ):
+                with self.subTest(agent=agent, key=key):
+                    self.assertIn("--standalone", preset[key].split())
 
     def test_single_agent_emits_no_profiles_flag(self) -> None:
         out = expand_agents_preset("claude", [])

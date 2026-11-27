@@ -32,7 +32,7 @@ Arguments: $ARGUMENTS
    | `sandbox-codex` / `sandbox-agy` / `sandbox-opencode` / `sandbox-pi` / `sandbox-bash` | `--agents sandbox-<name>` (bin+argv from `scripts/agent_presets.py`; same `--hostname` advice) | The same container for the other agents (see below) |
    | `codex`      | `--agents codex` (bin+argv from `scripts/agent_presets.py`; add `--hostname $HARNESS_HOSTNAME-codex` when roots overlap a Claude slot) | Codex CLI runner |
    | `agy`        | `--agents agy` (bin+argv from `scripts/agent_presets.py`; add `--hostname $HARNESS_HOSTNAME-agy` when roots overlap a Claude slot) | Antigravity CLI runner (gemini-cli's successor) |
-   | `opencode`   | `--agents opencode` (bin+argv from `scripts/agent_presets.py`; add `--hostname $HARNESS_HOSTNAME-opencode` when roots overlap a Claude slot) | OpenCode CLI runner (**1.18.18+ only**, see below) |
+   | `opencode`   | `--agents opencode` (bin+argv from `scripts/agent_presets.py`; add `--hostname $HARNESS_HOSTNAME-opencode` when roots overlap a Claude slot) | OpenCode CLI runner (**2.x only**, see below) |
    | `pi`         | `--agents pi` (bin+argv from `scripts/agent_presets.py`; add `--hostname $HARNESS_HOSTNAME-pi` when roots overlap a Claude slot) | Pi coding agent runner (needs Node ≥ 22.19.0 **and a provider login**, see below) |
 
    **The `sandbox*` presets are NOT shell presets.** They run the *full* agent
@@ -184,14 +184,20 @@ Arguments: $ARGUMENTS
 
    Two things to check before spawning a slot:
 
-   - **Version.** This preset is valid for **1.18.18+ only**. The harness gives
-     each task its own linked git worktree, and opencode groups sessions by the
-     git common dir, so every task on one repo shares a project. Measured on
-     1.1.35, `run --continue` from worktree B attached to worktree A's session —
-     a resumed task would have continued a *sibling task's* conversation. On
-     1.18.18 the project is still shared but `--continue` filters by the
-     session's recorded directory; two worktrees of one repo, seeded with
-     distinct codewords, each recalled their own.
+   - **Version.** This preset is valid for **2.x only** (verified on 2.4.2).
+     Every template passes `--standalone`, which 1.x refuses (exit 1), and the
+     transcript store calls `session export`, which 1.x does not have. Without
+     `--standalone`, 2.x runs the agent's tools under one per-user background
+     service that outlives the task, so a cancel leaves them running
+     (`docs/superpowers/specs/2026-11-28-opencode-2x-design.md`). Resume scope
+     was the earlier gate: the harness gives each task its own linked git
+     worktree, and opencode groups sessions by the git common dir, so every
+     task on one repo shares a project. Measured on 1.1.35, `run --continue`
+     from worktree B attached to worktree A's session — a resumed task would
+     have continued a *sibling task's* conversation. Since 1.18.18 (and still
+     on 2.4.2) `--continue` filters by the session's recorded directory; two
+     worktrees of one repo, seeded with distinct codewords, each recalled
+     their own.
    - **Runner binary.** That directory filter only helps if the agent sees the
      task's directory, and opencode reads `PWD` rather than calling `getcwd()`.
      Setting a child's working directory does not update `PWD`, so a runner

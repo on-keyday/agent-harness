@@ -221,19 +221,32 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         # conversation. Measured on 1.18.18 (2026-08-19) the project is still
         # shared but --continue now filters by the session's recorded
         # directory: two worktrees of one repo were seeded with distinct
-        # codewords and each --continue recalled its own. This preset is
-        # therefore valid for 1.18.18+ and NOT for 1.1.35.
+        # codewords and each --continue recalled its own. 2.4.2 (2026-11-28)
+        # repeated that with `run --standalone --continue`.
         #
-        # Verified against opencode 1.18.18: `run <prompt>` exits 0 with the
+        # SHARED SERVICE — --standalone on all four templates, and the reason
+        # this preset needs 2.x (1.x exits 1 on the unknown flag). 2.x attaches
+        # to one per-user `opencode serve --service`: the TUI starts it, `run`
+        # joins one that is already running. Measured on 2.4.2: the tool shell
+        # gets the CLIENT's environment (unlike codex's daemon above), but runs
+        # under the service's `opencode-pty`, outside the task — cancelling the
+        # task does not stop it, and the service outlives the TUI that started
+        # it, holding that task's environment. With --standalone the server is
+        # the agent's own child and exits with it.
+        # docs/superpowers/specs/2026-11-28-opencode-2x-design.md has the runs.
+        #
+        # Verified against opencode 2.4.2: `run <prompt>` exits 0 with the
         # response on stdout (logs go to stderr); `run --continue <prompt>`
         # recalls the prior turn in the same worktree; bare `opencode` starts
-        # the TUI under a PTY. Note it does NOT refuse a missing TTY the way
-        # agy does — without a PTY it renders the TUI into the pipe and hangs,
-        # so a non-PTY launch fails by timeout rather than by error.
-        "oneshotArgv": "run {args} {prompt}",
-        "resumeOneshotArgv": "run --continue {args} {prompt}",
-        "interactiveArgv": "{args} --prompt={prompt}",
-        "resumeInteractiveArgv": "{args} --continue --prompt={prompt}",
+        # the TUI under a PTY and runs --prompt as its first turn. Note it does
+        # NOT refuse a missing TTY the way agy does — 1.18.18 without a PTY
+        # rendered the TUI into the pipe and hung, so a non-PTY launch fails by
+        # timeout rather than by error. The TUI's --continue is in 2.4.2's
+        # --help and was not run live.
+        "oneshotArgv": "run --standalone {args} {prompt}",
+        "resumeOneshotArgv": "run --standalone --continue {args} {prompt}",
+        "interactiveArgv": "--standalone {args} --prompt={prompt}",
+        "resumeInteractiveArgv": "--standalone {args} --continue --prompt={prompt}",
         "transcriptStore": "opencode",
         "streamAdapter": "",
         "agentArgs": "",
@@ -368,7 +381,7 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
 # unsandboxed agent. Each flag was
 # checked against the real CLI's --help on every subcommand its templates use
 # (claude; codex 0.162.1 top-level/exec/exec resume/resume; agy 1.3.5;
-# opencode 1.18.18 top-level/run; pi 1.0.3). What it does INSIDE the container
+# opencode 1.18.18 and 2.4.2 top-level/run; pi 1.0.3). What it does INSIDE the container
 # is measured for claude, which the sandbox slot has run with it all along, and
 # for pi (2026-10-17: no trust dialog, the injected skills load).
 #
