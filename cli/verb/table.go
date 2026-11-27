@@ -24,9 +24,8 @@ var Verbs = []VerbSpec{
 	{
 		Path: []string{"prune"},
 		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_PruneTasks},
-		WebUIDispatch:  WebUIDispatch{Fn: "prune"},
-		SurfaceNotes:   map[Surface][]string{WebUI: {"forget terminal tasks older than DUR"}, TUI: {"ask the server to forget tasks (ids, or --before; active tasks need --force)"}},
-		NoModalSurface: "the TUI has an action for this (Do…) but dispatch.go is its only caller, so it IS the command line running the verb — already CmdlineSurfaces",
+		WebUIDispatch: WebUIDispatch{Fn: "prune"},
+		SurfaceNotes:  map[Surface][]string{WebUI: {"forget terminal tasks older than DUR"}, TUI: {"ask the server to forget tasks (ids, or --before; active tasks need --force)"}},
 		Notes: []string{
 			"ask the server to forget tasks",
 			"no ids: terminal tasks older than --before",
@@ -504,11 +503,10 @@ var Verbs = []VerbSpec{
 	},
 	// --- exec (exec_run) ---
 	{
-		Path:           []string{"exec"},
-		MCPNotATool:    "it splices this process's stdin and stdout to the command until it exits, then exits with its code",
-		WebUIDispatch:  WebUIDispatch{Fn: "execRun"},
-		SurfaceNotes:   map[Surface][]string{WebUI: {"run a command in the task's worktree as its own process, NOT in the session's shell (stdout 1| / stderr 2|)"}, TUI: {"run a command in the task's worktree as its own process, NOT in the session's shell (stdout 1| / stderr 2|). --shell hands it to the runner's own shell so pipes and redirects mean something; --sshd-parent gives the line a parent named sshd for a client that checks its ancestry (Windows only; needs --shell)"}},
-		NoModalSurface: "the TUI has an action for this (Do…) but dispatch.go is its only caller, so it IS the command line running the verb — already CmdlineSurfaces",
+		Path:          []string{"exec"},
+		MCPNotATool:   "it splices this process's stdin and stdout to the command until it exits, then exits with its code",
+		WebUIDispatch: WebUIDispatch{Fn: "execRun"},
+		SurfaceNotes:  map[Surface][]string{WebUI: {"run a command in the task's worktree as its own process, NOT in the session's shell (stdout 1| / stderr 2|)"}, TUI: {"run a command in the task's worktree as its own process, NOT in the session's shell (stdout 1| / stderr 2|). --shell hands it to the runner's own shell so pipes and redirects mean something; --sshd-parent gives the line a parent named sshd for a client that checks its ancestry (Windows only; needs --shell)"}},
 		Notes: []string{
 			"run a command in the task's WORKTREE as its own process:",
 			"stdout and stderr stay separate, and the command's own exit code becomes ours",
@@ -883,9 +881,8 @@ var Verbs = []VerbSpec{
 	{
 		Path: []string{"server", "dial-runner"},
 		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_DialRunner},
-		WebUIDispatch:  WebUIDispatch{Fn: "serverDialRunner"},
-		SurfaceNotes:   map[Surface][]string{WebUI: {"ask the server to reverse-dial a Listen-mode runner; --via routes through a registered relay-runner"}, TUI: {"ask the server to reverse-dial a runner that is listening instead of dialing out — for a runner an outbound ACL blocks"}},
-		NoModalSurface: "the TUI has an action for this (Do…) but dispatch.go is its only caller, so it IS the command line running the verb — already CmdlineSurfaces",
+		WebUIDispatch: WebUIDispatch{Fn: "serverDialRunner"},
+		SurfaceNotes:  map[Surface][]string{WebUI: {"ask the server to reverse-dial a Listen-mode runner; --via routes through a registered relay-runner"}, TUI: {"ask the server to reverse-dial a runner that is listening instead of dialing out — for a runner an outbound ACL blocks"}},
 		Notes: []string{
 			"ask the server to reverse-dial RUNNER_CID",
 			"RUNNER_CID is an ADDRESS: the target is not registered yet, so there",
@@ -913,7 +910,6 @@ var Verbs = []VerbSpec{
 		WebUIDispatch: WebUIDispatch{Fn: "actionPut"},
 		SurfaceNotes:  map[Surface][]string{WebUI: {"define a server-defined action (the command an ActionSet grant may run)"}, TUI: {"define a server-defined action (the command an ActionSet grant may run)"}},
 		MCP:           &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_ActionPut},
-		NoModalSurface: "an administrative verb run a handful of times, like runner enroll: the command line is the way in",
 		Notes: []string{
 			"define a named command the server keeps; a grant can then name it with",
 			"--grant-condition exec_run=actions:<id>, and its holder runs only that command (exec --action)",
@@ -935,7 +931,6 @@ var Verbs = []VerbSpec{
 		WebUIDispatch: WebUIDispatch{Fn: "actionPut"},
 		SurfaceNotes:  map[Surface][]string{WebUI: {"replace an action's definition; refused unless you could re-grant every holder"}, TUI: {"replace an action's definition; refused unless you could re-grant every holder"}},
 		MCP:           &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_ActionList, protocol.TaskControlKind_ActionPut},
-		NoModalSurface: "an administrative verb, like runner enroll: the command line is the way in",
 		Notes: []string{
 			"replace an action's definition: the params and the command are given whole, as on new;",
 			"--name and --description keep the current ones when omitted",
@@ -961,7 +956,6 @@ var Verbs = []VerbSpec{
 		WebUIDispatch: WebUIDispatch{Fn: "actionRemove"},
 		SurfaceNotes:  map[Surface][]string{WebUI: {"delete a server-defined action"}, TUI: {"delete a server-defined action"}},
 		MCP:           &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_ActionList, protocol.TaskControlKind_ActionRemove},
-		NoModalSurface: "an administrative verb, like runner unenroll: the command line is the way in",
 		Notes: []string{
 			"delete an action, by name or id; a grant naming it then runs nothing",
 			"needs action_admin",
@@ -976,7 +970,6 @@ var Verbs = []VerbSpec{
 		WebUIDispatch: WebUIDispatch{Fn: "actionList"},
 		SurfaceNotes:  map[Surface][]string{WebUI: {"list the server's actions: full id, name, revision, command, params"}, TUI: {"list the server's actions: full id, name, revision, command, params"}},
 		MCP:           &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_ActionList},
-		NoModalSurface: "an administrative listing, like runner keys: the command line is the way in",
 		Notes: []string{
 			"list the server's actions: full id (the form --grant-condition takes), name, revision,",
 			"the command each runs and its params; then the number of actions",
@@ -997,9 +990,8 @@ var Verbs = []VerbSpec{
 	{
 		Path: []string{"runner", "enroll"},
 		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_RunnerEnroll},
-		WebUIDispatch:  WebUIDispatch{Fn: "runnerEnroll"},
-		SurfaceNotes:   map[Surface][]string{WebUI: {"enroll a runner's public key so a runner holding it may register"}, TUI: {"enroll a runner's public key so a runner holding it may register"}},
-		NoModalSurface: "an administrative verb run a handful of times per machine, like server dial-runner: the command line is the way in on every surface",
+		WebUIDispatch: WebUIDispatch{Fn: "runnerEnroll"},
+		SurfaceNotes:  map[Surface][]string{WebUI: {"enroll a runner's public key so a runner holding it may register"}, TUI: {"enroll a runner's public key so a runner holding it may register"}},
 		Notes: []string{
 			"enroll a runner's public key: a runner signing with it may register",
 			"PUBKEY is 64 hex, printed by `agent-runner --print-pubkey` on the runner host",
@@ -1029,9 +1021,8 @@ var Verbs = []VerbSpec{
 	{
 		Path: []string{"runner", "keys"},
 		MCP:  &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_RunnerKeys},
-		WebUIDispatch:  WebUIDispatch{Fn: "runnerKeys"},
-		SurfaceNotes:   map[Surface][]string{WebUI: {"list enrolled runner keys and the runners on each"}, TUI: {"list enrolled runner keys and the runners on each"}},
-		NoModalSurface: "an administrative listing, like conns: the command line is the way in on every surface",
+		WebUIDispatch: WebUIDispatch{Fn: "runnerKeys"},
+		SurfaceNotes:  map[Surface][]string{WebUI: {"list enrolled runner keys and the runners on each"}, TUI: {"list enrolled runner keys and the runners on each"}},
 		Notes: []string{
 			"list enrolled runner keys: label, when and by whom each was enrolled,",
 			"and the runners registered with it right now; then the number of keys",
@@ -1050,9 +1041,8 @@ var Verbs = []VerbSpec{
 	{
 		Path: []string{"runner", "unenroll"},
 		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_RunnerUnenroll},
-		WebUIDispatch:  WebUIDispatch{Fn: "runnerUnenroll"},
-		SurfaceNotes:   map[Surface][]string{WebUI: {"remove an enrolled runner key; --force if runners use it"}, TUI: {"remove an enrolled runner key; --force if runners use it"}},
-		NoModalSurface: "an administrative verb, like server dial-runner: the command line is the way in on every surface",
+		WebUIDispatch: WebUIDispatch{Fn: "runnerUnenroll"},
+		SurfaceNotes:  map[Surface][]string{WebUI: {"remove an enrolled runner key; --force if runners use it"}, TUI: {"remove an enrolled runner key; --force if runners use it"}},
 		Notes: []string{
 			"remove an enrolled key, named by a unique prefix of at least 8 hex",
 			"refused while a runner uses it, listing those runners; --force closes",
@@ -1074,9 +1064,8 @@ var Verbs = []VerbSpec{
 	{
 		Path: []string{"runner", "dial", "add"},
 		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_RunnerDialAdd},
-		WebUIDispatch:  WebUIDispatch{Fn: "runnerDialAdd"},
-		SurfaceNotes:   map[Surface][]string{WebUI: {"have the server keep dialing a listening runner, across drops and its own restarts"}, TUI: {"have the server keep dialing a listening runner, across drops and its own restarts"}},
-		NoModalSurface: "an administrative verb run a handful of times per runner, like server dial-runner: the command line is the way in on every surface",
+		WebUIDispatch: WebUIDispatch{Fn: "runnerDialAdd"},
+		SurfaceNotes:  map[Surface][]string{WebUI: {"have the server keep dialing a listening runner, across drops and its own restarts"}, TUI: {"have the server keep dialing a listening runner, across drops and its own restarts"}},
 		Notes: []string{
 			"store a dial record: the server dials the runner (agent-runner --listen)",
 			"now, again whenever the connection ends, and after its own restart",
@@ -1106,9 +1095,8 @@ var Verbs = []VerbSpec{
 	{
 		Path: []string{"runner", "dial", "ls"},
 		MCP:  &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_RunnerDialList},
-		WebUIDispatch:  WebUIDispatch{Fn: "runnerDialList"},
-		SurfaceNotes:   map[Surface][]string{WebUI: {"list dial records: connected, dialing, waiting (when and why), or duplicate"}, TUI: {"list dial records: connected, dialing, waiting (when and why), or duplicate"}},
-		NoModalSurface: "an administrative listing, like runner keys: the command line is the way in on every surface",
+		WebUIDispatch: WebUIDispatch{Fn: "runnerDialList"},
+		SurfaceNotes:  map[Surface][]string{WebUI: {"list dial records: connected, dialing, waiting (when and why), or duplicate"}, TUI: {"list dial records: connected, dialing, waiting (when and why), or duplicate"}},
 		Notes: []string{
 			"list dial records: state, the runner connected through each, the",
 			"candidate that answered, and for a waiting one the next attempt and",
@@ -1128,9 +1116,8 @@ var Verbs = []VerbSpec{
 	{
 		Path: []string{"runner", "dial", "rm"},
 		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_RunnerDialRemove},
-		WebUIDispatch:  WebUIDispatch{Fn: "runnerDialRemove"},
-		SurfaceNotes:   map[Surface][]string{WebUI: {"stop re-dialing a runner; its live connection stays"}, TUI: {"stop re-dialing a runner; its live connection stays"}},
-		NoModalSurface: "an administrative verb, like runner unenroll: the command line is the way in on every surface",
+		WebUIDispatch: WebUIDispatch{Fn: "runnerDialRemove"},
+		SurfaceNotes:  map[Surface][]string{WebUI: {"stop re-dialing a runner; its live connection stays"}, TUI: {"stop re-dialing a runner; its live connection stays"}},
 		Notes: []string{
 			"remove a dial record by its id (8 hex, from runner dial ls)",
 			"stops re-dialing; the live connection stays — runner kick to disconnect",
@@ -1144,9 +1131,8 @@ var Verbs = []VerbSpec{
 	{
 		Path: []string{"runner", "kick"},
 		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_RunnerKick},
-		WebUIDispatch:  WebUIDispatch{Fn: "runnerKick"},
-		SurfaceNotes:   map[Surface][]string{WebUI: {"make one runner leave: it ends its tasks and exits"}, TUI: {"make one runner leave: it ends its tasks and exits"}},
-		NoModalSurface: "an administrative verb, like runner unenroll: the command line is the way in on every surface",
+		WebUIDispatch: WebUIDispatch{Fn: "runnerKick"},
+		SurfaceNotes:  map[Surface][]string{WebUI: {"make one runner leave: it ends its tasks and exits"}, TUI: {"make one runner leave: it ends its tasks and exits"}},
 		Notes: []string{
 			"make one runner leave, named by 8-32 hex of its identity (the id= column):",
 			"it ends its tasks and the process exits; a dial record that would bring",
@@ -1228,7 +1214,6 @@ var Verbs = []VerbSpec{
 		// `case SSHGatewayAction:` written by habit never matches.
 		Path:            []string{"ssh-gateway", "status"},
 		SurfaceNotes:    map[Surface][]string{TUI: {"whether it is running, and on what address"}},
-		NoModalSurface:  "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Action:          "SSHGatewayAction",
 		Const:           map[string]string{"Sub": "status"},
 		CmdlineSurfaces: TUI,
@@ -1237,7 +1222,6 @@ var Verbs = []VerbSpec{
 	{
 		Path:            []string{"ssh-gateway", "stop"},
 		SurfaceNotes:    map[Surface][]string{TUI: {"stop the gateway and every session it serves"}},
-		NoModalSurface:  "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Action:          "SSHGatewayAction",
 		Const:           map[string]string{"Sub": "stop"},
 		CmdlineSurfaces: TUI,
@@ -1248,8 +1232,7 @@ var Verbs = []VerbSpec{
 	{
 		Path: []string{"workspace", "save"},
 		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_ListPortForwards},
-		SurfaceNotes:   map[Surface][]string{TUI: {"pick which tasks, their resume/runner, their forwards and the grid (--all: no picker)"}},
-		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
+		SurfaceNotes: map[Surface][]string{TUI: {"pick which tasks, their resume/runner, their forwards and the grid (--all: no picker)"}},
 		Notes: []string{
 			"records every task the registry reports a forward for; --task narrows it to one.",
 			"It MERGES: it ADDS forwards not yet declared and never removes one (drop one with",
@@ -1296,8 +1279,7 @@ var Verbs = []VerbSpec{
 	{
 		Path: []string{"workspace", "rm"},
 		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{},
-		SurfaceNotes:   map[Surface][]string{TUI: {"delete one workspace from .harness/config"}},
-		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
+		SurfaceNotes: map[Surface][]string{TUI: {"delete one workspace from .harness/config"}},
 		Notes: []string{
 			"delete one workspace from .harness/config (other workspaces and comments kept)",
 		},
@@ -1327,8 +1309,7 @@ var Verbs = []VerbSpec{
 	{
 		Path: []string{"workspace", "show"},
 		MCP:  &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{},
-		SurfaceNotes:   map[Surface][]string{TUI: {"print one workspace"}},
-		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
+		SurfaceNotes: map[Surface][]string{TUI: {"print one workspace"}},
 		Notes: []string{
 			"print one workspace, or all of them when no name is given",
 		},
@@ -1356,7 +1337,6 @@ var Verbs = []VerbSpec{
 	{
 		Path:            []string{"workspace", "detach"},
 		SurfaceNotes:    map[Surface][]string{TUI: {"stop re-applying on reconnect; --stop also stops its forwards and gateway"}},
-		NoModalSurface:  "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Action:          "WorkspaceAction",
 		Const:           map[string]string{"Sub": "detach"},
 		CmdlineSurfaces: TUI,
@@ -2040,9 +2020,8 @@ var Verbs = []VerbSpec{
 	{
 		Path: []string{"session", "stream", "turn"},
 		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_AttachSession},
-		WebUIDispatch:  WebUIDispatch{Fn: "streamTurn"},
-		SurfaceNotes:   map[Surface][]string{WebUI: {"send a user turn (id defaults to the open chat)"}, TUI: {"send one user turn to an event-stream session"}},
-		NoModalSurface: "the TUI has an action for this (Do…) but dispatch.go is its only caller, so it IS the command line running the verb — already CmdlineSurfaces",
+		WebUIDispatch: WebUIDispatch{Fn: "streamTurn"},
+		SurfaceNotes:  map[Surface][]string{WebUI: {"send a user turn (id defaults to the open chat)"}, TUI: {"send one user turn to an event-stream session"}},
 		Notes: []string{
 			"send one user turn to an event-stream session",
 		},
@@ -2170,9 +2149,9 @@ var Verbs = []VerbSpec{
 		SurfaceNotes: map[Surface][]string{
 			WebUI: {"live screen preview of a session — click it to type (⏸/▶ pause-resume)"},
 		},
-		NoModalSurface: "the preview IS a WebUI panel; typing the verb is one way to open it and the task row's own control is the other, both reaching openSessionPreview",
-		Action:         "PreviewAction",
-		Args:           []Arg{{Name: "task-id", Type: ArgString, Field: "TaskID"}},
+		ModalSurfaces: []ModalSurface{{Surface: WebUI, At: "webui/index.html#session-preview-modal"}},
+		Action:        "PreviewAction",
+		Args:          []Arg{{Name: "task-id", Type: ArgString, Field: "TaskID"}},
 	},
 	{
 		// The grid grammar was ALREADY shared before this migration --
@@ -2362,9 +2341,8 @@ var Verbs = []VerbSpec{
 		// operator picking chips had the names and not the sentences.
 		Path: []string{"caps"}, CmdlineSurfaces: CLI | TUI | WebUI,
 		MCP: &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{},
-		WebUIDispatch:  WebUIDispatch{Fn: "capsCatalog"},
-		SurfaceNotes:   map[Surface][]string{TUI: {"the capability catalog: every grantable capability and the sentence saying what it gates, plus the scope grammar"}},
-		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
+		WebUIDispatch: WebUIDispatch{Fn: "capsCatalog"},
+		SurfaceNotes:  map[Surface][]string{TUI: {"the capability catalog: every grantable capability and the sentence saying what it gates, plus the scope grammar"}},
 		Notes: []string{
 			"list the grantable --caps capability names and --scope forms",
 		},
@@ -2555,9 +2533,8 @@ var Verbs = []VerbSpec{
 		// them. The asymmetry with prune is deliberate.
 		Path: []string{"restore"}, CmdlineSurfaces: CLI | TUI | WebUI,
 		MCP: &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_RestoreTasks},
-		WebUIDispatch:  WebUIDispatch{Fn: "restore"},
-		SurfaceNotes:   map[Surface][]string{TUI: {"with no ids (or --list): what a prune forgot and could still be put back \u2014 the ids live only in the server's WAL. With ids: put those back (needs `prune` and the same scope; the record returns, the worktree is untouched)"}},
-		NoModalSurface: "the TUI has an action for this (Do…) but dispatch.go is its only caller, so it IS the command line running the verb — already CmdlineSurfaces",
+		WebUIDispatch: WebUIDispatch{Fn: "restore"},
+		SurfaceNotes:  map[Surface][]string{TUI: {"with no ids (or --list): what a prune forgot and could still be put back \u2014 the ids live only in the server's WAL. With ids: put those back (needs `prune` and the same scope; the record returns, the worktree is untouched)"}},
 		Notes: []string{
 			"with no ids (or --list): list what a prune forgot and could still be put back \u2014 ids, when they were pruned, and the repo/prompt that identify them. The ids live only in the server's WAL, so this is the only way to learn them",
 			"with ids: put those back, rebuilt from the WAL. Requires the `prune` capability and the same scope: what you could forget, you can un-forget",
@@ -2592,16 +2569,16 @@ var Verbs = []VerbSpec{
 	// the table can hold.
 	{
 		Path: []string{"clear"}, CmdlineSurfaces: TUI,
-		SurfaceNotes:   map[Surface][]string{TUI: {"empty this result panel"}},
-		NoModalSurface: "a command of the TUI's own line (there is no separate surface to reach: this IS the cmdline)",
-		Action:         "ScreenAction", Const: map[string]string{"Sub": "clear"},
+		SurfaceNotes: map[Surface][]string{TUI: {"empty this result panel"}},
+		LineCommand:  true,
+		Action:       "ScreenAction", Const: map[string]string{"Sub": "clear"},
 		Examples: []string{"clear"},
 	},
 	{
 		Path: []string{"quit"}, CmdlineSurfaces: TUI,
-		SurfaceNotes:   map[Surface][]string{TUI: {"leave the TUI (alias: exit); the sessions it opened keep running"}},
-		NoModalSurface: "a command of the TUI's own line (there is no separate surface to reach: this IS the cmdline)",
-		Action:         "ScreenAction", Const: map[string]string{"Sub": "quit"},
+		SurfaceNotes: map[Surface][]string{TUI: {"leave the TUI (alias: exit); the sessions it opened keep running"}},
+		LineCommand:  true,
+		Action:       "ScreenAction", Const: map[string]string{"Sub": "quit"},
 		Examples: []string{"quit"},
 	},
 	{
@@ -2610,32 +2587,32 @@ var Verbs = []VerbSpec{
 		// verb, and two declared paths sharing an Action say the same thing
 		// without the mechanism.
 		Path: []string{"exit"}, CmdlineSurfaces: TUI,
-		SurfaceNotes:   map[Surface][]string{TUI: {"leave the TUI"}},
-		NoModalSurface: "a command of the TUI's own line (there is no separate surface to reach: this IS the cmdline)",
-		Action:         "ScreenAction", Const: map[string]string{"Sub": "quit"},
+		SurfaceNotes: map[Surface][]string{TUI: {"leave the TUI"}},
+		LineCommand:  true,
+		Action:       "ScreenAction", Const: map[string]string{"Sub": "quit"},
 		Examples: []string{"exit"},
 	},
 	{
 		Path: []string{"help"}, CmdlineSurfaces: TUI | WebUI,
-		WebUIDispatch:  WebUIDispatch{Fn: "help"},
-		SurfaceNotes:   map[Surface][]string{WebUI: {"this list"}, TUI: {"this list"}},
-		NoModalSurface: "a command of the TUI's own line (there is no separate surface to reach: this IS the cmdline)",
-		Action:         "ScreenAction", Const: map[string]string{"Sub": "help"},
+		WebUIDispatch: WebUIDispatch{Fn: "help"},
+		SurfaceNotes:  map[Surface][]string{WebUI: {"this list"}, TUI: {"this list"}},
+		LineCommand:   true,
+		Action:        "ScreenAction", Const: map[string]string{"Sub": "help"},
 		Examples: []string{"help"},
 	},
 	{
 		Path: []string{"refresh"}, CmdlineSurfaces: TUI | WebUI,
-		WebUIDispatch:  WebUIDispatch{Fn: "refreshSnapshot", Local: true},
-		SurfaceNotes:   map[Surface][]string{WebUI: {"force a snapshot re-sync"}, TUI: {"force a full runners+tasks snapshot re-sync now (alias: sync)"}},
-		NoModalSurface: "a command of the TUI's own line (there is no separate surface to reach: this IS the cmdline)",
-		Action:         "ScreenAction", Const: map[string]string{"Sub": "refresh"},
+		WebUIDispatch: WebUIDispatch{Fn: "refreshSnapshot", Local: true},
+		SurfaceNotes:  map[Surface][]string{WebUI: {"force a snapshot re-sync"}, TUI: {"force a full runners+tasks snapshot re-sync now (alias: sync)"}},
+		LineCommand:   true,
+		Action:        "ScreenAction", Const: map[string]string{"Sub": "refresh"},
 		Examples: []string{"refresh"},
 	},
 	{
 		Path: []string{"sync"}, CmdlineSurfaces: TUI,
-		SurfaceNotes:   map[Surface][]string{TUI: {"the shorter spelling of refresh"}},
-		NoModalSurface: "a command of the TUI's own line (there is no separate surface to reach: this IS the cmdline)",
-		Action:         "ScreenAction", Const: map[string]string{"Sub": "refresh"},
+		SurfaceNotes: map[Surface][]string{TUI: {"the shorter spelling of refresh"}},
+		LineCommand:  true,
+		Action:       "ScreenAction", Const: map[string]string{"Sub": "refresh"},
 		Examples: []string{"sync"},
 	},
 	{
@@ -2644,16 +2621,16 @@ var Verbs = []VerbSpec{
 		// on THIS client's own connection, not on server state, so there is
 		// nothing for the CLI or WebUI to reach here.
 		Path: []string{"reconnect"}, CmdlineSurfaces: TUI,
-		SurfaceNotes:   map[Surface][]string{TUI: {"force the client↔server link to re-dial NOW, instead of waiting out a dead path's idle timeout (e.g. after the UDP route drops)"}},
-		NoModalSurface: "a command of the TUI's own line (there is no separate surface to reach: this IS the cmdline)",
-		Action:         "ScreenAction", Const: map[string]string{"Sub": "reconnect"},
+		SurfaceNotes: map[Surface][]string{TUI: {"force the client↔server link to re-dial NOW, instead of waiting out a dead path's idle timeout (e.g. after the UDP route drops)"}},
+		LineCommand:  true,
+		Action:       "ScreenAction", Const: map[string]string{"Sub": "reconnect"},
 		Examples: []string{"reconnect"},
 	},
 	{
 		Path: []string{"trsf"}, CmdlineSurfaces: TUI,
-		SurfaceNotes:   map[Surface][]string{TUI: {"dump the client\u2194server transport's internal state (debug)"}},
-		NoModalSurface: "a command of the TUI's own line (there is no separate surface to reach: this IS the cmdline)",
-		Action:         "ScreenAction", Const: map[string]string{"Sub": "trsf"},
+		SurfaceNotes: map[Surface][]string{TUI: {"dump the client\u2194server transport's internal state (debug)"}},
+		LineCommand:  true,
+		Action:       "ScreenAction", Const: map[string]string{"Sub": "trsf"},
 		Examples: []string{"trsf"},
 	},
 	{
@@ -2662,18 +2639,18 @@ var Verbs = []VerbSpec{
 		// because someone already did, which is why the positional carries the
 		// word rather than the action carrying a bool.
 		Path: []string{"diag"}, CmdlineSurfaces: TUI,
-		SurfaceNotes:   map[Surface][]string{TUI: {"grid panes overlay their own state + arrival rate on row 1 (debug; bare `diag` toggles, HARNESS_GRID_DIAG seeds it at startup)"}},
-		NoModalSurface: "a command of the TUI's own line (there is no separate surface to reach: this IS the cmdline)",
-		Action:         "ScreenAction", Const: map[string]string{"Sub": "diag"},
+		SurfaceNotes: map[Surface][]string{TUI: {"grid panes overlay their own state + arrival rate on row 1 (debug; bare `diag` toggles, HARNESS_GRID_DIAG seeds it at startup)"}},
+		LineCommand:  true,
+		Action:       "ScreenAction", Const: map[string]string{"Sub": "diag"},
 		Args: []Arg{{Name: "on-off", Type: ArgString, Variadic: true, MaxCount: 1,
 			Field: "Arg", OneOfArg: []string{"on", "off"}}},
 		Examples: []string{"diag", "diag on", "diag off"},
 	},
 	{
 		Path: []string{"repo"}, CmdlineSurfaces: TUI,
-		SurfaceNotes:   map[Surface][]string{TUI: {"the default repo a spawn uses when its own line names none"}},
-		NoModalSurface: "a command of the TUI's own line (there is no separate surface to reach: this IS the cmdline)",
-		Action:         "ScreenAction", Const: map[string]string{"Sub": "repo"},
+		SurfaceNotes: map[Surface][]string{TUI: {"the default repo a spawn uses when its own line names none"}},
+		LineCommand:  true,
+		Action:       "ScreenAction", Const: map[string]string{"Sub": "repo"},
 		Args:     []Arg{{Name: "path", Type: ArgString, Field: "Arg"}},
 		Examples: []string{"repo /r"},
 	},
@@ -2683,9 +2660,9 @@ var Verbs = []VerbSpec{
 		// so setting its environment would outlive nothing, and a browser has
 		// no X server.
 		Path: []string{"display"}, CmdlineSurfaces: TUI,
-		SurfaceNotes:   map[Surface][]string{TUI: {"show or set DISPLAY for this TUI's X11 opens (this process only; e.g. localhost:0 for an X server on Windows)"}},
-		NoModalSurface: "a command of the TUI's own line (there is no separate surface to reach: this IS the cmdline)",
-		Action:         "ScreenAction", Const: map[string]string{"Sub": "display"},
+		SurfaceNotes: map[Surface][]string{TUI: {"show or set DISPLAY for this TUI's X11 opens (this process only; e.g. localhost:0 for an X server on Windows)"}},
+		LineCommand:  true,
+		Action:       "ScreenAction", Const: map[string]string{"Sub": "display"},
 		Args:     []Arg{{Name: "value", Type: ArgString, Variadic: true, MaxCount: 1, Field: "Arg"}},
 		Examples: []string{"display", "display localhost:0"},
 	},
@@ -2934,10 +2911,9 @@ var Verbs = []VerbSpec{
 		// (spawnCaps / spawnScope), so this is a second door onto one value,
 		// not a second value.
 		Path: []string{"caps", "set-defaults"}, CmdlineSurfaces: TUI | WebUI,
-		WebUIDispatch:  WebUIDispatch{Fn: "parseAuthority"},
-		SurfaceNotes:   map[Surface][]string{WebUI: {"the spawn defaults THIS page carries when a spawn names neither; no flags opens the compose panel's own controls"}, TUI: {"the defaults a spawn from THIS session carries when its own line names neither; no flags opens the picker. Also spelled `scope`"}},
-		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
-		Action:         "SetDefaultsAction",
+		WebUIDispatch: WebUIDispatch{Fn: "parseAuthority"},
+		SurfaceNotes:  map[Surface][]string{WebUI: {"the spawn defaults THIS page carries when a spawn names neither; no flags opens the compose panel's own controls"}, TUI: {"the defaults a spawn from THIS session carries when its own line names neither; no flags opens the picker. Also spelled `scope`"}},
+		Action:        "SetDefaultsAction",
 		// No AtLeastOne, unlike `caps set`: naming nothing is a question --
 		// show the current defaults (the TUI opens the picker on it) -- where
 		// on a re-grant it would be a no-op request against a live task.
@@ -3092,8 +3068,7 @@ var Verbs = []VerbSpec{
 	{
 		Path: []string{"session", "ls"}, CmdlineSurfaces: CLI | TUI,
 		MCP: &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_List},
-		SurfaceNotes:   map[Surface][]string{TUI: {"list detachable sessions"}},
-		NoModalSurface: "DoSessionList has no caller but dispatch.go, so it is the command line running the verb. The grid was considered and is NOT this: it tiles live sessions selected from the TASK list (gridLiveTasks over []TaskInfo), where this verb enumerates the server's session registry",
+		SurfaceNotes: map[Surface][]string{TUI: {"list detachable sessions"}},
 		Notes: []string{
 			"JSON Lines: interactive sessions only. The rows share `ls --json`'s task",
 			"vocabulary plus the session-only is_attached / ring_buffer_bytes fields.",
@@ -3118,8 +3093,7 @@ var Verbs = []VerbSpec{
 	{
 		Path: []string{"session", "kill"}, CmdlineSurfaces: CLI | TUI,
 		MCP: &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_Cancel},
-		SurfaceNotes:   map[Surface][]string{TUI: {"terminate a session"}},
-		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
+		SurfaceNotes: map[Surface][]string{TUI: {"terminate a session"}},
 		Notes: []string{
 			"cancel a session (alias of cancel)",
 		},
@@ -3131,8 +3105,7 @@ var Verbs = []VerbSpec{
 	{
 		Path: []string{"session", "rename"}, CmdlineSurfaces: CLI | TUI | WebUI,
 		MCP: &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_TaskRename},
-		WebUIDispatch:  WebUIDispatch{Fn: "taskRename"},
-		NoModalSurface: "looked for: a name is one typed value; every surface's command line runs the verb, and the WebUI task sheet's rename item only prompts for the name and calls the same bridge function",
+		WebUIDispatch: WebUIDispatch{Fn: "taskRename"},
 		Notes: []string{
 			"set a task's display name (shown as name= in ls and as the board sender label); an empty name clears it; at most 64 bytes of UTF-8 with no control characters",
 			"the operator may rename any task; from inside a task you may rename only your own descendants within your resume scope, never yourself (a self-rename would let a task pose as another on the board)",
@@ -3544,8 +3517,7 @@ var Verbs = []VerbSpec{
 	{
 		Path: []string{"schedule", "edit"}, CmdlineSurfaces: CLI | TUI | WebUI,
 		MCP: &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_ScheduleEdit},
-		WebUIDispatch:  WebUIDispatch{Fn: "scheduleEdit"},
-		NoModalSurface: "looked for: the TUI Schedules table and the WebUI dialog show, run and delete a schedule; editing is by the command line on both (spec, Surfaces)",
+		WebUIDispatch: WebUIDispatch{Fn: "scheduleEdit"},
 		Notes: []string{
 			"change a schedule's future firings: only the flags named are changed (--cron or --tz recomputes the next firing; --task binds a task to a schedule with none)",
 			"the stored authority is recomputed with YOU as granter whether or not an authority flag is named, so an edit never leaves it wider than you",

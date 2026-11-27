@@ -103,11 +103,15 @@ func TestEveryVerbIsReachableSomehow(t *testing.T) {
 // in the tree.
 func TestEveryVerbHasASurfaceVerdict(t *testing.T) {
 	for _, v := range Verbs {
+		if _, gap := screenGaps[strings.Join(v.Path, " ")]; gap || v.LineCommand {
+			continue
+		}
 		if len(v.ModalSurfaces) == 0 && strings.TrimSpace(v.NoModalSurface) == "" {
 			t.Errorf("%v has no verdict about non-cmdline surfaces.\n"+
 				"  Look for a TUI action or a WebUI element. `grep -rl DoThing tui/*.go`:\n"+
 				"  dispatch.go only means the cmdline, which CmdlineSurfaces already covers.\n"+
-				"  Then either add a ModalSurfaces row, or set NoModalSurface to what you found.",
+				"  Then add a ModalSurfaces row. NoModalSurface is accepted only for a verb typable on\n"+
+				"  no UI's command line (TestNoModalSurfaceOnlyForVerbsTypableNowhere).",
 				v.Path)
 		}
 	}
@@ -154,4 +158,135 @@ func TestDefinesEntryPointIsADefinitionNotAMention(t *testing.T) {
 			t.Errorf("definesEntryPoint(%s %q in %s) = %v, want %v", c.kind, c.name, c.path, got, c.want)
 		}
 	}
+}
+
+// screenGaps is every (verb, surface) typable on that surface's command line
+// with no screen there yet: the shrinking list. An entry leaves when its
+// screen is declared in ModalSurfaces, and TestTypableOnAUIMeansAScreenThere
+// fails until it does, so the list cannot keep a verb that has one. A NEW verb
+// cannot be added here to pass: being typable on a UI proves the UI can run
+// it, and the answer is a screen.
+var screenGaps = map[string]Surface{
+	"action edit":              TUI | WebUI,
+	"action ls":                TUI | WebUI,
+	"action new":               TUI | WebUI,
+	"action rm":                TUI | WebUI,
+	"caps":                     TUI | WebUI,
+	"caps reach":               TUI,
+	"caps set-defaults":        TUI | WebUI,
+	"caps what-if":             TUI,
+	"credential new":           TUI,
+	"exec":                     TUI | WebUI,
+	"exec tap":                 WebUI,
+	"file delete":              WebUI,
+	"file ls":                  WebUI,
+	"file mkdir":               WebUI,
+	"file new":                 WebUI,
+	"file pull":                WebUI,
+	"file push":                WebUI,
+	"forward tap":              WebUI,
+	"ls":                       WebUI,
+	"prune":                    TUI | WebUI,
+	"record get":               TUI,
+	"record off":               TUI,
+	"record on":                TUI,
+	"record rm":                TUI,
+	"restore":                  TUI | WebUI,
+	"runner dial add":          TUI | WebUI,
+	"runner dial ls":           TUI | WebUI,
+	"runner dial rm":           TUI | WebUI,
+	"runner enroll":            TUI | WebUI,
+	"runner keys":              TUI | WebUI,
+	"runner kick":              TUI | WebUI,
+	"runner unenroll":          TUI | WebUI,
+	"schedule edit":            TUI | WebUI,
+	"schedule new":             TUI,
+	"server dial-runner":       TUI | WebUI,
+	"session kill":             TUI,
+	"session ls":               TUI,
+	"session rename":           TUI | WebUI,
+	"session stream answer":    TUI,
+	"session stream approve":   TUI,
+	"session stream finish":    TUI,
+	"session stream interrupt": TUI,
+	"session stream turn":      TUI | WebUI,
+	"ssh-gateway status":       TUI,
+	"ssh-gateway stop":         TUI,
+	"transcript get":           TUI,
+	"workspace detach":         TUI,
+	"workspace rm":             TUI,
+	"workspace save":           TUI,
+	"workspace show":           TUI,
+}
+
+// Typing a verb on a UI's command line proves that UI can run it, so
+// "functionally impossible there" cannot be claimed for it: it has a
+// ModalSurfaces row for that UI, unless it is a command of the line itself
+// (LineCommand). A reason in free text is not accepted — no test can tell a
+// reason from a sentence saying only that no screen exists yet.
+func TestTypableOnAUIMeansAScreenThere(t *testing.T) {
+	seen := map[string]bool{}
+	for _, v := range Verbs {
+		path := strings.Join(v.Path, " ")
+		var lacking Surface
+		for _, s := range []Surface{TUI, WebUI} {
+			if v.CmdlineSurfaces&s == 0 || v.LineCommand {
+				continue
+			}
+			has := false
+			for _, ms := range v.ModalSurfaces {
+				has = has || ms.Surface == s
+			}
+			if !has {
+				lacking |= s
+			}
+		}
+		listed, inList := screenGaps[path]
+		seen[path] = inList
+		switch {
+		case lacking != 0 && listed&lacking != lacking:
+			t.Errorf("%q is typable on %v's command line with no screen there.\n"+
+				"  Build one and add {Surface: %v, At: ...} to ModalSurfaces. If it is a command of\n"+
+				"  the line itself (quit, help), set LineCommand: true.", path, surfaceList(lacking&^listed), surfaceList(lacking&^listed))
+		case inList && listed&^lacking != 0:
+			t.Errorf("screenGaps lists %q for %v, which it no longer lacks: remove it from the list", path, surfaceList(listed&^lacking))
+		}
+	}
+	for path := range screenGaps {
+		if _, ok := seen[path]; !ok {
+			t.Errorf("screenGaps lists %q, which is not a verb", path)
+		}
+	}
+}
+
+// A command of the line has nothing to put on a screen and nothing to explain.
+func TestLineCommandHasNoScreenAndNoReason(t *testing.T) {
+	for _, v := range Verbs {
+		if v.LineCommand && (len(v.ModalSurfaces) > 0 || v.NoModalSurface != "") {
+			t.Errorf("%v is a LineCommand and also declares a screen or a reason", v.Path)
+		}
+	}
+}
+
+// NoModalSurface is a note for verbs typable on no UI's command line. On a
+// verb typable somewhere it would be the free-text excuse the rule replaces.
+func TestNoModalSurfaceOnlyForVerbsTypableNowhere(t *testing.T) {
+	for _, v := range Verbs {
+		if v.NoModalSurface != "" && v.CmdlineSurfaces&(TUI|WebUI) != 0 {
+			t.Errorf("%v is typable on %v's command line, so it needs a screen (or screenGaps), not a NoModalSurface reason",
+				v.Path, surfaceList(v.CmdlineSurfaces&(TUI|WebUI)))
+		}
+	}
+}
+
+// surfaceList names the UI surfaces in s, for messages.
+func surfaceList(s Surface) string {
+	var out []string
+	if s&TUI != 0 {
+		out = append(out, "TUI")
+	}
+	if s&WebUI != 0 {
+		out = append(out, "WebUI")
+	}
+	return strings.Join(out, "|")
 }

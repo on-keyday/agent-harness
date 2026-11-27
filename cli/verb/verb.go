@@ -452,6 +452,14 @@ type VerbSpec struct {
 	// commit.
 	NoModalSurface string
 
+	// LineCommand marks a command of the command line itself (quit, help,
+	// refresh, …): it acts on the line or the program hosting it, so there is
+	// no capability to put on a screen. It is the only exception to "typable
+	// on a UI's command line ⇒ a ModalSurfaces row for that UI"
+	// (TestTypableOnAUIMeansAScreenThere); NoModalSurface is a note for verbs
+	// typable on no UI's command line, where that rule does not apply.
+	LineCommand bool
+
 	// MCP, when non-nil, is this verb's tool declaration. Every verb with a CLI
 	// surface carries either MCP or MCPNotATool, and
 	// TestEveryCLIVerbHasAnMCPVerdict refuses one with neither or both. It is a
