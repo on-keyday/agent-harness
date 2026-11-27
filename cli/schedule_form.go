@@ -27,8 +27,8 @@ type ScheduleForm struct {
 	// is then "" and is sent only when the editor types a new one.
 	PromptHidden       bool     `json:"promptHidden"`
 	Kind               string   `json:"kind"`   // interactive | oneshot | stream
-	Record             string   `json:"record"` // on | off | "" (the server's default)
-	Pty                string   `json:"pty"`    // on | off | "" (the mode's default)
+	Record             string   `json:"record"` // on | off (a stored schedule's; "" only on a new one: the server's default)
+	Pty                string   `json:"pty"`    // on | off (a stored schedule's; "" only on a new one: the mode's default)
 	ResumeConversation bool     `json:"resumeConversation"`
 	Deadline           string   `json:"deadline"` // durations: "" means none
 	TurnEnd            string   `json:"turnEnd"`
@@ -172,7 +172,9 @@ func ScheduleEditArgs(id string, was, now ScheduleForm) ([]string, error) {
 		case "off":
 			args = append(args, t.off)
 		default:
-			return nil, fmt.Errorf("%s: an edit cannot return it to the default; choose on or off", t.name)
+			// Create resolves the default to on or off (server/schedule_handler.go),
+			// so a stored schedule has no default to return to.
+			return nil, fmt.Errorf("%s: a schedule holds on or off; there is no default to return to", t.name)
 		}
 	}
 	if now.ResumeConversation != was.ResumeConversation {

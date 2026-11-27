@@ -6399,11 +6399,10 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     const d = resumeDialogDefaults(t, lastRunnerRows.map((r) => r.id));
     $("resume-title").textContent = `▶ Resume ${t.id.slice(0, 8)} ${repoTail(t.repoPath || "")}`;
     const radio = (name, v) => { for (const r of modal.querySelectorAll(`input[name="${name}"]`)) r.checked = r.value === v; };
-    radio("resume-mode", d.mode);
+    radio("resume-kind", d.kind);
+    radio("resume-runmode", d.runMode);
     radio("resume-runner", d.runner);
     $("resume-runner-assigned").hidden = !t.assignedTo;
-    $("resume-stream").checked = d.stream;
-    $("resume-oneshot").checked = d.oneshot;
     $("resume-conv").checked = d.conversation;
     populateAgentSelect($("resume-agent"), knownAgentProfiles, d.agent, t.agentProfile);
     $("resume-args").value = "";
@@ -6420,18 +6419,19 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     const scope = newScopeState();
     setScopeState(scope, { base: t.scopeBase, excludeSelf: t.scopeExcludeSelf, visBase: t.scopeVisBase, ids: t.scopeIds, visIds: t.scopeVisIds });
     buildScopeControls($("resume-scope"), scope, t.id, () => {});
-    const mode = () => (modal.querySelector('input[name="resume-mode"]:checked') || {}).value || "interactive";
+    const picked = (name, dflt) => (modal.querySelector(`input[name="${name}"]:checked`) || {}).value || dflt;
     const showForMode = () => {
-      for (const el of modal.querySelectorAll("[data-resume-for]")) el.hidden = !el.dataset.resumeFor.split(" ").includes(mode());
+      const runMode = picked("resume-runmode", "foreground");
+      for (const el of modal.querySelectorAll("[data-resume-for]")) el.hidden = !el.dataset.resumeFor.split(" ").includes(runMode);
     };
-    for (const r of modal.querySelectorAll('input[name="resume-mode"]')) r.onchange = showForMode;
+    for (const r of modal.querySelectorAll('input[name="resume-runmode"]')) r.onchange = showForMode;
     showForMode();
     $("resume-cancel").onclick = () => modal.close();
     $("resume-go").onclick = async () => {
       let req;
       try {
         const f = {
-          mode: mode(), stream: $("resume-stream").checked, oneshot: $("resume-oneshot").checked,
+          kind: picked("resume-kind", "interactive"), runMode: picked("resume-runmode", "foreground"),
           runner: (modal.querySelector('input[name="resume-runner"]:checked') || {}).value || "any",
           conversation: $("resume-conv").checked, agent: $("resume-agent").value,
           args: $("resume-args").value.trim() ? tokenize($("resume-args").value.trim()) : [],
@@ -6690,6 +6690,12 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     for (const b of document.querySelectorAll(".compose-tab")) b.disabled = on;
     runnerSelect.disabled = on;
     if (composeTarget) composeTarget.disabled = on;
+    // A stored schedule has no "default" record / pty: create resolves it to
+    // on or off (server/schedule_handler.go), so an edit offers only those.
+    for (const id of ["compose-record", "compose-pty"]) {
+      const o = [...(document.getElementById(id) || { options: [] }).options].find((x) => x.value === "default");
+      if (o) o.disabled = on;
+    }
     composeEditBanner.hidden = !on;
   };
   async function editScheduleInCompose(id) {

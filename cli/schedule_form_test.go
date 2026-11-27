@@ -91,14 +91,14 @@ func TestScheduleEditArgsSendsTheScopeWhole(t *testing.T) {
 	}
 }
 
-// What the verb cannot say is refused, not dropped: record and pty have no
-// spelling for "back to the server default", a hidden prompt cannot be edited
-// blind.
+// What a schedule cannot hold is refused, not dropped: a stored schedule's
+// record and pty are on or off (create resolves the default), so there is no
+// default to go back to; a hidden prompt cannot be edited blind.
 func TestScheduleEditArgsRefusesWhatItCannotSay(t *testing.T) {
 	was := ScheduleFormOf(formDetail())
 	now := was
 	now.Record = ""
-	if _, err := ScheduleEditArgs("ab", was, now); err == nil || !strings.Contains(err.Error(), "record") {
+	if _, err := ScheduleEditArgs("ab", was, now); err == nil || !strings.Contains(err.Error(), "record: a schedule holds on or off") {
 		t.Fatalf("record back to default: %v", err)
 	}
 	was.PromptHidden, was.Prompt = true, ""

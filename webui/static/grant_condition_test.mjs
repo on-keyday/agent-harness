@@ -52,7 +52,7 @@ test("sessionScopeFields carries the conditions with the overrides", () => {
 // An open override sends the task's overrides back; it must send their
 // conditions too, or the re-grant widens the task.
 test("resumeDialogRequest keeps the task's conditions with its overrides", () => {
-  const form = { mode: "interactive", runner: "any", override: true, caps: "forward_local", scope: "none", cond: {} };
+  const form = { kind: "interactive", runMode: "foreground", runner: "any", override: true, caps: "forward_local", scope: "none", cond: {} };
   const t = { id: ID, scopeForSpecs: ["forward_local=global"], grantConditionSpecs: ["forward_local=ports:22"] };
   const r = page.resumeDialogRequest(form, t);
   eq([r.scopeFor, r.grantConditions], [["forward_local=global"], ["forward_local=ports:22"]]);

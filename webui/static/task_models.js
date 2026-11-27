@@ -753,7 +753,7 @@ function msDurationStr(ms) {
 }
 
 // resumeDialogDefaults is the Resume… dialog's starting values: the task's
-// last run (its mode, one-shot / stream, and a background run's conditions),
+// last run (its kind, run mode, and a background run's conditions),
 // where it last ran when that runner is connected (connectedRunnerIds: a
 // background open is never refused for no runner, so a pin to a gone one
 // would queue it forever), its own agent, and the agent's conversation on. A
@@ -762,9 +762,9 @@ function msDurationStr(ms) {
 function resumeDialogDefaults(t, connectedRunnerIds) {
   const boxes = composeBoxesFromTask(t);
   const c = t.conditions || {};
-  const mode = t.runMode === "background" ? "background" : boxes.oneshot ? "oneshot" : "interactive";
   return {
-    mode, stream: boxes.stream, oneshot: mode === "background" && boxes.oneshot,
+    kind: boxes.stream ? "stream" : boxes.oneshot ? "oneshot" : "interactive",
+    runMode: t.runMode === "background" ? "background" : "foreground",
     runner: typeof t.assignedTo === "string" && t.assignedTo && (connectedRunnerIds || []).includes(t.assignedTo) ? "assigned" : "any",
     conversation: true,
     agent: t.agentProfile || "",
@@ -810,19 +810,21 @@ async function findTaskFresh(lookup, refresh) {
 }
 
 // resumeDialogRequest turns the dialog's form into sessionReq's argument. The
-// mode decides the run: one-shot is always one-shot and never a stream, a
-// background resume needs a prompt and takes the conditions. The authority is
+// kind (interactive / oneshot / stream, one of them, as in Compose) and the run
+// mode decide the run; a background resume needs a prompt and takes the
+// conditions. The authority is
 // re-granted only when the override is open (null = not given).
 function resumeDialogRequest(f, t) {
-  const bg = f.mode === "background";
+  if (!["interactive", "oneshot", "stream"].includes(f.kind)) throw new Error(`kind ${f.kind}: want interactive, oneshot or stream`);
+  const bg = f.runMode === "background";
   if (bg && !String(f.prompt || "").trim()) throw new Error("prompt: a background resume needs one");
   const r = {
     resumeTaskId: t.id, agent: f.agent || "", agentArgs: f.args || [],
     resumeConversation: !!f.conversation,
     runner: f.runner === "assigned" && typeof t.assignedTo === "string" ? t.assignedTo : "",
     prompt: f.prompt || "",
-    oneshot: f.mode === "oneshot" || (bg && !!f.oneshot),
-    eventStream: f.mode !== "oneshot" && !!f.stream,
+    oneshot: f.kind === "oneshot",
+    eventStream: f.kind === "stream",
     runMode: bg ? "background" : "",
     caps: f.override ? f.caps : null,
     scope: f.override ? f.scope : null,

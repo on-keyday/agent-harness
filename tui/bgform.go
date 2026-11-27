@@ -106,10 +106,9 @@ func NewBgForm() BgFormModel {
 	// The PTY record (A-D22): left as default the open says nothing and the
 	// server's --record decides; a resume is not prefilled from the last run,
 	// which the server would not reuse either.
-	m.fields[bgFieldRecord].Placeholder = "default (default|on|off)"
 	// --pty / --no-pty (A-D33): left as default the open says nothing and the
 	// server takes the mode's default (a PTY here: the form opens no one-shot).
-	m.fields[bgFieldPty].Placeholder = "default (default|on|off)"
+	// Both placeholders are set in reset: an edit narrows them.
 	m.fields[bgFieldCron].Placeholder = "0 9 * * *  or  @daily"
 	m.fields[bgFieldZone].Placeholder = "the server's zone (or e.g. Asia/Tokyo)"
 	m.fields[bgFieldTarget].Placeholder = "new task (or a task id / its prefix to bind)"
@@ -144,6 +143,8 @@ func (m *BgFormModel) reset(purpose bgFormPurpose) {
 		m.fields[i].SetValue("")
 	}
 	m.fields[bgFieldDeadline].SetValue(defaultBgDeadline)
+	m.fields[bgFieldRecord].Placeholder = "default (default|on|off)"
+	m.fields[bgFieldPty].Placeholder = "default (default|on|off)"
 	m.setFocus(-1)
 	if purpose == bgSwitch {
 		m.setFocus(bgFieldDeadline)
@@ -222,6 +223,10 @@ func (m *BgFormModel) OpenScheduleEdit(id string, f cli.ScheduleForm) {
 	} {
 		m.fields[i].SetValue(v)
 	}
+	// A stored schedule's record and pty are on or off: create resolved the
+	// default (server/schedule_handler.go), so an edit has none to offer.
+	m.fields[bgFieldRecord].Placeholder = "on|off"
+	m.fields[bgFieldPty].Placeholder = "on|off"
 	m.prompt.SetValue(f.Prompt)
 	m.editWas, _ = m.scheduleFormValue()
 	m.setFocus(bgFieldCron)

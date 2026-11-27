@@ -1092,17 +1092,17 @@ test("taskResumeActionsModel: assigned pair only with a runner, then any runner"
 test("resumeDialogDefaults: the task's last run, conversation on", () => {
   const bg = { id: ID, runMode: "background", oneshot: true, kind: "Interactive", assignedTo: "f".repeat(32), agentProfile: "claude",
     conditions: { deadlineMs: 1800000, turnEnd: "quiet", quietMs: 120000, blockedMs: 0, queueTimeoutMs: 0 } };
-  eq(page.resumeDialogDefaults(bg, ["f".repeat(32)]), { mode: "background", stream: false, oneshot: true, runner: "assigned", conversation: true,
+  eq(page.resumeDialogDefaults(bg, ["f".repeat(32)]), { kind: "oneshot", runMode: "background", runner: "assigned", conversation: true,
     agent: "claude", cond: { deadline: "30m", turnEnd: "quiet", quiet: "2m", blocked: "", queueTimeout: "" } });
   const st = page.resumeDialogDefaults({ id: ID, runMode: "foreground", kind: "Stream", assignedTo: "" });
-  eq([st.mode, st.stream, st.runner, st.cond.deadline], ["interactive", true, "any", "1h"]);
-  eq(page.resumeDialogDefaults({ id: ID, runMode: "foreground", oneshot: true, kind: "Interactive" }).mode, "oneshot");
+  eq([st.kind, st.runMode, st.runner, st.cond.deadline], ["stream", "foreground", "any", "1h"]);
+  eq(page.resumeDialogDefaults({ id: ID, runMode: "foreground", oneshot: true, kind: "Interactive" }).kind, "oneshot");
 });
 
 // The override re-grants only when it is open (resumeRegrantFlags reads null
 // as "not given").
-test("resumeDialogRequest: the override decides the re-grant; the mode decides the run", () => {
-  const form = (o) => ({ mode: "interactive", stream: false, oneshot: false, runner: "any", conversation: true, agent: "claude",
+test("resumeDialogRequest: the override decides the re-grant; kind and run mode decide the run", () => {
+  const form = (o) => ({ kind: "interactive", runMode: "foreground", runner: "any", conversation: true, agent: "claude",
     args: ["--x"], prompt: "", cond: { deadline: "1h", turnEnd: "", quiet: "", blocked: "", queueTimeout: "" },
     override: false, caps: "exec_view", scope: "none", ...o });
   const t = { id: ID, assignedTo: "f".repeat(32) };
@@ -1111,11 +1111,14 @@ test("resumeDialogRequest: the override decides the re-grant; the mode decides t
     [ID, null, null, null, "", true, "", ["--x"]]);
   r = page.resumeDialogRequest(form({ override: true, runner: "assigned" }), t);
   eq([r.caps, r.scope, r.runner], ["exec_view", "none", "f".repeat(32)]);
-  r = page.resumeDialogRequest(form({ mode: "background", prompt: "go", oneshot: true, stream: true }), t);
-  eq([r.runMode, r.deadlineMs, r.oneshot, r.eventStream, r.prompt], ["background", 3600000, true, true, "go"]);
-  assert.throws(() => page.resumeDialogRequest(form({ mode: "background" }), t), /prompt/);
-  r = page.resumeDialogRequest(form({ mode: "oneshot", stream: true, oneshot: false }), t);
+  r = page.resumeDialogRequest(form({ kind: "oneshot", runMode: "background", prompt: "go" }), t);
+  eq([r.runMode, r.deadlineMs, r.oneshot, r.eventStream, r.prompt], ["background", 3600000, true, false, "go"]);
+  r = page.resumeDialogRequest(form({ kind: "stream", runMode: "background", prompt: "go" }), t);
+  eq([r.oneshot, r.eventStream], [false, true]);
+  assert.throws(() => page.resumeDialogRequest(form({ runMode: "background" }), t), /prompt/);
+  r = page.resumeDialogRequest(form({ kind: "oneshot" }), t);
   eq([r.oneshot, r.eventStream, r.runMode], [true, false, ""]);
+  assert.throws(() => page.resumeDialogRequest(form({ kind: "both" }), t), /kind/);
 });
 
 // Final review #1: the server writes a scope and its per-cap overrides under
@@ -1134,7 +1137,7 @@ test("sessionScopeFields: a resume never takes the panel's scope half", () => {
 // per-cap overrides (the dialog does not edit them).
 test("resumeDialogRequest: an open override carries the task's scope-for", () => {
   const t = { id: ID, scopeForSpecs: ["exec_view=none"] };
-  const f = { mode: "interactive", runner: "any", conversation: true, agent: "", args: [], prompt: "", cond: {},
+  const f = { kind: "interactive", runMode: "foreground", runner: "any", conversation: true, agent: "", args: [], prompt: "", cond: {},
     override: true, caps: "exec_view", scope: "subtree" };
   eq(page.resumeDialogRequest(f, t).scopeFor, ["exec_view=none"]);
   eq(page.resumeDialogRequest({ ...f, override: false }, t).scopeFor, null);

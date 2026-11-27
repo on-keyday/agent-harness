@@ -840,12 +840,14 @@
 <dialog id="resume-modal" class="picker-modal regrant-modal">
   <form method="dialog" class="picker-form">
     <h3 class="picker-title" id="resume-title"></h3>
-    <div class="resume-row">mode
-      <label><input type="radio" name="resume-mode" value="interactive"> interactive</label>
-      <label><input type="radio" name="resume-mode" value="oneshot"> one-shot</label>
-      <label><input type="radio" name="resume-mode" value="background"> background</label>
-      <label data-resume-for="interactive background"><input type="checkbox" id="resume-stream"> event-stream</label>
-      <label data-resume-for="background"><input type="checkbox" id="resume-oneshot"> one-shot で</label>
+    <div class="resume-row">種類
+      <label><input type="radio" name="resume-kind" value="interactive"> interactive</label>
+      <label><input type="radio" name="resume-kind" value="oneshot"> one-shot</label>
+      <label><input type="radio" name="resume-kind" value="stream"> event-stream</label>
+    </div>
+    <div class="resume-row">実行
+      <label><input type="radio" name="resume-runmode" value="foreground"> foreground</label>
+      <label><input type="radio" name="resume-runmode" value="background"> background</label>
     </div>
     <div class="resume-row">runner
       <label id="resume-runner-assigned"><input type="radio" name="resume-runner" value="assigned"> assigned (前回の runner)</label>
