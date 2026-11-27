@@ -103,7 +103,7 @@ func TestEveryVerbIsReachableSomehow(t *testing.T) {
 // in the tree.
 func TestEveryVerbHasASurfaceVerdict(t *testing.T) {
 	for _, v := range Verbs {
-		if _, gap := screenGaps[strings.Join(v.Path, " ")]; gap || v.LineCommand {
+		if gap := screenGaps[strings.Join(v.Path, " ")]; gap != 0 || v.LineCommand {
 			continue
 		}
 		if len(v.ModalSurfaces) == 0 && strings.TrimSpace(v.NoModalSurface) == "" {
@@ -181,22 +181,22 @@ var screenGaps = map[string]Surface{
 	"file push":                WebUI,
 	"forward tap":              WebUI,
 	"ls":                       WebUI,
-	"prune":                    TUI | WebUI,
+	"prune":                    TUI | WebUI, // before the rule: the TUI has an action for this (Do…) but dispatch.go is its only caller, so it IS the command line running the verb — already CmdlineSurfaces
 	"record get":               TUI,
 	"record off":               TUI,
 	"record on":                TUI,
 	"record rm":                TUI,
-	"restore":                  TUI | WebUI,
-	"schedule edit":            TUI | WebUI,
+	"restore":                  TUI | WebUI, // before the rule: the TUI has an action for this (Do…) but dispatch.go is its only caller, so it IS the command line running the verb — already CmdlineSurfaces
+	"schedule edit":            TUI | WebUI, // before the rule: looked for: the TUI Schedules table and the WebUI dialog show, run and delete a schedule; editing is by the command line on both (spec, Surfaces)
 	"schedule new":             TUI,
 	"session kill":             TUI,
-	"session ls":               TUI,
-	"session rename":           TUI | WebUI,
+	"session ls":               TUI,         // before the rule: DoSessionList has no caller but dispatch.go, so it is the command line running the verb. The grid was considered and is NOT this: it tiles live sessions selected from the TASK list (gridLiveTasks over []TaskInfo), where this verb enumerates the server's session registry
+	"session rename":           TUI | WebUI, // before the rule: looked for: a name is one typed value; every surface's command line runs the verb, and the WebUI task sheet's rename item only prompts for the name and calls the same bridge function
 	"session stream answer":    TUI,
 	"session stream approve":   TUI,
 	"session stream finish":    TUI,
 	"session stream interrupt": TUI,
-	"session stream turn":      TUI | WebUI,
+	"session stream turn":      TUI | WebUI, // before the rule: the TUI has an action for this (Do…) but dispatch.go is its only caller, so it IS the command line running the verb — already CmdlineSurfaces
 	"ssh-gateway status":       TUI,
 	"ssh-gateway stop":         TUI,
 	"transcript get":           TUI,
@@ -212,8 +212,17 @@ var screenGaps = map[string]Surface{
 // (LineCommand). A reason in free text is not accepted — no test can tell a
 // reason from a sentence saying only that no screen exists yet.
 func TestTypableOnAUIMeansAScreenThere(t *testing.T) {
+	for _, p := range checkScreenGaps(Verbs, screenGaps) {
+		t.Error(p)
+	}
+}
+
+// checkScreenGaps is the rule over a verb table and its list of gaps: what
+// TestTypableOnAUIMeansAScreenThere reports.
+func checkScreenGaps(verbs []VerbSpec, gaps map[string]Surface) []string {
+	var problems []string
 	seen := map[string]bool{}
-	for _, v := range Verbs {
+	for _, v := range verbs {
 		path := strings.Join(v.Path, " ")
 		var lacking Surface
 		for _, s := range []Surface{TUI, WebUI} {
@@ -228,22 +237,25 @@ func TestTypableOnAUIMeansAScreenThere(t *testing.T) {
 				lacking |= s
 			}
 		}
-		listed, inList := screenGaps[path]
+		listed, inList := gaps[path]
 		seen[path] = inList
 		switch {
+		case inList && listed == 0:
+			problems = append(problems, fmt.Sprintf("screenGaps lists %q with no surface: an entry names what the verb lacks, so a 0 is an exemption in disguise", path))
 		case lacking != 0 && listed&lacking != lacking:
-			t.Errorf("%q is typable on %v's command line with no screen there.\n"+
+			problems = append(problems, fmt.Sprintf("%q is typable on %v's command line with no screen there.\n"+
 				"  Build one and add {Surface: %v, At: ...} to ModalSurfaces. If it is a command of\n"+
-				"  the line itself (quit, help), set LineCommand: true.", path, surfaceList(lacking&^listed), surfaceList(lacking&^listed))
+				"  the line itself (quit, help), set LineCommand: true.", path, surfaceList(lacking&^listed), surfaceList(lacking&^listed)))
 		case inList && listed&^lacking != 0:
-			t.Errorf("screenGaps lists %q for %v, which it no longer lacks: remove it from the list", path, surfaceList(listed&^lacking))
+			problems = append(problems, fmt.Sprintf("screenGaps lists %q for %v, which it no longer lacks: remove it from the list", path, surfaceList(listed&^lacking)))
 		}
 	}
-	for path := range screenGaps {
+	for path := range gaps {
 		if _, ok := seen[path]; !ok {
-			t.Errorf("screenGaps lists %q, which is not a verb", path)
+			problems = append(problems, fmt.Sprintf("screenGaps lists %q, which is not a verb", path))
 		}
 	}
+	return problems
 }
 
 // A command of the line has nothing to put on a screen and nothing to explain.
@@ -276,4 +288,16 @@ func surfaceList(s Surface) string {
 		out = append(out, "WebUI")
 	}
 	return strings.Join(out, "|")
+}
+
+// A zero entry is listed but lacks nothing, and must not pass as an
+// exemption (minor 2): the verdict test skips listed verbs.
+func TestScreenGapsRuleRefusesZeroEntry(t *testing.T) {
+	verbs := []VerbSpec{{Path: []string{"x"}, CmdlineSurfaces: CLI}}
+	if p := checkScreenGaps(verbs, map[string]Surface{"x": 0}); len(p) == 0 {
+		t.Fatal("a zero entry passed")
+	}
+	if p := checkScreenGaps(verbs, map[string]Surface{}); len(p) != 0 {
+		t.Fatalf("a verb typable nowhere needs no entry: %v", p)
+	}
 }

@@ -3250,8 +3250,10 @@ func harnessRawClose(this js.Value, args []js.Value) any {
 // Listen-mode runner (Phase A / Phase B relay). Used in ACL environments
 // where the runner cannot dial the server directly.
 //
-//	harness.serverDialRunner(runnerCID)              -> Promise<string>  // direct dial
-//	harness.serverDialRunner(runnerCID, viaCIDStr)   -> Promise<string>  // relayed via
+//	harness.serverDialRunner(runnerCID)              -> Promise<{text, ok}>  // direct dial
+//	harness.serverDialRunner(runnerCID, viaCIDStr)   -> Promise<{text, ok}>  // relayed via
+//
+// text is cli.FormatServerDialRunner's line, the wording every surface uses.
 func harnessServerDialRunner(this js.Value, args []js.Value) any {
 	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
 		resolve := promiseArgs[0]
@@ -3288,7 +3290,8 @@ func harnessServerDialRunner(this js.Value, args []js.Value) any {
 				rejectErr(reject, fmt.Errorf("serverDialRunner: %w", err))
 				return
 			}
-			resolve.Invoke(js.ValueOf(resp.Status.String()))
+			text, ok := cli.FormatServerDialRunner(runnerCIDStr, viaStr, resp.Status)
+			resolve.Invoke(js.ValueOf(map[string]any{"text": text, "ok": ok}))
 		}()
 		return nil
 	})

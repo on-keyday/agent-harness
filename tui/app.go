@@ -1498,6 +1498,14 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ActionResultMsg:
 		a.appendRunnerKeyResult(RunnerKeyResultMsg(msg))
+		// The Actions modal hides the results pane: say it there too.
+		if a.actionsModal.IsOpen() && a.actionsModal.mode != actionsForm {
+			if msg.Err != nil {
+				a.actionsModal.status = fmt.Sprintf("%s: %v", msg.Verb, msg.Err)
+			} else {
+				a.actionsModal.status = strings.TrimSpace(msg.Text)
+			}
+		}
 		return a, nil
 	case ActionViewsMsg:
 		switch msg.For {
@@ -1506,8 +1514,12 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "run":
 			a.actionRunForm.SetViews(msg.Views, msg.Err)
 		case "picker":
-			if msg.Err == nil && a.authorityPicker.IsOpen() {
-				a.authorityPicker.SetActionViews(msg.Views)
+			if a.authorityPicker.IsOpen() {
+				if msg.Err != nil {
+					a.authorityPicker.SetActionViewsErr(msg.Err)
+				} else {
+					a.authorityPicker.SetActionViews(msg.Views)
+				}
 			}
 		}
 		return a, nil
@@ -1535,9 +1547,12 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case msg.Err != nil:
 				a.runnerKeysModal.formErr = fmt.Sprintf("%s: %v", msg.Verb, msg.Err)
 			case msg.OK:
-				a.runnerKeysModal.mode = rkList
+				a.runnerKeysModal.mode, a.runnerKeysModal.status = rkList, strings.TrimSpace(msg.Text)
 			default:
 				a.runnerKeysModal.formErr = strings.TrimSpace(msg.Text)
+				if a.runnerKeysModal.mode == rkList {
+					a.runnerKeysModal.status = a.runnerKeysModal.formErr
+				}
 			}
 			if a.client != nil {
 				return a, tea.Batch(DoRunnerKeyViews(a.client), a.refreshSnapshot())
@@ -1580,25 +1595,25 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case ServerDialResultMsg:
+		line, ok := cli.FormatServerDialRunner(msg.RunnerCID, msg.Via, msg.Status)
+		if msg.Err != nil {
+			line, ok = fmt.Sprintf("server dial-runner %s: %v", msg.RunnerCID, msg.Err), false
+		}
 		// From the Runner keys screen's "dial once": answer in its form.
 		if a.runnerKeysModal.IsOpen() && a.runnerKeysModal.mode == rkDialOnce {
-			switch {
-			case msg.Err != nil:
-				a.runnerKeysModal.formErr = fmt.Sprintf("server dial-runner %s: %v", msg.RunnerCID, msg.Err)
-			case msg.Status == protocol.DialRunnerStatus_Ok:
-				a.runnerKeysModal.mode = rkList
-			default:
-				a.runnerKeysModal.formErr = fmt.Sprintf("server dial-runner %s: %s", msg.RunnerCID, msg.Status.String())
+			if ok {
+				a.runnerKeysModal.mode, a.runnerKeysModal.status = rkList, line
+			} else {
+				a.runnerKeysModal.formErr = line
 			}
 		}
-		if msg.Err != nil {
-			a.cmdresult.Append(ErrorStyle.Render(fmt.Sprintf("server dial-runner %s: %v", msg.RunnerCID, msg.Err)))
-			return a, nil
-		}
-		if msg.Status == protocol.DialRunnerStatus_Ok {
-			a.cmdresult.Append(OKStyle.Render(fmt.Sprintf("server dial-runner %s: ok", msg.RunnerCID)))
+		if !ok {
+			a.cmdresult.Append(ErrorStyle.Render(line))
+			if msg.Err != nil {
+				return a, nil
+			}
 		} else {
-			a.cmdresult.Append(ErrorStyle.Render(fmt.Sprintf("server dial-runner %s: %s", msg.RunnerCID, msg.Status.String())))
+			a.cmdresult.Append(OKStyle.Render(line))
 		}
 		return a, a.refreshSnapshot()
 

@@ -1029,9 +1029,7 @@ func (a *App) inAuthorityPicker(msg tea.KeyMsg) tea.Cmd {
 			a.cmdresult.Append(ErrorStyle.Render(p))
 			return nil
 		}
-		for _, r := range a.authorityPicker.Removed() {
-			a.cmdresult.Append(WarnStyle.Render("removed override " + r))
-		}
+		removed := a.authorityPicker.Removed()
 		caps, spec, cascade, keep := a.authorityPicker.Result()
 		dcaps, dspec, dchanged := a.authorityPicker.Delegation()
 		dscope, err := cli.ParseScope(dspec)
@@ -1072,6 +1070,9 @@ func (a *App) inAuthorityPicker(msg tea.KeyMsg) tea.Cmd {
 			label += "  delegate=" + capsLabel(dcaps) + " delegate-scope=" + cli.ScopeLabel(dscope)
 			label += "  spawn-depth=" + authority.LimitLabel(depth) + " max-descendants=" + authority.LimitLabel(maxDesc)
 			a.cmdresult.Append(OKStyle.Render("defaults set: ") + label)
+			for _, r := range removed {
+				a.cmdresult.Append(WarnStyle.Render("defaults: dropped override " + r))
+			}
 			return nil
 		}
 		if a.client == nil {
@@ -1098,6 +1099,10 @@ func (a *App) inAuthorityPicker(msg tea.KeyMsg) tea.Cmd {
 		// Likewise the limits: sent only when edited, on the target only.
 		if limitsChanged {
 			opts.SpawnDepth, opts.MaxDescendants = &depth, &maxDesc
+		}
+		// Said as what is SENT; the server's answer follows it.
+		for _, r := range removed {
+			a.cmdresult.Append(WarnStyle.Render("caps set " + target[:8] + ": sending without override " + r))
 		}
 		return DoSetCaps(a.client, opts)
 	}

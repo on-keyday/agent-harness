@@ -127,3 +127,14 @@ func TestActionFormRefusesWhatTheCommandLineCannotRestate(t *testing.T) {
 		t.Fatalf("a whole-word literal {env} is restatable as \\{env}: %v", err)
 	}
 }
+
+// One wording for server dial-runner's answer, on every surface (minor 11).
+func TestFormatServerDialRunner(t *testing.T) {
+	if s, ok := FormatServerDialRunner("ws:h:1-*", "", protocol.DialRunnerStatus_Ok); !ok || s != "server dial-runner ws:h:1-*: ok" {
+		t.Fatalf("ok: %q %v", s, ok)
+	}
+	s, ok := FormatServerDialRunner("ws:h:1-*", "abcd", protocol.DialRunnerStatus(2))
+	if ok || !strings.Contains(s, "via abcd") || strings.Contains(s, ": ok") {
+		t.Fatalf("refused: %q %v", s, ok)
+	}
+}

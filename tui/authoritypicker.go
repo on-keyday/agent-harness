@@ -47,6 +47,7 @@ type AuthorityPickerModel struct {
 	// actionViews is the action list the exec_run condition checklist shows;
 	// tasks is the snapshot the rows were built from, kept to rebuild them.
 	actionViews []cli.ActionView
+	actionErr   error // the action list could not be read
 	tasks       []protocol.TaskInfo
 	cascade     bool
 	keepConns   bool

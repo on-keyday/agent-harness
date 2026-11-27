@@ -15,6 +15,7 @@ import (
 // non-nil for transport / parse failures.
 type ServerDialResultMsg struct {
 	RunnerCID string
+	Via       string
 	Status    protocol.DialRunnerStatus
 	Err       error
 }
@@ -44,6 +45,6 @@ func DoServerDialRunner(c *cli.Client, runnerCIDStr, viaCIDStr string) tea.Cmd {
 		if err != nil {
 			return ServerDialResultMsg{RunnerCID: runnerCIDStr, Err: err}
 		}
-		return ServerDialResultMsg{RunnerCID: runnerCIDStr, Status: resp.Status}
+		return ServerDialResultMsg{RunnerCID: runnerCIDStr, Via: viaCIDStr, Status: resp.Status}
 	}
 }

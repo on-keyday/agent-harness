@@ -633,8 +633,7 @@ async function runVerbCommandDispatch(tokens, ctx) {
     }
     case "server": {
       const b = parseOrHelp(ctx, tokens, {});
-      const status = await ctx.harness.serverDialRunner(b.args[0], b.flags.via || undefined);
-      out = `server dial-runner ${b.args[0]}${b.flags.via ? ` --via=${b.flags.via}` : ""}: ${status}`;
+      out = (await ctx.harness.serverDialRunner(b.args[0], b.flags.via || undefined)).text;
       break;
     }
     // Same words the TUI cmdline takes, so a hand that learned one surface

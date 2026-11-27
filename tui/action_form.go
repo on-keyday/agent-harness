@@ -19,7 +19,12 @@ import (
 // the server's own (cli.ActionPutInputFromForm), so the form refuses what the
 // server would without restating a rule.
 type ActionFormModel struct {
-	form  cli.ActionForm
+	form cli.ActionForm
+	// refs[i] is the param argument i refers to, by position, or -1 for a
+	// literal. By position, so a rename that passes through another param's
+	// name cannot merge their references; the names in form.Template are
+	// written from it (sync).
+	refs  []int
 	rows  []formRow
 	cur   int
 	input textinput.Model
@@ -69,6 +74,18 @@ func NewActionForm(v *cli.ActionView) ActionFormModel {
 		}
 		m.form.Template = append([]cli.ActionElementView{}, v.Template...)
 	}
+	for _, e := range m.form.Template {
+		at := -1
+		if e.IsParam {
+			for j, p := range m.form.Params {
+				if p.Name == e.Param {
+					at = j
+					break
+				}
+			}
+		}
+		m.refs = append(m.refs, at)
+	}
 	m.rebuild()
 	m.load()
 	return m
@@ -77,6 +94,7 @@ func NewActionForm(v *cli.ActionView) ActionFormModel {
 // Form is what the form submits.
 func (m *ActionFormModel) Form() cli.ActionForm {
 	m.store()
+	m.sync()
 	return m.form
 }
 
@@ -88,7 +106,19 @@ func (m *ActionFormModel) Check() string {
 	return ""
 }
 
+// sync writes each argument's param name from refs.
+func (m *ActionFormModel) sync() {
+	for i := range m.form.Template {
+		if i < len(m.refs) && m.refs[i] >= 0 && m.refs[i] < len(m.form.Params) {
+			m.form.Template[i] = cli.ActionElementView{IsParam: true, Param: m.form.Params[m.refs[i]].Name}
+		} else if m.form.Template[i].IsParam {
+			m.form.Template[i] = cli.ActionElementView{}
+		}
+	}
+}
+
 func (m *ActionFormModel) rebuild() {
+	m.sync()
 	m.rows = []formRow{{kind: rowName}, {kind: rowDesc}}
 	for i, p := range m.form.Params {
 		m.rows = append(m.rows, formRow{kind: rowParamName, p: i}, formRow{kind: rowParamType, p: i})
@@ -141,22 +171,13 @@ func (m *ActionFormModel) text(r formRow) *string {
 	return nil
 }
 
-// store writes the input back to the row it edits. A param renamed carries
-// its references in the command with it.
+// store writes the input back to the row it edits. A renamed param keeps its
+// references: they follow it by position (refs).
 func (m *ActionFormModel) store() {
 	if m.cur >= len(m.rows) || !m.rows[m.cur].isText() {
 		return
 	}
-	r := m.rows[m.cur]
-	s := m.text(r)
-	if r.kind == rowParamName && *s != m.input.Value() {
-		for i := range m.form.Template {
-			if m.form.Template[i].IsParam && m.form.Template[i].Param == *s {
-				m.form.Template[i].Param = m.input.Value()
-			}
-		}
-	}
-	*s = m.input.Value()
+	*m.text(m.rows[m.cur]) = m.input.Value()
 }
 
 func (m *ActionFormModel) load() {
@@ -167,15 +188,6 @@ func (m *ActionFormModel) load() {
 		return
 	}
 	m.input.Blur()
-}
-
-// argKinds is what an argument row can be: a literal, or one of the params.
-func (m *ActionFormModel) argKinds() []string {
-	out := []string{""}
-	for _, p := range m.form.Params {
-		out = append(out, p.Name)
-	}
-	return out
 }
 
 // Update applies one key. It reports true when the operator submitted a form
@@ -221,24 +233,16 @@ func (m *ActionFormModel) Update(msg tea.KeyMsg) bool {
 			return false
 		}
 		if msg.String() == "left" || msg.String() == "right" {
-			kinds := m.argKinds()
-			e := &m.form.Template[r.p]
-			at := 0
-			for i, k := range kinds {
-				if e.IsParam && k == e.Param {
-					at = i
-				}
-			}
+			// -1 (literal), then each param by position.
+			n := len(m.form.Params) + 1
+			at := m.refs[r.p] + 1
 			if msg.String() == "right" {
-				at = (at + 1) % len(kinds)
+				at = (at + 1) % n
 			} else {
-				at = (at + len(kinds) - 1) % len(kinds)
+				at = (at + n - 1) % n
 			}
-			if kinds[at] == "" {
-				*e = cli.ActionElementView{}
-			} else {
-				*e = cli.ActionElementView{IsParam: true, Param: kinds[at]}
-			}
+			m.refs[r.p] = at - 1
+			m.form.Template[r.p] = cli.ActionElementView{}
 			m.rebuild()
 		}
 	case rowAddChoice, rowAddParam, rowAddArg:
@@ -254,6 +258,7 @@ func (m *ActionFormModel) Update(msg tea.KeyMsg) bool {
 				m.focusRow(rowParamName, len(m.form.Params)-1, 0)
 			case rowAddArg:
 				m.form.Template = append(m.form.Template, cli.ActionElementView{})
+				m.refs = append(m.refs, -1)
 				m.rebuild()
 				m.focusRow(rowArgLiteral, len(m.form.Template)-1, 0)
 			}
@@ -274,11 +279,14 @@ func (m *ActionFormModel) Update(msg tea.KeyMsg) bool {
 func (m *ActionFormModel) removeAt(r formRow) {
 	switch r.kind {
 	case rowParamName, rowParamType:
-		name := m.form.Params[r.p].Name
 		m.form.Params = append(m.form.Params[:r.p], m.form.Params[r.p+1:]...)
-		for i := range m.form.Template {
-			if m.form.Template[i].IsParam && m.form.Template[i].Param == name {
+		for i, ref := range m.refs {
+			switch {
+			case ref == r.p:
+				m.refs[i] = -1
 				m.form.Template[i] = cli.ActionElementView{}
+			case ref > r.p:
+				m.refs[i]--
 			}
 		}
 	case rowChoice:
@@ -287,6 +295,7 @@ func (m *ActionFormModel) removeAt(r formRow) {
 	case rowArgKind, rowArgLiteral:
 		if r.p > 0 {
 			m.form.Template = append(m.form.Template[:r.p], m.form.Template[r.p+1:]...)
+			m.refs = append(m.refs[:r.p], m.refs[r.p+1:]...)
 		}
 	}
 }
@@ -294,6 +303,7 @@ func (m *ActionFormModel) removeAt(r formRow) {
 // View renders the form; the current row is marked, and the server's or the
 // check's objection is the last line.
 func (m *ActionFormModel) View() string {
+	m.sync()
 	var b strings.Builder
 	for i, r := range m.rows {
 		mark := "  "

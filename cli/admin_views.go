@@ -261,3 +261,13 @@ func KickOffer(st protocol.RunnerKickStatus, res RunnerKickResult) ForceOffer {
 	}
 	return o
 }
+
+// FormatServerDialRunner is `server dial-runner`'s answer in one wording for
+// the CLI, the TUI and the WebUI; ok when the server dialed.
+func FormatServerDialRunner(target, via string, st protocol.DialRunnerStatus) (string, bool) {
+	line := "server dial-runner " + target
+	if via != "" {
+		line += " via " + via
+	}
+	return line + ": " + EnumWireName(st.String()), st == protocol.DialRunnerStatus_Ok
+}

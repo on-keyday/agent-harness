@@ -34,6 +34,9 @@ type RunnerKeysModal struct {
 	prompt  string
 	pending rkRequest
 	force   bool
+	// status is the last answer, shown under the list: the results pane is
+	// hidden while the modal is open.
+	status string
 	// The forms' fields. tasks / runners are the snapshot's, for the enroll
 	// binding and the dial-once route.
 	tasks   []protocol.TaskInfo
@@ -199,6 +202,7 @@ func (m *RunnerKeysModal) ApplyOffer(o cli.ForceOffer) {
 		return
 	}
 	m.force, m.mode, m.prompt = false, rkList, ""
+	m.status = strings.TrimSpace(o.Text)
 }
 
 func (m *RunnerKeysModal) openForm(mode rkMode) {
@@ -452,12 +456,17 @@ func (m *RunnerKeysModal) View() string {
 		}
 		if m.mode == rkConfirm {
 			b.WriteString(WarnStyle.Render(m.prompt) + "\n")
+		} else if m.status != "" {
+			b.WriteString(m.status + "\n")
 		}
 		b.WriteString(MutedStyle.Render("↑/↓ select · x unenroll / remove · n enroll · a add dial record · o dial once · r reload · esc close"))
 	}
 	tail := 1
-	if (m.mode == rkConfirm) || (m.mode != rkList && m.mode != rkConfirm && m.formErr != "") {
+	switch {
+	case m.mode == rkConfirm, m.mode != rkList && m.formErr != "":
 		tail = 2
+	case m.mode == rkList && m.status != "":
+		tail = 1 + strings.Count(m.status, "\n") + 1
 	}
 	return modalFrame(strings.TrimRight(b.String(), "\n"), tail, m.w, m.h, 120)
 }

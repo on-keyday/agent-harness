@@ -653,7 +653,8 @@ func (h cliVerbs) ServerDialRunner(a verb.ServerDialRunnerAction) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(h.stdout(), resp.Status.String())
+	line, _ := cli.FormatServerDialRunner(a.RunnerCID, a.Via, resp.Status)
+	fmt.Fprintln(h.stdout(), line)
 	if resp.Status != protocol.DialRunnerStatus_Ok {
 		return exitCodeError{code: 1}
 	}

@@ -1318,6 +1318,8 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // (cli.RunActionPut). Results go to the command output, as the verbs print
   // them; a refused submit keeps the form and what was typed.
   let actionViewsCache = null;
+  // actionViewsError is why the last load failed, "" when it did not.
+  let actionViewsError = "";
   const actionsModal = document.getElementById("actions-modal");
   const actionsBody = document.getElementById("actions-modal-body");
   const actionsTitle = document.getElementById("actions-modal-title");
@@ -1344,6 +1346,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     try {
       const { views } = await window.harness.actionViews();
       actionViewsCache = views;
+      actionViewsError = "";
       if (!actionsLatest.current(tok) || actionsView !== "list") return;
       if (!views.length) {
         actionsBody.replaceChildren(credentialNote("schedule-empty", "no actions — ＋ New defines one"));
@@ -1443,23 +1446,19 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       ph.textContent = "params — a value is always ONE argument: choice (one of the listed values) or token ([0-9A-Za-z._-], not starting with -)";
       root.appendChild(ph);
       form.params.forEach((p, pi) => {
-        // A rename moves every reference with it, on change rather than per
-        // key, so a half-typed name does not detach the command's words.
-        const name = input(p.name, "[a-z][a-z0-9_]{0,31}", () => {});
-        name.addEventListener("change", () => {
-          const old = p.name;
-          p.name = name.value;
-          for (const e of form.template) if (e.isParam && e.param === old) e.param = p.name;
-          render();
+        // References follow the param by position, so a rename takes effect
+        // per key — the check line and the submit button stay current — and
+        // the command rows' choices are relabelled in place, with no redraw
+        // to take the focus or the next click away.
+        const name = input(p.name, "[a-z][a-z0-9_]{0,31}", (v) => {
+          actionFormRenameParam(form, pi, v);
+          for (const o of root.querySelectorAll(`select.action-arg-kind option[value="${pi}"]`)) o.textContent = `{${v}}`;
         });
         const type = document.createElement("select");
         for (const t of ["choice", "token"]) type.add(new Option(t, t, false, p.type === t));
         type.addEventListener("change", () => { p.type = type.value; if (p.type === "choice" && !p.choices.length) p.choices = [""]; render(); });
         const del = credentialButton("✕", () => {
-          form.params.splice(pi, 1);
-          for (let i = 0; i < form.template.length; i++) {
-            if (form.template[i].isParam && form.template[i].param === p.name) actionFormSetElement(form, i, "");
-          }
+          actionFormRemoveParam(form, pi);
           render();
         }, "danger");
         root.appendChild(fieldRow(`param ${pi + 1}`, name, type, del));
@@ -1478,16 +1477,17 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       root.appendChild(th);
       form.template.forEach((e, ei) => {
         const kind = document.createElement("select");
-        kind.add(new Option("literal", "", false, !e.isParam));
-        for (const p of form.params) if (p.name) kind.add(new Option(`{${p.name}}`, p.name, false, e.isParam && e.param === p.name));
+        kind.className = "action-arg-kind";
+        kind.add(new Option("literal", "-1", false, e.ix < 0));
+        form.params.forEach((p, pi) => kind.add(new Option(`{${p.name}}`, String(pi), false, e.ix === pi)));
         kind.disabled = ei === 0;
-        kind.addEventListener("change", () => { actionFormSetElement(form, ei, kind.value); render(); });
+        kind.addEventListener("change", () => { actionFormSetElementIx(form, ei, Number(kind.value)); render(); });
         const els = [kind];
-        if (!e.isParam) els.push(input(e.literal, ei === 0 ? "the program, e.g. ./deploy.sh" : "an argument", (v) => { form.template[ei].literal = v; }));
+        if (e.ix < 0) els.push(input(e.literal, ei === 0 ? "the program, e.g. ./deploy.sh" : "an argument", (v) => { form.template[ei].literal = v; }));
         if (ei > 0) els.push(credentialButton("✕", () => { form.template.splice(ei, 1); render(); }));
         root.appendChild(fieldRow(`arg ${ei}`, ...els));
       });
-      root.appendChild(fieldRow("", credentialButton("＋ argument", () => { form.template.push({ literal: "", param: "", isParam: false }); render(); })));
+      root.appendChild(fieldRow("", credentialButton("＋ argument", () => { form.template.push({ literal: "", ix: -1 }); render(); })));
       root.append(errLine, submit);
       actionsBody.replaceChildren(root);
       recheck();
@@ -1501,8 +1501,8 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   const loadActionViewsCache = () => {
     if (!actionViewsLoad) {
       actionViewsLoad = window.harness.actionViews()
-        .then((r) => { actionViewsCache = r.views; })
-        .catch(() => { actionViewsCache = []; })
+        .then((r) => { actionViewsCache = r.views; actionViewsError = ""; })
+        .catch((e) => { actionViewsCache = []; actionViewsError = e.message || String(e); })
         .finally(() => { actionViewsLoad = null; });
     }
     return actionViewsLoad;
@@ -1607,6 +1607,15 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     };
   };
   actionRunBtn.addEventListener("click", () => { if (actionRunGo) actionRunGo(); });
+  // Enter in a <form method="dialog"> with one text field submits it, which
+  // closes the dialog with nothing sent. These dialogs act through their
+  // buttons only; in the run dialog Enter means ▶ 実行.
+  for (const id of ["actions-modal", "action-run-modal", "runner-keys-modal"]) {
+    document.querySelector(`#${id} form`).addEventListener("submit", (e) => {
+      e.preventDefault();
+      if (id === "action-run-modal" && actionRunGo) actionRunGo();
+    });
+  }
   document.getElementById("action-run-modal-close").addEventListener("click", () => actionRunModal.close());
 
   // --- Runner keys (runner enroll / keys / unenroll, runner dial *, server
@@ -1786,10 +1795,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     for (const r of lastRunnerRows || []) via.add(new Option(`via ${runnerRowModel(r).host} (${String(r.id).slice(0, 8)})`, r.id));
     rkForm("server dial-runner", [["runner", cid], ["route", via]],
       () => (cid.value.trim() ? [] : ["the runner's address"]),
-      async () => {
-        const status = await window.harness.serverDialRunner(cid.value.trim(), via.value || undefined);
-        return { text: `server dial-runner ${cid.value.trim()}${via.value ? ` --via=${via.value}` : ""}: ${status}`, ok: status === "Ok" || status === "ok" };
-      });
+      () => window.harness.serverDialRunner(cid.value.trim(), via.value || undefined));
   };
   const openRunnerKeys = () => {
     if (!rkModal.open) rkModal.showModal();
@@ -5562,8 +5568,10 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
           condBox.appendChild(document.createTextNode(" 読み込み中…"));
           loadActionViewsCache().then(() => buildOverrideRows(which, containerId, onChange));
         } else {
-          const m = conditionChecklistModel(actionViewsCache, row.cond || "");
-          if (m.empty) {
+          const m = conditionChecklistModel(actionViewsCache, row.cond || "", actionViewsError);
+          if (m.failed) {
+            condBox.appendChild(document.createTextNode(` action の一覧を読めません: ${actionViewsError} (↻ で再読込)`));
+          } else if (m.empty) {
             condBox.appendChild(document.createTextNode(" no actions — define one in ⚙ Actions"));
           }
           for (const r of m.rows) {

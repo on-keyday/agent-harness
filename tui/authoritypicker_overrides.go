@@ -142,7 +142,14 @@ func (m *AuthorityPickerModel) claimedElsewhere(ov int) protocol.Capability {
 
 // SetActionViews hands the picker the action list its checklists show.
 func (m *AuthorityPickerModel) SetActionViews(v []cli.ActionView) {
-	m.actionViews = v
+	m.actionViews, m.actionErr = v, nil
+	m.rebuildKeepCursor()
+}
+
+// SetActionViewsErr says the action list could not be read: the checklist
+// then says so, rather than calling the condition's ids deleted.
+func (m *AuthorityPickerModel) SetActionViewsErr(err error) {
+	m.actionViews, m.actionErr = nil, err
 	m.rebuildKeepCursor()
 }
 
@@ -232,6 +239,8 @@ func (m *AuthorityPickerModel) appendOverrides() {
 				label := "deleted " + id[:8]
 				if n, ok := known[id]; ok {
 					label = n + " (" + id[:8] + ")"
+				} else if m.actionErr != nil {
+					label = id[:8] + " (action list unavailable)"
 				}
 				m.rows = append(m.rows, pickerRow{kind: rowOvAction, ov: i, idHex: id, label: label})
 				listed[id] = true
@@ -241,7 +250,10 @@ func (m *AuthorityPickerModel) appendOverrides() {
 					m.rows = append(m.rows, pickerRow{kind: rowOvAction, ov: i, idHex: v.ID, label: v.Name + " (" + v.ID[:8] + ")"})
 				}
 			}
-			if len(m.actionViews) == 0 && len(o.actions) == 0 {
+			switch {
+			case m.actionErr != nil:
+				m.rows = append(m.rows, pickerRow{kind: rowSection, ov: i, label: "  action list unavailable: " + m.actionErr.Error()})
+			case len(m.actionViews) == 0 && len(o.actions) == 0:
 				m.rows = append(m.rows, pickerRow{kind: rowSection, ov: -1, label: "  no actions — define one in Actions (M)"})
 			}
 		case "ports":
@@ -254,10 +266,26 @@ func (m *AuthorityPickerModel) appendOverrides() {
 }
 
 // rebuildKeepCursor rebuilds the rows after an edit that changes which rows
-// exist, leaving the cursor on the same index where it can.
+// exist, leaving the cursor on the same row — found by what it is, not by
+// index, since rows can appear above it (an action list arriving late) — or,
+// when that row is gone, on the same index.
 func (m *AuthorityPickerModel) rebuildKeepCursor() {
 	at := m.cursor
+	var was pickerRow
+	had := at >= 0 && at < len(m.rows)
+	if had {
+		was = m.rows[at]
+	}
 	m.buildRows(m.tasks)
+	if had {
+		for i, r := range m.rows {
+			if r.kind == was.kind && r.deleg == was.deleg && r.ov == was.ov && r.bit == was.bit &&
+				r.idHex == was.idHex && r.label == was.label {
+				m.cursor = i
+				return
+			}
+		}
+	}
 	if at >= len(m.rows) {
 		at = len(m.rows) - 1
 	}

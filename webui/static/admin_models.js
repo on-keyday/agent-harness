@@ -9,18 +9,24 @@
 
 // actionFormModel is the editable state of the Actions form: a copy of view
 // (an edit at view's revision), or an empty new action whose command is one
-// literal word.
+// literal word. An argument refers to its param by POSITION (ix, -1 for a
+// literal), so renaming a param — even through another one's name — keeps
+// every reference where it was; names are written at actionFormToObject.
 function actionFormModel(view) {
   if (!view) {
-    return { ref: "", revision: 0, name: "", description: "", params: [], template: [{ literal: "", param: "", isParam: false }] };
+    return { ref: "", revision: 0, name: "", description: "", params: [], template: [{ literal: "", ix: -1 }] };
   }
+  const params = (view.params || []).map((p) => ({ name: p.name, type: p.type, choices: [...(p.choices || [])] }));
   return {
     ref: view.id,
     revision: view.revision,
     name: view.name,
     description: view.description || "",
-    params: (view.params || []).map((p) => ({ name: p.name, type: p.type, choices: [...(p.choices || [])] })),
-    template: (view.template || []).map((e) => ({ literal: e.literal || "", param: e.param || "", isParam: !!e.isParam })),
+    params,
+    template: (view.template || []).map((e) => ({
+      literal: e.isParam ? "" : (e.literal || ""),
+      ix: e.isParam ? params.findIndex((p) => p.name === e.param) : -1,
+    })),
   };
 }
 
@@ -32,10 +38,24 @@ function actionFormToObject(form) {
     name: form.name,
     description: form.description,
     params: form.params.map((p) => ({ name: p.name, type: p.type, choices: p.type === "choice" ? [...p.choices] : [] })),
-    template: form.template.map((e) => (e.isParam
-      ? { literal: "", param: e.param, isParam: true }
+    template: form.template.map((e) => (e.ix >= 0 && e.ix < form.params.length
+      ? { literal: "", param: form.params[e.ix].name, isParam: true }
       : { literal: e.literal, param: "", isParam: false })),
   };
+}
+
+// actionFormRenameParam renames param i; its references follow it.
+function actionFormRenameParam(form, i, name) {
+  if (i >= 0 && i < form.params.length) form.params[i].name = name;
+}
+
+// actionFormRemoveParam drops param i: its references become empty literals
+// and the ones after it shift down with it.
+function actionFormRemoveParam(form, i) {
+  form.params.splice(i, 1);
+  for (const e of form.template) {
+    if (e.ix === i) { e.ix = -1; e.literal = ""; } else if (e.ix > i) e.ix -= 1;
+  }
 }
 
 // actionFormErrors is why the form cannot be sent yet, by the server's own
@@ -45,14 +65,19 @@ function actionFormErrors(form) {
   return msg ? [msg] : [];
 }
 
-// actionFormSetElement makes word i a reference to param name, or a literal
-// when name is "". Word 0 is the program and is always literal (C17), so the
+// actionFormSetElementIx makes word i a reference to param ix, or a literal
+// when ix is -1. Word 0 is the program and is always literal (C17), so the
 // form cannot build the definition the server refuses: false, unchanged.
-function actionFormSetElement(form, i, name) {
+function actionFormSetElementIx(form, i, ix) {
   if (i < 0 || i >= form.template.length) return false;
-  if (name && i === 0) return false;
-  form.template[i] = name ? { literal: "", param: name, isParam: true } : { literal: form.template[i].literal || "", param: "", isParam: false };
+  if (ix >= 0 && i === 0) return false;
+  form.template[i] = ix >= 0 ? { literal: "", ix } : { literal: form.template[i].literal || "", ix: -1 };
   return true;
+}
+
+// actionFormSetElement is actionFormSetElementIx by param name ("" = literal).
+function actionFormSetElement(form, i, name) {
+  return actionFormSetElementIx(form, i, name ? form.params.findIndex((p) => p.name === name) : -1);
 }
 
 // actionRunModel is the run form's choices: per action, a select for a choice
@@ -92,7 +117,9 @@ function actionRunValueSpecs(action, values) {
 // unchecked. An id the list no longer has is a deleted action: shown as such
 // and kept checked until unchecked, so opening a dialog never drops it. cond
 // is the row's --grant-condition spelling after the '=' ("actions:<id>,…").
-function conditionChecklistModel(views, cond) {
+// loadError, when set, is why the list could not be read: an id is then of
+// unknown fate, not deleted, and the checklist is not "empty".
+function conditionChecklistModel(views, cond, loadError) {
   const ids = (cond || "").startsWith("actions:")
     ? cond.slice("actions:".length).split(",").map((s) => s.trim()).filter(Boolean)
     : [];
@@ -100,7 +127,10 @@ function conditionChecklistModel(views, cond) {
   const label = (v) => `${v.name} (${v.id.slice(0, 8)})`;
   const rows = ids.map((id) => (byId.has(id)
     ? { id, label: label(byId.get(id)), checked: true, deleted: false }
-    : { id, label: `deleted ${id.slice(0, 8)}`, checked: true, deleted: true }));
+    : loadError
+      ? { id, label: `${id.slice(0, 8)} (action list unavailable)`, checked: true, deleted: false }
+      : { id, label: `deleted ${id.slice(0, 8)}`, checked: true, deleted: true }));
+  if (loadError) return { empty: false, failed: true, rows };
   for (const v of views || []) {
     if (!ids.includes(v.id)) rows.push({ id: v.id, label: label(v), checked: false, deleted: false });
   }

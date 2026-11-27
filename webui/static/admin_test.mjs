@@ -58,11 +58,11 @@ test("the form is refused by Go's rules, each naming what is wrong", () => {
 test("the program word cannot be made a param", () => {
   const f = page.actionFormModel(VIEW);
   assert.equal(page.actionFormSetElement(f, 0, "env"), false);
-  assert.equal(f.template[0].isParam, false);
+  assert.equal(page.actionFormToObject(f).template[0].isParam, false);
   assert.equal(page.actionFormSetElement(f, 1, "ref"), true);
-  eq(f.template[1], { literal: "", param: "ref", isParam: true });
+  eq(page.actionFormToObject(f).template[1], { literal: "", param: "ref", isParam: true });
   assert.equal(page.actionFormSetElement(f, 1, ""), true); // back to a literal
-  assert.equal(f.template[1].isParam, false);
+  assert.equal(page.actionFormToObject(f).template[1].isParam, false);
 });
 
 test("the run form: a select per choice, a text box per token, and no actions said plainly", () => {
@@ -126,4 +126,20 @@ test("enroll and dial forms refuse what the server would", () => {
   assert.ok(page.dialFormErrors({ candidates: "h:7001", keyPrefix: "" }).join(" ").includes("key"));
   assert.ok(page.dialFormErrors({ candidates: " ", keyPrefix: "abcd1234" }).join(" ").includes("candidate"));
   eq(page.dialFormErrors({ candidates: "h:7001", keyPrefix: "abcd1234" }), []);
+});
+
+test("a failed action list is said as such, not as deleted actions", () => {
+  const m = page.conditionChecklistModel(null, `actions:${A}`, "boom");
+  assert.equal(m.empty, false);
+  assert.ok(!m.rows[0].label.includes("deleted") && m.rows[0].label.includes("unavailable"), m.rows[0].label);
+  assert.equal(page.conditionFromChecklist(m.rows), `actions:${A}`);
+});
+
+test("renaming a param through another's name keeps each reference on its own param", () => {
+  const f = page.actionFormModel({ id: "", name: "a", revision: 1,
+    params: [{ name: "ref", type: "token", choices: [] }, { name: "refs", type: "token", choices: [] }],
+    template: [{ literal: "run", param: "", isParam: false }, { literal: "", param: "ref", isParam: true }, { literal: "", param: "refs", isParam: true }] });
+  page.actionFormRenameParam(f, 1, "ref");
+  page.actionFormRenameParam(f, 1, "refx");
+  eq(page.actionFormToObject(f).template.map((e) => e.param), ["", "ref", "refx"]);
 });
