@@ -32,7 +32,7 @@ func (h *TaskHandler) recordForOpen(req *protocol.OpenInteractiveRequest, caller
 	} else {
 		record = h.RecordDefault
 	}
-	return record && interactiveKind(req) == protocol.TaskKind_Interactive, true
+	return record && req.Kind != protocol.TaskKind_Stream, true
 }
 
 // startRecording starts recording a session whose task says so: at placement
@@ -84,13 +84,6 @@ func (h *TaskHandler) finishRecording(taskID string) {
 	}
 }
 
-// oneshotOpen reports whether an open asks for `session new --oneshot`
-// (A3, A-D29), carried in the open's second flag byte.
-func oneshotOpen(req *protocol.OpenInteractiveRequest) bool {
-	ext := req.Ext()
-	return req.ExtPresent() && ext != nil && ext.Oneshot()
-}
-
 // ptyOpen reports the open's own --pty / --no-pty (A-D33): set is false when
 // it says neither, carried in the open's second flag byte.
 func ptyOpen(req *protocol.OpenInteractiveRequest) (pty, set bool) {
@@ -105,11 +98,11 @@ func ptyOpen(req *protocol.OpenInteractiveRequest) (pty, set bool) {
 // the open says; else, on an exact resume, what the task recorded — the PTY is
 // a terminal-shape setting like -d and the size, which resume_exact lets an
 // open change and otherwise keeps; else the mode's default, a PTY for an
-// interactive open and none for a --oneshot one. A plain resume reuses
+// interactive open and none for a oneshot one. A plain resume reuses
 // nothing (A-D7). A stream session never has one, and its kind says so: it is
-// stored false there, so the bit only ever qualifies an interactive run.
-func resolveNoPTY(req *protocol.OpenInteractiveRequest, oneshot bool, exactRec *TaskEntry) bool {
-	if req.EventStream() {
+// stored false there.
+func resolveNoPTY(req *protocol.OpenInteractiveRequest, kind protocol.TaskKind, exactRec *TaskEntry) bool {
+	if kind == protocol.TaskKind_Stream {
 		return false
 	}
 	if pty, set := ptyOpen(req); set {
@@ -118,5 +111,5 @@ func resolveNoPTY(req *protocol.OpenInteractiveRequest, oneshot bool, exactRec *
 	if exactRec != nil {
 		return exactRec.NoPTY
 	}
-	return oneshot
+	return kind == protocol.TaskKind_Oneshot
 }

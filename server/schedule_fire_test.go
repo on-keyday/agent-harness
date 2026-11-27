@@ -71,6 +71,7 @@ func newFireServer(t *testing.T, dir string) (*Server, *fakeSchedClock) {
 func fireTestSchedule(n int, state protocol.ScheduleTaskState, taskID string) Schedule {
 	return Schedule{
 		ID: scheduleID(n), Cron: "0 9 * * *", TZ: "UTC", State: state, TaskID: taskID,
+		Kind: protocol.TaskKind_Interactive,
 		Repo: "/repo", Agent: "claude", Prompt: "tick", ExtraArgs: []string{"--a"}, ResumeConversation: true,
 		Run: RunSpec{Mode: protocol.RunMode_Background, Cond: RunConditions{Deadline: time.Hour}, Record: true},
 		Grant: authority.Grant{Caps: protocol.Capability_FileRead, Scope: authority.DefaultScope(),

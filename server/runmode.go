@@ -25,12 +25,9 @@ type RunSpec struct {
 	// Record: this run's PTY output is recorded (pillar A spec, A-D22), as
 	// the open resolved it: its own on/off, else the server default.
 	Record bool
-	// Oneshot: the run is `session new --oneshot` (A3, A-D29): the profile's
-	// oneshot argv in the PTY. Per run, like the rest (A-D7).
-	Oneshot bool
 	// NoPTY: the run's child has no PTY, only pipes (A-D33), as the open
 	// resolved it: --pty/--no-pty, else the mode's default (a PTY for an
-	// interactive open, none for a --oneshot one).
+	// interactive open, none for a oneshot one).
 	NoPTY bool
 }
 

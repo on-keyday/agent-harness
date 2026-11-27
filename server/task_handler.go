@@ -1640,7 +1640,6 @@ func filterByProfile(cands []RunnerEntry, profile string) []RunnerEntry {
 // request.
 type exactFields struct {
 	Prompt       string
-	Oneshot      bool
 	ExtraArgs    []string
 	AgentProfile string
 	CapsOverride bool
@@ -1662,8 +1661,6 @@ func exactMismatch(req exactFields, rec TaskEntry) string {
 	switch {
 	case req.Prompt != "":
 		return "prompt"
-	case req.Oneshot:
-		return "--oneshot"
 	case len(req.ExtraArgs) != 0:
 		return "--agent-arg"
 	case req.AgentProfile != "":
@@ -1680,7 +1677,7 @@ func exactMismatch(req exactFields, rec TaskEntry) string {
 		return "--spawn-depth"
 	case req.MaxDescendantsPresent:
 		return "--max-descendants"
-	case req.Kind != rec.Kind:
+	case req.Kind != rec.Kind && !(rec.Kind == protocol.TaskKind_Oneshot && req.Kind == protocol.TaskKind_Interactive):
 		return "kind (the task was recorded as " + rec.Kind.String() + ")"
 	}
 	return ""
@@ -1815,9 +1812,15 @@ func (h *TaskHandler) handleOpenInteractiveWith(cid objproto.ConnectionID, tuiCo
 	// Tasks.Create. The downstream stream-allocation + open_exec block is
 	// shared between the two paths.
 	// Request validation before runner resolution: whether the caller may ask
-	// for this scope does not depend on which runners happen to be up, and
-	// resolving first would answer no_runner_for_repo to a request that is
+	// for this scope or kind does not depend on which runners happen to be up,
+	// and resolving first would answer no_runner_for_repo to a request that is
 	// malformed either way.
+	kind, kindOK := interactiveKind(req)
+	if !kindOK {
+		resp, body := errResp(protocol.OpenInteractiveStatus_KindUnsupported)
+		resp.SetErrorMsg([]byte("kind " + kind.String() + ": a session opens as oneshot, interactive or stream"))
+		return resp, body
+	}
 	grantTarget := ""
 	if !isZeroTaskID(req.ResumeTaskId) {
 		grantTarget = hex.EncodeToString(req.ResumeTaskId.Id[:])
@@ -1912,18 +1915,21 @@ func (h *TaskHandler) handleOpenInteractiveWith(cid objproto.ConnectionID, tuiCo
 				return errResp(protocol.OpenInteractiveStatus_ResumeNotFound)
 			}
 			if field := exactMismatch(exactFields{
-				Prompt: prompt, Oneshot: oneshotOpen(req),
+				Prompt: prompt,
 				ExtraArgs: args, AgentProfile: string(req.AgentProfile),
 				CapsOverride: req.ResumeCapsOverride(), ScopePresent: req.ScopePresent(),
 				DelegateCapsPresent: req.DelegateCapsPresent(), DelegateScopePresent: req.DelegateScopePresent(),
 				SpawnDepthPresent: req.SpawnDepthPresent(), MaxDescendantsPresent: req.MaxDescendantsPresent(),
-				Kind: interactiveKind(req),
+				Kind: kind,
 			}, rec); field != "" {
 				resp, body := errResp(protocol.OpenInteractiveStatus_ResumeExactMismatch)
 				resp.SetErrorMsg([]byte("resume_exact: " + field + " is a setting; an exact resume takes the task's recorded one"))
 				return resp, body
 			}
 			exactRec = &rec
+			if exactRec.Kind == protocol.TaskKind_Oneshot && kind == protocol.TaskKind_Interactive {
+				kind = protocol.TaskKind_Oneshot
+			}
 			args = rec.ExtraArgs
 			// The prompt is the last run's too: resume_exact permits no new
 			// one, and a background open needs one.
@@ -1944,38 +1950,29 @@ func (h *TaskHandler) handleOpenInteractiveWith(cid objproto.ConnectionID, tuiCo
 		resp.SetErrorMsg([]byte("recording a session needs record_persist"))
 		return resp, body
 	}
-	// --oneshot (A3, A-D29) runs the profile's oneshot argv, which exists to
-	// run a prompt: none is refused here, in either run mode.
-	// An exact resume runs as the last run did, --oneshot or not.
-	oneshot := oneshotOpen(req)
-	if exactRec != nil {
-		oneshot = exactRec.Oneshot
-	}
+	// --oneshot (TaskKind_Oneshot) runs the profile's oneshot argv, which exists
+	// to run a prompt: none is refused here, in either run mode.
+	oneshot := kind == protocol.TaskKind_Oneshot
 	if oneshot && prompt == "" {
 		resp, body := errResp(protocol.OpenInteractiveStatus_PromptRequired)
 		resp.SetErrorMsg([]byte("--oneshot needs a prompt"))
 		return resp, body
 	}
-	if oneshot && req.EventStream() {
-		resp, body := errResp(protocol.OpenInteractiveStatus_OneshotStream)
-		resp.SetErrorMsg([]byte("--oneshot runs in a PTY; an event-stream session has none"))
-		return resp, body
-	}
-	if pty, set := ptyOpen(req); set && pty && req.EventStream() {
+	if pty, set := ptyOpen(req); set && pty && kind == protocol.TaskKind_Stream {
 		resp, body := errResp(protocol.OpenInteractiveStatus_PtyStream)
 		resp.SetErrorMsg([]byte("--pty: an event-stream session has no PTY"))
 		return resp, body
 	}
 	// The server resolves the PTY choice (A-D33) and sends the runner the
 	// final answer, so a runner never applies a default of its own.
-	noPTY := resolveNoPTY(req, oneshot, exactRec)
+	noPTY := resolveNoPTY(req, kind, exactRec)
 
 	// A background open is queued, never placed here (A-D4); Tick places it.
 	if h.resolveRunMode(req, existingTaskIDHex) == protocol.RunMode_Background {
 		return h.openBackground(backgroundOpen{
-			cid: cid, req: req, origin: origin, creator: creator, grant: grant,
+			cid: cid, req: req, kind: kind, origin: origin, creator: creator, grant: grant,
 			resumeHex: existingTaskIDHex, exactRec: exactRec, repo: repo, args: args, prompt: prompt,
-			record: record, oneshot: oneshot, noPTY: noPTY,
+			record: record, noPTY: noPTY,
 		}), nil
 	}
 	// Background conditions on an open that resolved to foreground would
@@ -2107,7 +2104,7 @@ func (h *TaskHandler) handleOpenInteractiveWith(cid objproto.ConnectionID, tuiCo
 		// persisting it here closes the Task 6 gap where handleOpenInteractive
 		// threaded `resolved` to OpenExec but never wrote it back through
 		// Tasks.Resume.
-		if _, err := h.Tasks.Resume(existingTaskIDHex, prompt, args, req.Selector, runner.ID.String(), origin, grant, interactiveKind(req), resolved, h.lookupPrincipal(cid), req.ResumeConversation(), RunSpec{Mode: protocol.RunMode_Foreground, Record: record, Oneshot: oneshot, NoPTY: noPTY}); err != nil {
+		if _, err := h.Tasks.Resume(existingTaskIDHex, prompt, args, req.Selector, runner.ID.String(), origin, grant, kind, resolved, h.lookupPrincipal(cid), req.ResumeConversation(), RunSpec{Mode: protocol.RunMode_Foreground, Record: record, NoPTY: noPTY}); err != nil {
 			switch err {
 			case ResumeErrNotFound:
 				return errResp(protocol.OpenInteractiveStatus_ResumeNotFound)
@@ -2131,7 +2128,7 @@ func (h *TaskHandler) handleOpenInteractiveWith(cid objproto.ConnectionID, tuiCo
 		// resolved is the (runner,profile) combo's profile — the server-chosen
 		// profile the runner must exec with (empty only when the sole candidate
 		// advertises no profile, i.e. a legacy runner → its AgentBin default).
-		created, err := h.Tasks.CreateWithinLimits(repo, prompt, interactiveKind(req), origin, creator, runner.ID.String(), req.Selector, req.ExtraArgs.AsStrings(), grant.To, resolved, RunSpec{Mode: protocol.RunMode_Foreground, Record: record, Oneshot: oneshot, NoPTY: noPTY})
+		created, err := h.Tasks.CreateWithinLimits(repo, prompt, kind, origin, creator, runner.ID.String(), req.Selector, req.ExtraArgs.AsStrings(), grant.To, resolved, RunSpec{Mode: protocol.RunMode_Foreground, Record: record, NoPTY: noPTY})
 		if err != nil {
 			resp, body := errResp(protocol.OpenInteractiveStatus_SpawnLimit)
 			resp.SetErrorMsg([]byte(err.Error()))
@@ -2168,7 +2165,7 @@ func (h *TaskHandler) handleOpenInteractiveWith(cid objproto.ConnectionID, tuiCo
 	}
 	tuiStream, st, msg := h.startSession(sessionStart{
 		TaskIDHex: taskIDHex, Runner: runner, Profile: resolved, Repo: repo, Args: args,
-		ResumeConversation: req.ResumeConversation(), EventStream: req.EventStream(),
+		ResumeConversation: req.ResumeConversation(), EventStream: kind == protocol.TaskKind_Stream,
 		Detached: req.Detached(), Rows: rows, Cols: cols, X11: x11, TUIConn: tuiConn, Prompt: prompt,
 		Oneshot: oneshot, NoPTY: noPTY,
 	})
@@ -2764,10 +2761,7 @@ func toTaskInfo(t TaskEntry, children map[string][]string) protocol.TaskInfo {
 	// confined caller receives zero runners from handleList, so a
 	// runner-side lookup is unavailable to exactly the callers that need it.
 	info.SetSkillsInjected(t.SkillsInjected)
-	// The current run is a --oneshot (A-D29). The kind is interactive either
-	// way, so without this no surface can tell the two apart.
-	info.SetOneshot(t.Oneshot)
-	// The current run's child has no PTY (A-D33): per run, like oneshot.
+	// The current run's child has no PTY (A-D33): per run.
 	info.SetNoPty(t.NoPTY)
 	info.RingBufferBytes = t.RingBufferBytes
 	info.SetProgress([]byte(t.Progress))
@@ -2929,13 +2923,12 @@ func (h *TaskHandler) handleNotify(conn ConnHandle, req *protocol.TaskControlReq
 	conn.SendMessage(out) //nolint:errcheck
 }
 
-// interactiveKind is the TaskKind an open-interactive request creates. Both
-// kinds come through this one request and the same session machinery; the flag
-// is the only thing that differs, so the kind is derived here rather than
-// having each call site remember to look at it.
-func interactiveKind(req *protocol.OpenInteractiveRequest) protocol.TaskKind {
-	if req.EventStream() {
-		return protocol.TaskKind_Stream
+// interactiveKind validates the TaskKind an open-interactive request asks for:
+// oneshot, interactive or stream are permitted; anything else (credential, or
+// an unknown value) reports ok=false.
+func interactiveKind(req *protocol.OpenInteractiveRequest) (protocol.TaskKind, bool) {
+	if !protocol.IsSessionKind(req.Kind) {
+		return req.Kind, false
 	}
-	return protocol.TaskKind_Interactive
+	return req.Kind, true
 }

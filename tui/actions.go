@@ -732,7 +732,7 @@ func (a *App) onRunMode(msg tea.KeyMsg) (tea.Cmd, bool) {
 
 // switchRunMode is E on the task row and in the grid.
 func (a *App) switchRunMode(t *protocol.TaskInfo, id string) tea.Cmd {
-	if t == nil || !taskSessionAlive(t.Status) || t.Kind == protocol.TaskKind_Oneshot {
+	if t == nil || !taskSessionAlive(t.Status) || !protocol.IsSessionKind(t.Kind) {
 		a.cmdresult.Append(WarnStyle.Render("E: pick a running session"))
 		return nil
 	}

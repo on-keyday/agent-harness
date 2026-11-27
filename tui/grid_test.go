@@ -50,7 +50,7 @@ func mkGridTask(id byte, kind protocol.TaskKind, st protocol.TaskStatus, lastOut
 func TestGridLiveTasks_KeepsLiveInteractiveActivityDesc(t *testing.T) {
 	got := gridLiveTasks([]protocol.TaskInfo{
 		mkGridTask('a', protocol.TaskKind_Interactive, protocol.TaskStatus_Running, 10),
-		mkGridTask('b', protocol.TaskKind_Oneshot, protocol.TaskStatus_Running, 99),      // not tileable: no PTY to watch
+		mkGridTask('b', protocol.TaskKind_Credential, protocol.TaskStatus_Running, 99),   // not tileable: not a session
 		mkGridTask('c', protocol.TaskKind_Interactive, protocol.TaskStatus_Succeeded, 5), // session is gone
 		mkGridTask('d', protocol.TaskKind_Interactive, protocol.TaskStatus_Detached, 30), // alive, just unattached
 		mkGridTask('e', protocol.TaskKind_Interactive, protocol.TaskStatus_Running, 0),   // never produced output

@@ -137,16 +137,23 @@ func TestMarkFailedRunnerDisconnectedIsFailedReason(t *testing.T) {
 	}
 }
 
-func TestSwitchRunModeRefusesQueuedAndOneshot(t *testing.T) {
+func TestSwitchRunModeRefusesQueuedAndNonSession(t *testing.T) {
 	s := NewTaskStore()
 	q := createBG(t, s, protocol.TaskKind_Interactive, bgSpec(time.Hour))
 	if _, err := s.SwitchRunMode(q, protocol.RunMode_Foreground, RunConditions{}, 1); !errors.Is(err, ErrSwitchQueued) {
 		t.Fatalf("queued: err = %v", err)
 	}
+	// Oneshot is a live session kind, so switching its run mode succeeds.
 	o := createBG(t, s, protocol.TaskKind_Oneshot, RunSpec{})
 	s.Assign(o, testRunnerID("r1"), "", false)
-	if _, err := s.SwitchRunMode(o, protocol.RunMode_Background, RunConditions{Deadline: time.Hour}, 1); !errors.Is(err, ErrSwitchNotSession) {
-		t.Fatalf("oneshot: err = %v", err)
+	if _, err := s.SwitchRunMode(o, protocol.RunMode_Background, RunConditions{Deadline: time.Hour}, 1); err != nil {
+		t.Fatalf("oneshot: err = %v, want nil", err)
+	}
+	// Credential is not a session kind.
+	cred := createBG(t, s, protocol.TaskKind_Credential, RunSpec{})
+	s.Assign(cred, testRunnerID("r1"), "", false)
+	if _, err := s.SwitchRunMode(cred, protocol.RunMode_Background, RunConditions{Deadline: time.Hour}, 1); !errors.Is(err, ErrSwitchNotSession) {
+		t.Fatalf("credential: err = %v, want ErrSwitchNotSession", err)
 	}
 	s.Assign(q, testRunnerID("r1"), "", false)
 	s.Cancel(q, protocol.EndReason_Cancelled, protocol.TaskID{})

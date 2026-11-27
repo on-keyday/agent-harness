@@ -113,7 +113,7 @@ func TestForegroundOpenSkipsBoundRunner(t *testing.T) {
 		now := time.Now()
 		h.Registry.Add(&RunnerEntry{ID: tcid("B"), Identity: testRunnerID("B"), Hostname: "h", AllowedRoots: []string{"/x/repo"},
 			MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}, Bound: bound})
-		req := &protocol.OpenInteractiveRequest{}
+		req := &protocol.OpenInteractiveRequest{Kind: protocol.TaskKind_Interactive}
 		req.SetRepoPath([]byte("/x/repo"))
 		resp, _ := h.handleOpenInteractive(objproto.ConnectionID{}, nil, req, protocol.ClientKind_Unspecified, protocol.TaskID{}, protocol.Capability_All, "")
 		return resp.Status

@@ -766,8 +766,8 @@ func TestEditMergesOnlyWhatItNames(t *testing.T) {
 	sp.SetPromptPresent(true)
 	sp.SetExtraArgsPresent(true)
 	sp.SetExtraArgs(protocol.AgentArgsFromStrings(nil))
-	sp.SetOneshotSet(true)
-	sp.SetOneshot(true)
+	sp.SetKindPresent(true)
+	sp.SetKind(protocol.TaskKind_Oneshot)
 	sp.SetResumeConversationSet(true)
 	sp.SetResumeConversation(false)
 	sp.SetSizePresent(true)
@@ -777,7 +777,7 @@ func TestEditMergesOnlyWhatItNames(t *testing.T) {
 		t.Fatalf("%v %s", r.Status, r.Message)
 	}
 	got := e.stored(t, sc.ID)
-	if got.Prompt != "fresh prompt" || !got.Run.Oneshot || got.ResumeConversation || got.Run.Cond.Rows != 30 || got.Run.Cond.Cols != 100 || len(got.ExtraArgs) != 0 {
+	if got.Prompt != "fresh prompt" || got.Kind != protocol.TaskKind_Oneshot || got.ResumeConversation || got.Run.Cond.Rows != 30 || got.Run.Cond.Cols != 100 || len(got.ExtraArgs) != 0 {
 		t.Errorf("edited %+v", got)
 	}
 	if got.Cron != sc.Cron || got.TZ != sc.TZ || got.Agent != sc.Agent || got.Repo != sc.Repo || got.Run.Cond.Deadline != sc.Run.Cond.Deadline || got.Run.Record != sc.Run.Record {

@@ -186,16 +186,16 @@ func TestRecordRunRowNamesThePendingPeriod(t *testing.T) {
 	}
 }
 
-// A3 (A-D29): --oneshot shares the ext byte with the record switch; either or
-// both put it on the wire, and the run-mode flags carry it to every surface.
+// --oneshot sets Kind=TaskKind_Oneshot on the open request, independent of
+// the ext byte.
 func TestOneshotRidesTheOpenRequest(t *testing.T) {
 	only := buildOpenInteractiveRequest("/r", SessionOpts{Oneshot: true})
-	if ext := only.Ext(); !only.ExtPresent() || ext == nil || !ext.Oneshot() || ext.RecordSet() {
-		t.Fatalf("--oneshot: ext %+v present %v", ext, only.ExtPresent())
+	if only.Kind != protocol.TaskKind_Oneshot || only.ExtPresent() {
+		t.Fatalf("--oneshot: kind=%v extPresent=%v", only.Kind, only.ExtPresent())
 	}
 	both := buildOpenInteractiveRequest("/r", SessionOpts{Oneshot: true, RecordSet: true, Record: true})
-	if ext := both.Ext(); ext == nil || !ext.Oneshot() || !ext.RecordSet() || !ext.Record() {
-		t.Fatalf("--oneshot --record: ext %+v", ext)
+	if ext := both.Ext(); both.Kind != protocol.TaskKind_Oneshot || ext == nil || !ext.RecordSet() || !ext.Record() {
+		t.Fatalf("--oneshot --record: kind=%v ext %+v", both.Kind, ext)
 	}
 	var o SessionOpts
 	RunModeFlags{Oneshot: true, Prompt: "p"}.Apply(&o)
@@ -213,12 +213,12 @@ func TestPtyChoiceRidesTheOpenRequest(t *testing.T) {
 		t.Fatal("an open that says nothing put the ext byte on the wire")
 	}
 	noPTY := buildOpenInteractiveRequest("/r", SessionOpts{PtySet: true})
-	if ext := noPTY.Ext(); !noPTY.ExtPresent() || ext == nil || !ext.PtySet() || ext.Pty() || ext.Oneshot() {
-		t.Fatalf("--no-pty: ext %+v present %v", ext, noPTY.ExtPresent())
+	if ext := noPTY.Ext(); !noPTY.ExtPresent() || ext == nil || !ext.PtySet() || ext.Pty() || noPTY.Kind != protocol.TaskKind_Interactive {
+		t.Fatalf("--no-pty: kind=%v ext %+v present %v", noPTY.Kind, ext, noPTY.ExtPresent())
 	}
 	pty := buildOpenInteractiveRequest("/r", SessionOpts{PtySet: true, Pty: true, Oneshot: true})
-	if ext := pty.Ext(); ext == nil || !ext.PtySet() || !ext.Pty() || !ext.Oneshot() {
-		t.Fatalf("--oneshot --pty: ext %+v", ext)
+	if ext := pty.Ext(); ext == nil || !ext.PtySet() || !ext.Pty() || pty.Kind != protocol.TaskKind_Oneshot {
+		t.Fatalf("--oneshot --pty: kind=%v ext %+v", pty.Kind, ext)
 	}
 	var o SessionOpts
 	RunModeFlags{PtySet: true, Pty: true}.Apply(&o)

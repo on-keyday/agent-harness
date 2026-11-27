@@ -113,11 +113,12 @@ type sessionRequest struct {
 	// both must be non-zero to take effect (cli.SessionOpts.InitialRows).
 	InitialRows uint16
 	InitialCols uint16
-	// EventStream opens the session as TaskKind_Stream (`session new --stream`):
-	// structured events instead of a PTY. In the TUI this only rides the
-	// detached open — the interactive handover splices a terminal, which this
-	// kind does not have.
-	EventStream bool
+	// Kind is the TaskKind the open creates or resumes as: TaskKind_Interactive
+	// (default when zero) or TaskKind_Stream (`session new --stream`:
+	// structured events instead of a PTY). In the TUI TaskKind_Stream only rides
+	// the detached open — the interactive handover splices a terminal, which
+	// this kind does not have.
+	Kind protocol.TaskKind
 	// ResumeExact resumes with the task's recorded settings (--exact).
 	ResumeExact bool
 	// Detached opens without attaching: no stream comes back, and the initial
@@ -150,7 +151,7 @@ func (a Authority) opts(r sessionRequest) cli.SessionOpts {
 		AgentProfile:       r.AgentProfile,
 		InitialRows:        r.InitialRows,
 		InitialCols:        r.InitialCols,
-		EventStream:        r.EventStream,
+		Kind:               r.Kind,
 		ResumeExact:        r.ResumeExact,
 		Detached:           r.Detached,
 		Caps:               a.Caps,

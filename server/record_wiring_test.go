@@ -78,7 +78,7 @@ func TestOpenWithRecordOnNeedsRecordPersist(t *testing.T) {
 func TestStreamKindIsNeverRecorded(t *testing.T) {
 	h := newTestHandler(t)
 	oi := withRecordExt(bgOpen("claude"), true)
-	oi.SetEventStream(true)
+	oi.Kind = protocol.TaskKind_Stream
 	resp := openBG(h, oi, "p")
 	if resp.Status != protocol.OpenInteractiveStatus_Ok {
 		t.Fatalf("stream open with record on: %v", resp.Status)

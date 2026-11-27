@@ -143,7 +143,7 @@ func (c *Client) Interactive(ctx context.Context, repo string, opts SessionOpts)
 	// exactly one xterm: splicing raw NDJSON into the terminal the operator
 	// uses for real PTY sessions is what this prevents. It is opened detached,
 	// so no stream comes back, and the chat attaches on its own.
-	if opts.EventStream {
+	if opts.Kind == protocol.TaskKind_Stream {
 		opts.Detached = true
 	}
 	oi := buildOpenInteractiveRequest(repo, opts)
@@ -202,6 +202,8 @@ func (c *Client) Interactive(ctx context.Context, repo string, opts SessionOpts)
 		return "", fmt.Errorf("scope_not_permitted: a scope id is outside your own scope, or the scope is inconsistent (overlapping or empty overrides, or one naming spawn — narrow resume / resume_exact instead)")
 	case protocol.OpenInteractiveStatus_DetachRequired:
 		return "", fmt.Errorf("detach_required: you may open this task but not hold its seat (outside your exec_control scope)")
+	case protocol.OpenInteractiveStatus_KindUnsupported:
+		return "", fmt.Errorf("kind_unsupported: a session opens as oneshot, interactive or stream")
 	default:
 		return "", fmt.Errorf("server-side error opening interactive (status=%d)", oiResp.Status)
 	}

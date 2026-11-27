@@ -33,7 +33,7 @@ func fullSchedule(t *testing.T, id string, n int) Schedule {
 		Run: RunSpec{Mode: protocol.RunMode_Background, Cond: RunConditions{
 			Deadline: time.Hour, Quiet: 3 * time.Minute, Blocked: 4 * time.Minute, QueueTimeout: 90 * time.Second,
 			TurnEnd: protocol.TurnEndSignal_Lifecycle, Rows: 24, Cols: 80,
-		}, Record: true, Oneshot: true, NoPTY: true},
+		}, Record: true, NoPTY: true},
 		Grant: authority.Grant{
 			Caps: protocol.Capability_FileRead | protocol.Capability_ScheduleEdit,
 			Scope: authority.Scope{Base: protocol.ScopeBase_Global, IDs: []string{strings.Repeat("cd", 16)},
@@ -464,9 +464,14 @@ func TestScheduleFileFixtureV1(t *testing.T) {
 	if !ok {
 		t.Fatal("fixture schedule missing")
 	}
-	// Every field of what was loaded is set, so a key the reader no longer
-	// reads shows as a zero here, not as a silent default.
-	assertAllSet(t, "Schedule", reflect.ValueOf(got))
+	// Every field of what was loaded is set, except Kind which is
+	// TaskKind_Oneshot (0) because the v1 fixture had run.oneshot=true.
+	if got.Kind != protocol.TaskKind_Oneshot {
+		t.Fatalf("v1 fixture with run.oneshot=true loaded kind=%v, want oneshot", got.Kind)
+	}
+	check := got
+	check.Kind = protocol.TaskKind_Interactive
+	assertAllSet(t, "Schedule", reflect.ValueOf(check))
 	ref := fullSchedule(t, "x", 0)
 	wantSel, _ := ref.Selector.Append(nil)
 	gotSel, _ := got.Selector.Append(nil)
@@ -479,12 +484,12 @@ func TestScheduleFileFixtureV1(t *testing.T) {
 		ID: scheduleID(1), Cron: "*/5 * * * *", TZ: "Asia/Tokyo",
 		State: protocol.ScheduleTaskState_Bound, TaskID: cid("ab"), Repo: "r", Agent: "claude",
 		Selector: got.Selector, Prompt: "do it", ExtraArgs: []string{"--x", "y"}, ResumeConversation: true,
-		// The v1 fixture predates the kind: it has none, and reads as interactive.
-		Kind: protocol.TaskKind_Interactive,
+		// The v1 fixture had run.oneshot=true and no kind field, so it upgrades to TaskKind_Oneshot.
+		Kind: protocol.TaskKind_Oneshot,
 		Run: RunSpec{Mode: protocol.RunMode_Background, Cond: RunConditions{
 			Deadline: time.Hour, Quiet: 3 * time.Minute, Blocked: 4 * time.Minute, QueueTimeout: 90 * time.Second,
 			TurnEnd: protocol.TurnEndSignal_Lifecycle, Rows: 24, Cols: 80,
-		}, Record: true, Oneshot: true, NoPTY: true},
+		}, Record: true, NoPTY: true},
 		Grant: authority.Grant{
 			Caps: protocol.Capability_FileRead | protocol.Capability_ScheduleEdit,
 			Scope: authority.Scope{Base: protocol.ScopeBase_Global, IDs: []string{cid("cd")},

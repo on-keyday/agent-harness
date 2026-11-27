@@ -15,7 +15,7 @@ func TestGridTilesStreamSessions(t *testing.T) {
 		{Kind: protocol.TaskKind_Interactive, Status: protocol.TaskStatus_Running},
 		{Kind: protocol.TaskKind_Stream, Status: protocol.TaskStatus_Detached},
 		{Kind: protocol.TaskKind_Stream, Status: protocol.TaskStatus_Succeeded},
-		{Kind: protocol.TaskKind_Oneshot, Status: protocol.TaskStatus_Running},
+		{Kind: protocol.TaskKind_Credential, Status: protocol.TaskStatus_Running},
 	}
 	got := gridLiveTasks(tasks)
 	if len(got) != 2 {

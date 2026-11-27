@@ -72,7 +72,7 @@ func TestScheduleSpecPresenceBits(t *testing.T) {
 		"tz": got.TzPresent(), "repo": got.RepoPresent(), "task": got.TaskPresent(),
 		"agent": got.AgentPresent(), "selector": got.SelectorPresent(), "extra_args": got.ExtraArgsPresent(),
 		"requested_caps": got.RequestedCapsPresent(), "resume_conversation": got.ResumeConversationSet(),
-		"oneshot": got.OneshotSet(), "record": got.RecordSet(), "pty": got.PtySet(),
+		"kind": got.KindPresent(), "record": got.RecordSet(), "pty": got.PtySet(),
 		"scope": got.ScopePresent(), "delegate_caps": got.DelegateCapsPresent(),
 		"delegate_scope": got.DelegateScopePresent(), "spawn_depth": got.SpawnDepthPresent(),
 		"max_descendants": got.MaxDescendantsPresent(), "deadline": got.DeadlinePresent(), "quiet": got.QuietPresent(), "blocked": got.BlockedPresent(),

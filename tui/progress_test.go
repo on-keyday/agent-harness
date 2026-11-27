@@ -34,8 +34,8 @@ func TestAboutCell(t *testing.T) {
 	if got := aboutCell(progressTask(protocol.TaskKind_Interactive, "", 0, true, "✳ topic")); got != "(title) ✳ topic" {
 		t.Errorf("title only = %q, want it marked", got)
 	}
-	if got := aboutCell(progressTask(protocol.TaskKind_Oneshot, "", 0, false, "")); got != "the original ask" {
-		t.Errorf("neither = %q, want the prompt", got)
+	if got := aboutCell(progressTask(protocol.TaskKind_Oneshot, "", 0, false, "")); got != "(oneshot+pty) the original ask" {
+		t.Errorf("neither = %q, want (oneshot+pty) prompt", got)
 	}
 	// A cleared line is a write: it says "nothing to report", and the cell
 	// falls through to the title rather than resurrecting a stale line.

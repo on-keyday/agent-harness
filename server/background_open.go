@@ -31,6 +31,7 @@ func (h *TaskHandler) resolveRunMode(req *protocol.OpenInteractiveRequest, resum
 type backgroundOpen struct {
 	cid       objproto.ConnectionID
 	req       *protocol.OpenInteractiveRequest
+	kind      protocol.TaskKind // resolved kind (exact resume may adopt recorded Oneshot)
 	origin    protocol.ClientKind
 	creator   protocol.TaskID
 	grant     GrantUpdate
@@ -40,7 +41,6 @@ type backgroundOpen struct {
 	args      []string
 	prompt    string
 	record    bool // the open's resolved record switch (A-D22)
-	oneshot   bool // session new --oneshot (A3, A-D29)
 	noPTY     bool // the run's child has no PTY, as resolved (A-D33)
 }
 
@@ -78,7 +78,13 @@ func (h *TaskHandler) openBackground(b backgroundOpen) protocol.OpenInteractiveR
 		return refuse(protocol.OpenInteractiveStatus_InternalError,
 			"x11 forwarding needs a live client to host the tunnel, and a background session has none")
 	}
-	kind := interactiveKind(req)
+	kind, kindOK := interactiveKind(req)
+	if !kindOK {
+		return refuse(protocol.OpenInteractiveStatus_KindUnsupported, "kind "+kind.String()+": a session opens as oneshot, interactive or stream")
+	}
+	if b.exactRec != nil && b.exactRec.Kind == protocol.TaskKind_Oneshot && kind == protocol.TaskKind_Interactive {
+		kind = protocol.TaskKind_Oneshot
+	}
 	profile := string(req.AgentProfile)
 	if b.exactRec != nil {
 		profile = b.exactRec.AgentProfile
@@ -100,7 +106,7 @@ func (h *TaskHandler) openBackground(b backgroundOpen) protocol.OpenInteractiveR
 	if r, c := req.InitialRows(), req.InitialCols(); r != nil && c != nil {
 		cond.Rows, cond.Cols = *r, *c
 	}
-	run := RunSpec{Mode: protocol.RunMode_Background, Cond: cond, Record: b.record, Oneshot: b.oneshot, NoPTY: b.noPTY}
+	run := RunSpec{Mode: protocol.RunMode_Background, Cond: cond, Record: b.record, NoPTY: b.noPTY}
 
 	var taskIDHex string
 	if b.resumeHex != "" {
@@ -216,7 +222,7 @@ func (h *TaskHandler) waitReasonFor(t TaskEntry) protocol.WaitReason {
 		if t.AgentProfile != "" && !c.HasProfile(t.AgentProfile) {
 			continue
 		}
-		if t.Oneshot && !c.OneshotSessions {
+		if t.Kind == protocol.TaskKind_Oneshot && !c.OneshotSessions {
 			continue
 		}
 		matching++

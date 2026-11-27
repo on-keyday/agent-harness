@@ -286,19 +286,18 @@ func TestTaskIDStr(t *testing.T) {
 // ordinary session and the columns after it stay whitespace-separated. An
 // ordinary session carries no mark: absence is the answer for it.
 func TestLsTaskKindOneshotSession(t *testing.T) {
-	one := protocol.TaskInfo{Status: protocol.TaskStatus_Running, Kind: protocol.TaskKind_Interactive}
+	one := protocol.TaskInfo{Status: protocol.TaskStatus_Running, Kind: protocol.TaskKind_Oneshot}
 	one.Id.Id[0] = 0x01
-	one.SetOneshot(true)
 	one.SetNoPty(true) // a one-shot's default (A-D33)
 	plain := protocol.TaskInfo{Status: protocol.TaskStatus_Running, Kind: protocol.TaskKind_Interactive}
 	plain.Id.Id[0] = 0x02
-	if got := taskLine(one, nil); !strings.Contains(got, "  interactive+oneshot  repo=") {
-		t.Errorf("one-shot row lacks the kind mark:\n%s", got)
+	if got := taskLine(one, nil); !strings.Contains(got, "  oneshot      repo=") {
+		t.Errorf("one-shot row lacks the kind:\n%s", got)
 	}
 	if got := taskLine(plain, nil); strings.Contains(got, "oneshot") || !strings.Contains(got, "  interactive  repo=") {
 		t.Errorf("plain session row:\n%s", got)
 	}
-	if got := KindLabel(&one); got != "interactive+oneshot" {
+	if got := KindLabel(&one); got != "oneshot" {
 		t.Errorf("KindLabel(one-shot) = %q", got)
 	}
 	if got := KindLabel(&plain); got != "interactive" {
@@ -311,9 +310,8 @@ func TestLsTaskKindOneshotSession(t *testing.T) {
 // run with one — so the common rows stay as they were and every mark names a
 // choice someone made.
 func TestKindLabelMarksTheNonDefaultPTY(t *testing.T) {
-	mk := func(oneshot, noPTY bool) *protocol.TaskInfo {
-		ti := &protocol.TaskInfo{Kind: protocol.TaskKind_Interactive}
-		ti.SetOneshot(oneshot)
+	mk := func(kind protocol.TaskKind, noPTY bool) *protocol.TaskInfo {
+		ti := &protocol.TaskInfo{Kind: kind}
 		ti.SetNoPty(noPTY)
 		return ti
 	}
@@ -322,12 +320,11 @@ func TestKindLabelMarksTheNonDefaultPTY(t *testing.T) {
 		want string
 		pty  bool
 	}{
-		{mk(false, false), "interactive", true},
-		{mk(false, true), "interactive+pipe", false},
-		{mk(true, true), "interactive+oneshot", false},
-		{mk(true, false), "interactive+oneshot+pty", true},
+		{mk(protocol.TaskKind_Interactive, false), "interactive", true},
+		{mk(protocol.TaskKind_Interactive, true), "interactive+pipe", false},
+		{mk(protocol.TaskKind_Oneshot, true), "oneshot", false},
+		{mk(protocol.TaskKind_Oneshot, false), "oneshot+pty", true},
 		{&protocol.TaskInfo{Kind: protocol.TaskKind_Stream}, "stream", false},
-		{&protocol.TaskInfo{Kind: protocol.TaskKind_Oneshot}, "oneshot", false},
 	} {
 		if got := KindLabel(c.t); got != c.want {
 			t.Errorf("KindLabel = %q, want %q", got, c.want)
@@ -336,7 +333,7 @@ func TestKindLabelMarksTheNonDefaultPTY(t *testing.T) {
 			t.Errorf("%s: TaskHasPTY = %v, want %v", c.want, got, c.pty)
 		}
 	}
-	row := mk(false, true)
+	row := mk(protocol.TaskKind_Interactive, true)
 	row.Status = protocol.TaskStatus_Running
 	if got := taskLine(*row, nil); !strings.Contains(got, "  interactive+pipe  repo=") {
 		t.Errorf("no-PTY row lacks the kind mark:\n%s", got)

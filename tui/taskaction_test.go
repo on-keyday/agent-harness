@@ -44,13 +44,10 @@ func TestResumeReattachAction(t *testing.T) {
 			t.Errorf("status=%v R: want resume without conversation, got %v %v", st, got.Kind, got.ResumeConversation)
 		}
 	}
-	// Running one-shot has no PTY to attach → actionNone, and the hint must
-	// explain the one-shot case specifically (cancel-then-resume takeover
-	// path), not the generic line.
+	// Running oneshot is a live session kind → actionReattach.
 	runningOneshot.Kind = protocol.TaskKind_Oneshot
-	if got := resumeReattachAction(runningOneshot, true); got.Kind != actionNone ||
-		!strings.Contains(got.Hint, "one-shot") {
-		t.Errorf("running+oneshot: want actionNone with one-shot hint, got %v %q", got.Kind, got.Hint)
+	if got := resumeReattachAction(runningOneshot, true); got.Kind != actionReattach {
+		t.Errorf("running+oneshot: want actionReattach, got %v %q", got.Kind, got.Hint)
 	}
 	// Queued → actionNone with the queued explanation.
 	queued := &protocol.TaskInfo{Status: protocol.TaskStatus_Queued}

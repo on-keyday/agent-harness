@@ -86,7 +86,7 @@ func TestBackgroundCreateRequiresProfileDeadlinePrompt(t *testing.T) {
 // refused rather than queued with no size and no client stream.
 func TestBackgroundOpenMustBeDetached(t *testing.T) {
 	h := newTestHandler(t)
-	oi := &protocol.OpenInteractiveRequest{}
+	oi := &protocol.OpenInteractiveRequest{Kind: protocol.TaskKind_Interactive}
 	oi.SetRepoPath([]byte("/r"))
 	oi.SetRunModeSet(true)
 	oi.SetBackground(true)
@@ -148,14 +148,14 @@ func TestBackgroundStreamRefusesQuietTurnEnd(t *testing.T) {
 	h := newTestHandler(t)
 	for _, te := range []protocol.TurnEndSignal{protocol.TurnEndSignal_Quiet, protocol.TurnEndSignal_Program} {
 		oi := bgOpen("claude")
-		oi.SetEventStream(true)
+		oi.Kind = protocol.TaskKind_Stream
 		oi.SetConditions(protocol.BackgroundConditions{DeadlineMs: 1000, TurnEnd: te})
 		if r := openBG(h, oi, "p"); r.Status != protocol.OpenInteractiveStatus_TurnEndUnsupported {
 			t.Errorf("%v: %v", te, r.Status)
 		}
 	}
 	oi := bgOpen("claude")
-	oi.SetEventStream(true)
+	oi.Kind = protocol.TaskKind_Stream
 	r := openBG(h, oi, "p")
 	if r.Status != protocol.OpenInteractiveStatus_Ok || taskOf(t, h, r).Cond.TurnEnd != protocol.TurnEndSignal_Lifecycle {
 		t.Fatalf("stream default: %v %+v", r.Status, taskOf(t, h, r).Cond)

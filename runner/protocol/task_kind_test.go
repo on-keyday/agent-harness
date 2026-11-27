@@ -10,7 +10,7 @@ func TestSessionAndPTYKindsAreNotTheSameQuestion(t *testing.T) {
 		kind         TaskKind
 		session, pty bool
 	}{
-		{TaskKind_Oneshot, false, false},
+		{TaskKind_Oneshot, true, true},
 		{TaskKind_Interactive, true, true},
 		{TaskKind_Stream, true, false},      // a session, but there is no terminal
 		{TaskKind_Credential, false, false}, // no process at all, so neither

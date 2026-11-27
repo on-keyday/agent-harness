@@ -41,6 +41,27 @@ func TestOpenInteractiveRequestRunModeRoundTrip(t *testing.T) {
 	}
 }
 
+func TestOpenInteractiveRequestKindRoundTrip(t *testing.T) {
+	for _, k := range []TaskKind{TaskKind_Interactive, TaskKind_Stream, TaskKind_Oneshot} {
+		oi := OpenInteractiveRequest{Kind: k}
+		oi.SetRepoPath([]byte("/r"))
+		oi.SetExtPresent(true)
+		var ext OpenInteractiveExt
+		ext.SetRecordSet(true)
+		oi.SetExt(ext)
+		var got OpenInteractiveRequest
+		if err := got.DecodeExact(oi.MustAppend(nil)); err != nil {
+			t.Fatalf("kind %v decode: %v", k, err)
+		}
+		if got.Kind != k {
+			t.Fatalf("kind %v: got %v", k, got.Kind)
+		}
+		if !got.ExtPresent() || got.Ext() == nil || !got.Ext().RecordSet() {
+			t.Fatalf("kind %v disturbed ext: %+v", k, got.Ext())
+		}
+	}
+}
+
 // The run-mode bits were appended after max_descendants_present; the bits
 // already in that byte must keep their positions, or a peer on the old build
 // misreads them silently. Checked on the raw byte, which a same-build round

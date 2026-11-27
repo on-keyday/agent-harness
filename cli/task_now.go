@@ -45,19 +45,12 @@ func TaskNowText(t protocol.TaskInfo) string {
 // next List snapshot to disambiguate.
 func promptCell(t protocol.TaskInfo) string {
 	switch t.Kind {
-	case protocol.TaskKind_Interactive:
-		// A `session new --oneshot` run (A-D29) is this kind too, but it was
-		// started with a prompt to answer, and that prompt is what tells one
-		// row from another. Marked in plain text, like "(title)", so it reads
-		// as a one-shot rather than as a submit row from before A3.
-		// The PTY is marked where it is not the mode's default (A-D33),
-		// with RunMark's words.
-		if t.Oneshot() {
-			if !t.NoPty() {
-				return "(oneshot+pty) " + promptText(t.Prompt)
-			}
-			return "(oneshot) " + promptText(t.Prompt)
+	case protocol.TaskKind_Oneshot:
+		if !t.NoPty() {
+			return "(oneshot+pty) " + promptText(t.Prompt)
 		}
+		return "(oneshot) " + promptText(t.Prompt)
+	case protocol.TaskKind_Interactive:
 		if t.NoPty() {
 			return "<interactive+pipe>"
 		}

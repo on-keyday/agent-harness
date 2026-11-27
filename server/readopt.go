@@ -126,7 +126,7 @@ func (s *Server) readoptHeldTasks(identity protocol.RunnerID, report protocol.He
 		// session lands — in one transition, which is also the one this task's
 		// task_readopted event carries. A oneshot (only a runner from before
 		// A3 can still hold one) has no client to be missing and lands Running.
-		session := t.Kind == protocol.TaskKind_Interactive || t.Kind == protocol.TaskKind_Stream
+		session := protocol.IsSessionKind(t.Kind)
 		if err := s.tasks.MarkReadopted(taskID, identity.Hex(), reportHold, session); err != nil {
 			log.Error("readopt: MarkReadopted failed", "task", taskID, "err", err)
 			continue

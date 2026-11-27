@@ -248,7 +248,7 @@ const WATCH_CHOICES = [
   { key: "progress", label: "次の進捗行が書かれたら", progress: true },
 ];
 function watchChoices(t) {
-  const live = (t.kind === "Interactive" || t.kind === "Stream") &&
+  const live = (t.kind === "Interactive" || t.kind === "Oneshot" || t.kind === "Stream") &&
     (t.status === "Running" || t.status === "Detached");
   return WATCH_CHOICES.filter((c) => (c.progress ? canArmProgress(t) : live));
 }
@@ -415,7 +415,7 @@ function composePtyOption(v) {
 // so the prefilled open resolves to what the last run had.
 function composeBoxesFromTask(t) {
   const stream = !!t && t.kind === "Stream";
-  const oneshot = !!t && !!t.oneshot;
+  const oneshot = !!t && (t.kind === "Oneshot" || !!t.oneshot);
   let pty = "default";
   if (t && !stream && !!t.noPty !== oneshot) pty = t.noPty ? "off" : "on";
   return { stream, oneshot, pty };
@@ -828,7 +828,7 @@ function resumeDialogRequest(f, t) {
 function taskIdDialogModel(t) {
   const alive = t.status === "Running" || t.status === "Detached";
   return {
-    reattach: alive && t.kind === "Interactive",
+    reattach: alive && (t.kind === "Interactive" || t.kind === "Oneshot"),
     chat: alive && t.kind === "Stream",
     resume: ["Succeeded", "Failed", "Cancelled"].includes(t.status),
   };

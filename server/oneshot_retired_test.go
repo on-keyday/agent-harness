@@ -9,9 +9,10 @@ import (
 	"github.com/on-keyday/objtrsf/objproto"
 )
 
-// A3 (A-D32): oneshot tasks stop being created and placed. Review Focus 2:
-// a WAL holding them replays; the ones nothing would ever place or read fail.
-func TestReplayRetiresQueuedAndHeldOneshots(t *testing.T) {
+// Oneshot is a live session kind: a foreground oneshot left Queued or Running
+// on a crash fails with server_restart (like any foreground session), while a
+// Held oneshot stays Held for re-adoption and a finished one stays Succeeded.
+func TestReplayHandlesOneshotSessions(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "events.log")
 	w, err := OpenWAL(path)
 	if err != nil {
@@ -47,8 +48,8 @@ func TestReplayRetiresQueuedAndHeldOneshots(t *testing.T) {
 		id, name, msg string
 		want          protocol.TaskStatus
 	}{
-		{queued, "queued", "oneshot_retired", protocol.TaskStatus_Failed},
-		{held, "held", "oneshot_retired", protocol.TaskStatus_Failed},
+		{queued, "queued", "server_restart", protocol.TaskStatus_Failed},
+		{held, "held", "", protocol.TaskStatus_Held},
 		{running, "running", "server_restart", protocol.TaskStatus_Failed},
 		{done, "done", "", protocol.TaskStatus_Succeeded},
 	} {

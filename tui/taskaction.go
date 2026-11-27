@@ -68,13 +68,6 @@ func resumeReattachAction(t *protocol.TaskInfo, withContinue bool) taskAction {
 		// and half the story: following is read-only, and r is where an
 		// operator reaches to DRIVE something.
 		return taskAction{Kind: actionChat}
-	case t.Status == protocol.TaskStatus_Running && t.Kind == protocol.TaskKind_Oneshot:
-		// A prompt-driven one-shot (claude -p) has no PTY, so there is
-		// nothing to attach while it runs. The takeover path is manual and
-		// destructive (kills the in-flight turn), so it stays two explicit
-		// keystrokes instead of hiding behind r.
-		return taskAction{Kind: actionNone,
-			Hint: "one-shot task is still running: no PTY to attach — c cancels it, then r reopens the conversation as an interactive session"}
 	case t.Status == protocol.TaskStatus_Queued:
 		return taskAction{Kind: actionNone,
 			Hint: "task is still queued: nothing to reattach yet — r resumes it after it runs, c cancels it"}

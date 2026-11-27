@@ -88,9 +88,9 @@ func TestRenderListJSON(t *testing.T) {
 // carrying the shared ls --json task vocabulary PLUS is_attached/ring_buffer_bytes.
 func TestRenderSessionsJSON(t *testing.T) {
 	lr := &protocol.ListResultBody{}
-	var oneshot protocol.TaskInfo
-	oneshot.Id.Id = [16]byte{1}
-	oneshot.Kind = protocol.TaskKind_Oneshot
+	var cred protocol.TaskInfo
+	cred.Id.Id = [16]byte{1}
+	cred.Kind = protocol.TaskKind_Credential
 	var sess protocol.TaskInfo
 	sess.Id.Id = [16]byte{2}
 	sess.Kind = protocol.TaskKind_Interactive
@@ -98,7 +98,7 @@ func TestRenderSessionsJSON(t *testing.T) {
 	sess.CreatorTaskId.Id = [16]byte{7}
 	sess.Capabilities = protocol.Capability_Spawn
 	sess.RingBufferBytes = 4096
-	lr.Tasks = []protocol.TaskInfo{oneshot, sess}
+	lr.Tasks = []protocol.TaskInfo{cred, sess}
 
 	var buf bytes.Buffer
 	renderSessionsJSON(lr, &buf)
@@ -183,8 +183,7 @@ func TestRenderListJSONRunConditions(t *testing.T) {
 // for an ordinary session. The kind stays interactive for both (A-D29), so a
 // script that filters on kind keeps working.
 func TestRenderListJSONOneshot(t *testing.T) {
-	one := protocol.TaskInfo{Kind: protocol.TaskKind_Interactive}
-	one.SetOneshot(true)
+	one := protocol.TaskInfo{Kind: protocol.TaskKind_Oneshot}
 	plain := protocol.TaskInfo{Kind: protocol.TaskKind_Interactive}
 	var buf bytes.Buffer
 	renderListJSON(&protocol.ListResultBody{Tasks: []protocol.TaskInfo{one, plain}}, &buf)
@@ -194,13 +193,20 @@ func TestRenderListJSONOneshot(t *testing.T) {
 	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	for i, want := range []bool{true, false} {
+	wants := []struct {
+		oneshot bool
+		kind    string
+	}{
+		{true, "oneshot"},
+		{false, "interactive"},
+	}
+	for i, want := range wants {
 		tk := got.Tasks[i]
-		if v, ok := tk["oneshot"]; !ok || v != want {
-			t.Errorf("task %d: oneshot=%v present=%v, want %v", i, v, ok, want)
+		if v, ok := tk["oneshot"]; !ok || v != want.oneshot {
+			t.Errorf("task %d: oneshot=%v present=%v, want %v", i, v, ok, want.oneshot)
 		}
-		if tk["kind"] != "interactive" {
-			t.Errorf("task %d: kind=%v, want interactive", i, tk["kind"])
+		if tk["kind"] != want.kind {
+			t.Errorf("task %d: kind=%v, want %s", i, tk["kind"], want.kind)
 		}
 	}
 }

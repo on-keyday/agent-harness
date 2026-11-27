@@ -424,21 +424,6 @@ graph is a decision of its own (operator, 2026-11-23).
 
 ---
 
-## `OpenInteractiveRequest` says the task kind with a bool
-
-**What.** `session new` carries the event-stream choice as the bit
-`event_stream` on `OpenInteractiveRequest`; `interactiveKind`
-(`server/task_handler.go:2629`) turns it into a `TaskKind`. A schedule says
-the same choice with `kind :TaskKind` (`2026-11-17-schedule-stream-kind-design.md`,
-K2, operator's choice of the enum over bits). Two spawn wires now encode one
-choice two ways. Move the open to `kind :TaskKind` too.
-
-**Why deferred.** A wire change to the open path that nothing is blocked on;
-found while designing the schedule fix, and kept out of it (operator,
-2026-11-17).
-
----
-
 ## Let A message B, from two clicks on the WebUI tree
 
 **What.** In the WebUI task tree, pick a task A, then a task B. A gets

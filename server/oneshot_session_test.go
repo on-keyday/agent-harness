@@ -15,13 +15,7 @@ import (
 // A3 (A-D29): `session new --oneshot`.
 
 func withOneshot(oi *protocol.OpenInteractiveRequest) *protocol.OpenInteractiveRequest {
-	oi.SetExtPresent(true)
-	var ext protocol.OpenInteractiveExt
-	if e := oi.Ext(); e != nil {
-		ext = *e
-	}
-	ext.SetOneshot(true)
-	oi.SetExt(ext)
+	oi.Kind = protocol.TaskKind_Oneshot
 	return oi
 }
 
@@ -62,8 +56,8 @@ func TestOneshotOpenRelaysBit(t *testing.T) {
 	if oer := sentOpenExec(t, rc); !oer.Oneshot() || !oer.PromptPresent() {
 		t.Fatalf("OpenExec oneshot=%v prompt=%v", oer.Oneshot(), oer.PromptPresent())
 	}
-	if e := taskOf(t, h, resp); !e.Oneshot || e.Kind != protocol.TaskKind_Interactive {
-		t.Fatalf("task oneshot=%v kind=%v, want an interactive task marked oneshot", e.Oneshot, e.Kind)
+	if e := taskOf(t, h, resp); e.Kind != protocol.TaskKind_Oneshot {
+		t.Fatalf("task kind=%v, want TaskKind_Oneshot", e.Kind)
 	}
 }
 
@@ -135,9 +129,9 @@ func TestOneshotFlagSurvivesReplay(t *testing.T) {
 	}
 	store := NewTaskStore()
 	store.SetWAL(w)
-	id, err := store.CreateWithinLimits("/r", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Cli,
+	id, err := store.CreateWithinLimits("/r", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,
 		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{}, "claude",
-		RunSpec{Mode: protocol.RunMode_Background, Cond: RunConditions{Deadline: time.Hour}, Oneshot: true})
+		RunSpec{Mode: protocol.RunMode_Background, Cond: RunConditions{Deadline: time.Hour}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,48 +142,41 @@ func TestOneshotFlagSurvivesReplay(t *testing.T) {
 	}
 	r := NewTaskStore()
 	r.ReplayEvents(events)
-	if e, _ := r.Get(id); !e.Oneshot {
-		t.Fatal("oneshot lost across replay")
+	if e, _ := r.Get(id); e.Kind != protocol.TaskKind_Oneshot {
+		t.Fatalf("oneshot kind lost across replay: %v", e.Kind)
+	}
+
+	// Legacy A3 WAL entries wrote kind=interactive + oneshot=true; replay
+	// upgrades them to TaskKind_Oneshot.
+	legacyID := "0123456789abcdef0123456789abcdef"
+	legacy := NewTaskStore()
+	legacy.ReplayEvents([]WALEvent{{
+		Type:    "task_created",
+		TaskID:  legacyID,
+		RepoPath: "/r",
+		Prompt:  "p",
+		Kind:    uint8(protocol.TaskKind_Interactive),
+		RunMode: uint8(protocol.RunMode_Background),
+		Oneshot: true,
+	}})
+	if e, ok := legacy.Get(legacyID); !ok || e.Kind != protocol.TaskKind_Oneshot {
+		t.Fatalf("legacy A3 WAL replay: ok=%v kind=%v, want TaskKind_Oneshot", ok, e.Kind)
 	}
 }
 
-// Checkpoint review I1: --oneshot is a PTY session (A-D29). With --stream the
-// open is refused here — the WebUI can send both — rather than created as a
-// stream task the runner refuses later, or queued forever in background.
-func TestOneshotWithStreamRefused(t *testing.T) {
-	h := newTestHandler(t)
-	oneshotRunner(h, "A", true)
-	fg := withOneshot(detachedOpen(40, 120))
-	fg.SetAgentProfile([]byte("claude"))
-	fg.SetEventStream(true)
-	if resp, _ := h.handleOpenInteractive(objproto.ConnectionID{}, nil, fg, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All, "p"); resp.Status != protocol.OpenInteractiveStatus_OneshotStream {
-		t.Fatalf("foreground: %v", resp.Status)
-	}
-	bg := withOneshot(bgOpen("claude"))
-	bg.SetEventStream(true)
-	if r := openBG(h, bg, "p"); r.Status != protocol.OpenInteractiveStatus_OneshotStream {
-		t.Fatalf("background: %v", r.Status)
-	}
-	if n := len(h.Tasks.List(0)); n != 0 {
-		t.Fatalf("%d tasks created", n)
-	}
-}
-
-// A --oneshot task is an interactive task (A-D29), so the kind alone cannot
-// tell it from an ordinary session on any display surface. The listing carries
-// the run's flag; a plain session's row reads false.
+// List carries TaskKind_Oneshot on the row's kind field.
 func TestListCarriesOneshot(t *testing.T) {
 	h := newTestHandler(t)
-	mk := func(oneshot bool) string {
-		id, err := h.Tasks.CreateWithinLimits("/r", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Cli,
+	mk := func(kind protocol.TaskKind) string {
+		id, err := h.Tasks.CreateWithinLimits("/r", "p", kind, protocol.ClientKind_Cli,
 			protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All}, "claude",
-			RunSpec{Mode: protocol.RunMode_Foreground, Oneshot: oneshot})
+			RunSpec{Mode: protocol.RunMode_Foreground})
 		if err != nil {
 			t.Fatal(err)
 		}
 		return id
 	}
-	oneID, plainID := mk(true), mk(false)
+	oneID, plainID := mk(protocol.TaskKind_Oneshot), mk(protocol.TaskKind_Interactive)
 
 	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_List}}
 	req.SetList(defaultListQuery())
@@ -198,26 +185,26 @@ func TestListCarriesOneshot(t *testing.T) {
 	if len(conn.sendStreams) != 1 {
 		t.Fatalf("list: %d send streams", len(conn.sendStreams))
 	}
-	got := map[string]bool{}
+	got := map[string]protocol.TaskKind{}
 	for _, ti := range decodeListBody(t, conn.sendStreams[0].bytes).Tasks {
-		got[fmt.Sprintf("%x", ti.Id.Id[:])] = ti.Oneshot()
+		got[fmt.Sprintf("%x", ti.Id.Id[:])] = ti.Kind
 	}
-	if v, ok := got[oneID]; !ok || !v {
-		t.Errorf("--oneshot task: listed=%v oneshot=%v, want oneshot", ok, v)
+	if v, ok := got[oneID]; !ok || v != protocol.TaskKind_Oneshot {
+		t.Errorf("--oneshot task: listed=%v kind=%v, want oneshot", ok, v)
 	}
-	if v, ok := got[plainID]; !ok || v {
-		t.Errorf("plain session: listed=%v oneshot=%v, want not oneshot", ok, v)
+	if v, ok := got[plainID]; !ok || v != protocol.TaskKind_Interactive {
+		t.Errorf("plain session: listed=%v kind=%v, want interactive", ok, v)
 	}
 }
 
-// The task event carries the run's flag too: a resume changes it (A-D29), and
-// the TUI updates a known row from events alone.
+// The task event carries TaskKind_Oneshot too, so the TUI updates a known row
+// from events alone.
 func TestTaskEventCarriesOneshot(t *testing.T) {
 	s := New(Config{})
 	getEvents := captureTaskEvents(s, topics.TasksStatus())
-	oneID, err := s.tasks.CreateWithinLimits("/repo", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Cli,
+	oneID, err := s.tasks.CreateWithinLimits("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,
 		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All}, "claude",
-		RunSpec{Mode: protocol.RunMode_Foreground, Oneshot: true})
+		RunSpec{Mode: protocol.RunMode_Foreground})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,16 +214,16 @@ func TestTaskEventCarriesOneshot(t *testing.T) {
 		_ = s.tasks.SetDetached(id)
 		s.tasks.MarkFailed(id, "runner_disconnected")
 	}
-	ended := map[string]bool{}
+	ended := map[string]protocol.TaskKind{}
 	for _, ev := range getEvents() {
 		if ev.Kind == protocol.StatusEventKind_TaskEnded {
-			ended[fmt.Sprintf("%x", ev.TaskId.Id[:])] = ev.Oneshot()
+			ended[fmt.Sprintf("%x", ev.TaskId.Id[:])] = ev.TaskKind
 		}
 	}
-	if v, ok := ended[oneID]; !ok || !v {
-		t.Errorf("--oneshot task's event: seen=%v oneshot=%v, want oneshot", ok, v)
+	if v, ok := ended[oneID]; !ok || v != protocol.TaskKind_Oneshot {
+		t.Errorf("--oneshot task's event: seen=%v kind=%v, want oneshot", ok, v)
 	}
-	if v, ok := ended[plainID]; !ok || v {
-		t.Errorf("plain task's event: seen=%v oneshot=%v, want not oneshot", ok, v)
+	if v, ok := ended[plainID]; !ok || v != protocol.TaskKind_Interactive {
+		t.Errorf("plain task's event: seen=%v kind=%v, want interactive", ok, v)
 	}
 }

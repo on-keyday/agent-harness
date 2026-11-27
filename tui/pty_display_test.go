@@ -18,12 +18,11 @@ func TestPtyMarkOnRowAndDetail(t *testing.T) {
 	if d := formatTaskDetail(pipe, nil); !strings.Contains(d, "kind:          interactive+pipe\n") {
 		t.Errorf("no-PTY detail kind line:\n%s", d)
 	}
-	ptyOneshot := progressTask(protocol.TaskKind_Interactive, "", 0, false, "")
-	ptyOneshot.SetOneshot(true)
+	ptyOneshot := progressTask(protocol.TaskKind_Oneshot, "", 0, false, "")
 	if got := aboutCell(ptyOneshot); got != "(oneshot+pty) the original ask" {
 		t.Errorf("PTY one-shot About = %q", got)
 	}
-	if d := formatTaskDetail(ptyOneshot, nil); !strings.Contains(d, "kind:          interactive+oneshot+pty\n") {
+	if d := formatTaskDetail(ptyOneshot, nil); !strings.Contains(d, "kind:          oneshot+pty\n") {
 		t.Errorf("PTY one-shot detail kind line:\n%s", d)
 	}
 }

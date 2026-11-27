@@ -9,13 +9,12 @@ import "testing"
 func TestPtyBitsRoundTrip(t *testing.T) {
 	var ext OpenInteractiveExt
 	ext.SetPtySet(true)
-	ext.SetOneshot(true)
 	var extOut OpenInteractiveExt
 	if err := extOut.DecodeExact(ext.MustAppend(nil)); err != nil {
 		t.Fatal(err)
 	}
-	if !extOut.PtySet() || extOut.Pty() || !extOut.Oneshot() || extOut.RecordSet() {
-		t.Fatalf("ext bits: pty_set=%v pty=%v oneshot=%v record_set=%v", extOut.PtySet(), extOut.Pty(), extOut.Oneshot(), extOut.RecordSet())
+	if !extOut.PtySet() || extOut.Pty() || extOut.RecordSet() {
+		t.Fatalf("ext bits: pty_set=%v pty=%v record_set=%v", extOut.PtySet(), extOut.Pty(), extOut.RecordSet())
 	}
 	ext.SetPty(true)
 	if err := extOut.DecodeExact(ext.MustAppend(nil)); err != nil || !extOut.Pty() {
@@ -42,8 +41,8 @@ func TestPtyBitsRoundTrip(t *testing.T) {
 	if err := tiOut.DecodeExact(ti.MustAppend(nil)); err != nil {
 		t.Fatal(err)
 	}
-	if !tiOut.NoPty() || tiOut.Oneshot() {
-		t.Fatalf("TaskInfo bits: no_pty=%v oneshot=%v", tiOut.NoPty(), tiOut.Oneshot())
+	if !tiOut.NoPty() {
+		t.Fatalf("TaskInfo bits: no_pty=%v", tiOut.NoPty())
 	}
 
 	var ev TaskStatusEvent
@@ -52,7 +51,7 @@ func TestPtyBitsRoundTrip(t *testing.T) {
 	if err := evOut.DecodeExact(ev.MustAppend(nil)); err != nil {
 		t.Fatal(err)
 	}
-	if !evOut.NoPty() || evOut.Oneshot() {
-		t.Fatalf("TaskStatusEvent bits: no_pty=%v oneshot=%v", evOut.NoPty(), evOut.Oneshot())
+	if !evOut.NoPty() {
+		t.Fatalf("TaskStatusEvent bits: no_pty=%v", evOut.NoPty())
 	}
 }

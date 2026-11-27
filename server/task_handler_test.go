@@ -269,7 +269,7 @@ func TestHandleOpenInteractiveSubdirOfRootIsNoRunner(t *testing.T) {
 	now := time.Now()
 	h.Registry.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h", AllowedRoots: []string{"/x"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
 
-	req := &protocol.OpenInteractiveRequest{}
+	req := &protocol.OpenInteractiveRequest{Kind: protocol.TaskKind_Interactive}
 	req.SetRepoPath([]byte("/x/repo"))
 	resp, _ := h.handleOpenInteractive(objproto.ConnectionID{}, nil, req, protocol.ClientKind_Unspecified, protocol.TaskID{}, protocol.Capability_All, "")
 	if resp.Status != protocol.OpenInteractiveStatus_NoRunnerForRepo {
@@ -433,7 +433,7 @@ func TestOpenInteractivePinnedResumeEmptyProfileReusesOriginal(t *testing.T) {
 func TestHandleOpenInteractiveNoRunnerForRepo(t *testing.T) {
 	h := newTestHandler(t) // empty registry
 
-	req := &protocol.OpenInteractiveRequest{}
+	req := &protocol.OpenInteractiveRequest{Kind: protocol.TaskKind_Interactive}
 	req.SetRepoPath([]byte("/x/repo"))
 
 	resp, _ := h.handleOpenInteractive(objproto.ConnectionID{}, nil, req, protocol.ClientKind_Unspecified, protocol.TaskID{}, protocol.Capability_All, "")
@@ -461,7 +461,7 @@ func TestHandleOpenInteractiveResumeNoRunnerNamesTaskRepo(t *testing.T) {
 	var tid protocol.TaskID
 	raw, _ := hex.DecodeString(taskIDHex)
 	copy(tid.Id[:], raw)
-	resp, _ := h.handleOpenInteractive(objproto.ConnectionID{}, nil, &protocol.OpenInteractiveRequest{ResumeTaskId: tid}, protocol.ClientKind_Tui, protocol.TaskID{}, protocol.Capability_All, "")
+	resp, _ := h.handleOpenInteractive(objproto.ConnectionID{}, nil, &protocol.OpenInteractiveRequest{ResumeTaskId: tid, Kind: protocol.TaskKind_Interactive}, protocol.ClientKind_Tui, protocol.TaskID{}, protocol.Capability_All, "")
 	if resp.Status != protocol.OpenInteractiveStatus_NoRunnerForRepo {
 		t.Fatalf("status=%v want NoRunnerForRepo", resp.Status)
 	}
@@ -477,7 +477,7 @@ func TestHandleOpenInteractiveBusy(t *testing.T) {
 	h.Registry.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h", AllowedRoots: []string{"/x/repo"}, MaxTasks: 1,
 		ActiveTasks: map[string]struct{}{"existing": {}}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
 
-	req := &protocol.OpenInteractiveRequest{}
+	req := &protocol.OpenInteractiveRequest{Kind: protocol.TaskKind_Interactive}
 	req.SetRepoPath([]byte("/x/repo"))
 
 	resp, _ := h.handleOpenInteractive(objproto.ConnectionID{}, nil, req, protocol.ClientKind_Unspecified, protocol.TaskID{}, protocol.Capability_All, "")
@@ -492,7 +492,7 @@ func TestHandleOpenInteractiveAmbiguous(t *testing.T) {
 	h.Registry.Add(&RunnerEntry{ID: tcid("ws:10.0.0.1:1-1"), Identity: testRunnerID("ws:10.0.0.1:1-1"), Hostname: "h1", AllowedRoots: []string{"/shared/repo"}, MaxTasks: 8, ActiveTasks: map[string]struct{}{"t": {}}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
 	h.Registry.Add(&RunnerEntry{ID: tcid("ws:10.0.0.2:1-1"), Identity: testRunnerID("ws:10.0.0.2:1-1"), Hostname: "h2", AllowedRoots: []string{"/shared/repo"}, MaxTasks: 8, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
 
-	req := &protocol.OpenInteractiveRequest{}
+	req := &protocol.OpenInteractiveRequest{Kind: protocol.TaskKind_Interactive}
 	req.SetRepoPath([]byte("/shared/repo"))
 
 	resp, body := h.handleOpenInteractive(objproto.ConnectionID{}, nil, req, protocol.ClientKind_Unspecified, protocol.TaskID{}, protocol.Capability_All, "")
@@ -526,7 +526,7 @@ func TestHandleOpenInteractivePinnedNotFound(t *testing.T) {
 
 	sel := protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_ByHostname}
 	sel.SetHostname(mustHostname(t, "raspi")) // hostname not present
-	req := &protocol.OpenInteractiveRequest{Selector: sel}
+	req := &protocol.OpenInteractiveRequest{Selector: sel, Kind: protocol.TaskKind_Interactive}
 	req.SetRepoPath([]byte("/x/repo"))
 
 	resp, _ := h.handleOpenInteractive(objproto.ConnectionID{}, nil, req, protocol.ClientKind_Unspecified, protocol.TaskID{}, protocol.Capability_All, "")
@@ -554,7 +554,7 @@ func TestHandleOpenInteractiveOkSetsRepoPathOnOpenExec(t *testing.T) {
 
 	tuiConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9101-2"), nextBidi: liveStream(t, 7)}
 
-	req := &protocol.OpenInteractiveRequest{}
+	req := &protocol.OpenInteractiveRequest{Kind: protocol.TaskKind_Interactive}
 	req.SetRepoPath([]byte("/shared/repo"))
 
 	resp, _ := h.handleOpenInteractive(objproto.ConnectionID{}, tuiConn, req, protocol.ClientKind_Unspecified, protocol.TaskID{}, protocol.Capability_All, "")
@@ -601,7 +601,7 @@ func TestOpenInteractiveMultiProfileIsOneRowWithBoth(t *testing.T) {
 	now := time.Now()
 	h.Registry.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/repo"}, MaxTasks: 1, AgentProfiles: []string{"claude", "codex"}, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
 
-	req := &protocol.OpenInteractiveRequest{}
+	req := &protocol.OpenInteractiveRequest{Kind: protocol.TaskKind_Interactive}
 	req.SetRepoPath([]byte("/repo"))
 
 	resp, body := h.handleOpenInteractive(objproto.ConnectionID{}, nil, req, protocol.ClientKind_Tui, protocol.TaskID{}, protocol.Capability_All, "")
@@ -644,7 +644,7 @@ func TestHandleSendsCandidatesOnAStream(t *testing.T) {
 	h.Registry.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/repo"}, MaxTasks: 1, AgentProfiles: []string{"claude", "codex"}, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
 	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9200-1"), autoSendStreams: true}
 
-	oi := protocol.OpenInteractiveRequest{}
+	oi := protocol.OpenInteractiveRequest{Kind: protocol.TaskKind_Interactive}
 	oi.SetRepoPath([]byte("/repo"))
 	req := &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: protocol.TaskControlKind_OpenInteractive, RequestId: 9}}
 	req.SetOpenInteractive(oi)
@@ -670,7 +670,7 @@ func TestOpenInteractiveAgentFilterPicksProfile(t *testing.T) {
 	now := time.Now()
 	h.Registry.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/"}, MaxTasks: 1, AgentProfiles: []string{"claude", "codex"}, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
 
-	req := &protocol.OpenInteractiveRequest{}
+	req := &protocol.OpenInteractiveRequest{Kind: protocol.TaskKind_Interactive}
 	req.SetRepoPath([]byte("/repo"))
 	req.SetAgentProfile([]byte("codex"))
 
@@ -690,7 +690,7 @@ func TestOpenInteractiveAgentUnavailable(t *testing.T) {
 	now := time.Now()
 	h.Registry.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/repo"}, MaxTasks: 1, AgentProfiles: []string{"claude"}, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
 
-	req := &protocol.OpenInteractiveRequest{}
+	req := &protocol.OpenInteractiveRequest{Kind: protocol.TaskKind_Interactive}
 	req.SetRepoPath([]byte("/repo"))
 	req.SetAgentProfile([]byte("gemini")) // not advertised
 
@@ -713,7 +713,7 @@ func TestOpenInteractivePinnedEmptyProfileUsesDefault(t *testing.T) {
 	sel.SetHostname(mustHostname(t, "pinhost"))
 	tuiConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9301-2"), nextBidi: liveStream(t, 12)}
 
-	req := &protocol.OpenInteractiveRequest{Selector: sel}
+	req := &protocol.OpenInteractiveRequest{Selector: sel, Kind: protocol.TaskKind_Interactive}
 	req.SetRepoPath([]byte("/repo")) // empty agent_profile
 
 	resp, _ := h.handleOpenInteractive(objproto.ConnectionID{}, tuiConn, req, protocol.ClientKind_Tui, protocol.TaskID{}, protocol.Capability_All, "")
@@ -763,7 +763,7 @@ func TestOpenInteractiveUnpinnedResumeExpandsToPicker(t *testing.T) {
 	copy(tid.Id[:], raw)
 
 	// Selector left at its zero value: Kind == RunnerSelectorKind_Any (unpinned).
-	req := &protocol.OpenInteractiveRequest{ResumeTaskId: tid}
+	req := &protocol.OpenInteractiveRequest{ResumeTaskId: tid, Kind: protocol.TaskKind_Interactive}
 
 	resp, body := h.handleOpenInteractive(objproto.ConnectionID{}, nil, req, protocol.ClientKind_Tui, protocol.TaskID{}, protocol.Capability_All, "")
 	if resp.Status != protocol.OpenInteractiveStatus_AmbiguousRunner || body == nil {
@@ -809,7 +809,7 @@ func TestOpenInteractivePinnedResumeStillDefaultsProfile(t *testing.T) {
 	sel := protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_ByRunnerId}
 	sel.SetRunnerId(runnerIdentity)
 
-	req := &protocol.OpenInteractiveRequest{ResumeTaskId: tid, Selector: sel}
+	req := &protocol.OpenInteractiveRequest{ResumeTaskId: tid, Selector: sel, Kind: protocol.TaskKind_Interactive}
 
 	// tuiConn is nil: fine for asserting non-ambiguity — the Ok path itself
 	// would hit the nil-tuiConn InternalError guard, but that only proves
@@ -849,7 +849,7 @@ func TestHandleOpenInteractive_RegistersSessionMux(t *testing.T) {
 
 	tuiConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9201-2"), nextBidi: liveStream(t, 11)}
 
-	req := &protocol.OpenInteractiveRequest{}
+	req := &protocol.OpenInteractiveRequest{Kind: protocol.TaskKind_Interactive}
 	req.SetRepoPath([]byte("/repo"))
 
 	resp, _ := h.handleOpenInteractive(objproto.ConnectionID{}, tuiConn, req, protocol.ClientKind_Unspecified, protocol.TaskID{}, protocol.Capability_All, "")
@@ -936,7 +936,7 @@ func TestOpenInteractiveResumeCrossModeNotRejected(t *testing.T) {
 	raw, _ := hex.DecodeString(taskIDHex)
 	copy(tid.Id[:], raw)
 
-	req := &protocol.OpenInteractiveRequest{ResumeTaskId: tid}
+	req := &protocol.OpenInteractiveRequest{ResumeTaskId: tid, Kind: protocol.TaskKind_Interactive}
 
 	resp, _ := h.handleOpenInteractive(objproto.ConnectionID{}, tuiConn, req, protocol.ClientKind_Tui, protocol.TaskID{}, protocol.Capability_All, "")
 	if resp.Status == protocol.OpenInteractiveStatus_ResumeNotFound {
@@ -1008,7 +1008,7 @@ func TestHandleAttachSession_NotFound(t *testing.T) {
 	}
 }
 
-// TestHandleAttachSession_NotInteractive: oneshot task → NotInteractive.
+// TestHandleAttachSession_NotInteractive: credential task → NotInteractive.
 func TestHandleAttachSession_NotInteractive(t *testing.T) {
 	h := newTestHandler(t)
 	h.Sessions = NewSessionRegistry()
@@ -1021,7 +1021,7 @@ func TestHandleAttachSession_NotInteractive(t *testing.T) {
 		ID:       id,
 		RepoPath: "/repo",
 		Status:   protocol.TaskStatus_Running,
-		Kind:     protocol.TaskKind_Oneshot,
+		Kind:     protocol.TaskKind_Credential,
 	}
 	h.Tasks.order = append(h.Tasks.order, id)
 	h.Tasks.mu.Unlock()

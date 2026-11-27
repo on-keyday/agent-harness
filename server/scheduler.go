@@ -87,7 +87,7 @@ func (s *Scheduler) Tick() {
 			}
 			// A runner that did not say it runs --oneshot would start the
 			// interactive argv instead (A3, A-D29).
-			if task.Oneshot && !c.OneshotSessions {
+			if task.Kind == protocol.TaskKind_Oneshot && !c.OneshotSessions {
 				continue
 			}
 			if !s.reg.BindTask(c.ID, task.ID) {
