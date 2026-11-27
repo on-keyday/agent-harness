@@ -2,8 +2,11 @@ package hostlog
 
 import (
 	"bytes"
+	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -81,5 +84,30 @@ func TestFileReaderTailAndRange(t *testing.T) {
 	}
 	if snap.StartOffset != 30 || len(snap.Data) != 0 {
 		t.Fatalf("unexpected file past-EOF: %+v", snap)
+	}
+}
+
+func TestSetupPreservesDefaultSlogFormat(t *testing.T) {
+	prevOut := log.Writer()
+	t.Cleanup(func() { log.SetOutput(prevOut) })
+
+	path := filepath.Join(t.TempDir(), "app.log")
+	rd, closeFn, err := Setup(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeFn()
+
+	slog.Info("hello format", "k", "v")
+	snap, err := rd.Read(protocol.HostLogMode_Tail, 0, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(snap.Data)
+	if !strings.Contains(got, " INFO hello format k=v") {
+		t.Fatalf("expected Go default slog format, got: %q", got)
+	}
+	if strings.Contains(got, "level=INFO") {
+		t.Fatalf("unexpected TextHandler format: %q", got)
 	}
 }

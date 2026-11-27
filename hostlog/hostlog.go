@@ -12,7 +12,7 @@ package hostlog
 import (
 	"fmt"
 	"io"
-	"log/slog"
+	"log"
 	"os"
 	"path/filepath"
 	"sync"
@@ -258,11 +258,14 @@ func readFileSnapshot(path string, mode protocol.HostLogMode, offset uint64, max
 	}, nil
 }
 
-// Setup configures slog.Default() and returns a Reader for serving host logs.
+// Setup redirects standard log/slog output and returns a Reader for serving host logs.
 //
-// When logFilePath != "", slog writes (append, 0600) to logFilePath instead of
-// stderr (C-D1) and the Reader reads from logFilePath.
-// When logFilePath == "", slog writes to os.Stderr mirrored into a 1 MiB
+// Uses log.SetOutput rather than replacing slog.Default with slog.NewTextHandler,
+// preserving Go's default slog format ("YYYY/MM/DD HH:MM:SS INFO msg key=val").
+//
+// When logFilePath != "", log/slog writes (append, 0600) to logFilePath instead
+// of stderr (C-D1) and the Reader reads from logFilePath.
+// When logFilePath == "", log/slog writes to os.Stderr mirrored into a 1 MiB
 // in-process Ring and the Reader reads from that Ring.
 func Setup(logFilePath string) (*Reader, func() error, error) {
 	if logFilePath != "" {
@@ -275,12 +278,11 @@ func Setup(logFilePath string) (*Reader, func() error, error) {
 		if err != nil {
 			return nil, nil, fmt.Errorf("hostlog: open %s: %w", logFilePath, err)
 		}
-		slog.SetDefault(slog.New(slog.NewTextHandler(f, nil)))
+		log.SetOutput(f)
 		return NewFileReader(logFilePath), f.Close, nil
 	}
 
 	ring := NewRing(DefaultRingSize)
-	w := io.MultiWriter(os.Stderr, ring)
-	slog.SetDefault(slog.New(slog.NewTextHandler(w, nil)))
+	log.SetOutput(io.MultiWriter(os.Stderr, ring))
 	return NewRingReader(ring), func() error { return nil }, nil
 }
