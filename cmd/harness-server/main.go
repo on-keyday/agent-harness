@@ -25,6 +25,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/connauth"
+	"github.com/on-keyday/agent-harness/hostlog"
 	"github.com/on-keyday/agent-harness/server"
 	"github.com/on-keyday/agent-harness/shutdownwatch"
 	"github.com/on-keyday/agent-harness/webui"
@@ -57,6 +58,7 @@ var (
 	notifyHook           = flag.String("notify-hook", "", "external command line invoked on each notify request (stdin: JSON; env: HARNESS_NOTIFY_*); whitespace-split into executable + args (no quoting). Fallbacks: env HARNESS_NOTIFY_HOOK, then first non-# line of <data-dir>/notify-hook — write the command there once and it survives restarts. Empty everywhere disables egress.")
 
 	shutdownFile = flag.String("shutdown-file", "", "path to a sentinel file the server polls every 250ms; when it appears the server triggers a graceful shutdown. daemon.py injects this automatically when the server is spawned via scripts/server.py up, so Windows downs (where SIGTERM can't reach a DETACHED_PROCESS child) can still close WS connections cleanly instead of being TerminateProcess'd cold.")
+	logFile      = flag.String("log-file", "", "path to append process slog output to and serve via `server log` (pillar C). When empty, slog writes to stderr mirrored into an in-process 1 MiB ring buffer. daemon.py injects bin/.run/<slot>.log automatically.")
 
 	webuiDir = flag.String("webui-dir", "", "dev hot-reload: serve WebUI assets from this directory on disk instead of the embedded copy (env: HARNESS_WEBUI_DIR). Point it at the repo's webui/ dir; then `make webui-build` + a browser refresh picks up wasm/js/css changes with no server rebuild or restart. Empty (default) serves the embedded assets.")
 
@@ -249,6 +251,12 @@ func loadListenTLS(certFile, keyFile, wsListen string) (*tls.Config, error) {
 
 func main() {
 	flag.Parse()
+	hostLogReader, closeHostLog, err := hostlog.Setup(*logFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "harness-server: %v\n", err)
+		os.Exit(1)
+	}
+	defer closeHostLog()
 	connauth.WebSocketPath = *wsPath
 	// Catch SIGTERM in addition to SIGINT so daemon.py's `p.terminate()`
 	// (the default Linux down path used by server.sh / server.py) closes
@@ -390,6 +398,7 @@ func main() {
 		HoldWindow:           *holdWindow,
 		HoldAckTimeout:       *holdAckTimeout,
 		Logger:               slog.Default(),
+		HostLog:              hostLogReader,
 		OperatorPSK:          operatorPSKBytes,
 		ServerKey:            serverKey,
 		RunnerKeys:           runnerKeys,

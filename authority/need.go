@@ -143,6 +143,8 @@ var centralCap = map[protocol.TaskControlKind]protocol.Capability{
 	// (C11); action_list is a request-determined clause below.
 	protocol.TaskControlKind_ActionPut:    protocol.Capability_ActionAdmin,
 	protocol.TaskControlKind_ActionRemove: protocol.Capability_ActionAdmin,
+	// Host process logs (pillar C, C-D2): server log and runner log. No scope (G19).
+	protocol.TaskControlKind_HostLog: protocol.Capability_HostLog,
 	protocol.TaskControlKind_PruneTasks:   protocol.Capability_Prune,
 	protocol.TaskControlKind_Notify:       protocol.Capability_Notify,
 	// Emptying another task's progress line: whoever may end the task may

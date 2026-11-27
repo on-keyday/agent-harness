@@ -1619,7 +1619,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // Enter in a <form method="dialog"> with one text field submits it, which
   // closes the dialog with nothing sent. These dialogs act through their
   // buttons only; in the run dialog Enter means ▶ 実行.
-  for (const id of ["actions-modal", "action-run-modal", "runner-keys-modal"]) {
+  for (const id of ["actions-modal", "action-run-modal", "runner-keys-modal", "host-log-modal"]) {
     document.querySelector(`#${id} form`).addEventListener("submit", (e) => {
       e.preventDefault();
       if (id === "action-run-modal" && actionRunGo) actionRunGo();
@@ -1823,6 +1823,42 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   document.getElementById("runner-keys-modal-enroll").addEventListener("click", () => openEnrollForm());
   document.getElementById("runner-keys-modal-dial").addEventListener("click", () => openDialForm());
   document.getElementById("runner-keys-modal-dial-once").addEventListener("click", () => openDialOnceForm());
+
+  const hostLogModal = document.getElementById("host-log-modal");
+  const hostLogTitle = document.getElementById("host-log-modal-title");
+  const hostLogMeta = document.getElementById("host-log-modal-meta");
+  const hostLogBody = document.getElementById("host-log-modal-body");
+  let hostLogTarget = null; // null => server, string => runner id
+  const loadHostLog = async () => {
+    hostLogMeta.textContent = "loading…";
+    hostLogBody.textContent = "";
+    try {
+      const res = hostLogTarget
+        ? await window.harness.runnerLog(hostLogTarget)
+        : await window.harness.serverLog();
+      hostLogMeta.textContent = res.header || "";
+      hostLogBody.textContent = res.text || "(empty)";
+      hostLogBody.scrollTop = hostLogBody.scrollHeight;
+    } catch (e) {
+      hostLogMeta.textContent = "";
+      hostLogBody.textContent = String(e && e.message ? e.message : e);
+    }
+  };
+  const openServerLog = () => {
+    hostLogTarget = null;
+    hostLogTitle.textContent = "Server log";
+    if (!hostLogModal.open) hostLogModal.showModal();
+    loadHostLog();
+  };
+  const openRunnerLog = (r) => {
+    hostLogTarget = r.id;
+    hostLogTitle.textContent = `Runner log (${(r.id || "").slice(0, 8)} ${r.hostname || ""})`.trim();
+    if (!hostLogModal.open) hostLogModal.showModal();
+    loadHostLog();
+  };
+  document.getElementById("server-log-btn").addEventListener("click", () => openServerLog());
+  document.getElementById("host-log-modal-refresh").addEventListener("click", () => loadHostLog());
+  document.getElementById("host-log-modal-close").addEventListener("click", () => hostLogModal.close());
   rkBack.addEventListener("click", () => loadRunnerKeys());
   credentialsBack.addEventListener("click", () => loadCredentialList());
   credentialsNewBtn.addEventListener("click", () => openCredentialForm("new", ""));
@@ -2040,7 +2076,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     renderTaskHistoryNote(snap.finishedOmitted || 0);
     // After renderTaskList, so a task line's jump finds the row it opens.
     renderRunnerRows(runnerList, sortedRunners, {
-      tasks: snap.tasks, statusColor: taskStatusColor, repoTail, onTask: revealTaskInList, onKick: kickRunner,
+      tasks: snap.tasks, statusColor: taskStatusColor, repoTail, onTask: revealTaskInList, onKick: kickRunner, onLog: openRunnerLog,
     });
     drawTaskTree();
     renderFileTaskSelect(snap.tasks);

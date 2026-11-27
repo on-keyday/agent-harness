@@ -1197,6 +1197,23 @@ bin/harness-cli runner kick <8+ hex of id=> [--force]
 line and the WebUI command input. Design:
 `docs/superpowers/specs/2026-11-04-persistent-reverse-dial-and-runner-kick-design.md`.
 
+### Process logs (`server log` / `runner log`)
+
+```bash
+bin/harness-cli server log [--offset N] [--max-bytes N]
+bin/harness-cli runner log <8+ hex of id=> [--offset N] [--max-bytes N]
+```
+
+Reads a tail (default, 64 KiB; capped at 4 MiB) or byte-range snapshot of
+`harness-server`'s or a connected `agent-runner`'s process log over a stream.
+Both binaries accept `--log-file <path>` (injected automatically by
+`scripts/daemon.py` as `bin/.run/<slot>.log`); when `--log-file` is unset,
+`slog` is mirrored into a 1 MiB in-process ring buffer so foreground runs are
+readable too. Gated on `host_log` (no scope, default-off). Available on the CLI,
+MCP (`server_log` / `runner_log`), TUI (`l` on the runners panel or cmdline),
+and WebUI (`📜 Server log` / runner row `📜 Log` buttons or cmdline). Design:
+`docs/superpowers/specs/2026-11-28-pillar-c-host-logs-design.md`.
+
 ## Operating modes
 
 By default the runner creates a `git worktree` per task under
@@ -1281,7 +1298,7 @@ keeping a session's PTY record — switching recording on or keeping a record lo
 deleting one, switching recording off or shortening its retention (`record_delete`),
 reading the agents' own transcripts of a task's working directory (`transcript_read`),
 creating, editing, running and deleting a server-kept cron schedule and unbinding a task from one (`schedule_edit` / `schedule_run`, see **Schedules**), issuing or re-keying a credential task (`credential_issue`, see **Credential tasks**) and
-defining, editing and deleting server-defined actions (`action_admin`, no scope; `action ls` also admits `exec_run`; see **Actions**)) — and a **target scope** bounding WHICH tasks those
+defining, editing and deleting server-defined actions (`action_admin`, no scope; `action ls` also admits `exec_run`; see **Actions**), reading the server's and connected runners' process logs (`host_log`, no scope; `server log`, `runner log`)) — and a **target scope** bounding WHICH tasks those
 capabilities may be pointed at.
 
 Attaching to a session is three capabilities, not one, because the three
@@ -2427,7 +2444,7 @@ The cmdline accepts `session {new,attach,ls,kill}
 / forward {ls,kill,tap} / conns
 / grid / overview / caps / scope
 / caps set / caps set-parent / caps audit / caps reach / caps what-if / workspace {save,apply,detach,ls,show,rm} / workspace forward {add,rm}
-/ server dial-runner / runner {enroll,keys,unenroll,kick} / runner dial {add,ls,rm} / ssh-gateway / cancel / prune / repo / display / clear / help / quit`.
+/ server {dial-runner,log} / runner {enroll,keys,unenroll,kick,log} / runner dial {add,ls,rm} / ssh-gateway / cancel / prune / repo / display / clear / help / quit`.
 `exec <task-id> [--] <cmd>...` runs a command in that task's worktree and prints
 its output into the cmdresult pane, stdout marked `1|` and stderr `2|`;
 `exec ls` / `exec kill <exec-id>` / `exec tap <exec-id>` list, stop and watch

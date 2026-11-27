@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/appwire"
+	"github.com/on-keyday/agent-harness/hostlog"
 	"github.com/on-keyday/agent-harness/iplink"
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -334,6 +335,9 @@ type Session struct {
 	// resolved through (pillar B, B-D5); nil means this process's, which the
 	// agents it starts inherit. A test points the stores at temp dirs.
 	transcriptEnv func(string) string
+
+	// HostLog reads this runner's process log for RunnerRequestType_HostLog (pillar C).
+	HostLog *hostlog.Reader
 
 	// execCancels holds the cancel func of every out-of-band exec running on
 	// this runner (execId -> cancel), so a close_exec_run request can stop one.

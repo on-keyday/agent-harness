@@ -661,6 +661,21 @@ func (h cliVerbs) ServerDialRunner(a verb.ServerDialRunnerAction) error {
 	return nil
 }
 
+func (h cliVerbs) ServerLog(a verb.ServerLogAction) error {
+	snap, err := cli.HostLogServer(h.ctx, h.cid(), cli.HostLogOpts{
+		HasOffset: a.HasOffset, Offset: a.Offset, MaxBytes: a.MaxBytes,
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(h.stderr(), "# %s\n", cli.FormatHostLogHeader("server", snap))
+	if len(snap.Data) > 0 {
+		_, err = h.stdout().Write(snap.Data)
+		return err
+	}
+	return nil
+}
+
 // --- runner keys ---------------------------------------------------------
 
 func (h cliVerbs) RunnerEnroll(a verb.RunnerEnrollAction) error {
@@ -763,6 +778,21 @@ func (h cliVerbs) RunnerKick(a verb.RunnerKickAction) error {
 	fmt.Fprintln(h.stdout(), out)
 	if !ok {
 		return exitCodeError{code: 1}
+	}
+	return nil
+}
+
+func (h cliVerbs) RunnerLog(a verb.RunnerLogAction) error {
+	snap, err := cli.HostLogRunner(h.ctx, h.cid(), a.RunnerID, cli.HostLogOpts{
+		HasOffset: a.HasOffset, Offset: a.Offset, MaxBytes: a.MaxBytes,
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(h.stderr(), "# %s\n", cli.FormatHostLogHeader("runner "+a.RunnerID, snap))
+	if len(snap.Data) > 0 {
+		_, err = h.stdout().Write(snap.Data)
+		return err
 	}
 	return nil
 }

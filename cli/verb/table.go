@@ -905,6 +905,33 @@ var Verbs = []VerbSpec{
 		},
 		Examples: []string{"server dial-runner ws:127.0.0.1:9000-abcd"},
 	},
+	{
+		Path:          []string{"server", "log"},
+		ModalSurfaces: []ModalSurface{{Surface: WebUI, At: "webui/index.html#host-log-modal"}, {Surface: TUI, At: "tui/host_log_modal.go:HostLogModal"}},
+		MCP:           &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_HostLog},
+		WebUIDispatch: WebUIDispatch{Fn: "serverLog"},
+		SurfaceNotes:  map[Surface][]string{WebUI: {"read the server's process log as a tail or byte range (needs host_log)"}, TUI: {"read the server's process log as a tail or byte range (needs host_log)"}},
+		Notes: []string{
+			"read a tail (default) or byte-range snapshot of the server's process log",
+			"reads --log-file when configured, otherwise the 1 MiB in-process ring buffer",
+			"needs host_log (no scope)",
+		},
+		Action:          "ServerLogAction",
+		CmdlineSurfaces: CLI | TUI | WebUI,
+		Flags: []Flag{
+			{Name: "offset", Type: FlagUint64, Default: uint64(0), Field: "Offset", PresenceField: "HasOffset",
+				Help: "start byte offset for a range read (omitted = tail from end)"},
+			{Name: "max-bytes", Type: FlagUint, Default: uint(0), Field: "MaxBytes", FieldType: "uint32",
+				Help: "maximum bytes to return (0 = 64 KiB, capped at 4 MiB)"},
+		},
+		Validate: func(b Bound) error {
+			if mb := uintOf(b.Flags["max-bytes"]); uint64(mb) > math.MaxUint32 {
+				return fmt.Errorf("server log: --max-bytes %d is out of range", mb)
+			}
+			return nil
+		},
+		Examples: []string{"server log", "server log --max-bytes 16384", "server log --offset 0 --max-bytes 4096"},
+	},
 
 	// --- server-defined actions (2026-11-26-grant-conditions-and-bound-enrollment-design.md, C8, C13) ---
 	{
@@ -1161,6 +1188,35 @@ var Verbs = []VerbSpec{
 				Help: "kick it even though it runs tasks, which end as on any runner death"},
 		},
 		Examples: []string{"runner kick 83e97d9c", "runner kick 83e97d9c --force"},
+	},
+	{
+		Path:          []string{"runner", "log"},
+		ModalSurfaces: []ModalSurface{{Surface: WebUI, At: "webui/index.html#host-log-modal"}, {Surface: TUI, At: "tui/host_log_modal.go:HostLogModal"}},
+		MCP:           &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_List, protocol.TaskControlKind_HostLog},
+		WebUIDispatch: WebUIDispatch{Fn: "runnerLog"},
+		SurfaceNotes:  map[Surface][]string{WebUI: {"read a connected runner's process log as a tail or byte range (needs host_log)"}, TUI: {"read a connected runner's process log as a tail or byte range (needs host_log)"}},
+		Notes: []string{
+			"read a tail (default) or byte-range snapshot of one connected runner's process log",
+			"RUNNER_ID is 8-32 hex of the runner's identity (the id= column of `harness-cli ls`)",
+			"reads --log-file when configured on the runner, otherwise its 1 MiB in-process ring buffer",
+			"needs host_log (no scope)",
+		},
+		Action:          "RunnerLogAction",
+		CmdlineSurfaces: CLI | TUI | WebUI,
+		Args:            []Arg{{Name: "runner-id", Type: ArgString, Field: "RunnerID"}},
+		Flags: []Flag{
+			{Name: "offset", Type: FlagUint64, Default: uint64(0), Field: "Offset", PresenceField: "HasOffset",
+				Help: "start byte offset for a range read (omitted = tail from end)"},
+			{Name: "max-bytes", Type: FlagUint, Default: uint(0), Field: "MaxBytes", FieldType: "uint32",
+				Help: "maximum bytes to return (0 = 64 KiB, capped at 4 MiB)"},
+		},
+		Validate: func(b Bound) error {
+			if mb := uintOf(b.Flags["max-bytes"]); uint64(mb) > math.MaxUint32 {
+				return fmt.Errorf("runner log: --max-bytes %d is out of range", mb)
+			}
+			return nil
+		},
+		Examples: []string{"runner log 83e97d9c", "runner log 83e97d9c --offset 0 --max-bytes 4096"},
 	},
 
 	// --- ssh-gateway ---

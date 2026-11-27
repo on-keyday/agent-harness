@@ -1220,3 +1220,26 @@ test("credential ls and --json reach the bridge's list, whose text is the output
     assert.equal(out, "no credentials", line);
   }
 });
+
+test("server log and runner log pass tail and byte-range options to the bridge", async () => {
+  const srvRes = { ok: true, header: "server log (file, bytes 0..5 of 5)", text: "hello" };
+  {
+    const { out, err, calls } = await run("server log --max-bytes 4096", { serverLog: srvRes });
+    assert.equal(err, undefined);
+    eq(named(calls, "serverLog")[0], ["serverLog", { maxBytes: 4096 }]);
+    assert.equal(out, "# server log (file, bytes 0..5 of 5)\nhello");
+  }
+  {
+    const { out, err, calls } = await run("server log --offset 0 --max-bytes 128", { serverLog: srvRes });
+    assert.equal(err, undefined);
+    eq(named(calls, "serverLog")[0], ["serverLog", { maxBytes: 128, offset: 0 }]);
+    assert.equal(out, "# server log (file, bytes 0..5 of 5)\nhello");
+  }
+  const runRes = { ok: true, header: "runner 83e97d9c log (ring, bytes 10..15 of 15)", text: "world" };
+  {
+    const { out, err, calls } = await run("runner log 83e97d9c --offset 10 --max-bytes 512", { runnerLog: runRes });
+    assert.equal(err, undefined);
+    eq(named(calls, "runnerLog")[0], ["runnerLog", "83e97d9c", { maxBytes: 512, offset: 10 }]);
+    assert.equal(out, "# runner 83e97d9c log (ring, bytes 10..15 of 15)\nworld");
+  }
+});

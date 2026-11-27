@@ -209,6 +209,30 @@ func (h tuiVerbs) ServerDialRunner(v verb.ServerDialRunnerAction) tea.Cmd {
 	return DoServerDialRunner(a.client, v.RunnerCID, v.Via)
 }
 
+func (h tuiVerbs) ServerLog(v verb.ServerLogAction) tea.Cmd {
+	a := h.a
+	if a.client == nil {
+		a.cmdresult.Append(ErrorStyle.Render("server log: not connected to server"))
+		return nil
+	}
+	opts := cli.HostLogOpts{HasOffset: v.HasOffset, Offset: v.Offset, MaxBytes: v.MaxBytes}
+	a.hostLogModal.SetSize(a.width, a.height)
+	a.hostLogModal.OpenLoading("server", "", opts)
+	return DoHostLogServer(a.client, opts)
+}
+
+func (h tuiVerbs) RunnerLog(v verb.RunnerLogAction) tea.Cmd {
+	a := h.a
+	if a.client == nil {
+		a.cmdresult.Append(ErrorStyle.Render("runner log: not connected to server"))
+		return nil
+	}
+	opts := cli.HostLogOpts{HasOffset: v.HasOffset, Offset: v.Offset, MaxBytes: v.MaxBytes}
+	a.hostLogModal.SetSize(a.width, a.height)
+	a.hostLogModal.OpenLoading("runner "+v.RunnerID, v.RunnerID, opts)
+	return DoHostLogRunner(a.client, v.RunnerID, opts)
+}
+
 // Conns opens the connections modal — the same overlay `C` opens, because the
 // key and the verb ask the same question. --trsf opens it on the transport
 // reading instead, --runner aims that at a runner's own transport and --watch

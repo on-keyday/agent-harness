@@ -102,6 +102,10 @@ var capTargetClasses = map[protocol.Capability]capTargetClass{
 		kind:   capNoTargetResolution,
 		reason: "an action is server configuration, not a task; an edit's per-holder gate (C11) uses the editor's resume and exec_run scopes, not this bit's",
 	},
+	protocol.Capability_HostLog: {
+		kind:   capNoTargetResolution,
+		reason: "a host's process log mixes every task on that host and cannot be scoped to a subset of tasks (pillar C, G19)",
+	},
 	protocol.Capability_Notify: {
 		kind:   capNoTargetResolution,
 		reason: "a notification names no task; its origin is stamped from the sender",

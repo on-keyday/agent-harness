@@ -356,7 +356,8 @@ def daemon_up(slot: str, bin_name: str, *args: str) -> int:
     # at the same path — harmless under Go's last-write-wins flag
     # parsing, but ugly in ps output and confusing to debug).
     args = _strip_flag(list(args), "shutdown-file")
-    spawn_args = ["--shutdown-file", str(sf), *args]
+    args = _strip_flag(args, "log-file")
+    spawn_args = ["--shutdown-file", str(sf), "--log-file", str(lf), *args]
 
     pid = _spawn_detached([str(bp), *spawn_args], lf, drop=_DROP_FOR_BIN.get(bin_name, frozenset()))
     # setsid does not re-parent the cgroup: without this the daemon stays in

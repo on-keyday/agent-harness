@@ -11,6 +11,7 @@ import (
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/authority"
+	"github.com/on-keyday/agent-harness/hostlog"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/objtrsf/trsf"
@@ -87,6 +88,10 @@ type TaskHandler struct {
 	// NotifyHook is the configured external command for the egress leg of
 	// notify (empty = egress disabled). See server/notify_hook.go.
 	NotifyHook string
+
+	// HostLog reads the server's own process log for `server log` (pillar C).
+	// Nil answers HostLogStatus_Unavailable.
+	HostLog *hostlog.Reader
 
 	// OnNotify runs the live leg for a notify (ring append + topic publish).
 	// nil-safe: tests may leave it nil to exercise egress in isolation.
@@ -1466,6 +1471,9 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 
 	case protocol.TaskControlKind_TranscriptList, protocol.TaskControlKind_TranscriptGet:
 		h.handleTranscript(cid, conn, &req)
+
+	case protocol.TaskControlKind_HostLog:
+		h.handleHostLog(cid, conn, &req)
 
 	case protocol.TaskControlKind_DialRunner:
 		dr := req.DialRunner()

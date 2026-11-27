@@ -498,6 +498,7 @@ func runnerEntryFromHello(runnerID objproto.ConnectionID, hello protocol.RunnerH
 		SkillsInjected:   hello.SkillsInjected(),
 		Transcripts:      hello.Transcripts(),
 		OneshotSessions:  hello.OneshotSessions(),
+		HostLogs:         hello.HostLogs(),
 		ActiveTasks:      make(map[string]struct{}),
 		ConnectedAt:      now,
 		LastTaskActivity: now,

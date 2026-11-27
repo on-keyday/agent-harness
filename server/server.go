@@ -26,6 +26,7 @@ import (
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/buildinfo"
 	"github.com/on-keyday/agent-harness/connauth"
+	"github.com/on-keyday/agent-harness/hostlog"
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/pubsub"
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -45,6 +46,8 @@ type Config struct {
 	TaskRetention time.Duration // if > 0, terminal tasks older than this are pruned at startup and every hour
 	PruneInterval time.Duration // overrides the default 1h prune cadence (only used when TaskRetention > 0)
 	Logger        *slog.Logger
+	// HostLog reads the server's process log for `server log` (pillar C).
+	HostLog *hostlog.Reader
 
 	// HoldWindow is how long a runner keeps a held task's child alive with no
 	// server, i.e. how long this server's successor has to come back and
@@ -335,6 +338,7 @@ func New(cfg Config) *Server {
 		Actions:     cfg.Actions,
 		RunnerDials: cfg.RunnerDials,
 		Dials:       s.dials,
+		HostLog:     cfg.HostLog,
 		DialLegs: func(transport string) bool {
 			switch transport {
 			case "ws", "wss":

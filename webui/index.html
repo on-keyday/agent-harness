@@ -48,7 +48,7 @@
       <div id="overview-body" class="ov-body"></div>
     </section>
     <section id="runners" data-tabgroup="tasks">
-      <h2>Runners <button type="button" id="runner-keys-btn" class="task-chip" title="enrolled runner keys and the server's dial records: list, enroll, unenroll, add, remove, dial once">🔐 Runner keys</button></h2>
+      <h2>Runners <button type="button" id="runner-keys-btn" class="task-chip" title="enrolled runner keys and the server's dial records: list, enroll, unenroll, add, remove, dial once">🔐 Runner keys</button> <button type="button" id="server-log-btn" class="task-chip" title="read the server's process log (tail or byte range; needs host_log)">📜 Server log</button></h2>
       <div id="runner-list"></div>
     </section>
     <section id="tasks" data-tabgroup="tasks">
@@ -822,6 +822,17 @@
       <button type="button" id="runner-keys-modal-dial-once">⇄ Dial once</button>
       <button type="button" id="runner-keys-modal-refresh">↻ 更新</button>
       <button type="button" id="runner-keys-modal-close">Close</button>
+    </menu>
+  </form>
+</dialog>
+<dialog id="host-log-modal" class="picker-modal schedules-modal">
+  <form method="dialog" class="picker-form">
+    <h3 class="picker-title" id="host-log-modal-title">Process log</h3>
+    <div id="host-log-modal-meta" class="picker-hint"></div>
+    <pre id="host-log-modal-body" class="schedules-body" style="white-space:pre-wrap;word-break:break-all;max-height:60vh;overflow:auto;"></pre>
+    <menu class="picker-actions">
+      <button type="button" id="host-log-modal-refresh">↻ 更新</button>
+      <button type="button" id="host-log-modal-close">Close</button>
     </menu>
   </form>
 </dialog>

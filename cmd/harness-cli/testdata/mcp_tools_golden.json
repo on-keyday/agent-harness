@@ -567,6 +567,29 @@
   },
   {
     "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "description": "read a tail (default) or byte-range snapshot of the server's process log",
+    "inputSchema": {
+      "properties": {
+        "max-bytes": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "offset": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "name": "server_log"
+  },
+  {
+    "annotations": {
       "destructiveHint": true,
       "readOnlyHint": false
     },
@@ -834,6 +857,35 @@
       "type": "object"
     },
     "name": "runner_kick"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "description": "read a tail (default) or byte-range snapshot of one connected runner's process log",
+    "inputSchema": {
+      "properties": {
+        "max-bytes": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "offset": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "runner-id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "runner-id"
+      ],
+      "type": "object"
+    },
+    "name": "runner_log"
   },
   {
     "annotations": {

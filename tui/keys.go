@@ -51,6 +51,7 @@ type mainKeyMap struct {
 	// is x on the runners table: ScheduleDelete's letter, in a scope of its
 	// own, as the credentials table's revoke is.)
 	RunnerKeys string
+	HostLog    string
 
 	Cancel                 string
 	ReGrant                string
@@ -103,6 +104,7 @@ var mainKeys = mainKeyMap{
 	Actions:         "M",
 	RunAction:       "!",
 	RunnerKeys:      "K",
+	HostLog:         "l",
 
 	Cancel:                 "c",
 	ReGrant:                "a",
@@ -420,6 +422,8 @@ var mainKeyBindings = []keyBinding{
 	// --- runners pane ---
 	{Keys: []string{mainKeys.ScheduleDelete}, Scope: scopeRunners, Do: (*App).onRunnerKick,
 		Short: "x kick", Long: "make the selected runner leave after a y/n (runner kick): it ends its tasks and exits; refused while it runs tasks until you confirm force"},
+	{Keys: []string{mainKeys.HostLog}, Scope: scopeRunners, Do: (*App).onRunnerLog,
+		Short: "l log", Long: "read the selected runner's process log (runner log; press s inside the viewer to switch to the server log)"},
 
 	// --- runners + tasks + schedules + credentials ---
 	{Keys: []string{mainKeys.Detail}, Scope: scopeTables, Do: (*App).onDetail, Short: "d detail", Long: "detail popup for the selected runner / task / schedule / credential (in a task's, s lists its agents' transcripts; a schedule's shows its history and wait statistics; a credential's, its name, expiry and last use)"},

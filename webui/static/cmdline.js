@@ -617,6 +617,13 @@ async function runVerbCommandDispatch(tokens, ctx) {
         case "keys": r = await ctx.harness.runnerKeys(); break;
         case "unenroll": r = await ctx.harness.runnerUnenroll(b.args[0], !!b.flags.force); break;
         case "kick": r = await ctx.harness.runnerKick(b.args[0], !!b.flags.force); break;
+        case "log": {
+          const opts = { maxBytes: b.flags["max-bytes"] || 0 };
+          if ((b.set || {}).offset) opts.offset = b.flags.offset;
+          const lr = await ctx.harness.runnerLog(b.args[0], opts);
+          r = { ok: true, text: `# ${lr.header}\n${lr.text}` };
+          break;
+        }
         case "dial":
           switch (b.path[2]) {
             case "add": r = await ctx.harness.runnerDialAdd(b.args[0], b.flags.key || "", b.flags.label || ""); break;
@@ -633,7 +640,14 @@ async function runVerbCommandDispatch(tokens, ctx) {
     }
     case "server": {
       const b = parseOrHelp(ctx, tokens, {});
-      out = (await ctx.harness.serverDialRunner(b.args[0], b.flags.via || undefined)).text;
+      if (b.path[1] === "log") {
+        const opts = { maxBytes: b.flags["max-bytes"] || 0 };
+        if ((b.set || {}).offset) opts.offset = b.flags.offset;
+        const lr = await ctx.harness.serverLog(opts);
+        out = `# ${lr.header}\n${lr.text}`.trimEnd();
+      } else {
+        out = (await ctx.harness.serverDialRunner(b.args[0], b.flags.via || undefined)).text;
+      }
       break;
     }
     // Same words the TUI cmdline takes, so a hand that learned one surface

@@ -70,6 +70,10 @@ type RunnerEntry struct {
 	// A --oneshot task is never placed on one without it: it would ignore the
 	// bit and start the interactive argv.
 	OneshotSessions bool
+	// HostLogs: the runner answers RunnerRequestType.host_log (pillar C, C-D5).
+	// One without it is never sent one: an unknown request type makes it drop
+	// the connection.
+	HostLogs bool
 	// Key is the enrolled Ed25519 key this connection authenticated with
 	// (AuthRole.runner). The gate admits no runner without one; nil only in
 	// test wiring that leaves RunnerHandler.AuthOf unset.

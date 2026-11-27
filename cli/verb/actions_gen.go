@@ -745,6 +745,18 @@ type RunnerKickAction struct {
 	RunnerID string
 }
 
+// RunnerLogAction is built by: runner log.
+type RunnerLogAction struct {
+	ActionMarker
+	// whether --offset was typed, which its zero value cannot say
+	HasOffset bool
+	// start byte offset for a range read (omitted = tail from end)
+	Offset uint64
+	// maximum bytes to return (0 = 64 KiB, capped at 4 MiB)
+	MaxBytes uint32
+	RunnerID string
+}
+
 // RunnerUnenrollAction is built by: runner unenroll.
 type RunnerUnenrollAction struct {
 	ActionMarker
@@ -945,6 +957,17 @@ type ServerDialRunnerAction struct {
 	// relay through this registered runner, by its 32-hex identity (the id= column of `harness-cli ls`)
 	Via       string
 	RunnerCID string
+}
+
+// ServerLogAction is built by: server log.
+type ServerLogAction struct {
+	ActionMarker
+	// whether --offset was typed, which its zero value cannot say
+	HasOffset bool
+	// start byte offset for a range read (omitted = tail from end)
+	Offset uint64
+	// maximum bytes to return (0 = 64 KiB, capped at 4 MiB)
+	MaxBytes uint32
 }
 
 // SessionAction is built by: session attach, session await-idle, session await-idle kill, session await-idle ls, session kill, session ls, session mode, session resize, session snapshot, session stream answer, session stream approve, session stream attach, session stream finish, session stream interrupt, session stream turn.
@@ -2180,6 +2203,27 @@ func init() {
 			}
 			return a, nil
 		},
+		"server log\x00cli": func(b Bound) (Action, error) {
+			a := ServerLogAction{}
+			a.HasOffset = b.Set["offset"]
+			a.Offset = uint64Of(b.Flags["offset"])
+			a.MaxBytes = uint32(uintOf(b.Flags["max-bytes"]))
+			return a, nil
+		},
+		"server log\x00tui": func(b Bound) (Action, error) {
+			a := ServerLogAction{}
+			a.HasOffset = b.Set["offset"]
+			a.Offset = uint64Of(b.Flags["offset"])
+			a.MaxBytes = uint32(uintOf(b.Flags["max-bytes"]))
+			return a, nil
+		},
+		"server log\x00webui": func(b Bound) (Action, error) {
+			a := ServerLogAction{}
+			a.HasOffset = b.Set["offset"]
+			a.Offset = uint64Of(b.Flags["offset"])
+			a.MaxBytes = uint32(uintOf(b.Flags["max-bytes"]))
+			return a, nil
+		},
 		"action new\x00cli": func(b Bound) (Action, error) {
 			a := ActionPutAction{}
 			a.Sub = "new"
@@ -2484,6 +2528,36 @@ func init() {
 		"runner kick\x00webui": func(b Bound) (Action, error) {
 			a := RunnerKickAction{}
 			a.Force = b.Bool("force")
+			if len(b.Args) > 0 {
+				a.RunnerID = b.Args[0]
+			}
+			return a, nil
+		},
+		"runner log\x00cli": func(b Bound) (Action, error) {
+			a := RunnerLogAction{}
+			a.HasOffset = b.Set["offset"]
+			a.Offset = uint64Of(b.Flags["offset"])
+			a.MaxBytes = uint32(uintOf(b.Flags["max-bytes"]))
+			if len(b.Args) > 0 {
+				a.RunnerID = b.Args[0]
+			}
+			return a, nil
+		},
+		"runner log\x00tui": func(b Bound) (Action, error) {
+			a := RunnerLogAction{}
+			a.HasOffset = b.Set["offset"]
+			a.Offset = uint64Of(b.Flags["offset"])
+			a.MaxBytes = uint32(uintOf(b.Flags["max-bytes"]))
+			if len(b.Args) > 0 {
+				a.RunnerID = b.Args[0]
+			}
+			return a, nil
+		},
+		"runner log\x00webui": func(b Bound) (Action, error) {
+			a := RunnerLogAction{}
+			a.HasOffset = b.Set["offset"]
+			a.Offset = uint64Of(b.Flags["offset"])
+			a.MaxBytes = uint32(uintOf(b.Flags["max-bytes"]))
 			if len(b.Args) > 0 {
 				a.RunnerID = b.Args[0]
 			}
@@ -6114,6 +6188,7 @@ const (
 	CmdForwardKill            = "forward kill"
 	CmdForwardTap             = "forward tap"
 	CmdServerDialRunner       = "server dial-runner"
+	CmdServerLog              = "server log"
 	CmdActionNew              = "action new"
 	CmdActionEdit             = "action edit"
 	CmdActionRm               = "action rm"
@@ -6125,6 +6200,7 @@ const (
 	CmdRunnerDialLs           = "runner dial ls"
 	CmdRunnerDialRm           = "runner dial rm"
 	CmdRunnerKick             = "runner kick"
+	CmdRunnerLog              = "runner log"
 	CmdSshGateway             = "ssh-gateway"
 	CmdSshGatewayStart        = "ssh-gateway start"
 	CmdSshGatewayStatus       = "ssh-gateway status"
@@ -6827,6 +6903,27 @@ func ParseCmdServerDialRunner(sf Surface, args []string, ctx map[string]string) 
 	return a, nil
 }
 
+func ParseCmdServerLog(sf Surface, args []string, ctx map[string]string) (ServerLogAction, error) {
+	var zero ServerLogAction
+	sp, ok := Lookup("server", "log")
+	if !ok {
+		return zero, fmt.Errorf("server log: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(ServerLogAction)
+	return a, nil
+}
+
 func ParseCmdActionNew(sf Surface, args []string, ctx map[string]string) (ActionPutAction, error) {
 	var zero ActionPutAction
 	sp, ok := Lookup("action", "new")
@@ -7055,6 +7152,27 @@ func ParseCmdRunnerKick(sf Surface, args []string, ctx map[string]string) (Runne
 		return zero, err
 	}
 	a := act.(RunnerKickAction)
+	return a, nil
+}
+
+func ParseCmdRunnerLog(sf Surface, args []string, ctx map[string]string) (RunnerLogAction, error) {
+	var zero RunnerLogAction
+	sp, ok := Lookup("runner", "log")
+	if !ok {
+		return zero, fmt.Errorf("runner log: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(RunnerLogAction)
 	return a, nil
 }
 
@@ -9783,6 +9901,8 @@ type CLIDispatch[R any] interface {
 	ForwardTap(ForwardTapAction) R
 	// server dial-runner
 	ServerDialRunner(ServerDialRunnerAction) R
+	// server log
+	ServerLog(ServerLogAction) R
 	// action new
 	ActionNew(ActionPutAction) R
 	// action edit
@@ -9805,6 +9925,8 @@ type CLIDispatch[R any] interface {
 	RunnerDialRm(RunnerDialRemoveAction) R
 	// runner kick
 	RunnerKick(RunnerKickAction) R
+	// runner log
+	RunnerLog(RunnerLogAction) R
 	// ssh-gateway
 	SshGateway(SSHGatewayAction) R
 	// workspace save
@@ -10164,6 +10286,12 @@ func DispatchCLI[R any](h CLIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.ServerDialRunner(a), true, nil
+	case CmdServerLog:
+		a, perr := ParseCmdServerLog(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.ServerLog(a), true, nil
 	case CmdActionNew:
 		a, perr := ParseCmdActionNew(CLI, args, ctx)
 		if perr != nil {
@@ -10230,6 +10358,12 @@ func DispatchCLI[R any](h CLIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.RunnerKick(a), true, nil
+	case CmdRunnerLog:
+		a, perr := ParseCmdRunnerLog(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.RunnerLog(a), true, nil
 	case CmdSshGateway:
 		a, perr := ParseCmdSshGateway(CLI, args, ctx)
 		if perr != nil {
@@ -10940,6 +11074,8 @@ func DispatchCLIAction[R any](h CLIDispatch[R], act Action) (r R, handled bool) 
 		return h.ForwardTap(a), true
 	case ServerDialRunnerAction:
 		return h.ServerDialRunner(a), true
+	case ServerLogAction:
+		return h.ServerLog(a), true
 	case ActionPutAction:
 		switch a.Sub {
 		case "new":
@@ -10965,6 +11101,8 @@ func DispatchCLIAction[R any](h CLIDispatch[R], act Action) (r R, handled bool) 
 		return h.RunnerDialRm(a), true
 	case RunnerKickAction:
 		return h.RunnerKick(a), true
+	case RunnerLogAction:
+		return h.RunnerLog(a), true
 	case SSHGatewayAction:
 		return h.SshGateway(a), true
 	case WorkspaceAction:
@@ -11371,6 +11509,12 @@ func ParseCLICommand(tokens []string, ctx map[string]string) (act Action, handle
 				return nil, true, perr
 			}
 			return a, true, nil
+		case CmdServerLog:
+			a, perr := ParseCmdServerLog(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
 		case CmdActionNew:
 			a, perr := ParseCmdActionNew(CLI, tokens[n:], ctx)
 			if perr != nil {
@@ -11433,6 +11577,12 @@ func ParseCLICommand(tokens []string, ctx map[string]string) (act Action, handle
 			return a, true, nil
 		case CmdRunnerKick:
 			a, perr := ParseCmdRunnerKick(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdRunnerLog:
+			a, perr := ParseCmdRunnerLog(CLI, tokens[n:], ctx)
 			if perr != nil {
 				return nil, true, perr
 			}
@@ -12125,6 +12275,8 @@ type TUIDispatch[R any] interface {
 	ForwardTap(ForwardTapAction) R
 	// server dial-runner
 	ServerDialRunner(ServerDialRunnerAction) R
+	// server log
+	ServerLog(ServerLogAction) R
 	// action new
 	ActionNew(ActionPutAction) R
 	// action edit
@@ -12147,6 +12299,8 @@ type TUIDispatch[R any] interface {
 	RunnerDialRm(RunnerDialRemoveAction) R
 	// runner kick
 	RunnerKick(RunnerKickAction) R
+	// runner log
+	RunnerLog(RunnerLogAction) R
 	// ssh-gateway start
 	SshGatewayStart(SSHGatewayAction) R
 	// ssh-gateway status
@@ -12428,6 +12582,12 @@ func DispatchTUI[R any](h TUIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.ServerDialRunner(a), true, nil
+	case CmdServerLog:
+		a, perr := ParseCmdServerLog(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.ServerLog(a), true, nil
 	case CmdActionNew:
 		a, perr := ParseCmdActionNew(TUI, args, ctx)
 		if perr != nil {
@@ -12494,6 +12654,12 @@ func DispatchTUI[R any](h TUIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.RunnerKick(a), true, nil
+	case CmdRunnerLog:
+		a, perr := ParseCmdRunnerLog(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.RunnerLog(a), true, nil
 	case CmdSshGatewayStart:
 		a, perr := ParseCmdSshGatewayStart(TUI, args, ctx)
 		if perr != nil {
@@ -13004,6 +13170,8 @@ func DispatchTUIAction[R any](h TUIDispatch[R], act Action) (r R, handled bool) 
 		return h.ForwardTap(a), true
 	case ServerDialRunnerAction:
 		return h.ServerDialRunner(a), true
+	case ServerLogAction:
+		return h.ServerLog(a), true
 	case ActionPutAction:
 		switch a.Sub {
 		case "new":
@@ -13029,6 +13197,8 @@ func DispatchTUIAction[R any](h TUIDispatch[R], act Action) (r R, handled bool) 
 		return h.RunnerDialRm(a), true
 	case RunnerKickAction:
 		return h.RunnerKick(a), true
+	case RunnerLogAction:
+		return h.RunnerLog(a), true
 	case SSHGatewayAction:
 		switch a.Sub {
 		case "start":
@@ -13354,6 +13524,12 @@ func ParseTUICommand(tokens []string, ctx map[string]string) (act Action, handle
 				return nil, true, perr
 			}
 			return a, true, nil
+		case CmdServerLog:
+			a, perr := ParseCmdServerLog(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
 		case CmdActionNew:
 			a, perr := ParseCmdActionNew(TUI, tokens[n:], ctx)
 			if perr != nil {
@@ -13416,6 +13592,12 @@ func ParseTUICommand(tokens []string, ctx map[string]string) (act Action, handle
 			return a, true, nil
 		case CmdRunnerKick:
 			a, perr := ParseCmdRunnerKick(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdRunnerLog:
+			a, perr := ParseCmdRunnerLog(TUI, tokens[n:], ctx)
 			if perr != nil {
 				return nil, true, perr
 			}

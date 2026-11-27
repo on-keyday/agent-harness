@@ -141,6 +141,24 @@ func (a *App) onRunnerKick(msg tea.KeyMsg) (tea.Cmd, bool) {
 	return nil, true
 }
 
+// `l` on the runners table opens the selected runner's process log.
+func (a *App) onRunnerLog(msg tea.KeyMsg) (tea.Cmd, bool) {
+	if a.client == nil {
+		a.cmdresult.Append(WarnStyle.Render("runner log: not connected"))
+		return nil, true
+	}
+	r := a.runners.SelectedRunner()
+	if r == nil {
+		a.cmdresult.Append(WarnStyle.Render("no runner selected"))
+		return nil, true
+	}
+	idHex := fmt.Sprintf("%x", r.Id.Id[:])
+	opts := cli.HostLogOpts{}
+	a.hostLogModal.SetSize(a.width, a.height)
+	a.hostLogModal.OpenLoading("runner "+idHex[:8], idHex, opts)
+	return DoHostLogRunner(a.client, idHex, opts), true
+}
+
 // `!` on the tasks table runs an action against the selected task.
 func (a *App) onRunAction(msg tea.KeyMsg) (tea.Cmd, bool) {
 	id := a.tasks.SelectedID()

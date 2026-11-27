@@ -165,6 +165,8 @@ func main() {
 		"awaitIdleKill":       js.FuncOf(harnessAwaitIdleKill),
 		"execArgvText":        js.FuncOf(harnessExecArgvText),
 		"serverDialRunner":    js.FuncOf(harnessServerDialRunner),
+		"serverLog":           js.FuncOf(harnessServerLog),
+		"runnerLog":           js.FuncOf(harnessRunnerLog),
 		"runnerEnroll":        js.FuncOf(harnessRunnerEnroll),
 		"runnerKeys":          js.FuncOf(harnessRunnerKeys),
 		"actionPut":           js.FuncOf(harnessActionPut),
@@ -3699,6 +3701,75 @@ func harnessRunnerKick(this js.Value, args []js.Value) any {
 		}
 		text, ok := cli.FormatRunnerKick(st, res)
 		return text, ok, nil
+	})
+}
+
+func parseHostLogOptsJS(v js.Value) cli.HostLogOpts {
+	var opts cli.HostLogOpts
+	if v.IsUndefined() || v.IsNull() || v.Type() != js.TypeObject {
+		return opts
+	}
+	if off := v.Get("offset"); !off.IsUndefined() && !off.IsNull() {
+		opts.HasOffset = true
+		opts.Offset = uint64(off.Int())
+	}
+	if mb := v.Get("maxBytes"); !mb.IsUndefined() && !mb.IsNull() {
+		if n := mb.Int(); n > 0 {
+			opts.MaxBytes = uint32(n)
+		}
+	}
+	return opts
+}
+
+func hostLogPromise(target string, fn func(*cli.Client) (cli.HostLogSnapshot, error)) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		go func() {
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			snap, err := fn(c)
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			obj := js.Global().Get("Object").New()
+			obj.Set("ok", true)
+			obj.Set("header", cli.FormatHostLogHeader(target, snap))
+			obj.Set("source", cli.EnumWireName(snap.Source.String()))
+			obj.Set("totalSize", float64(snap.TotalSize))
+			obj.Set("startOffset", float64(snap.StartOffset))
+			obj.Set("text", string(snap.Data))
+			resolve.Invoke(obj)
+		}()
+		return nil
+	})
+	return js.Global().Get("Promise").New(executor)
+}
+
+// harness.serverLog(opts?) -> Promise<{ok, header, source, totalSize, startOffset, text}>
+func harnessServerLog(this js.Value, args []js.Value) any {
+	var opts cli.HostLogOpts
+	if len(args) > 0 {
+		opts = parseHostLogOptsJS(args[0])
+	}
+	return hostLogPromise("server", func(c *cli.Client) (cli.HostLogSnapshot, error) {
+		return cli.HostLogServerWith(rootCtx, c, opts)
+	})
+}
+
+// harness.runnerLog(runnerIDPrefix, opts?) -> Promise<{ok, header, source, totalSize, startOffset, text}>
+func harnessRunnerLog(this js.Value, args []js.Value) any {
+	prefix := jsArgString(args, 0)
+	var opts cli.HostLogOpts
+	if len(args) > 1 {
+		opts = parseHostLogOptsJS(args[1])
+	}
+	return hostLogPromise("runner "+prefix, func(c *cli.Client) (cli.HostLogSnapshot, error) {
+		return cli.HostLogRunnerWith(rootCtx, c, prefix, opts)
 	})
 }
 

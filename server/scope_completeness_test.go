@@ -202,10 +202,13 @@ var kindTargetClass = map[protocol.TaskControlKind]targetClass{
 	protocol.TaskControlKind_ActionPut:    noTarget,
 	protocol.TaskControlKind_ActionRemove: noTarget,
 	protocol.TaskControlKind_ActionList:   noTarget,
+	// Host process logs (pillar C, G19): a host's process log mixes every task
+	// on that host; gated centrally on host_log with no task scope.
+	protocol.TaskControlKind_HostLog: noTarget,
 }
 
 func TestEveryTaskControlKindIsClassified(t *testing.T) {
-	for i := 0; i <= int(protocol.TaskControlKind_ActionList); i++ {
+	for i := 0; i <= int(protocol.TaskControlKind_HostLog); i++ {
 		k := protocol.TaskControlKind(i)
 		if k.String() == fmt.Sprintf("TaskControlKind(%d)", i) {
 			continue // gap in the enum, not a real kind
@@ -233,10 +236,10 @@ func TestEveryTaskControlKindIsClassified(t *testing.T) {
 // runner_kick; session_mode; the five record_* kinds; and transcript_list /
 // transcript_get; the six schedule_* kinds; and credential_issue /
 // credential_rekey.
-func TestActionListIsStillTheLastKind(t *testing.T) {
-	next := protocol.TaskControlKind(int(protocol.TaskControlKind_ActionList) + 1)
+func TestHostLogIsStillTheLastKind(t *testing.T) {
+	next := protocol.TaskControlKind(int(protocol.TaskControlKind_HostLog) + 1)
 	if next.String() != fmt.Sprintf("TaskControlKind(%d)", int(next)) {
-		t.Fatalf("a kind was appended after action_list (%v) — raise the loop bound in "+
+		t.Fatalf("a kind was appended after host_log (%v) — raise the loop bound in "+
 			"TestEveryTaskControlKindIsClassified, which otherwise stops before it (authority's "+
 			"TestEveryKindIsClassified guards its own bound, lastKind)", next)
 	}

@@ -63,6 +63,9 @@ enum RunnerRequestType:
     transcript            # list a task's transcripts or read one (pillar B).
                           # Sent only to a runner whose RunnerHello sets
                           # transcripts: an older one would be dropped as above.
+    host_log              # read the runner's process log (pillar C).
+                          # Sent only to a runner whose RunnerHello sets
+                          # host_logs: an older one would be dropped as above.
 
 # AllowedRoot is a single repository root path the runner is willing to accept tasks for.
 format AllowedRoot:
@@ -133,7 +136,10 @@ format RunnerHello:
     # from before it sends 0, and is never given a --oneshot open: it would
     # ignore the bit and start the interactive argv.
     oneshot_sessions :u1
-    reserved :u5
+    # this runner answers RunnerRequestType.host_log (pillar C, C-D5). A runner
+    # from before it sends 0 and is never asked.
+    host_logs :u1
+    reserved :u4
     # named agent profiles this runner can launch a session under (empty =
     # runner has no profile concept beyond its single --agent-bin).
     agent_profiles_len :u8
@@ -545,6 +551,7 @@ format RunnerRequest:
         RunnerRequestType.rebind_session => rebind_session :RebindSessionRequest
         RunnerRequestType.leave => leave :LeaveRequest
         RunnerRequestType.transcript => transcript :RunnerTranscriptRequest
+        RunnerRequestType.host_log => host_log :RunnerHostLogRequest
 
 # Server -> runner, RunnerRequestType.leave: `runner kick` asked this runner to
 # go. It ends its tasks and the process exits 0. by names who kicked it, as the
@@ -835,6 +842,7 @@ enum TaskControlKind:
     action_put              # appended: create or edit one action
     action_remove           # appended: delete one action
     action_list             # appended: every action, on a stream
+    host_log                # appended: read server or runner process log on a stream (pillar C)
 
 # ClientKind tags the kind of caller that opened a TaskControl session.
 # `agent` is an in-task harness-cli that proves its identity via agent_info;
@@ -3334,6 +3342,7 @@ format TaskControlRequest:
         TaskControlKind.action_put               => action_put               :ActionPutRequest
         TaskControlKind.action_remove            => action_remove            :ActionRemoveRequest
         TaskControlKind.action_list              => action_list              :ActionListRequest
+        TaskControlKind.host_log                 => host_log                 :HostLogRequest
         .. => error("Unexpected task")
 
 # --- credential tasks (docs/superpowers/specs/2026-11-21-credential-tasks-design.md) ---
@@ -3550,6 +3559,7 @@ format TaskControlResponse:
         TaskControlKind.action_put               => action_put               :ActionPutResponse
         TaskControlKind.action_remove            => action_remove            :ActionRemoveResponse
         TaskControlKind.action_list              => action_list              :ActionListResponse
+        TaskControlKind.host_log                 => host_log                 :HostLogResponse
 
 # --- runner enrollment (2026-10-27-runner-enrollment-design.md) --------------
 # The server lets a runner register under AuthRole.runner only when it signs
@@ -5155,6 +5165,10 @@ enum Capability:
     # additionally gated, per holder, as a set_caps on that holder would be
     # (C11). Default-off, appended.
     action_admin = 0x100000000, "action_admin"
+    # host_log reads the server's and connected runners' process logs
+    # (pillar C, C-D2). No scope: a host's process log mixes every task on that
+    # host (G19). Default-off, appended.
+    host_log = 0x200000000, "host_log"
     # `all` is a LITERAL, not "every defined bit", so it widens by hand — the
     # same edit exec_view / exec_cowrite / exec_resize each needed. The WAL
     # persists the NUMBER, so a task already granted `all` holds 0xffff and
@@ -5163,14 +5177,14 @@ enum Capability:
     # board_persist; nor, at 0x1ffffff, board_member; nor, at 0xfffffff,
     # record_delete and record_persist; nor, at 0xfffffff, transcript_read; nor, at
     # 0x1fffffff, schedule_edit; nor, at 0x3fffffff, schedule_run; nor, at 0x7fffffff, credential_issue;
-    # nor, at 0xffffffff, action_admin).
+    # nor, at 0xffffffff, action_admin; nor, at 0x1ffffffff, host_log).
     # That is the safe
     # direction and needs no migration.
     #
     # Widening it is REQUIRED, not stylistic: callerCaps hands operator
     # connections Capability_All, so a literal left at 0xffff would deny the
     # operator its own feature.
-    all            = 0x1ffffffff, "all"
+    all            = 0x3ffffffff, "all"
 
 # ScopeBase is the base target set a TaskScope starts from, before its explicit
 # id list is unioned in. Self joins that union unless exclude_self removes it,
@@ -6794,3 +6808,60 @@ format ScheduleDetail:
     # Appended: the stored authority's overlap warning, as
     # TaskInfo.action_overlap, computed over the task each firing runs as.
     action_overlap :Capability
+
+# --- host logs (pillar C, docs/superpowers/specs/2026-11-28-pillar-c-host-logs-design.md) ---
+
+enum HostLogTarget:
+    :u8
+    server = 0, "server"
+    runner = 1, "runner"
+
+enum HostLogMode:
+    :u8
+    tail  = 0, "tail"
+    range = 1, "range"
+
+enum HostLogSource:
+    :u8
+    file = 0, "file"
+    ring = 1, "ring"
+
+enum HostLogStatus:
+    :u8
+    ok                 = 0, "ok"
+    no_such_runner     = 1, "no_such_runner"
+    runner_offline     = 2, "runner_offline"
+    runner_unsupported = 3, "runner_unsupported"
+    unavailable        = 4, "unavailable"
+    io_error           = 5, "io_error"
+    internal_error     = 6, "internal_error"
+
+# HostLogRequest asks for a tail or byte-range snapshot of either the server's
+# or a connected runner's process log. Gated centrally on Capability.host_log.
+format HostLogRequest:
+    target    :HostLogTarget
+    runner_id :RunnerID       # zero when target == server
+    mode      :HostLogMode
+    offset    :u64            # start byte offset when mode == range
+    max_bytes :u32            # 0 => default (64 KiB); capped at 4 MiB
+
+format HostLogResponse:
+    status    :HostLogStatus
+    stream_id :u64            # carries HostLogResult + raw bytes; 0 unless ok
+
+format RunnerHostLogRequest:
+    stream_id :u64
+    mode      :HostLogMode
+    offset    :u64
+    max_bytes :u32
+
+# HostLogResult is written at the start of the response stream, followed
+# immediately by returned_bytes raw bytes of process log data, then EOF.
+format HostLogResult:
+    status         :HostLogStatus
+    source         :HostLogSource
+    total_size     :u64
+    start_offset   :u64
+    returned_bytes :u32
+    message_len    :u16
+    message        :[message_len]u8

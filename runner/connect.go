@@ -17,6 +17,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/connauth"
+	"github.com/on-keyday/agent-harness/hostlog"
 	"github.com/on-keyday/agent-harness/iplink"
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -58,6 +59,9 @@ type Config struct {
 	// A restart SHOULD change it: the value differing is what tells the server
 	// the children this runner had are gone.
 	RunnerID protocol.RunnerID
+
+	// HostLog reads this runner's process log for RunnerRequestType_HostLog (pillar C).
+	HostLog *hostlog.Reader
 
 	AllowedRoots []string // absolute repo paths this runner serves; a task's repo must equal one
 	MaxTasks     int      // maximum concurrent tasks (0 → defaults to 1)
@@ -451,6 +455,7 @@ func driveAfterConn(ctx context.Context, cfg Config, pc *peer.Conn) (*RunHandle,
 		// because this is where it becomes the Session's, and it is the end
 		// that SENDS every pull -- the state nobody could see before.
 		Logger:                     cfg.Logger,
+		HostLog:                    cfg.HostLog,
 		Now:                        time.Now,
 		NoWorktree:                 cfg.NoWorktree,
 		ForceInjectHarnessSettings: cfg.ForceInjectHarnessSettings,
@@ -604,6 +609,7 @@ func buildRunnerHello(cfg Config) protocol.RunnerHello {
 	// asks no runner that does not say so.
 	hh.SetTranscripts(true)
 	hh.SetOneshotSessions(true)
+	hh.SetHostLogs(true)
 	return hh
 }
 
@@ -852,6 +858,12 @@ func dispatchRunnerRequest(ctx context.Context, session *Session, log *slog.Logg
 			return
 		}
 		go session.handleTranscript(ctx, tr)
+	case protocol.RunnerRequestType_HostLog:
+		hl := req.HostLog()
+		if hl == nil {
+			return
+		}
+		go session.handleHostLog(ctx, hl)
 	case protocol.RunnerRequestType_OpenExecRun:
 		er := req.OpenExecRun()
 		if er == nil {

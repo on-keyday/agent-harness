@@ -9,14 +9,14 @@ import (
 
 // lastKind is the highest TaskControlKind the protocol defines. The test below
 // fails when a kind is added past it, so the bound cannot go stale silently.
-const lastKind = protocol.TaskControlKind_ActionList
+const lastKind = protocol.TaskControlKind_HostLog
 
 func reqOf(k protocol.TaskControlKind) *protocol.TaskControlRequest {
 	return &protocol.TaskControlRequest{Header: protocol.TaskControlRequestHeader{Kind: k}}
 }
 
 func TestEveryKindIsClassified(t *testing.T) {
-	if s := (lastKind + 1).String(); s != "TaskControlKind(92)" {
+	if s := (lastKind + 1).String(); s != "TaskControlKind(93)" {
 		t.Fatalf("kind %d is now %q: a kind was added past lastKind; classify it in RequestNeed and move lastKind", lastKind+1, s)
 	}
 	for k := protocol.TaskControlKind(0); k <= lastKind; k++ {
@@ -33,6 +33,7 @@ var pureMapKinds = []protocol.TaskControlKind{
 	protocol.TaskControlKind_PruneTasks,
 	protocol.TaskControlKind_DialRunner,
 	protocol.TaskControlKind_Notify,
+	protocol.TaskControlKind_HostLog,
 	protocol.TaskControlKind_BoardTopics,
 	protocol.TaskControlKind_BoardRead,
 	protocol.TaskControlKind_BoardPurge,

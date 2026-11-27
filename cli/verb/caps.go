@@ -86,6 +86,10 @@ func GrantableCaps() []protocol.Capability {
 		// action_admin after credential_issue: it defines what ActionSet-
 		// conditioned exec_run grants run (grant conditions spec C13).
 		protocol.Capability_ActionAdmin,
+		// host_log after action_admin: it reads server and runner process logs
+		// (pillar C, C-D2). No scope: a host's process log mixes every task on
+		// that host (G19).
+		protocol.Capability_HostLog,
 		protocol.Capability_All,
 	}
 }
@@ -209,6 +213,8 @@ func CapDescription(c protocol.Capability) string {
 		return "issue credential tasks: a key pair whose holder connects with the issued task's caps and scope (credential new / rekey); attenuated like spawn, and a credential can never hold this bit. Issuing names no task; re-key reaches only credentials in your own subtree (your descendants) within this bit's scope, and an operator hands someone else's credential over by reparenting it"
 	case protocol.Capability_ActionAdmin:
 		return "define, edit and delete server-defined actions, the named commands an ActionSet-conditioned exec_run may run (action new / edit / rm; action ls also admits exec_run). No scope; an edit is refused unless you could re-grant every task and schedule whose grant names the action, as caps set would need, and never when your own grant names it"
+	case protocol.Capability_HostLog:
+		return "read the server's and connected runners' process logs as a tail or byte range (server log, runner log). No scope: a process log mixes every task on that host"
 	case protocol.Capability_All:
 		return "full capability set (operator-equivalent)"
 	default:
@@ -517,6 +523,9 @@ var capAuditTable = map[protocol.Capability]capAuditEntry{
 	// operator hands someone else's credential over by reparenting it.
 	protocol.Capability_CredentialIssue: {tier: TierStrong},
 	protocol.Capability_ActionAdmin:     {tier: TierStrong, scope: ScopeNone},
+	// Strong: a host's process log mixes every task on that host and cannot be
+	// scoped to a subset of tasks (pillar C, G19).
+	protocol.Capability_HostLog:         {tier: TierStrong, scope: ScopeNone},
 	protocol.Capability_ResumeExact:     {tier: TierMid, impliedBy: []protocol.Capability{protocol.Capability_Resume}},
 	protocol.Capability_ExecView:        {tier: TierWeak, impliedBy: []protocol.Capability{protocol.Capability_ExecCowrite, protocol.Capability_ExecControl}},
 	protocol.Capability_ExecResize:      {tier: TierWeak},

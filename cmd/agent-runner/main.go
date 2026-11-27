@@ -26,6 +26,7 @@ import (
 
 	"github.com/google/shlex"
 	"github.com/on-keyday/agent-harness/connauth"
+	"github.com/on-keyday/agent-harness/hostlog"
 	"github.com/on-keyday/agent-harness/runner"
 	"github.com/on-keyday/agent-harness/runner/agentskills"
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -87,6 +88,9 @@ type mainConfig struct {
 	// DETACHED_PROCESS child) can still close the WS cleanly instead of
 	// waiting for ping timeout.
 	ShutdownFile string
+	// LogFile, when non-empty, receives slog output (append) and is served via
+	// `runner log` (pillar C). Empty falls back to stderr + 1 MiB in-process ring.
+	LogFile string
 
 	// PprofListen mirrors harness-server's flag of the same name. The runner
 	// needs it for the same reason the server did and for one more: on a pull
@@ -146,6 +150,7 @@ func (c *mainConfig) bindFlags(fs *flag.FlagSet) {
 	fs.DurationVar(&c.ReconnectInit, "reconnect-initial", c.ReconnectInit, "first backoff after a disconnect")
 	fs.DurationVar(&c.ReconnectMax, "reconnect-max", c.ReconnectMax, "backoff cap")
 	fs.StringVar(&c.ShutdownFile, "shutdown-file", c.ShutdownFile, "path to a sentinel file the runner polls every 250ms; when it appears the runner triggers a graceful shutdown. daemon.py injects this automatically when the runner is spawned via scripts/runner.py up, so Windows downs (where SIGTERM can't reach a DETACHED_PROCESS child) can still close the WS cleanly instead of waiting for ping timeout.")
+	fs.StringVar(&c.LogFile, "log-file", c.LogFile, "path to append process slog output to and serve via `runner log` (pillar C). When empty, slog writes to stderr mirrored into an in-process 1 MiB ring buffer. daemon.py injects bin/.run/<slot>.log automatically.")
 	fs.StringVar(&c.WSListen, "listen", c.WSListen, "WebSocket listen host:port for server-initiated reverse-dial mode (mutually exclusive with --server-cid; mirrors harness-server's --listen). Needs the server's key (--server-pubkey / --server-pubkey-file): a listening runner otherwise takes any dialer as its server")
 	fs.StringVar(&c.UDPListen, "udp-listen", c.UDPListen, "UDP listen host:port for server-initiated reverse-dial mode (mutually exclusive with --server-cid). Combine with --listen for ws+udp dualstack. Needs the server's key, as --listen does")
 	fs.StringVar(&c.PprofListen, "pprof-listen", c.PprofListen, "serve net/http/pprof on this host:port (empty = off, the default). Turning it on ALSO enables the block and mutex profilers, which ship off because they sample on every blocking event: a CPU profile alone answers \"where does the CPU go\", which is the wrong question for a process sitting at a fraction of a core — the other half is waiting, and only the block profile and the execution trace say on what. Dev-only and unauthenticated: /debug/pprof exposes goroutine stacks and lets anyone who can reach it start a profile, so bind it to loopback or to a namespace nothing else can reach.")
@@ -442,6 +447,13 @@ func main() {
 		}()
 	}
 
+	hostLogReader, closeHostLog, err := hostlog.Setup(cfg.LogFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "agent-runner: %v\n", err)
+		os.Exit(1)
+	}
+	defer closeHostLog()
+
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
@@ -511,6 +523,7 @@ func main() {
 		Hostname:                   hostname,
 		Profiles:                   cfg.Profiles,
 		Logger:                     slog.Default(),
+		HostLog:                    hostLogReader,
 		ServerPubKey:               serverPubKey,
 		RunnerKey:                  runnerKey,
 		NotEnrolledOnce:            new(sync.Once),

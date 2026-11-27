@@ -43,6 +43,7 @@ var appOverlays = []overlay{
 	{func(a *App) bool { return a.actionRunForm.IsOpen() }, (*App).inActionRunForm},
 	{func(a *App) bool { return a.actionsModal.IsOpen() }, (*App).inActionsModal},
 	{func(a *App) bool { return a.runnerKeysModal.IsOpen() }, (*App).inRunnerKeysModal},
+	{func(a *App) bool { return a.hostLogModal.IsOpen() }, (*App).inHostLogModal},
 	{func(a *App) bool { return a.idleWatchersModal.IsOpen() }, (*App).inIdleWatchersModal},
 	{func(a *App) bool { return a.capsAuditModal.IsOpen() }, (*App).inCapsAuditModal},
 	{func(a *App) bool { return a.forwardsModal.IsOpen() }, (*App).inForwardsModal},

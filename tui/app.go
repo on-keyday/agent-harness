@@ -151,6 +151,8 @@ type App struct {
 	// runnerKeysModal is K (runner keys and dial records); kickAsk is the
 	// runners table's pending kick question, nil when none.
 	runnerKeysModal RunnerKeysModal
+	// hostLogModal shows server or runner process logs (`l` on runners, `server log`, `runner log`).
+	hostLogModal HostLogModal
 	kickAsk         *kickQuestion
 	// idleWatchersModal lists armed await-idle watchers; opened with `I`.
 	idleWatchersModal IdleWatchersModal
@@ -461,6 +463,7 @@ func New(cfg Config) *App {
 		actionsModal:      NewActionsModal(),
 		actionRunForm:     NewActionRunForm(),
 		runnerKeysModal:   NewRunnerKeysModal(),
+		hostLogModal:      NewHostLogModal(),
 		idleWatchersModal: NewIdleWatchersModal(),
 		capsAuditModal:    NewCapsAuditModal(),
 		rawModal:          NewRawConnectModal(),
@@ -1641,6 +1644,17 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return a, a.refreshSnapshot()
 
+	case HostLogResultMsg:
+		if a.hostLogModal.IsOpen() {
+			a.hostLogModal.SetResult(msg)
+		}
+		if msg.Err != nil {
+			a.cmdresult.Append(ErrorStyle.Render(fmt.Sprintf("%s log: %v", msg.Target, msg.Err)))
+		} else {
+			a.cmdresult.Append(OKStyle.Render(cli.FormatHostLogHeader(msg.Target, msg.Snap)))
+		}
+		return a, nil
+
 	case FilePickerListingMsg:
 		var pcmd tea.Cmd
 		a.filepicker, pcmd = a.filepicker.Update(msg)
@@ -2014,6 +2028,7 @@ func (a *App) updateWindowSize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	a.forwardsModal.SetSize(a.width, a.height)
 	a.tap.SetSize(a.width, a.height)
 	a.execsModal.SetSize(a.width, a.height)
+	a.hostLogModal.SetSize(a.width, a.height)
 	a.idleWatchersModal.SetSize(a.width, a.height)
 	a.capsAuditModal.SetSize(a.width, a.height)
 	a.boardModal.SetSize(a.width, a.height)
@@ -2494,6 +2509,9 @@ func (a *App) View() string {
 	}
 	if a.runnerKeysModal.IsOpen() {
 		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.runnerKeysModal.View())
+	}
+	if a.hostLogModal.IsOpen() {
+		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.hostLogModal.View())
 	}
 	if a.idleWatchersModal.IsOpen() {
 		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.idleWatchersModal.View())
