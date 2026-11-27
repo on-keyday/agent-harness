@@ -749,7 +749,7 @@ func (a *App) onBackgroundOpen(msg tea.KeyMsg) (tea.Cmd, bool) {
 	// In the Schedules table `N` is a new schedule: same letter, the table it
 	// is pressed in says which new thing.
 	if a.focus == focusSchedules {
-		a.bgform.OpenSchedule(repo)
+		a.bgform.OpenSchedule(repo, a.authority())
 		return nil, true
 	}
 	// In the Credentials table it is a new credential, issued from the

@@ -118,6 +118,9 @@ const (
 	// set_parent. Single-choice: Enter applies the CURSOR row (root / swap /
 	// a task); there is no toggling and no caps/base/cascade rows.
 	PickerModeParent
+	// PickerModeSchedule edits the schedule form's authority (its authority
+	// row): as PickerModeSession, but apply hands it back to the form.
+	PickerModeSchedule
 )
 
 type pickerRowKind int
@@ -180,7 +183,16 @@ func (m *AuthorityPickerModel) OpenRegrant(target protocol.TaskInfo, tasks []pro
 
 // OpenSession opens the picker prefilled with the session defaults.
 func (m *AuthorityPickerModel) OpenSession(defaults Authority, tasks []protocol.TaskInfo) {
-	m.reset(PickerModeSession, defaults.Caps, defaults.Scope)
+	m.openAuthority(PickerModeSession, defaults, tasks)
+}
+
+// OpenSchedule opens the picker on a schedule form's authority.
+func (m *AuthorityPickerModel) OpenSchedule(au Authority, tasks []protocol.TaskInfo) {
+	m.openAuthority(PickerModeSchedule, au, tasks)
+}
+
+func (m *AuthorityPickerModel) openAuthority(mode AuthorityPickerMode, defaults Authority, tasks []protocol.TaskInfo) {
+	m.reset(mode, defaults.Caps, defaults.Scope)
 	m.setDeleg(defaults.DelegateCaps, defaults.DelegateScope)
 	m.setLimits(defaults.SpawnDepth, defaults.MaxDescendants)
 	m.setOverrides(defaults.Overrides, defaults.GrantConditions)
@@ -577,7 +589,7 @@ func (m *AuthorityPickerModel) delegLabel() string {
 
 func (m *AuthorityPickerModel) Result() (caps protocol.Capability, scopeSpec string, cascade, keepConns bool) {
 	spec := m.scopeSpec()
-	if m.mode == PickerModeSession {
+	if m.mode == PickerModeSession || m.mode == PickerModeSchedule {
 		return m.caps, spec, false, false
 	}
 	return m.caps, spec, m.cascade, m.keepConns
@@ -670,6 +682,8 @@ func (m *AuthorityPickerModel) View() string {
 		title = "re-grant " + m.targetHex[:8]
 	case PickerModeParent:
 		title = "set parent of " + m.targetHex[:8]
+	case PickerModeSchedule:
+		title = "schedule authority (enter: back to the form with it)"
 	}
 
 	// The popup's width depends only on the terminal, never on the content:

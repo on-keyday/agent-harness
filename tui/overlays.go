@@ -958,6 +958,9 @@ func (a *App) inAuthorityPicker(msg tea.KeyMsg) tea.Cmd {
 	switch {
 	case msg.Type == tea.KeyEsc:
 		a.authorityPicker.Close()
+		if a.authorityPicker.Mode() == PickerModeSchedule {
+			a.bgform.Show() // back to the form, its authority as it was
+		}
 		return nil
 	case msg.Type == tea.KeyUp:
 		a.authorityPicker.Move(-1)
@@ -1046,6 +1049,21 @@ func (a *App) inAuthorityPicker(msg tea.KeyMsg) tea.Cmd {
 		depth, maxDesc, limitsChanged := a.authorityPicker.Limits()
 		mode, target := a.authorityPicker.Mode(), a.authorityPicker.TargetID()
 		a.authorityPicker.Close()
+		if mode == PickerModeSchedule {
+			sc, err := cli.ParseScope(spec)
+			if err != nil {
+				a.cmdresult.Append(ErrorStyle.Render("scope: " + err.Error()))
+				a.bgform.Show()
+				return nil
+			}
+			a.bgform.SetAuthority(Authority{Caps: caps, Scope: sc, Overrides: overrides, GrantConditions: grantConds,
+				DelegateCaps: dcaps, DelegateScope: dscope, SpawnDepth: depth, MaxDescendants: maxDesc})
+			for _, r := range removed {
+				a.cmdresult.Append(WarnStyle.Render("schedule authority: dropped override " + r))
+			}
+			a.bgform.Show()
+			return nil
+		}
 		if mode == PickerModeSession {
 			a.sessionCaps = caps
 			if spec == "" {
@@ -1374,6 +1392,16 @@ func (a *App) inRecordKeep(msg tea.KeyMsg) tea.Cmd {
 
 // Background form intercepts ALL keys when open (pillar A spec, A-D15).
 func (a *App) inBgForm(msg tea.KeyMsg) tea.Cmd {
+	if msg.Type == tea.KeyEnter && a.bgform.AuthorityFocused() && !a.bgform.Pending() {
+		// The authority row: the picker edits it and hands it back.
+		a.bgform.Hide()
+		a.authorityPicker.SetSize(a.width, a.height)
+		a.authorityPicker.OpenSchedule(a.bgform.Authority(), a.tasks.Rows())
+		if a.client != nil {
+			return DoActionViews(a.client, "picker")
+		}
+		return nil
+	}
 	switch msg.Type {
 	case tea.KeyEsc:
 		a.bgform.Close()

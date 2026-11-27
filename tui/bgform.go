@@ -39,14 +39,17 @@ const (
 	bgFieldZone
 	bgFieldRepo
 	bgFieldTarget
-	bgFieldOneshot
-	bgFieldStream
+	bgFieldKind // interactive | oneshot | stream: one kind, as the WebUI's radio
 	bgFieldConv
 	bgFieldCount
 )
 
+// bgFocusAuthority is the schedule form's authority row: not a text field,
+// Enter on it opens the authority picker (PickerModeSchedule).
+const bgFocusAuthority = -2
+
 var bgFieldLabels = [bgFieldCount]string{"agent", "deadline", "turn end", "quiet", "blocked", "queue timeout", "record", "pty",
-	"cron", "zone", "repo", "task", "one-shot", "stream", "conversation"}
+	"cron", "zone", "repo", "task", "kind", "conversation"}
 
 // defaultBgDeadline is the deadline the form starts with: the front-end
 // prefill G41 allows (the server has no default).
@@ -75,11 +78,14 @@ type BgFormModel struct {
 	pending bool
 	errMsg  string
 	// editID is the schedule this form edits ("" = a new schedule); editBase
-	// its stored values, which carry what the form has no field for
-	// (authority, agent args, runner); editWas the form as opened, read back.
+	// its stored values, which carry what the form has no field for (agent
+	// args, runner); editWas the form as opened, read back.
 	editID   string
 	editBase cli.ScheduleForm
 	editWas  cli.ScheduleForm
+	// auth is a schedule's authority (the authority row): a new one's starts
+	// as the session defaults, an edit's as stored; the picker replaces it.
+	auth Authority
 }
 
 func NewBgForm() BgFormModel {
@@ -112,8 +118,7 @@ func NewBgForm() BgFormModel {
 	m.fields[bgFieldCron].Placeholder = "0 9 * * *  or  @daily"
 	m.fields[bgFieldZone].Placeholder = "the server's zone (or e.g. Asia/Tokyo)"
 	m.fields[bgFieldTarget].Placeholder = "new task (or a task id / its prefix to bind)"
-	m.fields[bgFieldOneshot].Placeholder = "no (no|yes)"
-	m.fields[bgFieldStream].Placeholder = "no (no|yes): each firing runs an event-stream session"
+	m.fields[bgFieldKind].Placeholder = "interactive (interactive|oneshot|stream)"
 	m.fields[bgFieldConv].Placeholder = "no (no|yes): each firing resumes the conversation"
 	m.fields[bgFieldRepo].CharLimit = 4096
 	return m
@@ -137,7 +142,7 @@ func (m *BgFormModel) reset(purpose bgFormPurpose) {
 	m.open, m.purpose = true, purpose
 	m.repo, m.resumeID, m.switchID, m.stream, m.resumeConversation = "", "", "", false, false
 	m.pin, m.pending, m.errMsg = protocol.RunnerID{}, false, ""
-	m.editID, m.editBase, m.editWas = "", cli.ScheduleForm{}, cli.ScheduleForm{}
+	m.editID, m.editBase, m.editWas, m.auth = "", cli.ScheduleForm{}, cli.ScheduleForm{}, Authority{}
 	m.prompt.Reset()
 	for i := range m.fields {
 		m.fields[i].SetValue("")
@@ -189,8 +194,9 @@ func (m *BgFormModel) OpenResume(t protocol.TaskInfo, idHex string, resumeConver
 
 // OpenSchedule starts a new schedule: its first firing creates a task on
 // repo, or the task field names one to bind.
-func (m *BgFormModel) OpenSchedule(repo string) {
+func (m *BgFormModel) OpenSchedule(repo string, auth Authority) {
 	m.reset(bgSchedule)
+	m.auth = auth
 	m.fields[bgFieldRepo].SetValue(repo)
 	m.setFocus(bgFieldCron)
 }
@@ -199,9 +205,9 @@ func (m *BgFormModel) OpenSchedule(repo string) {
 // with its values (cli.ScheduleFormOf). Saving sends only what changed
 // (ScheduleEditArgs); the repo and the bound task are not editable, and what
 // the form has no field for is kept as stored.
-func (m *BgFormModel) OpenScheduleEdit(id string, f cli.ScheduleForm) {
+func (m *BgFormModel) OpenScheduleEdit(id string, f cli.ScheduleForm, auth Authority) {
 	m.reset(bgSchedule)
-	m.editID, m.editBase = id, f
+	m.editID, m.editBase, m.auth = id, f, auth
 	yesNo := func(b bool) string {
 		if b {
 			return "yes"
@@ -218,7 +224,7 @@ func (m *BgFormModel) OpenScheduleEdit(id string, f cli.ScheduleForm) {
 		bgFieldCron: f.Cron, bgFieldZone: f.Tz, bgFieldRepo: f.Repo, bgFieldTarget: f.Task, bgFieldAgent: f.Agent,
 		bgFieldDeadline: f.Deadline, bgFieldTurnEnd: f.TurnEnd, bgFieldQuiet: f.Quiet, bgFieldBlocked: f.Blocked,
 		bgFieldQueue: f.QueueTimeout, bgFieldRecord: orDefault(f.Record), bgFieldPty: orDefault(f.Pty),
-		bgFieldOneshot: yesNo(f.Kind == "oneshot"), bgFieldStream: yesNo(f.Kind == "stream"),
+		bgFieldKind: f.Kind,
 		bgFieldConv: yesNo(f.ResumeConversation),
 	} {
 		m.fields[i].SetValue(v)
@@ -237,6 +243,8 @@ func (m *BgFormModel) OpenScheduleEdit(id string, f cli.ScheduleForm) {
 func (m *BgFormModel) scheduleFormValue() (cli.ScheduleForm, error) {
 	val := func(i int) string { return strings.TrimSpace(m.fields[i].Value()) }
 	f := m.editBase
+	au := m.auth
+	f.SetAuthority(au.Caps, au.Scope, au.Overrides, au.GrantConditions, au.DelegateCaps, au.DelegateScope, au.SpawnDepth, au.MaxDescendants)
 	f.Cron, f.Tz, f.Agent, f.Prompt = val(bgFieldCron), val(bgFieldZone), val(bgFieldAgent), m.prompt.Value()
 	f.Deadline, f.TurnEnd, f.Quiet, f.Blocked, f.QueueTimeout =
 		val(bgFieldDeadline), val(bgFieldTurnEnd), val(bgFieldQuiet), val(bgFieldBlocked), val(bgFieldQueue)
@@ -253,29 +261,45 @@ func (m *BgFormModel) scheduleFormValue() (cli.ScheduleForm, error) {
 			return f, fmt.Errorf("%s: %q: want default, on or off", bgFieldLabels[t.i], v)
 		}
 	}
-	yes := map[int]bool{}
-	for _, i := range []int{bgFieldOneshot, bgFieldStream, bgFieldConv} {
-		switch v := val(i); v {
-		case "", "no":
-		case "yes":
-			yes[i] = true
-		default:
-			return f, fmt.Errorf("%s: %q: want no or yes", bgFieldLabels[i], v)
-		}
+	kind, err := m.scheduleKind()
+	if err != nil {
+		return f, err
 	}
-	switch {
-	case yes[bgFieldOneshot] && yes[bgFieldStream]:
-		return f, fmt.Errorf("one-shot and stream: a schedule runs one kind of session")
-	case yes[bgFieldOneshot]:
-		f.Kind = "oneshot"
-	case yes[bgFieldStream]:
-		f.Kind = "stream"
+	f.Kind = kind
+	switch v := val(bgFieldConv); v {
+	case "", "no":
+		f.ResumeConversation = false
+	case "yes":
+		f.ResumeConversation = true
 	default:
-		f.Kind = "interactive"
+		return f, fmt.Errorf("%s: %q: want no or yes", bgFieldLabels[bgFieldConv], v)
 	}
-	f.ResumeConversation = yes[bgFieldConv]
 	return f, nil
 }
+
+// scheduleKind is the kind field: one of interactive, oneshot, stream
+// ("" = interactive).
+func (m *BgFormModel) scheduleKind() (string, error) {
+	switch v := strings.TrimSpace(m.fields[bgFieldKind].Value()); v {
+	case "", "interactive":
+		return "interactive", nil
+	case "oneshot", "stream":
+		return v, nil
+	default:
+		return "", fmt.Errorf("kind: %q: want interactive, oneshot or stream", v)
+	}
+}
+
+// Authority is the schedule form's authority; SetAuthority replaces it (the
+// picker's apply).
+func (m *BgFormModel) Authority() Authority      { return m.auth }
+func (m *BgFormModel) SetAuthority(au Authority) { m.auth = au }
+func (m *BgFormModel) AuthorityFocused() bool    { return m.open && m.focus == bgFocusAuthority }
+
+// Hide and Show step the form aside for the authority picker and back,
+// keeping what was typed (Close and the Open* calls reset it).
+func (m *BgFormModel) Hide() { m.open = false }
+func (m *BgFormModel) Show() { m.open = true }
 
 // ScheduleEditArgs is `schedule edit`'s line for what the operator changed
 // (cli.ScheduleEditArgs); just the id when nothing did.
@@ -318,11 +342,11 @@ func (m *BgFormModel) order() []int {
 	if m.purpose == bgSchedule && m.editID != "" {
 		// An edit cannot move a schedule to another repo or task.
 		return []int{bgFieldCron, bgFieldZone, -1, bgFieldAgent, bgFieldDeadline, bgFieldTurnEnd,
-			bgFieldQuiet, bgFieldBlocked, bgFieldQueue, bgFieldRecord, bgFieldPty, bgFieldOneshot, bgFieldStream, bgFieldConv}
+			bgFieldQuiet, bgFieldBlocked, bgFieldQueue, bgFieldRecord, bgFieldPty, bgFieldKind, bgFieldConv, bgFocusAuthority}
 	}
 	if m.purpose == bgSchedule {
 		return []int{bgFieldCron, bgFieldZone, bgFieldRepo, bgFieldTarget, -1, bgFieldAgent, bgFieldDeadline, bgFieldTurnEnd,
-			bgFieldQuiet, bgFieldBlocked, bgFieldQueue, bgFieldRecord, bgFieldPty, bgFieldOneshot, bgFieldStream, bgFieldConv}
+			bgFieldQuiet, bgFieldBlocked, bgFieldQueue, bgFieldRecord, bgFieldPty, bgFieldKind, bgFieldConv, bgFocusAuthority}
 	}
 	return []int{-1, bgFieldAgent, bgFieldDeadline, bgFieldTurnEnd, bgFieldQuiet, bgFieldBlocked, bgFieldQueue, bgFieldRecord, bgFieldPty}
 }
@@ -361,6 +385,9 @@ func (m *BgFormModel) Update(msg tea.Msg) tea.Cmd {
 	if m.focus == -1 {
 		m.prompt, cmd = m.prompt.Update(msg)
 		return cmd
+	}
+	if m.focus < 0 {
+		return nil // the authority row takes Enter only (inBgForm)
 	}
 	m.fields[m.focus], cmd = m.fields[m.focus].Update(msg)
 	return cmd
@@ -492,19 +519,52 @@ func (m *BgFormModel) ScheduleArgs(resolve func(string) (string, error)) ([]stri
 			return nil, fmt.Errorf("%s: %q: want default, on or off", bgFieldLabels[f.i], v)
 		}
 	}
-	for _, f := range []struct {
-		i    int
-		flag string
-	}{{bgFieldOneshot, "--oneshot"}, {bgFieldStream, "--stream"}, {bgFieldConv, "--resume-conversation"}} {
-		switch v := val(f.i); v {
-		case "", "no":
-		case "yes":
-			args = append(args, f.flag)
-		default:
-			return nil, fmt.Errorf("%s: %q: want no or yes", bgFieldLabels[f.i], v)
-		}
+	kind, err := m.scheduleKind()
+	if err != nil {
+		return nil, err
 	}
+	if kind != "interactive" {
+		args = append(args, "--"+kind)
+	}
+	switch v := val(bgFieldConv); v {
+	case "", "no":
+	case "yes":
+		args = append(args, "--resume-conversation")
+	default:
+		return nil, fmt.Errorf("%s: %q: want no or yes", bgFieldLabels[bgFieldConv], v)
+	}
+	// The authority row, in the spellings `schedule new` takes, as the
+	// WebUI's Compose sends its authority section.
+	var af cli.ScheduleForm
+	au := m.auth
+	af.SetAuthority(au.Caps, au.Scope, au.Overrides, au.GrantConditions, au.DelegateCaps, au.DelegateScope, au.SpawnDepth, au.MaxDescendants)
+	args = append(args, "--caps", af.Caps, "--scope", af.Scope)
+	for _, v := range af.ScopeFor {
+		args = append(args, "--scope-for", v)
+	}
+	for _, v := range af.GrantConditions {
+		args = append(args, "--grant-condition", v)
+	}
+	args = append(args, "--delegate-caps", af.DelegateCaps, "--delegate-scope", af.DelegateScope,
+		"--spawn-depth", af.SpawnDepth, "--max-descendants", af.MaxDescendants)
 	return args, nil
+}
+
+// authorityLine is the authority row's text.
+func (m *BgFormModel) authorityLine() string {
+	var af cli.ScheduleForm
+	au := m.auth
+	af.SetAuthority(au.Caps, au.Scope, au.Overrides, au.GrantConditions, au.DelegateCaps, au.DelegateScope, au.SpawnDepth, au.MaxDescendants)
+	line := "caps=" + af.Caps + " scope=" + af.Scope
+	for _, v := range af.ScopeFor {
+		line += " +" + v
+	}
+	line += " delegate=" + af.DelegateCaps + " delegate-scope=" + af.DelegateScope +
+		" spawn-depth=" + af.SpawnDepth + " max-descendants=" + af.MaxDescendants
+	if m.focus == bgFocusAuthority {
+		line = "> " + line + "   (Enter: edit)"
+	}
+	return line
 }
 
 // Submitted marks the form's request as sent; Answered takes the server's
@@ -541,6 +601,10 @@ func (m *BgFormModel) View() string {
 		sb.WriteString("prompt:\n" + m.prompt.View() + "\n")
 	}
 	for _, i := range m.order() {
+		if i == bgFocusAuthority {
+			fmt.Fprintf(&sb, "%-14s %s\n", "authority:", m.authorityLine())
+			continue
+		}
 		if i < 0 {
 			if m.purpose == bgSchedule {
 				sb.WriteString("prompt:\n" + m.prompt.View() + "\n")

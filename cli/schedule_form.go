@@ -74,12 +74,8 @@ func ScheduleFormOf(d protocol.ScheduleDetail) ScheduleForm {
 		Deadline:           formDuration(d.Conditions.DeadlineMs), TurnEnd: EnumWireName(d.Conditions.TurnEnd.String()),
 		Quiet: formDuration(d.Conditions.QuietMs), Blocked: formDuration(d.Conditions.BlockedMs),
 		QueueTimeout: formDuration(d.Conditions.QueueTimeoutMs),
-		Caps:         CapsLabel(d.Caps), Scope: ScopeLabel(d.Scope),
-		ScopeFor:        []string{},
-		GrantConditions: append([]string{}, GrantConditionSpecs(d.Overrides, d.GrantConditions)...),
-		DelegateCaps:    CapsLabel(d.DelegateCaps), DelegateScope: ScopeLabel(d.DelegateScope),
-		SpawnDepth: authority.LimitLabel(d.SpawnDepth), MaxDescendants: authority.LimitLabel(d.MaxDescendants),
 	}
+	f.SetAuthority(d.Caps, d.Scope, d.Overrides, d.GrantConditions, d.DelegateCaps, d.DelegateScope, d.SpawnDepth, d.MaxDescendants)
 	if d.Row.TaskState == protocol.ScheduleTaskState_Bound {
 		f.Task = hex.EncodeToString(d.Row.TaskId.Id[:])
 	}
@@ -88,10 +84,22 @@ func ScheduleFormOf(d protocol.ScheduleDetail) ScheduleForm {
 			f.Host = string(v.Name)
 		}
 	}
-	for _, o := range d.Overrides {
+	return f
+}
+
+// SetAuthority writes an authority into the form's spellings: what a screen
+// that edits it in wire types (the TUI's authority picker) hands back.
+func (f *ScheduleForm) SetAuthority(caps protocol.Capability, scope protocol.TaskScope, overrides []protocol.ScopeOverride,
+	conds []protocol.GrantCondition, delegateCaps protocol.Capability, delegateScope protocol.TaskScope,
+	spawnDepth, maxDescendants protocol.SpawnLimit) {
+	f.Caps, f.Scope = CapsLabel(caps), ScopeLabel(scope)
+	f.ScopeFor = []string{}
+	for _, o := range overrides {
 		f.ScopeFor = append(f.ScopeFor, OverridesLabel([]protocol.ScopeOverride{o}))
 	}
-	return f
+	f.GrantConditions = append([]string{}, GrantConditionSpecs(overrides, conds)...)
+	f.DelegateCaps, f.DelegateScope = CapsLabel(delegateCaps), ScopeLabel(delegateScope)
+	f.SpawnDepth, f.MaxDescendants = authority.LimitLabel(spawnDepth), authority.LimitLabel(maxDescendants)
 }
 
 // ScheduleEditArgs is `schedule edit`'s argument line for the fields that

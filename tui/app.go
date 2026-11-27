@@ -1513,7 +1513,7 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.cmdresult.Append(ErrorStyle.Render(fmt.Sprintf("schedule edit %s: %v", shortTaskID(msg.ID), msg.Err)))
 			return a, nil
 		}
-		a.bgform.OpenScheduleEdit(msg.ID, msg.Form)
+		a.bgform.OpenScheduleEdit(msg.ID, msg.Form, msg.Auth)
 		return a, nil
 	case ActionViewsMsg:
 		switch msg.For {

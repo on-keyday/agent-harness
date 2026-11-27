@@ -352,6 +352,7 @@ func (a *App) onScheduleShowMsg(msg ScheduleShowMsg) {
 type ScheduleFormMsg struct {
 	ID   string
 	Form cli.ScheduleForm
+	Auth Authority // the stored authority in wire types, for the picker
 	Err  error
 }
 
@@ -364,7 +365,11 @@ func DoScheduleForm(c *cli.Client, id string) tea.Cmd {
 		if err != nil {
 			return ScheduleFormMsg{ID: id, Err: err}
 		}
-		return ScheduleFormMsg{ID: id, Form: cli.ScheduleFormOf(d)}
+		return ScheduleFormMsg{ID: id, Form: cli.ScheduleFormOf(d), Auth: Authority{
+			Caps: d.Caps, Scope: d.Scope, Overrides: d.Overrides, GrantConditions: d.GrantConditions,
+			DelegateCaps: d.DelegateCaps, DelegateScope: d.DelegateScope,
+			SpawnDepth: d.SpawnDepth, MaxDescendants: d.MaxDescendants,
+		}}
 	}
 }
 

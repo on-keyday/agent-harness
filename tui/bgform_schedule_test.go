@@ -11,7 +11,7 @@ import (
 func scheduleForm(t *testing.T) BgFormModel {
 	t.Helper()
 	f := NewBgForm()
-	f.OpenSchedule("/r")
+	f.OpenSchedule("/r", Authority{})
 	f.prompt.SetValue("triage")
 	f.fields[bgFieldCron].SetValue("@daily")
 	f.fields[bgFieldAgent].SetValue("claude")
@@ -51,7 +51,7 @@ func TestNOpensScheduleFormInSchedulesAndBackgroundInTasks(t *testing.T) {
 func TestScheduleArgsNewTask(t *testing.T) {
 	f := scheduleForm(t)
 	f.fields[bgFieldZone].SetValue("Asia/Tokyo")
-	f.fields[bgFieldOneshot].SetValue("yes")
+	f.fields[bgFieldKind].SetValue("oneshot")
 	args, err := f.ScheduleArgs(identityResolve)
 	if err != nil {
 		t.Fatal(err)
@@ -123,11 +123,12 @@ func TestScheduleFormSubmitWhileDisconnectedIsAnswered(t *testing.T) {
 	}
 }
 
-// The schedule form's stream field (2026-11-17-schedule-stream-kind-design.md,
-// K8): yes sends --stream, which the shared parser accepts; no sends nothing.
+// The schedule form's kind field (one of interactive / oneshot / stream, as
+// the WebUI's kind radio): stream sends --stream, which the shared parser
+// accepts; interactive sends no kind flag.
 func TestScheduleArgsStream(t *testing.T) {
 	f := scheduleForm(t)
-	f.fields[bgFieldStream].SetValue("yes")
+	f.fields[bgFieldKind].SetValue("stream")
 	args, err := f.ScheduleArgs(identityResolve)
 	if err != nil {
 		t.Fatal(err)
@@ -138,11 +139,16 @@ func TestScheduleArgsStream(t *testing.T) {
 	if _, err := verb.ParseCmdScheduleNew(verb.TUI, args, nil); err != nil {
 		t.Errorf("the shared parser refuses the form's args %q: %v", args, err)
 	}
-	f.fields[bgFieldStream].SetValue("no")
-	if args, _ := f.ScheduleArgs(identityResolve); strings.Contains(strings.Join(args, " "), "--stream") {
-		t.Errorf("stream=no sent --stream: %q", args)
+	f.fields[bgFieldKind].SetValue("interactive")
+	if args, _ := f.ScheduleArgs(identityResolve); strings.Contains(strings.Join(args, " "), "--stream") ||
+		strings.Contains(strings.Join(args, " "), "--oneshot") {
+		t.Errorf("kind=interactive sent a kind flag: %q", args)
 	}
-	if !strings.Contains(f.View(), "stream") {
-		t.Errorf("the form does not show the stream field:\n%s", f.View())
+	f.fields[bgFieldKind].SetValue("both")
+	if _, err := f.ScheduleArgs(identityResolve); err == nil || !strings.Contains(err.Error(), "kind") {
+		t.Errorf("kind=both: %v", err)
+	}
+	if !strings.Contains(f.View(), "kind") {
+		t.Errorf("the form does not show the kind field:\n%s", f.View())
 	}
 }
