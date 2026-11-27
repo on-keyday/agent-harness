@@ -118,7 +118,7 @@ func NewBgForm() BgFormModel {
 	m.fields[bgFieldCron].Placeholder = "0 9 * * *  or  @daily"
 	m.fields[bgFieldZone].Placeholder = "the server's zone (or e.g. Asia/Tokyo)"
 	m.fields[bgFieldTarget].Placeholder = "new task (or a task id / its prefix to bind)"
-	m.fields[bgFieldKind].Placeholder = "interactive (interactive|oneshot|stream)"
+	m.fields[bgFieldKind].Placeholder = "interactive|oneshot|stream"
 	m.fields[bgFieldConv].Placeholder = "no (no|yes): each firing resumes the conversation"
 	m.fields[bgFieldRepo].CharLimit = 4096
 	return m
