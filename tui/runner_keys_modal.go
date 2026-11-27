@@ -134,7 +134,7 @@ func NewRunnerKeysModal() RunnerKeysModal {
 	return RunnerKeysModal{
 		pubkey: in(66, 64, "64 hex: agent-runner --print-pubkey"),
 		label:  in(30, 64, "optional"),
-		cands:  in(50, 512, "host:port[,host:port…]"),
+		cands:  in(50, 512, "ws:host:port-*[,…] (transport:host:port-id)"),
 		cid:    in(40, 128, "udp:host:7001"),
 	}
 }

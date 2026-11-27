@@ -600,3 +600,56 @@ or in the journal under a systemd unit.
 **Why deferred.** The other pillars went first, and C was not picked up after
 them. The operator chose to do it later (2026-11-26), after the
 grant-conditions spec's remaining plan (actions).
+
+---
+
+## Verbs typable on a UI's command line with no screen there (`screenGaps`)
+
+**What.** A verb that can be typed on the TUI's or the WebUI's command line has
+a screen of its own there, unless it is a command of the line itself
+(`LineCommand`). `TestTypableOnAUIMeansAScreenThere`
+(`cli/verb/modal_surface_test.go`) enforces it, and `screenGaps` beside it lists
+the (verb, surface) pairs that break it today. The list fails in both
+directions, so an entry has to leave when its screen is declared.
+
+**Evidence** (2026-11-27, the `screenGaps` literal): 37 verbs.
+
+- No screen on either UI (7): `caps`, `caps set-defaults`, `prune`, `restore`,
+  `schedule edit`, `session rename`, `session stream turn`.
+- No TUI screen (21): `caps reach`, `caps what-if`, `credential new`,
+  `record get` / `off` / `on` / `rm`, `schedule new`, `session kill`,
+  `session ls`, `session stream answer` / `approve` / `finish` / `interrupt`,
+  `ssh-gateway status` / `stop`, `transcript get`, `workspace detach` / `rm` /
+  `save` / `show`.
+- No WebUI screen (9): `exec tap`, `file delete` / `ls` / `mkdir` / `new` /
+  `pull` / `push`, `forward tap`, `ls`.
+
+**Check first, for each: is there an equivalent screen that is only
+undeclared?** `ModalSurfaces` records where a verb's capability also exists as
+a UI's own control, and it is not one control per verb. `session send` (typable
+on no UI) says "no WebUI element reaches this", while the WebUI session preview
+sends input to the session (`webui/static/main.js`, `previewInput`). Some
+entries above may have the same shape — the WebUI file panel and `file ls`, for
+one — and need a declaration, not a build.
+
+**Why deferred.** Found while building the action and runner-key screens
+(`2026-11-27-admin-screens-actions-runner-keys-design.md`), which took their
+own 13 verbs off the list; each remaining verb is its own screen or its own
+declaration.
+
+---
+
+## The WebUI is wider than a 390 px phone screen
+
+**What.** At a 390 px viewport the page scrolls sideways before any dialog is
+open. A `.compose-tab` button (the interactive / one-shot / background /
+schedule row of the Compose section) ends 35 px past the right edge.
+
+**Evidence** (2026-11-27, headless Chromium against a `dummy-harness --known-psk`
+instance at `4c4e1d48`+, viewport 390×844): `document.documentElement` is
+`scrollWidth 425`, `clientWidth 390`; the only element past the edge that is not
+`position: fixed` is `button.compose-tab` with `right = 425`. This branch
+changed neither the compose tabs nor `style.css`, so the overflow is older.
+
+**Why deferred.** Found while checking the new admin dialogs at phone width;
+they fit, and the fix is in a part of the page that work did not touch.

@@ -1769,7 +1769,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       () => window.harness.runnerEnroll(pub.value.trim(), label.value, bindIds.size ? [...bindIds].join(",") : null));
   };
   const openDialForm = () => {
-    const cands = rkText("host:port[,host:port…] — tried in order, ws:// and wss:// URLs too");
+    const cands = rkText("ws:host:port-*[,…] (transport:host:port-id), tried in order; ws:// and wss:// URLs too");
     const key = document.createElement("select");
     for (const k of rkKeys) key.add(new Option(`${k.prefix}${k.label ? ` (${k.label})` : ""}`, k.key));
     const label = rkText("optional");

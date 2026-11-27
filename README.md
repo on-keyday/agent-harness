@@ -1121,6 +1121,20 @@ bin/harness-cli action rm deploy
 - **Listing.** `exec ls` shows `action=<name>@r<revision>` on an exec started
   from an action; `--json` carries `action_id`, `action_revision` and
   `action_name`.
+- **On the TUI and the WebUI.** Actions have screens of their own, not only
+  the command line. WebUI: **⚙ Actions** beside 🔑 Credentials lists, defines,
+  edits and deletes them (params and the command as rows, the first word
+  always written out); a task's sheet has **▶ action を実行**; and a re-grant or
+  Compose override of exactly `exec_run` picks its `actions:` condition from a
+  checklist of names. TUI: `M` opens the Actions screen (`n` new, `e` edit,
+  `x` delete), `!` on the tasks table runs one against the selected task, and
+  the `a` re-grant picker edits per-capability overrides (`o` adds one, `x`
+  drops it), with the same action checklist. Runner keys and dial records
+  have one screen on each: **🔐 Runner keys** in the WebUI's Runners heading,
+  `K` on the TUI; a runner is kicked with ⏏ Kick on its WebUI row or `x` on the
+  TUI's runners table. Unenroll and kick never force on the first try: a
+  refusal because the key or runner is in use is asked again, listing what is
+  in the way.
 
 ### Dial records and runner kick
 
