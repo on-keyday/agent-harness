@@ -1228,12 +1228,24 @@ func (h *TaskHandler) scheduleDetail(cid objproto.ConnectionID, id protocol.Sche
 	}
 	d.SetOverrides(sc.Grant.Scope.OverridesToWire())
 	d.SetGrantConditions(sc.Grant.Scope.ConditionsToWire())
+	d.ActionOverlap = authority.ActionOverlap(scheduleSelfHex(sc), sc.Grant.Caps, sc.Grant.Scope, h.childIndex())
 	hist := make([]protocol.ScheduleHistoryEntry, 0, len(sc.History))
 	for _, e := range sc.History {
 		hist = append(hist, historyEntryWire(e))
 	}
 	d.SetHistory(hist)
 	return d, nil
+}
+
+// scheduleSelfHex is the task a schedule's stored authority is relative to:
+// the bound task or the id its first firing will create (Schedule.TaskID), or,
+// for an unbound schedule, an id no task has, standing in for whichever task a
+// later binding names.
+func scheduleSelfHex(sc Schedule) string {
+	if sc.TaskID != "" {
+		return sc.TaskID
+	}
+	return "schedule:" + sc.ID
 }
 
 // --- unbinding (S-D15) ---

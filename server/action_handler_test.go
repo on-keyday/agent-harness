@@ -336,3 +336,38 @@ func TestActionPutResponseFitsADatagram(t *testing.T) {
 		t.Fatalf("response is %d bytes, want <= 300", n)
 	}
 }
+
+// schedule show carries the overlap warning ls and whoami carry: a stored
+// grant whose ActionSet-conditioned exec_run reaches a target it may also
+// write files in is computed over the task each firing runs as.
+func TestScheduleDetailCarriesActionOverlap(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		caps protocol.Capability
+		want protocol.Capability
+	}{
+		{"file_write over the same task", protocol.Capability_ExecRun | protocol.Capability_FileWrite, protocol.Capability_FileWrite},
+		{"control: exec_run alone", protocol.Capability_ExecRun, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newActEnv(t, actAll, authority.Scope{Base: protocol.ScopeBase_Subtree})
+			st, _ := LoadScheduleStore("")
+			e.h.Sched = &ScheduleOps{Store: st}
+			id := e.create(t, "a")
+			sc := Schedule{ID: strings.Repeat("ab", 16), Cron: "0 * * * *", TZ: "UTC", State: protocol.ScheduleTaskState_PendingCreate,
+				Grant: authority.Grant{Caps: tc.caps, Scope: runOver(protocol.ScopeBase_Subtree, id)}}
+			if err := st.Put(sc); err != nil {
+				t.Fatal(err)
+			}
+			var sid protocol.ScheduleID
+			copy(sid.Id[:], []byte{0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab})
+			d, refusal := e.h.scheduleDetail(operatorCID, sid)
+			if refusal != nil {
+				t.Fatalf("%v %s", refusal.Status, refusal.Message)
+			}
+			if d.ActionOverlap != tc.want {
+				t.Fatalf("action_overlap %v, want %v", d.ActionOverlap, tc.want)
+			}
+		})
+	}
+}

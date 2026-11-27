@@ -942,3 +942,24 @@ func TestScheduleChangeListNamesStream(t *testing.T) {
 		t.Errorf("change list %q does not name stream", got)
 	}
 }
+
+// schedule show carries the overlap warning ls and whoami carry, on every
+// surface that renders ScheduleDetailParts, and in --json always.
+func TestScheduleDetailShowsActionOverlap(t *testing.T) {
+	d := schedDetail()
+	if got := ScheduleDetailText(d, schedNow); strings.Contains(got, "action_overlap") {
+		t.Fatalf("no overlap, yet a warning:\n%s", got)
+	}
+	var buf bytes.Buffer
+	if err := ScheduleDetailJSON(&buf, d, schedNow); err != nil || !strings.Contains(buf.String(), `"action_overlap":[]`) {
+		t.Fatalf("json without overlap: %v %s", err, buf.String())
+	}
+	d.ActionOverlap = protocol.Capability_FileWrite
+	if got := ScheduleDetailText(d, schedNow); !strings.Contains(got, "warn=action_overlap:file_write") {
+		t.Fatalf("detail lacks the warning:\n%s", got)
+	}
+	buf.Reset()
+	if err := ScheduleDetailJSON(&buf, d, schedNow); err != nil || !strings.Contains(buf.String(), `"action_overlap":["file_write"]`) {
+		t.Fatalf("json: %v %s", err, buf.String())
+	}
+}

@@ -6791,3 +6791,6 @@ format ScheduleDetail:
     # conditioned overrides, as TaskInfo.grant_conditions.
     grant_conditions_len :u8
     grant_conditions     :[grant_conditions_len]GrantCondition
+    # Appended: the stored authority's overlap warning, as
+    # TaskInfo.action_overlap, computed over the task each firing runs as.
+    action_overlap :Capability

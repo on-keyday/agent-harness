@@ -472,7 +472,9 @@ since the client checks values against the definition it read; added after
 the final review — `bad_body` named it as a body the server could not read),
 and `action_overlap :Capability` on `TaskInfo` and
 `WhoAmIResponse`: the § Surfaces overlap warning, computed by the server,
-which holds the task tree a client listing one row (`whoami`) does not. The
+which holds the task tree a client listing one row (`whoami`) does not — and,
+after the final review, on `ScheduleDetail`, over the task each firing runs as
+(the bound or pre-chosen task id). The
 WAL gains condition bodies; the key store gains `bound_tasks`; the action store
 is new. Run `scripts/wire-skew-check.sh`. `RunnerHello` and every
 runner-decoded format are unchanged (C8), so a runner does not need a restart.

@@ -1071,6 +1071,9 @@ func ScheduleDetailParts(d protocol.ScheduleDetail, now time.Time) ScheduleDetai
 	if cl := ConditionsLabel(d.Overrides, d.GrantConditions); cl != "" {
 		auth += " conditions=" + cl
 	}
+	if w := ActionOverlapLabel(d.ActionOverlap); w != "" {
+		auth += " " + w
+	}
 	line("authority: %s delegate=%s delegate-scope=%s spawn-depth=%s max-descendants=%s",
 		auth, CapsLabel(d.DelegateCaps), ScopeLabel(d.DelegateScope),
 		authority.LimitLabel(d.SpawnDepth), authority.LimitLabel(d.MaxDescendants))
@@ -1216,30 +1219,32 @@ type scheduleWaitStatsJSON struct {
 
 type scheduleDetailJSON struct {
 	scheduleRowJSON
-	Prompt             string                `json:"prompt"`
-	ExtraArgs          []string              `json:"extra_args"`
-	Selector           string                `json:"selector"`
-	ResumeConversation bool                  `json:"resume_conversation"`
-	Kind               string                `json:"kind"`
-	Oneshot            bool                  `json:"oneshot"`
-	Record             string                `json:"record"`
-	Pty                string                `json:"pty"`
-	Conditions         conditionsJSON        `json:"conditions"`
-	Caps               string                `json:"caps"`
-	Scope              string                `json:"scope"`
-	ScopeByCap         map[string]string     `json:"scope_by_cap"`
-	ConditionsByCap    map[string]string     `json:"conditions_by_cap"`
-	DelegateCaps       string                `json:"delegate_caps"`
-	DelegateScope      string                `json:"delegate_scope"`
-	SpawnDepth         *uint32               `json:"spawn_depth"`
-	MaxDescendants     *uint32               `json:"max_descendants"`
-	Creator            string                `json:"creator"`
-	CreatedAt          uint64                `json:"created_at"`
-	EditedAt           uint64                `json:"edited_at"`
-	EditedByKind       string                `json:"edited_by_kind"`
-	EditedBy           string                `json:"edited_by"`
-	WaitStats          scheduleWaitStatsJSON `json:"wait_stats"`
-	History            []scheduleHistoryJSON `json:"history"`
+	Prompt             string            `json:"prompt"`
+	ExtraArgs          []string          `json:"extra_args"`
+	Selector           string            `json:"selector"`
+	ResumeConversation bool              `json:"resume_conversation"`
+	Kind               string            `json:"kind"`
+	Oneshot            bool              `json:"oneshot"`
+	Record             string            `json:"record"`
+	Pty                string            `json:"pty"`
+	Conditions         conditionsJSON    `json:"conditions"`
+	Caps               string            `json:"caps"`
+	Scope              string            `json:"scope"`
+	ScopeByCap         map[string]string `json:"scope_by_cap"`
+	ConditionsByCap    map[string]string `json:"conditions_by_cap"`
+	// ActionOverlap is the server's action_overlap as bit names, [] when none.
+	ActionOverlap  []string              `json:"action_overlap"`
+	DelegateCaps   string                `json:"delegate_caps"`
+	DelegateScope  string                `json:"delegate_scope"`
+	SpawnDepth     *uint32               `json:"spawn_depth"`
+	MaxDescendants *uint32               `json:"max_descendants"`
+	Creator        string                `json:"creator"`
+	CreatedAt      uint64                `json:"created_at"`
+	EditedAt       uint64                `json:"edited_at"`
+	EditedByKind   string                `json:"edited_by_kind"`
+	EditedBy       string                `json:"edited_by"`
+	WaitStats      scheduleWaitStatsJSON `json:"wait_stats"`
+	History        []scheduleHistoryJSON `json:"history"`
 }
 
 func writeScheduleDetailJSON(w io.Writer, d protocol.ScheduleDetail, now time.Time) error {
@@ -1257,6 +1262,7 @@ func writeScheduleDetailJSON(w io.Writer, d protocol.ScheduleDetail, now time.Ti
 		Caps: CapsLabel(d.Caps), Scope: ScopeLabel(d.Scope),
 		ScopeByCap:      ResolvedScopeByCap(d.Caps, d.Scope, d.Overrides),
 		ConditionsByCap: ConditionsByCap(d.Caps, d.Overrides, d.GrantConditions),
+		ActionOverlap:   ActionOverlapNames(d.ActionOverlap),
 		DelegateCaps:    CapsLabel(d.DelegateCaps), DelegateScope: ScopeLabel(d.DelegateScope),
 		SpawnDepth: LimitJSON(d.SpawnDepth), MaxDescendants: LimitJSON(d.MaxDescendants),
 		Creator:   taskIDHexOrEmpty(d.Creator.Id[:]),
