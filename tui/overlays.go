@@ -2,6 +2,7 @@ package tui
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -37,6 +38,8 @@ var appOverlays = []overlay{
 	// so it comes before both.
 	{func(a *App) bool { return a.tap.IsOpen() }, (*App).inTap},
 	{func(a *App) bool { return a.execsModal.IsOpen() }, (*App).inExecsModal},
+	{func(a *App) bool { return a.actionRunForm.IsOpen() }, (*App).inActionRunForm},
+	{func(a *App) bool { return a.actionsModal.IsOpen() }, (*App).inActionsModal},
 	{func(a *App) bool { return a.idleWatchersModal.IsOpen() }, (*App).inIdleWatchersModal},
 	{func(a *App) bool { return a.capsAuditModal.IsOpen() }, (*App).inCapsAuditModal},
 	{func(a *App) bool { return a.forwardsModal.IsOpen() }, (*App).inForwardsModal},
@@ -172,6 +175,80 @@ func (a *App) inExecsModal(msg tea.KeyMsg) tea.Cmd {
 	var cmd tea.Cmd
 	a.execsModal, cmd = a.execsModal.Update(msg)
 	return cmd
+}
+
+// Actions screen (M): the list's keys, the form's while it is open, and a y/n
+// for delete that swallows everything else, as inExecsModal's kill does.
+func (a *App) inActionsModal(msg tea.KeyMsg) tea.Cmd {
+	m := &a.actionsModal
+	switch m.mode {
+	case actionsConfirmDelete:
+		switch msg.String() {
+		case modalKeys.ConfirmYes, modalKeys.ConfirmYesUpper:
+			v := m.selected()
+			m.mode = actionsList
+			if v != nil && a.client != nil {
+				return tea.Sequence(DoActionRemove(a.client, v.ID), DoActionViews(a.client, "modal"))
+			}
+		case modalKeys.ConfirmNo, modalKeys.ConfirmNoUpper, modalKeys.Escape:
+			m.mode = actionsList
+		}
+		return nil
+	case actionsForm:
+		if msg.Type == tea.KeyEsc {
+			m.mode = actionsList
+			return nil
+		}
+		if m.form.Update(msg) && a.client != nil {
+			return DoActionPutForm(a.client, m.form.Form())
+		}
+		return nil
+	}
+	switch msg.String() {
+	case modalKeys.Escape:
+		m.Close()
+	case "up":
+		if m.cur > 0 {
+			m.cur--
+		}
+	case "down":
+		if m.cur < len(m.views)-1 {
+			m.cur++
+		}
+	case modalKeys.ActionNew:
+		m.OpenForm(false)
+	case modalKeys.ActionEdit, "enter":
+		m.OpenForm(true)
+	case modalKeys.ActionDelete:
+		if m.selected() != nil {
+			m.mode = actionsConfirmDelete
+		}
+	case modalKeys.ActionRefresh:
+		if a.client != nil {
+			return DoActionViews(a.client, "modal")
+		}
+	}
+	return nil
+}
+
+// Run-an-action form (!): enter on [ run ] runs it on the exec path
+// `exec --action` takes, its closing line labelled with the action.
+func (a *App) inActionRunForm(msg tea.KeyMsg) tea.Cmd {
+	if msg.Type == tea.KeyEsc {
+		a.actionRunForm.Close()
+		return nil
+	}
+	if !a.actionRunForm.Update(msg) {
+		return nil
+	}
+	name, values, err := a.actionRunForm.Request()
+	if err != nil {
+		return nil
+	}
+	id := a.actionRunForm.taskID
+	a.actionRunForm.Close()
+	a.cmdresult.Append(fmt.Sprintf("exec %s: action %s …", pfShortID(id), name))
+	return DoExecRun(a.client, id, nil, ExecRunFlags{Action: name, Values: values}, a.program)
 }
 
 // Armed await-idle watcher list: inExecsModal's keys, against

@@ -107,6 +107,34 @@ func (a *App) onExecs(msg tea.KeyMsg) (tea.Cmd, bool) {
 	return DoExecRunList(a.client, "", false), true
 }
 
+// `M` opens the Actions screen: the server's actions, with define / edit /
+// delete. The list is fetched on opening and after every change.
+func (a *App) onActions(msg tea.KeyMsg) (tea.Cmd, bool) {
+	if a.client == nil {
+		a.cmdresult.Append(WarnStyle.Render("actions: not connected"))
+		return nil, true
+	}
+	a.actionsModal.SetSize(a.width, a.height)
+	a.actionsModal.Open()
+	return DoActionViews(a.client, "modal"), true
+}
+
+// `!` on the tasks table runs an action against the selected task.
+func (a *App) onRunAction(msg tea.KeyMsg) (tea.Cmd, bool) {
+	id := a.tasks.SelectedID()
+	if id == "" {
+		a.cmdresult.Append(WarnStyle.Render("no task selected"))
+		return nil, true
+	}
+	if a.client == nil {
+		a.cmdresult.Append(WarnStyle.Render("action: not connected"))
+		return nil, true
+	}
+	a.actionRunForm.SetSize(a.width, a.height)
+	a.actionRunForm.OpenFor(id)
+	return DoActionViews(a.client, "run"), true
+}
+
 // `I` opens the armed await-idle watcher list.
 func (a *App) onIdleWatchers(msg tea.KeyMsg) (tea.Cmd, bool) {
 	if a.client == nil {

@@ -144,6 +144,10 @@ type App struct {
 	tap        TapView
 	tapStop    context.CancelFunc
 	execsModal ExecsModal
+	// actionsModal is M (the Actions screen); actionRunForm is the tasks
+	// table's ! (run an action against the selected task).
+	actionsModal  ActionsModal
+	actionRunForm ActionRunFormModel
 	// idleWatchersModal lists armed await-idle watchers; opened with `I`.
 	idleWatchersModal IdleWatchersModal
 	// capsAuditModal lists, per capability, the tasks holding it; opened with `i`.
@@ -447,6 +451,8 @@ func New(cfg Config) *App {
 		overview:          NewOverviewModel(),
 		forwardsModal:     NewForwardsModal(),
 		execsModal:        NewExecsModal(),
+		actionsModal:      NewActionsModal(),
+		actionRunForm:     NewActionRunForm(),
 		idleWatchersModal: NewIdleWatchersModal(),
 		capsAuditModal:    NewCapsAuditModal(),
 		rawModal:          NewRawConnectModal(),
@@ -1485,6 +1491,28 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ActionResultMsg:
 		a.appendRunnerKeyResult(RunnerKeyResultMsg(msg))
 		return a, nil
+	case ActionViewsMsg:
+		switch msg.For {
+		case "modal":
+			a.actionsModal.SetViews(msg.Views, msg.Err)
+		case "run":
+			a.actionRunForm.SetViews(msg.Views, msg.Err)
+		}
+		return a, nil
+	case ActionFormResultMsg:
+		switch {
+		case msg.Err != nil:
+			a.cmdresult.Append(ErrorStyle.Render(msg.Err.Error()))
+		case msg.OK:
+			a.cmdresult.Append(OKStyle.Render(strings.TrimSpace(msg.Text)))
+		default:
+			a.cmdresult.Append(ErrorStyle.Render(strings.TrimSpace(msg.Text)))
+		}
+		a.actionsModal.ApplyResult(msg)
+		if msg.OK && a.client != nil {
+			return a, DoActionViews(a.client, "modal")
+		}
+		return a, nil
 	case RunnerKeyResultMsg:
 		a.appendRunnerKeyResult(msg)
 		if msg.Refresh {
@@ -2337,6 +2365,12 @@ func (a *App) View() string {
 	}
 	if a.execsModal.IsOpen() {
 		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.execsModal.View())
+	}
+	if a.actionRunForm.IsOpen() {
+		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.actionRunForm.View())
+	}
+	if a.actionsModal.IsOpen() {
+		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.actionsModal.View())
 	}
 	if a.idleWatchersModal.IsOpen() {
 		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.idleWatchersModal.View())

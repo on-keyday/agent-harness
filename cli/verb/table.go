@@ -504,7 +504,7 @@ var Verbs = []VerbSpec{
 	// --- exec (exec_run) ---
 	{
 		Path:          []string{"exec"},
-		ModalSurfaces: []ModalSurface{{Surface: WebUI, At: "webui/index.html#action-run-modal"}},
+		ModalSurfaces: []ModalSurface{{Surface: WebUI, At: "webui/index.html#action-run-modal"}, {Surface: TUI, At: "tui/action_run_form.go:ActionRunFormModel"}},
 		MCPNotATool:   "it splices this process's stdin and stdout to the command until it exits, then exits with its code",
 		WebUIDispatch: WebUIDispatch{Fn: "execRun"},
 		SurfaceNotes:  map[Surface][]string{WebUI: {"run a command in the task's worktree as its own process, NOT in the session's shell (stdout 1| / stderr 2|)"}, TUI: {"run a command in the task's worktree as its own process, NOT in the session's shell (stdout 1| / stderr 2|). --shell hands it to the runner's own shell so pipes and redirects mean something; --sshd-parent gives the line a parent named sshd for a client that checks its ancestry (Windows only; needs --shell)"}},
@@ -909,7 +909,7 @@ var Verbs = []VerbSpec{
 	// --- server-defined actions (2026-11-26-grant-conditions-and-bound-enrollment-design.md, C8, C13) ---
 	{
 		Path:          []string{"action", "new"},
-		ModalSurfaces: []ModalSurface{{Surface: WebUI, At: "webui/index.html#actions-modal"}},
+		ModalSurfaces: []ModalSurface{{Surface: WebUI, At: "webui/index.html#actions-modal"}, {Surface: TUI, At: "tui/actions_modal.go:ActionsModal"}},
 		WebUIDispatch: WebUIDispatch{Fn: "actionPut"},
 		SurfaceNotes:  map[Surface][]string{WebUI: {"define a server-defined action (the command an ActionSet grant may run)"}, TUI: {"define a server-defined action (the command an ActionSet grant may run)"}},
 		MCP:           &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_ActionPut},
@@ -931,7 +931,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path:          []string{"action", "edit"},
-		ModalSurfaces: []ModalSurface{{Surface: WebUI, At: "webui/index.html#actions-modal"}},
+		ModalSurfaces: []ModalSurface{{Surface: WebUI, At: "webui/index.html#actions-modal"}, {Surface: TUI, At: "tui/actions_modal.go:ActionsModal"}},
 		WebUIDispatch: WebUIDispatch{Fn: "actionPut"},
 		SurfaceNotes:  map[Surface][]string{WebUI: {"replace an action's definition; refused unless you could re-grant every holder"}, TUI: {"replace an action's definition; refused unless you could re-grant every holder"}},
 		MCP:           &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_ActionList, protocol.TaskControlKind_ActionPut},
@@ -957,7 +957,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path:          []string{"action", "rm"},
-		ModalSurfaces: []ModalSurface{{Surface: WebUI, At: "webui/index.html#actions-modal"}},
+		ModalSurfaces: []ModalSurface{{Surface: WebUI, At: "webui/index.html#actions-modal"}, {Surface: TUI, At: "tui/actions_modal.go:ActionsModal"}},
 		WebUIDispatch: WebUIDispatch{Fn: "actionRemove"},
 		SurfaceNotes:  map[Surface][]string{WebUI: {"delete a server-defined action"}, TUI: {"delete a server-defined action"}},
 		MCP:           &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_ActionList, protocol.TaskControlKind_ActionRemove},
@@ -972,7 +972,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path:          []string{"action", "ls"},
-		ModalSurfaces: []ModalSurface{{Surface: WebUI, At: "webui/index.html#actions-modal"}},
+		ModalSurfaces: []ModalSurface{{Surface: WebUI, At: "webui/index.html#actions-modal"}, {Surface: TUI, At: "tui/actions_modal.go:ActionsModal"}},
 		WebUIDispatch: WebUIDispatch{Fn: "actionList"},
 		SurfaceNotes:  map[Surface][]string{WebUI: {"list the server's actions: full id, name, revision, command, params"}, TUI: {"list the server's actions: full id, name, revision, command, params"}},
 		MCP:           &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_ActionList},

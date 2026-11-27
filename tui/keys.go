@@ -43,6 +43,10 @@ type mainKeyMap struct {
 	FinishedAll     string
 	FilePicker      string
 	Git             string
+	// Actions opens the Actions screen; RunAction runs an action against the
+	// selected task.
+	Actions   string
+	RunAction string
 
 	Cancel                 string
 	ReGrant                string
@@ -92,6 +96,8 @@ var mainKeys = mainKeyMap{
 	FinishedAll:     "H",
 	FilePicker:      "F",
 	Git:             "G",
+	Actions:         "M",
+	RunAction:       "!",
 
 	Cancel:                 "c",
 	ReGrant:                "a",
@@ -186,6 +192,11 @@ type modalKeyMap struct {
 	DetailRecordKeep string
 	// DetailTranscripts lists the agents' transcripts in a task's d popup.
 	DetailTranscripts string
+	// The Actions screen's list: n new, e edit, x delete, r reload.
+	ActionNew     string
+	ActionEdit    string
+	ActionDelete  string
+	ActionRefresh string
 }
 
 var modalKeys = modalKeyMap{
@@ -278,6 +289,10 @@ var modalKeys = modalKeyMap{
 	// to point at.
 	ConnsReadRunner: "enter",
 	ConnsReadServer: "s",
+	ActionNew:       "n",
+	ActionEdit:      "e",
+	ActionDelete:    "x",
+	ActionRefresh:   "r",
 }
 
 // keyScope is a bitmask of the panes a main-view binding applies to. These
@@ -354,6 +369,8 @@ var mainKeyBindings = []keyBinding{
 	{Keys: []string{mainKeys.ForwardLink}, Scope: scopeTasks, Do: (*App).onForward,
 		Short: "L ip link", Long: "start an ip link (a tun device at each end) for the selected task; stop it from f"},
 	{Keys: []string{mainKeys.RawConnect}, Scope: scopeTasks, Do: (*App).onRawConnect, Short: "t raw connect", Long: "raw-connect to a forwarded port"},
+	{Keys: []string{mainKeys.RunAction}, Scope: scopeTasks, Do: (*App).onRunAction, OutsideHint: "run an action: focus the tasks pane first", Short: "! action",
+		Long: "run a server-defined action against the selected task: pick it and its values (exec --action)"},
 	{Keys: []string{mainKeys.GridSubtree, mainKeys.GridDescendants}, Scope: scopeTasks, Do: (*App).onGridSubtree, Short: "z/Z subtree grid",
 		Long: "grid of the selected task's subtree — z includes the task itself, Z is its descendants only (for when you are watching that one elsewhere); g is the whole fleet"},
 	{Keys: []string{mainKeys.BackgroundOpen}, Scope: scopeTasks | scopeSchedules | scopeCredentials, Do: (*App).onBackgroundOpen, Short: "N new",
@@ -397,6 +414,7 @@ var mainKeyBindings = []keyBinding{
 	{Keys: []string{mainKeys.FinishedAll}, Scope: scopeGlobal, Do: (*App).onFinishedAll, Short: "H history", Long: "toggle the task list between the newest 100 finished tasks and every one (the last row says how many are not listed)"},
 	{Keys: []string{mainKeys.Order}, Scope: scopeGlobal, Do: (*App).onOrder, Short: "o order", Long: "cycle the flat task list's order: created → activity → live → state → repo (the last three grouped under headers; not in the tree view)"},
 	{Keys: []string{mainKeys.Forwards}, Scope: scopeGlobal, Do: (*App).onForwards, Short: "f forwards", Long: "port-forward list (t taps the selected row's traffic, r refreshes, x kills)"},
+	{Keys: []string{mainKeys.Actions}, Scope: scopeGlobal, Do: (*App).onActions, Short: "M actions", Long: "the server's actions: list, define (n), edit (e), delete (x)"},
 	{Keys: []string{mainKeys.Execs}, Scope: scopeGlobal, Do: (*App).onExecs, Short: "e execs", Long: "running-exec list (t taps the selected row's stdin/stdout/stderr, x kills)"},
 	{Keys: []string{mainKeys.IdleWatchers}, Scope: scopeGlobal, Do: (*App).onIdleWatchers, Short: "I watchers", Long: "armed await-idle watchers (x kills the selected row)"},
 	{Keys: []string{mainKeys.CapsAudit}, Scope: scopeGlobal, Do: (*App).onCapsAudit, Short: "i caps audit", Long: "who holds which capability (enter expands / opens re-grant, a ended, e empty bits)"},
