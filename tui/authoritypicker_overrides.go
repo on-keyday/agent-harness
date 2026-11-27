@@ -37,6 +37,10 @@ type pickerOverride struct {
 	selected    map[string]bool
 	actions     []string // exec_run: the checked action ids, in order
 	ports       string   // forward bits: the list after "ports:"
+	// unknown: marked conditioned with no body in hand. It reaches nothing
+	// (C7), so it is not editable here — an edit would drop the marker and
+	// widen it; x removes it, --grant-condition sets one.
+	unknown bool
 }
 
 const forwardBits = protocol.Capability_ForwardLocal | protocol.Capability_ForwardRemote
@@ -75,6 +79,7 @@ func newPickerOverride(o protocol.ScopeOverride, conds []protocol.GrantCondition
 			}
 		}
 	}
+	p.unknown = o.Conditioned() && p.origCond == nil
 	return p
 }
 
@@ -268,6 +273,9 @@ func (m *AuthorityPickerModel) toggleOverride(r pickerRow) {
 		return
 	}
 	o := &m.ovs[r.ov]
+	if o.unknown {
+		return
+	}
 	switch r.kind {
 	case rowOvCap:
 		if m.claimedElsewhere(r.ov)&r.bit != 0 {
@@ -357,6 +365,9 @@ func (m *AuthorityPickerModel) overrideLine(r pickerRow) string {
 			if cw, err := authority.ConditionFromWire(*c); err == nil {
 				head += " condition=" + cw.Label()
 			}
+		}
+		if o.unknown {
+			head += " condition=(unknown: reaches nothing; x removes it, --grant-condition sets one)"
 		}
 		return "    " + head
 	case rowOvCap:

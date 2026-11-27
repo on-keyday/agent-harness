@@ -455,14 +455,11 @@ func (m *RunnerKeysModal) View() string {
 		}
 		b.WriteString(MutedStyle.Render("↑/↓ select · x unenroll / remove · n enroll · a add dial record · o dial once · r reload · esc close"))
 	}
-	w := m.w - 4
-	if w > 120 {
-		w = 120
+	tail := 1
+	if (m.mode == rkConfirm) || (m.mode != rkList && m.mode != rkConfirm && m.formErr != "") {
+		tail = 2
 	}
-	if w < 40 {
-		w = 40
-	}
-	return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1).Width(w).Render(b.String())
+	return modalFrame(strings.TrimRight(b.String(), "\n"), tail, m.w, m.h, 120)
 }
 
 // kickQuestion is the runners table's pending kick: asked plainly first, and
@@ -501,4 +498,63 @@ func (a *App) applyKickOffer(msg RunnerOfferMsg) {
 	} else {
 		a.cmdresult.Append(ErrorStyle.Render(text))
 	}
+}
+
+// fitLines keeps a modal's content within max lines of at most width cells:
+// the first head and last tail lines (title, footer, prompt) stay, and the
+// rows between are cut to a window around the line marked "▸". A view taller
+// than the terminal would otherwise lose its TOP — the row being typed into.
+func fitLines(content string, head, tail, max, width int) string {
+	lines := strings.Split(content, "\n")
+	clip := lipgloss.NewStyle().MaxWidth(width)
+	for i := range lines {
+		lines[i] = clip.Render(lines[i])
+	}
+	if len(lines) <= max || head+tail >= len(lines) {
+		return strings.Join(lines, "\n")
+	}
+	mid := lines[head : len(lines)-tail]
+	room := max - head - tail
+	if room < 1 {
+		room = 1
+	}
+	cur := 0
+	for i, l := range mid {
+		if strings.Contains(l, "▸") {
+			cur = i
+			break
+		}
+	}
+	start := cur - room/2
+	if start < 0 {
+		start = 0
+	}
+	end := start + room
+	if end > len(mid) {
+		end = len(mid)
+		start = end - room
+		if start < 0 {
+			start = 0
+		}
+	}
+	out := append(append(append([]string{}, lines[:head]...), mid[start:end]...), lines[len(lines)-tail:]...)
+	return strings.Join(out, "\n")
+}
+
+// modalFrame is the border every admin modal draws, with its content fitted
+// to the terminal (fitLines).
+func modalFrame(content string, tail, w, h, maxW int) string {
+	width := w - 4
+	if width > maxW {
+		width = maxW
+	}
+	if width < 40 {
+		width = 40
+	}
+	max := h - 2
+	if max < 8 {
+		max = 8
+	}
+	return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1).Width(width).
+		Render(fitLines(content, 2, tail, max, width-2))
 }

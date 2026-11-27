@@ -1529,13 +1529,20 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.appendRunnerKeyResult(msg)
 		// A change made from the Runner keys screen: back to its list, read
 		// again, unless the server refused — then the form stays.
-		if a.runnerKeysModal.IsOpen() && a.client != nil && msg.Verb != "runner keys" && msg.Verb != "runner dial ls" {
-			if msg.OK {
+		// The modal hides the results pane, so the answer is shown in it.
+		if a.runnerKeysModal.IsOpen() && msg.Verb != "runner keys" && msg.Verb != "runner dial ls" {
+			switch {
+			case msg.Err != nil:
+				a.runnerKeysModal.formErr = fmt.Sprintf("%s: %v", msg.Verb, msg.Err)
+			case msg.OK:
 				a.runnerKeysModal.mode = rkList
-			} else if msg.Err == nil {
+			default:
 				a.runnerKeysModal.formErr = strings.TrimSpace(msg.Text)
 			}
-			return a, tea.Batch(DoRunnerKeyViews(a.client), a.refreshSnapshot())
+			if a.client != nil {
+				return a, tea.Batch(DoRunnerKeyViews(a.client), a.refreshSnapshot())
+			}
+			return a, nil
 		}
 		if msg.Refresh {
 			return a, a.refreshSnapshot()
@@ -1573,6 +1580,17 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case ServerDialResultMsg:
+		// From the Runner keys screen's "dial once": answer in its form.
+		if a.runnerKeysModal.IsOpen() && a.runnerKeysModal.mode == rkDialOnce {
+			switch {
+			case msg.Err != nil:
+				a.runnerKeysModal.formErr = fmt.Sprintf("server dial-runner %s: %v", msg.RunnerCID, msg.Err)
+			case msg.Status == protocol.DialRunnerStatus_Ok:
+				a.runnerKeysModal.mode = rkList
+			default:
+				a.runnerKeysModal.formErr = fmt.Sprintf("server dial-runner %s: %s", msg.RunnerCID, msg.Status.String())
+			}
+		}
 		if msg.Err != nil {
 			a.cmdresult.Append(ErrorStyle.Render(fmt.Sprintf("server dial-runner %s: %v", msg.RunnerCID, msg.Err)))
 			return a, nil

@@ -1095,6 +1095,9 @@ func (h tuiVerbs) CapsSetDefaults(v verb.SetDefaultsAction) tea.Cmd {
 		// them here is what keeps a stale narrowing from surviving onto a
 		// base it was never written against.
 		a.sessionOverrides = v.Overrides
+		// Their condition bodies go with them: a body left from the picker
+		// would mark (or refuse, naming flags nobody typed) the new ones.
+		a.sessionGrantConditions = nil
 		label := cli.ScopeLabel(a.sessionScope)
 		if ov := cli.OverridesLabel(a.sessionOverrides); ov != "" {
 			label += " +" + ov

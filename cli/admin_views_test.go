@@ -108,3 +108,22 @@ func TestRunnerViews(t *testing.T) {
 		t.Fatalf("dial views: %+v", d)
 	}
 }
+
+// What the form saves must be writable back on the command line (action
+// edit restates the definition): a literal with a {param} inside other text,
+// or one starting with \{, is refused (final review I4).
+func TestActionFormRefusesWhatTheCommandLineCannotRestate(t *testing.T) {
+	env := ActionParamView{Name: "env", Type: "token"}
+	for name, lit := range map[string]string{"partial reference": "--env={env}", "leading backslash-brace": `\{x}`} {
+		f := ActionForm{Name: "x", Params: []ActionParamView{env},
+			Template: []ActionElementView{{Literal: "run"}, {Literal: lit}, {IsParam: true, Param: "env"}}}
+		if _, err := ActionPutInputFromForm(f); err == nil {
+			t.Errorf("%s: %q accepted", name, lit)
+		}
+	}
+	ok := ActionForm{Name: "x", Params: []ActionParamView{env},
+		Template: []ActionElementView{{Literal: "run"}, {Literal: "{env}"}, {IsParam: true, Param: "env"}}}
+	if _, err := ActionPutInputFromForm(ok); err != nil {
+		t.Fatalf("a whole-word literal {env} is restatable as \\{env}: %v", err)
+	}
+}

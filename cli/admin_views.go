@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/hex"
 	"fmt"
+	"reflect"
 
 	"github.com/on-keyday/agent-harness/actiondef"
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -143,7 +144,29 @@ func ActionPutInputFromForm(f ActionForm) (ActionPutInput, error) {
 	if err := actiondef.Validate(&def); err != nil {
 		return in, err
 	}
+	if err := restatable(&def); err != nil {
+		return in, err
+	}
 	return in, nil
+}
+
+// restatable refuses a definition the command line could not write back:
+// `action edit` restates the template as words (ActionTemplateWords), and
+// ParseTemplate of them must give the same elements. A literal with a
+// declared {param} inside other text is refused there, and one starting with
+// \{ would come back without its backslash.
+func restatable(def *protocol.ActionDefinition) error {
+	words := ActionTemplateWords(def)
+	els, err := actiondef.ParseTemplate(words, def.Params)
+	if err != nil {
+		return fmt.Errorf("the command cannot be written on the command line: %w", err)
+	}
+	for i := range def.Template {
+		if i >= len(els) || !reflect.DeepEqual(els[i], def.Template[i]) {
+			return fmt.Errorf("argument %d %q cannot be written on the command line: a word starting with \\{ is read as an escaped {", i, words[i])
+		}
+	}
+	return nil
 }
 
 // RunnerKeyView is one enrolled key. Bound holds full task ids; Runners the

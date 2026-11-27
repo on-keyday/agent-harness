@@ -7,7 +7,6 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
 	"github.com/on-keyday/agent-harness/cli"
 )
@@ -187,12 +186,12 @@ func (m *ActionsModal) View() string {
 		}
 		b.WriteString(MutedStyle.Render("↑/↓ select · n new · e edit · x delete · r reload · esc close"))
 	}
-	w := m.w - 4
-	if w > 110 {
-		w = 110
+	tail := 1
+	switch {
+	case m.mode == actionsForm && (m.form.err != "" || m.form.Check() != ""):
+		tail = 2
+	case m.mode != actionsForm && (m.mode == actionsConfirmDelete || m.status != ""):
+		tail = 2
 	}
-	if w < 40 {
-		w = 40
-	}
-	return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1).Width(w).Render(b.String())
+	return modalFrame(strings.TrimRight(b.String(), "\n"), tail, m.w, m.h, 110)
 }
