@@ -243,8 +243,10 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         # the TUI under a PTY and runs --prompt as its first turn. Note it does
         # NOT refuse a missing TTY the way agy does — 1.18.18 without a PTY
         # rendered the TUI into the pipe and hung, so a non-PTY launch fails by
-        # timeout rather than by error. The TUI's --continue is in 2.4.2's
-        # --help and was not run live.
+        # timeout rather than by error. Through a dummy harness (2026-11-28),
+        # an interactive resume (`--standalone --continue --prompt=`) recalled
+        # the previous turn, and a cancel mid-tool-call left no opencode or
+        # tool process behind.
         "oneshotArgv": "run --standalone {args} {prompt}",
         "resumeOneshotArgv": "run --standalone --continue {args} {prompt}",
         "interactiveArgv": "--standalone {args} --prompt={prompt}",
