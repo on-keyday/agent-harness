@@ -75,10 +75,18 @@ Branch first; then the operator upgrades opencode on each host with an
 opencode slot; then a real opencode task and a `sandbox-opencode` task are run
 before landing.
 
+As run (2026-11-28, Arch `opencode 2.4.2-1` on the runner host,
+`scripts/dummy-harness.sh up --agent fake -- --agent-profiles <bash +
+opencode / sandbox-opencode from agent_presets.agent_profiles_json>`), for
+both `opencode` and `sandbox-opencode`: a one-shot whose tool call saw the
+task's own `HARNESS_TASK_ID` and `PWD`; a `--resume-conversation` one-shot and
+interactive open that recalled the previous turn; `transcript ls` while an
+interactive task was live (no hang) and `transcript get` of `export.json`; a
+cancel during a tool call that left no opencode, `opencode-pty` or tool
+process (and, sandboxed, no container). `opencode service status` read
+`stopped` throughout. The sandbox proxy logged only `ALLOW opencode.ai:443`
+and `ALLOW models.opencode.ai:443`, no DENY, so `A_DOMAINS` needs nothing new.
+
 ## Not measured
 
-- Whether 2.x inside the podman sandbox reaches hosts beyond
-  `opencode.ai,models.opencode.ai` (needs 2.x on the host: the wrapper bind-
-  mounts the host binary and the real data dirs, which a scratch binary must
-  not migrate).
 - Whether 1.x can still read a data dir after 2.x opened it.
