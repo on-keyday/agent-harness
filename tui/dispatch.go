@@ -371,18 +371,19 @@ func (h tuiVerbs) FileNew(v verb.FileNewAction) tea.Cmd {
 // unread, because the shared prologue built the query from the modal's state.
 
 // gitOpen is everything the six share: resolve the id, open the modal at the
-// command line's root, and issue the three panel queries with the limits the
-// line asked for.
-func (h tuiVerbs) gitOpen(v verb.GitAction) (full string, limits func(cli.GitQuery) cli.GitQuery, cmds []tea.Cmd, ok bool) {
+// command line's root, and build the limits the line asked for. Each caller
+// then issues the panel queries with ONE content query of its own
+// (gitReloadWith): the default diff sent beside a file/show/diff raced it.
+func (h tuiVerbs) gitOpen(v verb.GitAction) (full string, limits func(cli.GitQuery) cli.GitQuery, ok bool) {
 	a := h.a
 	full, errStr := a.resolveTaskIDPrefix(v.TaskID)
 	if errStr != "" {
 		a.cmdresult.Append(ErrorStyle.Render(errStr))
-		return "", nil, nil, false
+		return "", nil, false
 	}
 	if a.client == nil {
 		a.cmdresult.Append(WarnStyle.Render("git: not connected"))
-		return "", nil, nil, false
+		return "", nil, false
 	}
 	// The cmdline route lands in the same modal the G key opens, rather than
 	// dumping a diff into the result pane where it cannot be scrolled.
@@ -405,7 +406,7 @@ func (h tuiVerbs) gitOpen(v verb.GitAction) (full string, limits func(cli.GitQue
 		}
 		return q
 	}
-	return full, limits, []tea.Cmd{a.gitReload(full, limits)}, true
+	return full, limits, true
 }
 
 // GitLog, GitStatus and GitSubrepos are answered by gitReload's three queries.
@@ -414,15 +415,15 @@ func (h tuiVerbs) GitStatus(v verb.GitAction) tea.Cmd   { return h.gitPanelOnly(
 func (h tuiVerbs) GitSubrepos(v verb.GitAction) tea.Cmd { return h.gitPanelOnly(v) }
 
 func (h tuiVerbs) gitPanelOnly(v verb.GitAction) tea.Cmd {
-	_, _, cmds, ok := h.gitOpen(v)
+	full, limits, ok := h.gitOpen(v)
 	if !ok {
 		return nil
 	}
-	return tea.Batch(cmds...)
+	return h.a.gitReload(full, limits)
 }
 
 func (h tuiVerbs) GitFile(v verb.GitAction) tea.Cmd {
-	full, limits, cmds, ok := h.gitOpen(v)
+	full, limits, ok := h.gitOpen(v)
 	if !ok {
 		return nil
 	}
@@ -437,22 +438,26 @@ func (h tuiVerbs) GitFile(v verb.GitAction) tea.Cmd {
 	default:
 		q.Target = protocol.GitDiffTarget_Worktree
 	}
-	return tea.Batch(append(cmds, DoGitFile(h.a.client, full, q))...)
+	// Leaving the file view goes back to the default diff.
+	h.a.gitModal.RecordContentQuery(h.a.gitDefaultDiff(limits))
+	return h.a.gitReloadWith(full, limits, DoGitFile(h.a.client, full, q))
 }
 
 func (h tuiVerbs) GitShow(v verb.GitAction) tea.Cmd {
-	full, limits, cmds, ok := h.gitOpen(v)
+	full, limits, ok := h.gitOpen(v)
 	if !ok {
 		return nil
 	}
 	q := limits(h.a.gitModal.Query())
 	q.BaseRev = v.BaseRev
 	q.Path = v.Path
-	return tea.Batch(append(cmds, DoGitShow(h.a.client, full, q))...)
+	q.Kind = protocol.GitQueryKind_Show
+	h.a.gitModal.RecordContentQuery(q)
+	return h.a.gitReloadWith(full, limits, DoGitShow(h.a.client, full, q))
 }
 
 func (h tuiVerbs) GitDiff(v verb.GitAction) tea.Cmd {
-	full, limits, cmds, ok := h.gitOpen(v)
+	full, limits, ok := h.gitOpen(v)
 	if !ok {
 		return nil
 	}
@@ -467,7 +472,9 @@ func (h tuiVerbs) GitDiff(v verb.GitAction) tea.Cmd {
 	case v.TargetRev != "":
 		q.Target = protocol.GitDiffTarget_Rev
 	}
-	return tea.Batch(append(cmds, DoGitDiff(h.a.client, full, q))...)
+	q.Kind = protocol.GitQueryKind_Diff
+	h.a.gitModal.RecordContentQuery(q)
+	return h.a.gitReloadWith(full, limits, DoGitDiff(h.a.client, full, q))
 }
 
 // --- exec --------------------------------------------------------------

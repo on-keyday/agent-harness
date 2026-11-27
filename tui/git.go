@@ -16,8 +16,10 @@ type GitResultMsg struct {
 	TaskID string
 	Kind   protocol.GitQueryKind
 	Result *cli.GitResult
-	// Path is set for the file kind: which file the content belongs to, so
-	// the modal can label it without re-deriving it.
+	// Path is the query's path. For the file kind it names the file the
+	// content belongs to; for diff and status it says the answer is narrowed
+	// to that path, which is how a narrowed status is told apart from the
+	// panel's whole-worktree summary.
 	Path string
 	Err  error
 }
@@ -49,7 +51,7 @@ func DoGitDiff(c *cli.Client, taskID string, q cli.GitQuery) tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), gitCmdTimeout)
 		defer cancel()
 		res, err := c.GitDiff(ctx, taskID, q)
-		return GitResultMsg{TaskID: taskID, Kind: protocol.GitQueryKind_Diff, Result: res, Err: err}
+		return GitResultMsg{TaskID: taskID, Kind: protocol.GitQueryKind_Diff, Result: res, Path: q.Path, Err: err}
 	}
 }
 
@@ -67,7 +69,7 @@ func DoGitStatus(c *cli.Client, taskID string, q cli.GitQuery) tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), gitCmdTimeout)
 		defer cancel()
 		res, err := c.GitStatus(ctx, taskID, q)
-		return GitResultMsg{TaskID: taskID, Kind: protocol.GitQueryKind_Status, Result: res, Err: err}
+		return GitResultMsg{TaskID: taskID, Kind: protocol.GitQueryKind_Status, Result: res, Path: q.Path, Err: err}
 	}
 }
 

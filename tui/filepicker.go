@@ -46,6 +46,14 @@ type FileEditRequestMsg struct {
 	Rel    string
 }
 
+// FileGitRequestMsg asks App to open the git modal on TaskID with the
+// worktree diff narrowed to Path (relative to the worktree root). The modal
+// lives on App, which holds the client its queries need.
+type FileGitRequestMsg struct {
+	TaskID string
+	Path   string
+}
+
 // FileEditNewRequestMsg asks App to open the editor popup on a file that does
 // not exist yet, seeded with the picker's current directory.
 type FileEditNewRequestMsg struct {
@@ -379,6 +387,16 @@ func (m FilePickerModel) handleBrowseKey(k tea.KeyMsg) (FilePickerModel, tea.Cmd
 	case "n":
 		taskID, dir := m.taskID, m.curDir
 		return m, func() tea.Msg { return FileEditNewRequestMsg{TaskID: taskID, Dir: dir} }
+	case "G":
+		// Git: the git modal opens over the picker with the diff narrowed
+		// to the selected entry (a directory narrows to everything under
+		// it); Esc there comes back here.
+		if m.cursor < 0 || m.cursor >= len(m.entries) {
+			m.msg = "select an entry for its git diff"
+			return m, nil
+		}
+		taskID, rel := m.taskID, joinRel(m.curDir, m.entries[m.cursor].Name)
+		return m, func() tea.Msg { return FileGitRequestMsg{TaskID: taskID, Path: rel} }
 	case "d":
 		if m.cursor < 0 || m.cursor >= len(m.entries) {
 			return m, nil
@@ -830,12 +848,20 @@ func (m FilePickerModel) View() string {
 	if innerH < 8 {
 		innerH = 8
 	}
+	w := m.width - 4
+	if w < 40 {
+		w = 40
+	}
+	// The box wraps at its own width, so a line longer than that takes
+	// several rows; counting newlines alone overflowed the budget and pushed
+	// the box's top edge off a narrow terminal.
+	textW := w - 2 // Padding(0, 1)
 
 	// Compose header (always shown).
 	var header strings.Builder
 	fmt.Fprintf(&header, "File picker · task %s · /%s\n", m.taskShort, m.curDir)
 	if !m.localBrowseActive {
-		header.WriteString("↑↓ nav · → / Enter descend · ← / Backspace back · e edit · n new file · u push · g pull · d delete · D rm -rf · + new dir · r reload · Esc close\n")
+		header.WriteString("↑↓ nav · → / Enter descend · ← / Backspace back · e edit · n new file · u push · g pull · G git diff · d delete · D rm -rf · + new dir · r reload · Esc close\n")
 	} else {
 		header.WriteString("Tab → typing (pre-fills selected file) · ↑↓ → / Enter descend · ← / Backspace back · . use this dir · d/D delete · r reload · Esc cancel\n")
 	}
@@ -850,7 +876,7 @@ func (m FilePickerModel) View() string {
 		header.WriteString(m.msg + "\n")
 	}
 	header.WriteString(strings.Repeat("─", 60) + "\n")
-	headerLines := lineCount(header.String())
+	headerLines := wrappedLineCount(header.String(), textW)
 
 	// Compose footer / subpopup (varies by inputMode).
 	var footer strings.Builder
@@ -908,7 +934,7 @@ func (m FilePickerModel) View() string {
 	case pickerConfirmPushOverwrite:
 		fmt.Fprintf(&footer, "\nremote destination %s already exists. overwrite? (y/n)\n", m.pendingPushRemote)
 	}
-	footerLines := lineCount(footer.String())
+	footerLines := wrappedLineCount(footer.String(), textW)
 
 	// Remaining rows for entries.
 	entryCapacity := innerH - headerLines - footerLines
@@ -944,10 +970,6 @@ func (m FilePickerModel) View() string {
 		body += strings.Repeat("\n", pad)
 	}
 
-	w := m.width - 4
-	if w < 40 {
-		w = 40
-	}
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		Padding(0, 1).
@@ -1015,6 +1037,19 @@ func lineCount(s string) int {
 	n := strings.Count(s, "\n")
 	if !strings.HasSuffix(s, "\n") {
 		n++
+	}
+	return n
+}
+
+// wrappedLineCount is lineCount for text the box wraps at width: each line
+// counts the rows it takes once wrapped.
+func wrappedLineCount(s string, width int) int {
+	if s == "" {
+		return 0
+	}
+	n := 0
+	for _, line := range strings.Split(strings.TrimSuffix(s, "\n"), "\n") {
+		n += lipgloss.Height(lipgloss.NewStyle().Width(width).Render(line))
 	}
 	return n
 }

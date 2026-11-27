@@ -352,6 +352,38 @@ func (m *GitModal) SetContent(res *cli.GitResult) {
 	m.setLines(strings.Split(text, "\n"), res.Truncated)
 }
 
+func noDifferenceIn(path string) string { return "(no difference in " + path + ")" }
+
+// SetNoDifferenceIn reports an empty diff narrowed to path. A bare
+// "(no difference)" there reads as "the whole worktree is clean".
+func (m *GitModal) SetNoDifferenceIn(path string) {
+	m.errMsg = ""
+	m.fileView = ""
+	m.setLines([]string{noDifferenceIn(path)}, false)
+}
+
+// ShowsNoDifferenceIn reports whether the content is still the empty narrowed
+// diff for path — the only content a narrowed status may replace, so an answer
+// arriving after the operator moved on cannot overwrite what they moved to.
+func (m GitModal) ShowsNoDifferenceIn(path string) bool {
+	return m.fileView == "" && len(m.rawLines) == 1 && m.rawLines[0] == noDifferenceIn(path)
+}
+
+// SetPathStatusContent renders the porcelain status for one path into the
+// content pane: an untracked file is in no diff, and this says why the diff
+// was empty. Unlike SetStatusContent it leaves the worktree row's summary
+// alone, which counts the whole worktree.
+func (m *GitModal) SetPathStatusContent(path string, res *cli.GitResult) {
+	if len(res.Entries) == 0 {
+		return // the empty-diff line already says it
+	}
+	lines := []string{"(no diff for " + path + " — status:)"}
+	for _, e := range res.Entries {
+		lines = append(lines, fmt.Sprintf("%s %s", e.XY, e.Path))
+	}
+	m.setLines(lines, false)
+}
+
 // SetError replaces the content with git's own words. A failed query leaves
 // the modal standing: the operator picked the wrong baseline far more often
 // than the view broke, and the fix is one keypress away.

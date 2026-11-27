@@ -924,7 +924,13 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case protocol.GitQueryKind_Log:
 			a.gitModal.SetLog(msg.Result)
 		case protocol.GitQueryKind_Status:
-			if a.gitStatusToContent {
+			if msg.Path != "" {
+				// A narrowed status is never the panel's summary: it explains
+				// an empty narrowed diff, and only while that is still showing.
+				if a.gitModal.ShowsNoDifferenceIn(msg.Path) {
+					a.gitModal.SetPathStatusContent(msg.Path, msg.Result)
+				}
+			} else if a.gitStatusToContent {
 				a.gitStatusToContent = false
 				a.gitModal.SetStatusContent(msg.Result)
 			} else {
@@ -934,6 +940,16 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.gitModal.SetSubrepos(msg.Result)
 		case protocol.GitQueryKind_File:
 			a.gitModal.SetFileContent(msg.Path, msg.Result)
+		case protocol.GitQueryKind_Diff:
+			if msg.Path != "" && strings.TrimSuffix(msg.Result.Text, "\n") == "" {
+				// An untracked file is in no diff at all; its status says so.
+				a.gitModal.SetNoDifferenceIn(msg.Path)
+				q := a.gitModal.Query()
+				q.Path = msg.Path
+				a.gitModal.SetSize(a.width, a.height)
+				return a, DoGitStatus(a.client, msg.TaskID, q)
+			}
+			a.gitModal.SetContent(msg.Result)
 		default:
 			a.gitModal.SetContent(msg.Result)
 		}
@@ -1636,6 +1652,9 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// The route is a command-line choice; the interactive widgets
 			// take the default.
 			protocol.DataPlaneRoute_Splice)
+
+	case FileGitRequestMsg:
+		return a, a.openGitNarrowed(msg.TaskID, msg.Path)
 
 	case FileEditNewRequestMsg:
 		a.fileEditor.SetSize(a.width, a.height)
@@ -2406,6 +2425,11 @@ func (a *App) View() string {
 		cmdlineView,
 		footer,
 	}, "\n")
+	// The git modal before the picker: the picker's G opens it on top, and it
+	// already takes keys ahead of the picker (appOverlays).
+	if a.gitModal.IsOpen() {
+		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.gitModal.View())
+	}
 	// Editor before picker: it opens from the picker and draws on top of it,
 	// matching the key precedence in Update.
 	if a.fileEditor.IsOpen() {
@@ -2482,9 +2506,6 @@ func (a *App) View() string {
 	}
 	if a.boardModal.IsOpen() {
 		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.boardModal.View())
-	}
-	if a.gitModal.IsOpen() {
-		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.gitModal.View())
 	}
 	if a.grid.IsOpen() {
 		// Top-align vertically (not Center): if the grid is ever fractionally
@@ -2937,26 +2958,60 @@ func uniqueAgentProfiles(rs []protocol.RunnerInfo) []string {
 // commit list, the worktree summary, the nested repositories, and the diff for
 // the default selection. One helper because a re-root, a refresh and the
 // initial open all need the same four answers, and a route that forgot one
-// would silently show the previous repository's data.
-// gitReload issues the three panel queries. limits, when non-nil, applies the
-// command line's --max / --max-bytes -- the keyboard route passes nil and
-// keeps the modal's own settings.
+// would silently show the previous repository's data. limits, when non-nil,
+// applies the command line's --max / --max-bytes -- the keyboard route passes
+// nil and keeps the modal's own settings.
 func (a *App) gitReload(taskID string, limits func(cli.GitQuery) cli.GitQuery) tea.Cmd {
+	diffQ := a.gitDefaultDiff(limits)
+	a.gitModal.RecordContentQuery(diffQ)
+	return a.gitReloadWith(taskID, limits, DoGitDiff(a.client, taskID, diffQ))
+}
+
+// gitDefaultDiff is the content an open or a re-root starts on: the working
+// tree against the baseline.
+func (a *App) gitDefaultDiff(limits func(cli.GitQuery) cli.GitQuery) cli.GitQuery {
 	q := a.gitModal.Query()
 	if limits != nil {
 		q = limits(q)
 	}
-	diffQ := q
-	diffQ.BaseRev = a.gitModal.BaseRev()
-	diffQ.Target = protocol.GitDiffTarget_Worktree
-	diffQ.Kind = protocol.GitQueryKind_Diff
-	a.gitModal.RecordContentQuery(diffQ)
+	q.BaseRev = a.gitModal.BaseRev()
+	q.Target = protocol.GitDiffTarget_Worktree
+	q.Kind = protocol.GitQueryKind_Diff
+	return q
+}
+
+// gitReloadWith is gitReload with the content query chosen by the caller, who
+// also records it. Exactly ONE content query goes out: issuing the default
+// diff beside a caller's own raced it -- both answers land in the content
+// pane, and whichever came back last was what the operator saw.
+func (a *App) gitReloadWith(taskID string, limits func(cli.GitQuery) cli.GitQuery, content tea.Cmd) tea.Cmd {
+	q := a.gitModal.Query()
+	if limits != nil {
+		q = limits(q)
+	}
 	return tea.Batch(
 		DoGitLog(a.client, taskID, q),
 		DoGitStatus(a.client, taskID, q),
 		DoGitSubrepos(a.client, taskID, q),
-		DoGitDiff(a.client, taskID, diffQ),
+		content,
 	)
+}
+
+// openGitNarrowed opens the git modal on taskID with the working-tree diff
+// narrowed to path (a directory narrows to everything under it). The file
+// picker's G; the modal is drawn over the picker, so Esc lands back there.
+func (a *App) openGitNarrowed(taskID, path string) tea.Cmd {
+	if a.client == nil {
+		a.cmdresult.Append(WarnStyle.Render("git: not connected"))
+		return nil
+	}
+	a.gitModal.Open(taskID)
+	a.gitModal.SetSize(a.width, a.height)
+	a.gitStatusToContent = false
+	q := a.gitDefaultDiff(nil)
+	q.Path = path
+	a.gitModal.RecordContentQuery(q)
+	return a.gitReloadWith(taskID, nil, DoGitDiff(a.client, taskID, q))
 }
 
 // cmdlinePlaceholder is the cmdline's ghost text: a width-limited SUMMARY, so
@@ -2971,7 +3026,7 @@ const cmdlinePlaceholder = "session / file / forward / conns / ssh-gateway / ser
 // nothing parses it -- and pretending otherwise would put screen state in the
 // grammar.
 var tuiKeyHelp = []string{
-	"F (tasks focus): open file picker — Enter/→ to descend a dir, Backspace/← to go back. e edit / n new / u push / g pull / d delete / D rm -rf. Esc closes.",
+	"F (tasks focus): open file picker — Enter/→ to descend a dir, Backspace/← to go back. e edit / n new / u push / g pull / G git diff of the entry / d delete / D rm -rf. Esc closes.",
 	"  picker push/pull input — Tab toggles local fs browser. Tab back to typing pre-fills the selected file's path; Enter commits.",
 	"  push/pull overwrite — first try fails on existing dest; picker prompts overwrite? (y/n). y retries with force=true.",
 }
