@@ -57,8 +57,11 @@ type Store interface {
 var Kinds = []string{"claude", "codex", "pi", "agy", "opencode"}
 
 // New returns the store for kind, rooted where that agent keeps it as seen
-// through getenv, the agent's environment (B-D5, B-F8).
-func New(kind string, getenv func(string) string) (Store, error) {
+// through getenv, the agent's environment (B-D5, B-F8). agentBin is, for a
+// store read through the agent's own CLI (CLIName non-empty), the binary to
+// run — the one the agent itself runs; "" runs CLIName from PATH. Other
+// stores ignore it.
+func New(kind string, getenv func(string) string, agentBin string) (Store, error) {
 	switch kind {
 	case "claude":
 		return newClaude(getenv)
@@ -69,9 +72,18 @@ func New(kind string, getenv func(string) string) (Store, error) {
 	case "agy":
 		return newAgy(getenv)
 	case "opencode":
-		return newOpencode(getenv)
+		return newOpencode(getenv, agentBin)
 	}
 	return nil, fmt.Errorf("transcript: no store for agent kind %q", kind)
+}
+
+// CLIName is the agent binary a store of kind is read through, without
+// directory or Windows extension; "" for a store read from files.
+func CLIName(kind string) string {
+	if kind == "opencode" {
+		return "opencode"
+	}
+	return ""
 }
 
 // SamePath compares two paths as the runner's OS does (B-D9).

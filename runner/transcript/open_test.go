@@ -30,7 +30,7 @@ func TestSymlinkedFileIsNotListedOrOpened(t *testing.T) {
 	if err := os.Symlink(secret, filepath.Join(proj, "s1", "tool-results", "t.txt")); err != nil {
 		t.Fatal(err)
 	}
-	st, _ := New("claude", env(map[string]string{"CLAUDE_CONFIG_DIR": root}))
+	st, _ := New("claude", env(map[string]string{"CLAUDE_CONFIG_DIR": root}), "")
 	fs, err := st.Files(dir, "s1")
 	if err != nil {
 		t.Fatal(err)
@@ -84,7 +84,7 @@ func TestSymlinkSwapWhileOpeningNeverReadsTheTarget(t *testing.T) {
 			}
 		}
 	}()
-	st, _ := New("claude", env(map[string]string{"CLAUDE_CONFIG_DIR": root}))
+	st, _ := New("claude", env(map[string]string{"CLAUDE_CONFIG_DIR": root}), "")
 	for i := 0; i < 3000; i++ {
 		rc, err := st.Open(dir, "s1", "s1.jsonl")
 		if err != nil {
@@ -115,7 +115,7 @@ func TestSessionsSkipFifoAndDevices(t *testing.T) {
 	if err := os.Symlink("/dev/zero", filepath.Join(proj, "zero.jsonl")); err != nil {
 		t.Fatal(err)
 	}
-	st, _ := New("claude", env(map[string]string{"CLAUDE_CONFIG_DIR": root}))
+	st, _ := New("claude", env(map[string]string{"CLAUDE_CONFIG_DIR": root}), "")
 	got := make(chan []Session, 1)
 	go func() {
 		ss, _ := st.Sessions(dir)
@@ -142,7 +142,7 @@ func TestHeaderReadIsBounded(t *testing.T) {
 	if err := os.Truncate(p, 200<<20); err != nil { // 200 MiB of NULs, no newline
 		t.Fatal(err)
 	}
-	st, _ := New("claude", env(map[string]string{"CLAUDE_CONFIG_DIR": root}))
+	st, _ := New("claude", env(map[string]string{"CLAUDE_CONFIG_DIR": root}), "")
 	start := time.Now()
 	if _, err := st.Sessions(dir); err != nil {
 		t.Fatal(err)

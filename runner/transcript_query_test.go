@@ -416,6 +416,64 @@ func TestWholeSessionTarSizeMatchesWithLongNames(t *testing.T) {
 	}
 }
 
+// The opencode store runs the opencode the agent runs: the bin of a profile
+// naming the store whose file is opencode itself. A sandbox wrapper names the
+// same store but is not opencode, so it is never picked.
+func TestTranscriptAgentBinIsTheProfilesOpencode(t *testing.T) {
+	wrapper := AgentProfile{Name: "sandbox-opencode", Bin: "/repo/scripts/sandbox/opencode-in-podman.sh", TranscriptStore: "opencode"}
+	for _, tc := range []struct {
+		name  string
+		extra []AgentProfile
+		want  string
+	}{
+		{"wrapper only", []AgentProfile{wrapper}, ""},
+		{"wrapper first", []AgentProfile{wrapper, {Name: "opencode", Bin: "/home/u/.opencode/bin/opencode", TranscriptStore: "opencode"}}, "/home/u/.opencode/bin/opencode"},
+		{"windows extension", []AgentProfile{{Name: "opencode", Bin: "/w/opencode.exe", TranscriptStore: "opencode"}}, "/w/opencode.exe"},
+		{"opencode without the store", []AgentProfile{{Name: "opencode", Bin: "/b/opencode"}}, ""},
+	} {
+		ps, err := NewProfileSet(AgentProfile{Name: "claude", Bin: "/b/claude", TranscriptStore: "claude"}, tc.extra)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := ps.TranscriptAgentBin("opencode"); got != tc.want {
+			t.Errorf("%s: %q, want %q", tc.name, got, tc.want)
+		}
+		if got := ps.TranscriptAgentBin("claude"); got != "" {
+			t.Errorf("%s: claude's store reads files, so no bin: %q", tc.name, got)
+		}
+	}
+}
+
+// A runner started with a PATH that lacks opencode (g1: an agent bin given as
+// an absolute path, a runner started over ssh) still lists opencode sessions,
+// because the store runs the profile's binary rather than searching PATH.
+func TestOpencodeTranscriptRunsTheProfilesBinaryOffPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fake")
+	}
+	f := newTranscriptFixture(t)
+	bin := filepath.Join(t.TempDir(), "opencode")
+	list := `[{"id":"ses_a","directory":"` + f.worktree() + `","created":1,"updated":2}]`
+	writeFile(t, bin, "#!/bin/sh\nif [ \"$1 $2\" = \"session list\" ]; then echo '"+list+"'; exit 0; fi\nexit 9\n")
+	if err := os.Chmod(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", t.TempDir())
+	ps, err := NewProfileSet(AgentProfile{Name: "sandbox-opencode", Bin: "/x/opencode-in-podman.sh", TranscriptStore: "opencode"},
+		[]AgentProfile{{Name: "opencode", Bin: bin, TranscriptStore: "opencode"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.s.Profiles = ps
+	if err := os.MkdirAll(f.worktree(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	res, _ := f.answer(t, f.req(protocol.TranscriptOp_Sessions, "", "", false))
+	if res.Status != protocol.TranscriptStatus_Ok || strings.Join(sessionIDs(res), ",") != "opencode:ses_a" {
+		t.Fatalf("status %v %q rows %v", res.Status, res.Message, sessionIDs(res))
+	}
+}
+
 // A runner none of whose profiles names a store — a slot replayed with an
 // argv from before --agent-transcript-store — says how to fix it, not merely
 // that no agent keeps transcripts.

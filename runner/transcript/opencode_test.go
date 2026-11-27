@@ -19,7 +19,7 @@ import (
 // opencode 2.x it would start or join the shared background service. Like
 // opencode 1.18.18, which ended a piped export at 128KiB and exited 0, the
 // fake prints only a fragment when its stdout is a pipe.
-func fakeOpencode(t *testing.T, list string) (logPath string) {
+func fakeOpencode(t *testing.T, list string) (logPath, bin string) {
 	t.Helper()
 	d := t.TempDir()
 	logPath = filepath.Join(d, "calls.log")
@@ -39,14 +39,11 @@ if [ "$1 $2" = "session export" ]; then
 fi
 exit 9
 `
-	bin := filepath.Join(d, "opencode")
+	bin = filepath.Join(d, "opencode")
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	old := opencodeBin
-	opencodeBin = bin
-	t.Cleanup(func() { opencodeBin = old })
-	return logPath
+	return logPath, bin
 }
 
 func opencodeList(dir, other string) string {
@@ -58,8 +55,8 @@ func opencodeList(dir, other string) string {
 // times it reports (unix ms).
 func TestOpencodeListsByDirectory(t *testing.T) {
 	dir := t.TempDir()
-	logPath := fakeOpencode(t, opencodeList(dir, "/elsewhere"))
-	st, err := New("opencode", env(nil))
+	logPath, bin := fakeOpencode(t, opencodeList(dir, "/elsewhere"))
+	st, err := New("opencode", env(nil), bin)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,8 +84,8 @@ func TestOpencodeListsByDirectory(t *testing.T) {
 func TestOpencodeListsFromNearestExistingDir(t *testing.T) {
 	repo := t.TempDir()
 	dir := filepath.Join(repo, ".harness-worktrees", "gone")
-	logPath := fakeOpencode(t, opencodeList(dir, "/elsewhere"))
-	st, _ := New("opencode", env(nil))
+	logPath, bin := fakeOpencode(t, opencodeList(dir, "/elsewhere"))
+	st, _ := New("opencode", env(nil), bin)
 	ss, err := st.Sessions(dir)
 	if err != nil || len(ss) != 1 {
 		t.Fatalf("sessions %+v err %v", ss, err)
@@ -103,8 +100,8 @@ func TestOpencodeListsFromNearestExistingDir(t *testing.T) {
 // (B-D4).
 func TestOpencodeGetRunsExport(t *testing.T) {
 	dir := t.TempDir()
-	fakeOpencode(t, opencodeList(dir, "/elsewhere"))
-	st, _ := New("opencode", env(nil))
+	_, bin := fakeOpencode(t, opencodeList(dir, "/elsewhere"))
+	st, _ := New("opencode", env(nil), bin)
 	fs, err := st.Files(dir, "ses_a")
 	if err != nil || len(fs) != 1 || fs[0].Name != "export.json" || fs[0].SizeKnown {
 		t.Fatalf("files %+v err %v", fs, err)
@@ -132,8 +129,8 @@ func TestOpencodeGetRunsExport(t *testing.T) {
 // complete.
 func TestOpencodeExportFailureIsStoreError(t *testing.T) {
 	dir := t.TempDir()
-	fakeOpencode(t, `[{"id":"bad","directory":"`+dir+`","created":1,"updated":2}]`)
-	st, _ := New("opencode", env(nil))
+	_, bin := fakeOpencode(t, `[{"id":"bad","directory":"`+dir+`","created":1,"updated":2}]`)
+	st, _ := New("opencode", env(nil), bin)
 	rc, err := st.Open(dir, "bad", "export.json")
 	if err == nil {
 		rc.Close()
@@ -147,13 +144,28 @@ func TestOpencodeExportFailureIsStoreError(t *testing.T) {
 // the exit status alone did not catch opencode's cut-off output.
 func TestOpencodeExportCutShortIsStoreError(t *testing.T) {
 	dir := t.TempDir()
-	fakeOpencode(t, `[{"id":"notjson","directory":"`+dir+`","created":1,"updated":2}]`)
-	st, _ := New("opencode", env(nil))
+	_, bin := fakeOpencode(t, `[{"id":"notjson","directory":"`+dir+`","created":1,"updated":2}]`)
+	st, _ := New("opencode", env(nil), bin)
 	rc, err := st.Open(dir, "notjson", "export.json")
 	if err == nil {
 		rc.Close()
 	}
 	if err == nil || !strings.Contains(err.Error(), "JSON") {
 		t.Fatalf("err %v, want an incomplete-JSON error", err)
+	}
+}
+
+// With no binary given, the store runs the name `opencode` from PATH, as it
+// did before a profile could name one.
+func TestOpencodeWithoutABinUsesTheNameOnPath(t *testing.T) {
+	dir := t.TempDir()
+	logPath, bin := fakeOpencode(t, opencodeList(dir, "/elsewhere"))
+	t.Setenv("PATH", filepath.Dir(bin)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	st, _ := New("opencode", env(nil), "")
+	if ss, err := st.Sessions(dir); err != nil || len(ss) != 1 {
+		t.Fatalf("sessions %+v err %v", ss, err)
+	}
+	if calls, _ := os.ReadFile(logPath); len(calls) == 0 {
+		t.Fatal("the opencode on PATH was not run")
 	}
 }

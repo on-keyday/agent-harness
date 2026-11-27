@@ -78,7 +78,7 @@ func TestClaudeHostileIdAndSymlinkedCompanions(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(proj, "s1", "subagents")); err != nil {
 		t.Fatal(err)
 	}
-	st, err := New("claude", env(map[string]string{"CLAUDE_CONFIG_DIR": root}))
+	st, err := New("claude", env(map[string]string{"CLAUDE_CONFIG_DIR": root}), "")
 	if err != nil {
 		t.Fatal(err)
 	}

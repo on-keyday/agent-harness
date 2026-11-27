@@ -70,7 +70,7 @@ func writeAgy(t *testing.T, path, body string) {
 
 func (f *agyFixture) store(t *testing.T) Store {
 	t.Helper()
-	st, err := New("agy", env(map[string]string{"HOME": f.home, "USERPROFILE": f.home}))
+	st, err := New("agy", env(map[string]string{"HOME": f.home, "USERPROFILE": f.home}), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +141,7 @@ func TestAgyFilesIncludeWalAndBrain(t *testing.T) {
 // agy never run on this host: nothing to list, not an error.
 func TestAgyNeverRunIsEmpty(t *testing.T) {
 	needSqlite3(t)
-	st, err := New("agy", env(map[string]string{"HOME": t.TempDir(), "USERPROFILE": t.TempDir()}))
+	st, err := New("agy", env(map[string]string{"HOME": t.TempDir(), "USERPROFILE": t.TempDir()}), "")
 	if err != nil {
 		t.Fatal(err)
 	}

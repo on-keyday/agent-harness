@@ -55,7 +55,7 @@ func TestClaudeSessionsMatchRecordedCwd(t *testing.T) {
 	write(t, filepath.Join(proj, "s1.jsonl"), `{"type":"summary"}`+"\n"+line(dir, "s1"))
 	write(t, filepath.Join(proj, "s2.jsonl"), line(dir, "s2"))
 	write(t, filepath.Join(proj, "s3.jsonl"), line(other, "s3")) // same folder, another directory
-	st, err := New("claude", env(map[string]string{"CLAUDE_CONFIG_DIR": root}))
+	st, err := New("claude", env(map[string]string{"CLAUDE_CONFIG_DIR": root}), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func TestClaudeTruncatedNameIsCheckedInside(t *testing.T) {
 	enc := ClaudeProjectDirName(long)
 	write(t, filepath.Join(root, "projects", enc[:ClaudeProjectDirNameLimit]+"-h1", "mine.jsonl"), `{"cwd":"`+long+`"}`+"\n")
 	write(t, filepath.Join(root, "projects", enc[:ClaudeProjectDirNameLimit]+"-h2", "theirs.jsonl"), `{"cwd":"`+longOther+`"}`+"\n")
-	st, _ := New("claude", env(map[string]string{"CLAUDE_CONFIG_DIR": root}))
+	st, _ := New("claude", env(map[string]string{"CLAUDE_CONFIG_DIR": root}), "")
 	ss, err := st.Sessions(long)
 	if err != nil {
 		t.Fatal(err)
@@ -105,7 +105,7 @@ func TestClaudeFilesIncludeSubagentsAndToolResults(t *testing.T) {
 	write(t, filepath.Join(proj, "s1.jsonl"), `{"cwd":"`+dir+`"}`+"\n")
 	write(t, filepath.Join(proj, "s1", "subagents", "a.jsonl"), "{}\n")
 	write(t, filepath.Join(proj, "s1", "tool-results", "t.txt"), "out")
-	st, _ := New("claude", env(map[string]string{"CLAUDE_CONFIG_DIR": root}))
+	st, _ := New("claude", env(map[string]string{"CLAUDE_CONFIG_DIR": root}), "")
 	fs, err := st.Files(dir, "s1")
 	if err != nil {
 		t.Fatal(err)
@@ -129,7 +129,7 @@ func TestCodexSessionsFilterByMetaCwd(t *testing.T) {
 	}
 	write(t, filepath.Join(root, "sessions", "2026", "11", "14", "rollout-2026-11-14T00-00-00-c1.jsonl"), meta("c1", dir)+`{"type":"x"}`+"\n")
 	write(t, filepath.Join(root, "sessions", "2026", "11", "13", "rollout-2026-11-13T00-00-00-c2.jsonl"), meta("c2", "/elsewhere"))
-	st, err := New("codex", env(map[string]string{"CODEX_HOME": root}))
+	st, err := New("codex", env(map[string]string{"CODEX_HOME": root}), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +155,7 @@ func TestPiSessionsFilterByHeaderCwd(t *testing.T) {
 	}
 	write(t, filepath.Join(root, "--w-r-.harness-worktrees-eeee--", "2026-11-14_p1.jsonl"), hdr("p1", dir))
 	write(t, filepath.Join(root, "--elsewhere--", "2026-11-14_p2.jsonl"), hdr("p2", "/elsewhere"))
-	st, err := New("pi", env(map[string]string{"PI_CODING_AGENT_SESSION_DIR": root}))
+	st, err := New("pi", env(map[string]string{"PI_CODING_AGENT_SESSION_DIR": root}), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +171,7 @@ func TestPiSessionDirFromAgentDir(t *testing.T) {
 	root := t.TempDir()
 	dir := "/w/r/.harness-worktrees/ffff"
 	write(t, filepath.Join(root, "sessions", "--x--", "a_p9.jsonl"), `{"type":"session","id":"p9","cwd":"`+dir+`"}`+"\n")
-	st, _ := New("pi", env(map[string]string{"PI_CODING_AGENT_DIR": root}))
+	st, _ := New("pi", env(map[string]string{"PI_CODING_AGENT_DIR": root}), "")
 	ss, err := st.Sessions(dir)
 	if err != nil || strings.Join(ids(ss), ",") != "p9" {
 		t.Fatalf("sessions %v err %v, want p9", ids(ss), err)
@@ -187,7 +187,7 @@ func TestOpenRefusesNamesNotListed(t *testing.T) {
 	write(t, filepath.Join(proj, "s1.jsonl"), `{"cwd":"`+dir+`"}`+"\n")
 	write(t, filepath.Join(proj, "s2.jsonl"), `{"cwd":"/elsewhere"}`+"\n")
 	write(t, filepath.Join(root, "secret.txt"), "no")
-	st, _ := New("claude", env(map[string]string{"CLAUDE_CONFIG_DIR": root}))
+	st, _ := New("claude", env(map[string]string{"CLAUDE_CONFIG_DIR": root}), "")
 	for _, name := range []string{"../../secret.txt", filepath.Join(root, "secret.txt"), "s2.jsonl", "s1/../s2.jsonl", ""} {
 		if _, err := st.Open(dir, "s1", name); !errors.Is(err, ErrNoFile) {
 			t.Fatalf("Open(%q) err %v, want ErrNoFile", name, err)
@@ -219,7 +219,7 @@ func TestOpenWhileWritten(t *testing.T) {
 	path := filepath.Join(proj, "s1.jsonl")
 	first := `{"cwd":"` + dir + `"}` + "\n"
 	write(t, path, first)
-	st, _ := New("claude", env(map[string]string{"CLAUDE_CONFIG_DIR": root}))
+	st, _ := New("claude", env(map[string]string{"CLAUDE_CONFIG_DIR": root}), "")
 	stop := make(chan struct{})
 	done := make(chan struct{})
 	go func() {
@@ -267,7 +267,7 @@ func TestSamePath(t *testing.T) {
 }
 
 func TestNewRefusesUnknownKind(t *testing.T) {
-	if _, err := New("bash", env(nil)); err == nil {
+	if _, err := New("bash", env(nil), ""); err == nil {
 		t.Fatal("a kind with no store was accepted")
 	}
 }

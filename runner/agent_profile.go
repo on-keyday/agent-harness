@@ -246,6 +246,26 @@ func (ps ProfileSet) UnrecognisedTranscriptStores() []string {
 	return out
 }
 
+// TranscriptAgentBin returns, for a store read through the agent's own CLI
+// (transcript.CLIName), the Bin of the first profile naming that store whose
+// file is that CLI (modulo a Windows extension) — after ResolveBinPaths, the
+// exact binary that profile's agent runs. "" when none is: a store read from
+// files, or a runner whose only such profile is a wrapper (sandbox-opencode
+// runs opencode-in-podman.sh, which cannot list sessions), and the store then
+// runs the CLI's name from PATH.
+func (ps ProfileSet) TranscriptAgentBin(kind string) string {
+	name := transcript.CLIName(kind)
+	if name == "" {
+		return ""
+	}
+	for _, p := range ps.profiles {
+		if p.TranscriptStore == kind && protocol.EqualAgentProfileName(filepath.Base(p.Bin), name) {
+			return p.Bin
+		}
+	}
+	return ""
+}
+
 // TranscriptStores returns the distinct, recognised store kinds of the
 // profiles, in profile order: several profiles (an agent and its sandboxed
 // variant) share one store, which is asked once.

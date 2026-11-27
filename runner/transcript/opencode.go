@@ -15,10 +15,6 @@ import (
 	"time"
 )
 
-// opencodeBin is the binary run for opencode's own listing and export; a
-// variable so a test can stand in a script.
-var opencodeBin = "opencode"
-
 // opencodeListTimeout bounds `opencode session list`. Listing answers a
 // person waiting on `transcript ls`, so a wedged opencode must not hold it.
 const opencodeListTimeout = 60 * time.Second
@@ -36,10 +32,21 @@ const opencodeListMax = "2147483647"
 // <id>` writes one session as JSON. Both pass --standalone: without it
 // opencode 2.x starts (or joins) a per-user background service, which the
 // runner would leave running with the runner's own environment.
-type opencodeStore struct{ getenv func(string) string }
+//
+// bin is the opencode the agent runs (New's agentBin), so the transcript is
+// read by the same version that wrote it — the CLI changed under the store
+// once already (1.x `export` became `session export`) — and a runner whose
+// PATH lacks opencode, with the agent given as an absolute path, still reads.
+type opencodeStore struct {
+	getenv func(string) string
+	bin    string
+}
 
-func newOpencode(getenv func(string) string) (Store, error) {
-	return &opencodeStore{getenv: getenv}, nil
+func newOpencode(getenv func(string) string, bin string) (Store, error) {
+	if bin == "" {
+		bin = CLIName("opencode")
+	}
+	return &opencodeStore{getenv: getenv, bin: bin}, nil
 }
 
 func (s *opencodeStore) Agent() string { return "opencode" }
@@ -68,7 +75,7 @@ type opencodeRow struct {
 func (s *opencodeStore) list(dir string) ([]opencodeRow, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), opencodeListTimeout)
 	defer cancel()
-	cmd := hostcmd.CommandContext(ctx, opencodeBin, "session", "list", "--standalone", "--format", "json", "-n", opencodeListMax)
+	cmd := hostcmd.CommandContext(ctx, s.bin, "session", "list", "--standalone", "--format", "json", "-n", opencodeListMax)
 	cmd.Dir = nearestExisting(dir)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -145,7 +152,7 @@ func (s *opencodeStore) Open(dir, id, name string) (io.ReadCloser, error) {
 	// export at 128KiB and still exited 0 (measured 2026-11-16: 131072 of
 	// 479799 bytes, every run). 2.4.2 did not (2026-11-28: 302096 bytes either
 	// way); the file and the check below stay because they cost nothing.
-	cmd := hostcmd.Command(opencodeBin, "session", "export", "--standalone", id)
+	cmd := hostcmd.Command(s.bin, "session", "export", "--standalone", id)
 	cmd.Dir = nearestExisting(dir)
 	cmd.Stdout = f.File
 	var stderr bytes.Buffer

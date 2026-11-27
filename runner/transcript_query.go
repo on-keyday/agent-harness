@@ -116,7 +116,7 @@ func (s *Session) transcriptAnswer(req *protocol.RunnerTranscriptRequest) (proto
 	var stores []transcript.Store
 	var failures []string
 	for _, kind := range s.Profiles.TranscriptStores() {
-		st, err := transcript.New(kind, getenv)
+		st, err := transcript.New(kind, getenv, s.Profiles.TranscriptAgentBin(kind))
 		if err != nil {
 			failures = append(failures, kind+": "+err.Error())
 			continue
