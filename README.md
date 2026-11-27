@@ -512,7 +512,7 @@ bin/harness-cli record on|off <task-id>
 # Nothing is kept on the server, so a task whose runner is offline answers
 # runner_offline. `ls` lists the sessions any agent recorded for the task's
 # working directory. claude, codex and pi store JSONL files; opencode is read
-# through its own CLI (`session list` / `export`, so its size is unknown until
+# through its own CLI (`session list` / `session export`, so its size is unknown until
 # read); agy's SQLite index through the `sqlite3` CLI, which must be on the
 # runner host's PATH (Windows does not ship it). A runner profile names its
 # store with --agent-transcript-store (preset key transcriptStore); a store that

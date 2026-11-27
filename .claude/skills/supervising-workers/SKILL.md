@@ -1105,7 +1105,7 @@ harness-cli transcript get -o s.tar "$TASK_ID" <SESSION>           # the whole s
   task, where other tasks' and the operator's sessions also land. It is listed
   and fetched only if you also hold `exec_run` on the task.
 - The bytes are not rendered: JSONL for claude, codex and pi, the JSON
-  `opencode export` writes (its size reads `unknown` until it is produced),
+  `opencode session export` writes (its size reads `unknown` until it is produced),
   agy's SQLite `.db`. A `<FILE>` must be a name `ls <SESSION>` printed.
 - A store the runner could not read is named on a `note:` line, not passed off
   as an empty list — for agy, the runner host needs `sqlite3` on its PATH.

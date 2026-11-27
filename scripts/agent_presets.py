@@ -229,10 +229,12 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         # to one per-user `opencode serve --service`: the TUI starts it, `run`
         # joins one that is already running. Measured on 2.4.2: the tool shell
         # gets the CLIENT's environment (unlike codex's daemon above), but runs
-        # under the service's `opencode-pty`, outside the task — cancelling the
-        # task does not stop it, and the service outlives the TUI that started
-        # it, holding that task's environment. With --standalone the server is
-        # the agent's own child and exits with it.
+        # under the service's `opencode-pty`, outside the task's process tree,
+        # and the service outlived the TUI that started it (killed by
+        # `timeout`), holding that task's environment. So a cancel would not
+        # reach the tool processes — read from the tree, not run as a cancel.
+        # With --standalone the server is the agent's own child and exited
+        # with it.
         # docs/superpowers/specs/2026-11-28-opencode-2x-design.md has the runs.
         #
         # Verified against opencode 2.4.2: `run <prompt>` exits 0 with the

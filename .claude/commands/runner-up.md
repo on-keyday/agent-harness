@@ -187,8 +187,9 @@ Arguments: $ARGUMENTS
    - **Version.** This preset is valid for **2.x only** (verified on 2.4.2).
      Every template passes `--standalone`, which 1.x refuses (exit 1), and the
      transcript store calls `session export`, which 1.x does not have. Without
-     `--standalone`, 2.x runs the agent's tools under one per-user background
-     service that outlives the task, so a cancel leaves them running
+     `--standalone`, the 2.x TUI starts a per-user background service and
+     `run` joins one already running; the agent's tools then run under that
+     service, outside the task's process tree, and it outlives the task
      (`docs/superpowers/specs/2026-11-28-opencode-2x-design.md`). Resume scope
      was the earlier gate: the harness gives each task its own linked git
      worktree, and opencode groups sessions by the git common dir, so every
