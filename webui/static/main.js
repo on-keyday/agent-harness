@@ -1308,6 +1308,291 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   document.getElementById("credentials-btn").addEventListener("click", () => openCredentials());
   document.getElementById("credentials-modal-close").addEventListener("click", () => credentialsModal.close());
   credentialsRefreshBtn.addEventListener("click", () => loadCredentialList());
+
+  // --- Actions (server-defined commands, grant conditions spec C8) ----------
+  //
+  // The dialog behind the Actions button: the rows of `action ls` with Edit
+  // and Delete, and the define / edit form. The form's state and its check are
+  // admin_models.js (the rules are Go's, through harness.actionFormCheck); a
+  // submit goes through the same funnel `action new` / `action edit` use
+  // (cli.RunActionPut). Results go to the command output, as the verbs print
+  // them; a refused submit keeps the form and what was typed.
+  const actionsModal = document.getElementById("actions-modal");
+  const actionsBody = document.getElementById("actions-modal-body");
+  const actionsTitle = document.getElementById("actions-modal-title");
+  const actionsBack = document.getElementById("actions-modal-back");
+  const actionsNewBtn = document.getElementById("actions-modal-new");
+  const actionsRefreshBtn = document.getElementById("actions-modal-refresh");
+  let actionsView = "list"; // "list" | "form"
+  const actionsLatest = latestLoad();
+  const setActionsView = (view, title) => {
+    actionsView = view;
+    actionsTitle.textContent = title;
+    actionsBack.hidden = view === "list";
+    actionsNewBtn.hidden = view !== "list";
+    actionsRefreshBtn.hidden = view !== "list";
+  };
+  // actionParamLine is a param as `action ls` prints it.
+  const actionParamLine = (p) => (p.type === "choice"
+    ? `param ${p.name}: choice ${p.choices.map((c) => JSON.stringify(c)).join(" ")}`
+    : `param ${p.name}: ${p.type}`);
+  const loadActionList = async () => {
+    setActionsView("list", "Actions");
+    actionsBody.replaceChildren(credentialNote("schedule-note", "読み込み中…"));
+    const tok = actionsLatest.begin();
+    try {
+      const { views } = await window.harness.actionViews();
+      if (!actionsLatest.current(tok) || actionsView !== "list") return;
+      if (!views.length) {
+        actionsBody.replaceChildren(credentialNote("schedule-empty", "no actions — ＋ New defines one"));
+        return;
+      }
+      actionsBody.replaceChildren(...views.map((v) => {
+        const el = document.createElement("div");
+        el.className = "schedule-row credential-row";
+        el.title = v.id;
+        const name = document.createElement("span");
+        name.className = "schedule-id";
+        name.textContent = v.name;
+        const cells = document.createElement("div");
+        cells.className = "schedule-cells";
+        for (const text of [`rev=${v.revision}`, `run: ${v.templateText}`, ...v.params.map(actionParamLine), `by=${v.editedBy}`]) {
+          const c = document.createElement("span");
+          c.textContent = text;
+          cells.appendChild(c);
+        }
+        if (v.description) {
+          const d = document.createElement("span");
+          d.textContent = `description: ${v.description}`;
+          cells.appendChild(d);
+        }
+        const acts = document.createElement("div");
+        acts.className = "credential-actions";
+        acts.appendChild(credentialButton("✎ Edit", () => openActionForm(v)));
+        acts.appendChild(credentialButton("🗑 Delete", async () => {
+          if (!confirm(`Delete action ${v.name}?\nA grant naming it then runs nothing.`)) return;
+          try {
+            const r = await window.harness.actionRemove(v.id);
+            appendCmdOutput(r.text, true);
+          } catch (err) {
+            appendCmdOutput(err.message, true);
+          }
+          loadActionList();
+        }, "danger"));
+        el.append(name, cells, acts);
+        return el;
+      }));
+    } catch (e) {
+      if (actionsLatest.current(tok)) actionsBody.replaceChildren(credentialNote("schedule-note", e.message));
+    }
+  };
+  // openActionForm is New (view null) and Edit. Typing updates the model and
+  // the error line only, so the caret stays; adding, removing or retyping a
+  // row redraws the form.
+  const openActionForm = (view) => {
+    setActionsView("form", view ? `action edit ${view.name} (rev ${view.revision})` : "action new");
+    const form = actionFormModel(view);
+    const errLine = credentialNote("schedule-note", "");
+    const submit = credentialButton(view ? "保存" : "作成", async (b) => {
+      b.disabled = true;
+      try {
+        const r = await window.harness.actionPutForm(actionFormToObject(form));
+        appendCmdOutput(r.text, true);
+        if (r.ok) {
+          loadActionList();
+          return;
+        }
+        errLine.textContent = r.text;
+      } catch (err) {
+        errLine.textContent = err.message;
+      }
+      b.disabled = false;
+    });
+    const recheck = () => {
+      const errs = actionFormErrors(form);
+      errLine.textContent = errs.join(" / ");
+      submit.disabled = errs.length > 0;
+    };
+    const input = (value, placeholder, onInput) => {
+      const i = document.createElement("input");
+      i.type = "text";
+      i.value = value;
+      i.placeholder = placeholder;
+      i.autocomplete = "off";
+      i.spellcheck = false;
+      i.addEventListener("input", () => { onInput(i.value); recheck(); });
+      return i;
+    };
+    const fieldRow = (labelText, ...els) => {
+      const row = document.createElement("div");
+      row.className = "credential-field";
+      const l = document.createElement("span");
+      l.textContent = labelText;
+      row.append(l, ...els);
+      return row;
+    };
+    const render = () => {
+      const root = document.createElement("div");
+      root.className = "credential-form action-form";
+      root.appendChild(fieldRow("name", input(form.name, "[a-z0-9][a-z0-9._-]{0,63}", (v) => { form.name = v; })));
+      root.appendChild(fieldRow("description", input(form.description, "optional, shown by action ls", (v) => { form.description = v; })));
+      const ph = document.createElement("div");
+      ph.className = "notify-meta";
+      ph.textContent = "params — a value is always ONE argument: choice (one of the listed values) or token ([0-9A-Za-z._-], not starting with -)";
+      root.appendChild(ph);
+      form.params.forEach((p, pi) => {
+        // A rename moves every reference with it, on change rather than per
+        // key, so a half-typed name does not detach the command's words.
+        const name = input(p.name, "[a-z][a-z0-9_]{0,31}", () => {});
+        name.addEventListener("change", () => {
+          const old = p.name;
+          p.name = name.value;
+          for (const e of form.template) if (e.isParam && e.param === old) e.param = p.name;
+          render();
+        });
+        const type = document.createElement("select");
+        for (const t of ["choice", "token"]) type.add(new Option(t, t, false, p.type === t));
+        type.addEventListener("change", () => { p.type = type.value; if (p.type === "choice" && !p.choices.length) p.choices = [""]; render(); });
+        const del = credentialButton("✕", () => {
+          form.params.splice(pi, 1);
+          for (let i = 0; i < form.template.length; i++) {
+            if (form.template[i].isParam && form.template[i].param === p.name) actionFormSetElement(form, i, "");
+          }
+          render();
+        }, "danger");
+        root.appendChild(fieldRow(`param ${pi + 1}`, name, type, del));
+        if (p.type === "choice") {
+          p.choices.forEach((c, ci) => {
+            const ce = input(c, "a value (no ',')", (v) => { p.choices[ci] = v; });
+            root.appendChild(fieldRow("  choice", ce, credentialButton("✕", () => { p.choices.splice(ci, 1); render(); })));
+          });
+          root.appendChild(fieldRow("", credentialButton("＋ choice", () => { p.choices.push(""); render(); })));
+        }
+      });
+      root.appendChild(fieldRow("", credentialButton("＋ param", () => { form.params.push({ name: "", type: "token", choices: [] }); render(); })));
+      const th = document.createElement("div");
+      th.className = "notify-meta";
+      th.textContent = "command — one row per argument; the first is the program and is always written out";
+      root.appendChild(th);
+      form.template.forEach((e, ei) => {
+        const kind = document.createElement("select");
+        kind.add(new Option("literal", "", false, !e.isParam));
+        for (const p of form.params) if (p.name) kind.add(new Option(`{${p.name}}`, p.name, false, e.isParam && e.param === p.name));
+        kind.disabled = ei === 0;
+        kind.addEventListener("change", () => { actionFormSetElement(form, ei, kind.value); render(); });
+        const els = [kind];
+        if (!e.isParam) els.push(input(e.literal, ei === 0 ? "the program, e.g. ./deploy.sh" : "an argument", (v) => { form.template[ei].literal = v; }));
+        if (ei > 0) els.push(credentialButton("✕", () => { form.template.splice(ei, 1); render(); }));
+        root.appendChild(fieldRow(`arg ${ei}`, ...els));
+      });
+      root.appendChild(fieldRow("", credentialButton("＋ argument", () => { form.template.push({ literal: "", param: "", isParam: false }); render(); })));
+      root.append(errLine, submit);
+      actionsBody.replaceChildren(root);
+      recheck();
+    };
+    render();
+  };
+  const openActions = () => {
+    if (!actionsModal.open) actionsModal.showModal();
+    loadActionList();
+  };
+  document.getElementById("actions-btn").addEventListener("click", () => openActions());
+  document.getElementById("actions-modal-close").addEventListener("click", () => actionsModal.close());
+  actionsRefreshBtn.addEventListener("click", () => loadActionList());
+  actionsNewBtn.addEventListener("click", () => openActionForm(null));
+  actionsBack.addEventListener("click", () => loadActionList());
+
+  // Running an action against a task (exec --action): the task sheet's
+  // "▶ action を実行". One control per param; the values are checked by Go's
+  // token rule before anything is sent, and the run is the exec path the
+  // command line's `exec --action` takes, so its output lands the same way.
+  const actionRunModal = document.getElementById("action-run-modal");
+  const actionRunBody = document.getElementById("action-run-modal-body");
+  const actionRunBtn = document.getElementById("action-run-modal-run");
+  let actionRunGo = null;
+  const openActionRun = async (t) => {
+    if (!actionRunModal.open) actionRunModal.showModal();
+    document.getElementById("action-run-modal-title").textContent = `action を実行 — ${t.id.slice(0, 12)}…`;
+    actionRunBtn.disabled = true;
+    actionRunGo = null;
+    actionRunBody.replaceChildren(credentialNote("schedule-note", "読み込み中…"));
+    let m;
+    try {
+      m = actionRunModel((await window.harness.actionViews()).views);
+    } catch (e) {
+      actionRunBody.replaceChildren(credentialNote("schedule-note", e.message));
+      return;
+    }
+    if (m.empty) {
+      actionRunBody.replaceChildren(credentialNote("schedule-empty", "no actions — define one in ⚙ Actions"));
+      return;
+    }
+    const root = document.createElement("div");
+    root.className = "credential-form";
+    const pick = document.createElement("select");
+    m.actions.forEach((a, i) => pick.add(new Option(a.name, String(i))));
+    const paramsBox = document.createElement("div");
+    paramsBox.className = "credential-form";
+    const errLine = credentialNote("schedule-note", "");
+    const values = {};
+    const drawParams = () => {
+      const a = m.actions[Number(pick.value)];
+      for (const k of Object.keys(values)) delete values[k];
+      const cmd = credentialNote("notify-meta", `run: ${a.templateText}`);
+      const rows = a.params.map((p) => {
+        let ctl;
+        if (p.kind === "select") {
+          ctl = document.createElement("select");
+          for (const c of p.choices) ctl.add(new Option(c, c));
+          values[p.name] = p.choices[0];
+          ctl.addEventListener("change", () => { values[p.name] = ctl.value; });
+        } else {
+          ctl = document.createElement("input");
+          ctl.type = "text";
+          ctl.placeholder = "token: [0-9A-Za-z._-], not starting with -";
+          ctl.autocomplete = "off";
+          ctl.spellcheck = false;
+          ctl.addEventListener("input", () => { values[p.name] = ctl.value; errLine.textContent = ""; });
+        }
+        const row = document.createElement("div");
+        row.className = "credential-field";
+        const l = document.createElement("span");
+        l.textContent = p.name;
+        row.append(l, ctl);
+        return row;
+      });
+      paramsBox.replaceChildren(cmd, ...rows);
+    };
+    pick.addEventListener("change", drawParams);
+    const head = document.createElement("div");
+    head.className = "credential-field";
+    const hl = document.createElement("span");
+    hl.textContent = "action";
+    head.append(hl, pick);
+    root.append(head, paramsBox, errLine);
+    actionRunBody.replaceChildren(root);
+    drawParams();
+    actionRunBtn.disabled = false;
+    actionRunGo = async () => {
+      const a = m.actions[Number(pick.value)];
+      const r = actionRunValueSpecs(a, values);
+      if (r.error) {
+        errLine.textContent = r.error;
+        return;
+      }
+      actionRunModal.close();
+      setActiveTab("tasks");
+      appendCmdOutput(`> exec ${t.id.slice(0, 12)}… --action ${a.name} ${r.specs.map((s) => `--value ${s}`).join(" ")}`, true);
+      try {
+        appendCmdOutput(await execRunToOutput(t.id, [], { action: a.name, valueSpecs: r.specs }));
+      } catch (err) {
+        appendCmdOutput(`exec error: ${err.message}`);
+      }
+      refreshSnapshot();
+    };
+  };
+  actionRunBtn.addEventListener("click", () => { if (actionRunGo) actionRunGo(); });
+  document.getElementById("action-run-modal-close").addEventListener("click", () => actionRunModal.close());
   credentialsBack.addEventListener("click", () => loadCredentialList());
   credentialsNewBtn.addEventListener("click", () => openCredentialForm("new", ""));
 
@@ -7732,6 +8017,8 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     // A text prompt rather than a built control, and deliberately: a command
     // line IS free text, unlike caps or a scope, which decompose into things
     // this form already has chips and radios for.
+    // A server-defined action instead of a command line: picked, not typed.
+    addItem("▶ action を実行", "", () => openActionRun(t));
     addItem("⌨ コマンド実行", "", async () => {
       const line = window.prompt(`${t.id.slice(0, 12)}… の worktree で実行するコマンド (シェルで解釈)`, "git status");
       if (!line || !line.trim()) return;

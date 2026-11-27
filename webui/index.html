@@ -92,6 +92,7 @@
         <button type="button" id="grid-all-off" class="task-chip">☐ 全解除</button>
         <button type="button" id="schedules-btn" class="task-chip" title="server-kept cron schedules: list, detail, run now, delete">⏱ Schedules</button>
         <button type="button" id="credentials-btn" class="task-chip" title="credential tasks: an expiring identity for a script outside the harness — list, issue, re-key, revoke">🔑 Credentials</button>
+        <button type="button" id="actions-btn" class="task-chip" title="server-defined actions: list, define, edit, delete">⚙ Actions</button>
       </div>
             <!-- Creator tree: a node-link diagram of who spawned whom. Toggled by
            #task-chip-tree, hidden otherwise. Deliberately NOT a re-ordering of
@@ -771,6 +772,34 @@
     </menu>
   </form>
 </dialog>
+<!-- Actions (server-defined commands, grant conditions spec C8): the rows of
+     `action ls` with Edit and Delete, and the define / edit form. The form's
+     rules are Go's (harness.actionFormCheck); results go to the command
+     output, as the verbs print them. -->
+<dialog id="actions-modal" class="picker-modal schedules-modal">
+  <form method="dialog" class="picker-form">
+    <h3 class="picker-title" id="actions-modal-title">Actions</h3>
+    <div id="actions-modal-body" class="schedules-body"></div>
+    <menu class="picker-actions">
+      <button type="button" id="actions-modal-back" hidden>← 一覧</button>
+      <button type="button" id="actions-modal-new">＋ New</button>
+      <button type="button" id="actions-modal-refresh">↻ 更新</button>
+      <button type="button" id="actions-modal-close">Close</button>
+    </menu>
+  </form>
+</dialog>
+<!-- Running an action against one task (exec --action): pick the action, a
+     select per choice param, a text box per token param. -->
+<dialog id="action-run-modal" class="picker-modal">
+  <form method="dialog" class="picker-form">
+    <h3 class="picker-title" id="action-run-modal-title">action を実行</h3>
+    <div id="action-run-modal-body" class="schedules-body"></div>
+    <menu class="picker-actions">
+      <button type="button" id="action-run-modal-run">▶ 実行</button>
+      <button type="button" id="action-run-modal-close">Close</button>
+    </menu>
+  </form>
+</dialog>
 <dialog id="watch-modal" class="picker-modal">
   <form method="dialog" class="picker-form">
     <h3 class="picker-title" id="watch-modal-title">何で知らせる?</h3>
@@ -924,6 +953,7 @@
 <script src="/static/files.js" defer></script>
 <script src="/static/graph.js" defer></script>
 <script src="/static/reconnect.js" defer></script>
+<script src="/static/admin_models.js" defer></script>
 <script src="/static/main.js" defer></script>
 </body>
 </html>

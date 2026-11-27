@@ -167,16 +167,16 @@ func TestDefinesEntryPointIsADefinitionNotAMention(t *testing.T) {
 // cannot be added here to pass: being typable on a UI proves the UI can run
 // it, and the answer is a screen.
 var screenGaps = map[string]Surface{
-	"action edit":              TUI | WebUI,
-	"action ls":                TUI | WebUI,
-	"action new":               TUI | WebUI,
-	"action rm":                TUI | WebUI,
+	"action edit":              TUI,
+	"action ls":                TUI,
+	"action new":               TUI,
+	"action rm":                TUI,
 	"caps":                     TUI | WebUI,
 	"caps reach":               TUI,
 	"caps set-defaults":        TUI | WebUI,
 	"caps what-if":             TUI,
 	"credential new":           TUI,
-	"exec":                     TUI | WebUI,
+	"exec":                     TUI,
 	"exec tap":                 WebUI,
 	"file delete":              WebUI,
 	"file ls":                  WebUI,

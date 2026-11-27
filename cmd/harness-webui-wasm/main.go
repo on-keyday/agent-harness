@@ -181,6 +181,8 @@ func main() {
 		"runnerDialViews":     js.FuncOf(harnessRunnerDialViews),
 		"runnerUnenrollOffer": js.FuncOf(harnessRunnerUnenrollOffer),
 		"runnerKickOffer":     js.FuncOf(harnessRunnerKickOffer),
+		"actionFormCheck":     js.FuncOf(harnessActionFormCheck),
+		"actionTokenValid":    js.FuncOf(harnessActionTokenValid),
 		"help":                js.FuncOf(harnessHelp),
 		"dispatch":            js.FuncOf(harnessDispatch),
 		"sendNotification":    js.FuncOf(harnessSendNotification),
@@ -3541,6 +3543,28 @@ func harnessRunnerKickOffer(this js.Value, args []js.Value) any {
 		}
 		return cli.KickOffer(st, res), nil
 	})
+}
+
+// harness.actionFormCheck(form) -> "" or the first rule the form breaks, by
+// the server's own check (actiondef.Validate through cli.ActionPutInputFromForm),
+// so a screen refuses what the server would without restating the rules.
+func harnessActionFormCheck(this js.Value, args []js.Value) any {
+	if len(args) == 0 || args[0].Type() != js.TypeObject {
+		return "actionFormCheck: missing form"
+	}
+	var f cli.ActionForm
+	if err := json.Unmarshal([]byte(js.Global().Get("JSON").Call("stringify", args[0]).String()), &f); err != nil {
+		return err.Error()
+	}
+	if _, err := cli.ActionPutInputFromForm(f); err != nil {
+		return err.Error()
+	}
+	return ""
+}
+
+// harness.actionTokenValid(value) -> bool, the C12 token rule.
+func harnessActionTokenValid(this js.Value, args []js.Value) any {
+	return actiondef.ValidToken([]byte(jsArgString(args, 0)))
 }
 
 // harness.actionRemove(ref) -> Promise<{text, ok}>
