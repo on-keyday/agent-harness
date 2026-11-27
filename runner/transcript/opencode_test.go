@@ -13,25 +13,29 @@ import (
 )
 
 // fakeOpencode installs a shell script as the opencode binary: `session list`
-// prints list, `export <id>` prints {"id":"<id>"} (fails for "bad", prints a
-// cut-off value for "notjson"), and every call appends its argv and cwd to a
-// log. Like opencode 1.18.18, which ends a piped export at 128KiB and exits 0,
-// the fake prints only a fragment when its stdout is a pipe.
+// prints list, `session export <id>` (the id last) prints {"id":"<id>"}
+// (fails for "bad", prints a cut-off value for "notjson"), and every call
+// appends its argv and cwd to a log. A call without --standalone fails: on
+// opencode 2.x it would start or join the shared background service. Like
+// opencode 1.18.18, which ended a piped export at 128KiB and exited 0, the
+// fake prints only a fragment when its stdout is a pipe.
 func fakeOpencode(t *testing.T, list string) (logPath string) {
 	t.Helper()
 	d := t.TempDir()
 	logPath = filepath.Join(d, "calls.log")
 	script := `#!/bin/sh
 echo "$PWD|$*" >> '` + logPath + `'
-if [ "$1" = session ]; then cat <<'JSON'
+case " $* " in *" --standalone "*) ;; *) echo "no --standalone" >&2; exit 8;; esac
+if [ "$1 $2" = "session list" ]; then cat <<'JSON'
 ` + list + `
 JSON
 exit 0; fi
-if [ "$1" = export ]; then
-  if [ "$2" = bad ]; then echo boom >&2; exit 3; fi
-  if [ -p /dev/stdout ]; then printf '{"id":"%s","cu' "$2"; exit 0; fi
-  if [ "$2" = notjson ]; then printf '{"id":'; exit 0; fi
-  printf '{"id":"%s"}\n' "$2"; exit 0
+if [ "$1 $2" = "session export" ]; then
+  for id; do :; done
+  if [ "$id" = bad ]; then echo boom >&2; exit 3; fi
+  if [ -p /dev/stdout ]; then printf '{"id":"%s","cu' "$id"; exit 0; fi
+  if [ "$id" = notjson ]; then printf '{"id":'; exit 0; fi
+  printf '{"id":"%s"}\n' "$id"; exit 0
 fi
 exit 9
 `
@@ -70,8 +74,11 @@ func TestOpencodeListsByDirectory(t *testing.T) {
 		t.Fatalf("created %v, want %v", ss[0].Created, want)
 	}
 	calls, _ := os.ReadFile(logPath)
-	if !strings.Contains(string(calls), dir+"|session list --format json") {
-		t.Fatalf("calls %q, want session list run in the task dir", calls)
+	// -n: 2.x returns only the project's 100 newest sessions by default, and
+	// every task worktree of a repo is one project, so the directory filter
+	// above must see all of them.
+	if !strings.Contains(string(calls), dir+"|session list --standalone --format json -n 2147483647") {
+		t.Fatalf("calls %q, want an uncapped standalone session list run in the task dir", calls)
 	}
 }
 
@@ -92,7 +99,8 @@ func TestOpencodeListsFromNearestExistingDir(t *testing.T) {
 	}
 }
 
-// One session is one file, produced on read by `opencode export <id>` (B-D4).
+// One session is one file, produced on read by `opencode session export <id>`
+// (B-D4).
 func TestOpencodeGetRunsExport(t *testing.T) {
 	dir := t.TempDir()
 	fakeOpencode(t, opencodeList(dir, "/elsewhere"))

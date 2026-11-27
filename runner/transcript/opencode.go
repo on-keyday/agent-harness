@@ -23,11 +23,19 @@ var opencodeBin = "opencode"
 // person waiting on `transcript ls`, so a wedged opencode must not hold it.
 const opencodeListTimeout = 60 * time.Second
 
+// opencodeListMax is `session list -n`. opencode 2.x lists only the project's
+// 100 newest sessions by default and refuses 0, and every task worktree of a
+// repo is one project, so the default would drop older tasks' sessions before
+// the directory filter in list ever saw them.
+const opencodeListMax = "2147483647"
+
 // opencodeStore reads opencode through its own CLI (B-D4, B-F9): its store is
 // one database holding every session of every project, so returning a file
 // would hand out other projects' conversations. `session list --format json`
-// lists the project's sessions with the directory each ran in; `export <id>`
-// writes one session as JSON.
+// lists the project's sessions with the directory each ran in; `session export
+// <id>` writes one session as JSON. Both pass --standalone: without it
+// opencode 2.x starts (or joins) a per-user background service, which the
+// runner would leave running with the runner's own environment.
 type opencodeStore struct{ getenv func(string) string }
 
 func newOpencode(getenv func(string) string) (Store, error) {
@@ -60,7 +68,7 @@ type opencodeRow struct {
 func (s *opencodeStore) list(dir string) ([]opencodeRow, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), opencodeListTimeout)
 	defer cancel()
-	cmd := hostcmd.CommandContext(ctx, opencodeBin, "session", "list", "--format", "json")
+	cmd := hostcmd.CommandContext(ctx, opencodeBin, "session", "list", "--standalone", "--format", "json", "-n", opencodeListMax)
 	cmd.Dir = nearestExisting(dir)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -68,7 +76,8 @@ func (s *opencodeStore) list(dir string) ([]opencodeRow, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opencode session list: %v: %s", err, strings.TrimSpace(stderr.String()))
 	}
-	// Outside any project opencode prints nothing: no sessions, not an error.
+	// Outside any project opencode 1.x printed nothing and 2.4.2 prints `[]`:
+	// no sessions either way, not an error.
 	if len(bytes.TrimSpace(out)) == 0 {
 		return nil, nil
 	}
@@ -132,17 +141,18 @@ func (s *opencodeStore) Open(dir, id, name string) (io.ReadCloser, error) {
 	if err != nil {
 		return nil, err
 	}
-	// The export goes to a file, never a pipe: opencode 1.18.18 ends a piped
-	// export at 128KiB and still exits 0 (measured 2026-11-16: 131072 of
-	// 479799 bytes, every run), while a file receives all of it.
-	cmd := hostcmd.Command(opencodeBin, "export", id)
+	// The export goes to a file, never a pipe: opencode 1.18.18 ended a piped
+	// export at 128KiB and still exited 0 (measured 2026-11-16: 131072 of
+	// 479799 bytes, every run). 2.4.2 did not (2026-11-28: 302096 bytes either
+	// way); the file and the check below stay because they cost nothing.
+	cmd := hostcmd.Command(opencodeBin, "session", "export", "--standalone", id)
 	cmd.Dir = nearestExisting(dir)
 	cmd.Stdout = f.File
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		f.Close()
-		return nil, fmt.Errorf("opencode export: %v: %s", err, strings.TrimSpace(stderr.String()))
+		return nil, fmt.Errorf("opencode session export: %v: %s", err, strings.TrimSpace(stderr.String()))
 	}
 	// The exit status did not catch the cut, so the output is checked too: a
 	// short file is never passed off as complete.
@@ -150,7 +160,7 @@ func (s *opencodeStore) Open(dir, id, name string) (io.ReadCloser, error) {
 		err = oneJSONValue(f)
 		if err != nil {
 			f.Close()
-			return nil, fmt.Errorf("opencode export: the output is not one complete JSON value: %v", err)
+			return nil, fmt.Errorf("opencode session export: the output is not one complete JSON value: %v", err)
 		}
 	} else {
 		f.Close()
