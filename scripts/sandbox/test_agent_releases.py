@@ -43,11 +43,25 @@ class AgentReleaseTests(unittest.TestCase):
         release = {"tag_name": "v1.2.3", "html_url": "https://github.com/anomalyco/opencode/releases/tag/v1.2.3", "assets": [
             {"name": "opencode-linux-x64-baseline.tar.gz", "digest": "sha256:" + "a" * 64,
              "browser_download_url": "https://github.com/anomalyco/opencode/releases/download/v1.2.3/opencode-linux-x64-baseline.tar.gz"}]}
-        with mock.patch.object(check, "fetch_json", return_value=release):
+        with mock.patch.object(check, "fetch_json", return_value=[release]) as fetch:
             self.assertEqual(check.upstream("opencode", "x64")["version"], "1.2.3")
+            self.assertNotIn("/latest", fetch.call_args.args[0])
             release["assets"][0]["digest"] = None
             with self.assertRaisesRegex(ValueError, "digest missing"):
                 check.upstream("opencode", "x64")
+
+    def test_opencode_takes_highest_version_not_newest_date(self):
+        # GitHub's releases/latest named v1.19.6 while 2.x shipped (and was
+        # what Arch packaged): a 1.x patch published after v2.3.0 still marks
+        # itself latest. The same repo also tags process-daemon-v*.
+        rels = [{"tag_name": "v1.19.6", "draft": False, "prerelease": False},
+                {"tag_name": "process-daemon-v9.0.0", "draft": False, "prerelease": False},
+                {"tag_name": "v2.4.2", "draft": False, "prerelease": False},
+                {"tag_name": "v2.10.0", "draft": True, "prerelease": False},
+                {"tag_name": "v2.5.0", "draft": False, "prerelease": True}]
+        self.assertEqual(check.latest_opencode_release(rels)["tag_name"], "v2.4.2")
+        with self.assertRaisesRegex(ValueError, "stable OpenCode"):
+            check.latest_opencode_release(rels[1:2])
 
     def test_metadata_success_does_not_claim_runtime_coverage(self):
         with mock.patch.object(check, "upstream", return_value={"agent": "pi", "source": "test", "version": "1.2.3"}), mock.patch.object(check.codex, "smoke_bundle") as smoke:

@@ -51,6 +51,21 @@ def npm_asset(package):
     return {"browser_download_url": dist["tarball"], "digest": "sha512:" + digest.hex()}
 
 
+def latest_opencode_release(releases):
+    """The stable `vX.Y.Z` release with the highest version. Not GitHub's
+    releases/latest: that named v1.19.6 while 2.x shipped, because a 1.x patch
+    published after a 2.x release marks itself latest. The repo also tags
+    process-daemon-v*, which never qualifies."""
+    stable = []
+    for release in releases:
+        match = re.fullmatch(r"v(\d+)\.(\d+)\.(\d+)", release.get("tag_name") or "")
+        if match and not release.get("draft") and not release.get("prerelease"):
+            stable.append((tuple(int(part) for part in match.groups()), release))
+    if not stable:
+        raise ValueError("expected a stable OpenCode release")
+    return max(stable, key=lambda pair: pair[0])[1]
+
+
 def upstream(agent, arch):
     if agent == "bash":
         return {"agent": agent, "source": "sandbox image", "version": None}
@@ -78,9 +93,7 @@ def upstream(agent, arch):
         return {"agent": agent, "source": source, "version": release["version"],
                 "asset": {"browser_download_url": release["url"], "digest": "sha512:" + release["sha512"]}, "binary_name": "antigravity"}
     if agent == "opencode":
-        release = fetch_json("https://api.github.com/repos/anomalyco/opencode/releases/latest")
-        if release.get("draft") or release.get("prerelease"):
-            raise ValueError("expected a stable OpenCode release")
+        release = latest_opencode_release(fetch_json("https://api.github.com/repos/anomalyco/opencode/releases?per_page=100"))
         name = "opencode-linux-" + ("x64-baseline" if arch == "x64" else arch) + ".tar.gz"
         assets = [asset for asset in release["assets"] if asset["name"] == name]
         if len(assets) != 1 or not re.fullmatch(r"sha256:[0-9a-f]{64}", assets[0].get("digest") or ""):
