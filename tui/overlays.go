@@ -27,6 +27,8 @@ var appOverlays = []overlay{
 	{func(a *App) bool { return a.schedDeleteID != "" }, (*App).inSchedDeleteConfirm},
 	// A pending credential revoke, likewise: asked from the main view.
 	{func(a *App) bool { return a.credRevokeID != "" }, (*App).inCredRevokeConfirm},
+	// A pending runner kick, likewise: asked from the runners table.
+	{func(a *App) bool { return a.kickAsk != nil }, (*App).inKickConfirm},
 	// A pending D restart, likewise: asked from the main view.
 	{func(a *App) bool { return a.x11RestartAsk != "" }, (*App).inX11RestartConfirm},
 	// Opened from the d popup and drawn over it, so it comes first.
@@ -40,6 +42,7 @@ var appOverlays = []overlay{
 	{func(a *App) bool { return a.execsModal.IsOpen() }, (*App).inExecsModal},
 	{func(a *App) bool { return a.actionRunForm.IsOpen() }, (*App).inActionRunForm},
 	{func(a *App) bool { return a.actionsModal.IsOpen() }, (*App).inActionsModal},
+	{func(a *App) bool { return a.runnerKeysModal.IsOpen() }, (*App).inRunnerKeysModal},
 	{func(a *App) bool { return a.idleWatchersModal.IsOpen() }, (*App).inIdleWatchersModal},
 	{func(a *App) bool { return a.capsAuditModal.IsOpen() }, (*App).inCapsAuditModal},
 	{func(a *App) bool { return a.forwardsModal.IsOpen() }, (*App).inForwardsModal},
@@ -229,6 +232,95 @@ func (a *App) inActionsModal(msg tea.KeyMsg) tea.Cmd {
 		}
 	}
 	return nil
+}
+
+// Runner keys screen (K): the list's keys, the open form's, and a y/n that
+// swallows everything else while it is up.
+func (a *App) inRunnerKeysModal(msg tea.KeyMsg) tea.Cmd {
+	m := &a.runnerKeysModal
+	switch m.mode {
+	case rkConfirm:
+		switch msg.String() {
+		case modalKeys.ConfirmYes, modalKeys.ConfirmYesUpper:
+			req := m.Confirm()
+			m.mode = rkList
+			return a.sendRunnerKeyRequest(req)
+		case modalKeys.ConfirmNo, modalKeys.ConfirmNoUpper, modalKeys.Escape:
+			m.mode, m.force = rkList, false
+		}
+		return nil
+	case rkEnroll, rkDialAdd, rkDialOnce:
+		if msg.Type == tea.KeyEsc {
+			m.mode = rkList
+			return nil
+		}
+		if req := m.UpdateForm(msg); req.kind != "" {
+			return a.sendRunnerKeyRequest(req)
+		}
+		return nil
+	}
+	switch msg.String() {
+	case modalKeys.Escape:
+		m.Close()
+	case "up":
+		m.Move(-1)
+	case "down":
+		m.Move(1)
+	case modalKeys.RunnerKeysRemove:
+		m.BeginRemove()
+	case modalKeys.RunnerKeysEnroll:
+		m.OpenEnrollForm()
+	case modalKeys.RunnerKeysDialAdd:
+		m.OpenDialForm()
+	case modalKeys.RunnerKeysDialOnce:
+		m.OpenDialOnceForm()
+	case modalKeys.RunnerKeysRefresh:
+		if a.client != nil {
+			return DoRunnerKeyViews(a.client)
+		}
+	}
+	return nil
+}
+
+// sendRunnerKeyRequest sends what the Runner keys screen asked for, through
+// the functions the command line's verbs use.
+func (a *App) sendRunnerKeyRequest(r rkRequest) tea.Cmd {
+	if a.client == nil {
+		a.cmdresult.Append(WarnStyle.Render("runner keys: not connected"))
+		return nil
+	}
+	switch r.kind {
+	case "unenroll":
+		return DoRunnerUnenrollOffer(a.client, r.ref, r.force)
+	case "dial rm":
+		return DoRunnerDialRemove(a.client, r.ref)
+	case "enroll":
+		return DoRunnerEnroll(a.client, r.pubkey, r.label, r.bound)
+	case "dial add":
+		return DoRunnerDialAdd(a.client, r.cands, r.ref, r.label)
+	case "dial once":
+		return DoServerDialRunner(a.client, r.ref, r.via)
+	}
+	return nil
+}
+
+// The runners table's kick question: y sends it (forced only when the server
+// already answered in_use and this is the second question), anything else
+// drops it.
+func (a *App) inKickConfirm(msg tea.KeyMsg) tea.Cmd {
+	q := a.kickAsk
+	if msg.String() != modalKeys.ConfirmYes && msg.String() != modalKeys.ConfirmYesUpper {
+		a.kickAsk = nil
+		a.cmdresult.Append(fmt.Sprintf("runner kick %s: cancelled; nothing sent", q.ref[:8]))
+		return nil
+	}
+	if a.client == nil {
+		a.kickAsk = nil
+		a.cmdresult.Append(WarnStyle.Render("runner kick: not connected"))
+		return nil
+	}
+	a.kickAsk = nil
+	return DoRunnerKickOffer(a.client, q.ref, q.force)
 }
 
 // Run-an-action form (!): enter on [ run ] runs it on the exec path

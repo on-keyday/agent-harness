@@ -148,6 +148,10 @@ type App struct {
 	// table's ! (run an action against the selected task).
 	actionsModal  ActionsModal
 	actionRunForm ActionRunFormModel
+	// runnerKeysModal is K (runner keys and dial records); kickAsk is the
+	// runners table's pending kick question, nil when none.
+	runnerKeysModal RunnerKeysModal
+	kickAsk         *kickQuestion
 	// idleWatchersModal lists armed await-idle watchers; opened with `I`.
 	idleWatchersModal IdleWatchersModal
 	// capsAuditModal lists, per capability, the tasks holding it; opened with `i`.
@@ -456,6 +460,7 @@ func New(cfg Config) *App {
 		execsModal:        NewExecsModal(),
 		actionsModal:      NewActionsModal(),
 		actionRunForm:     NewActionRunForm(),
+		runnerKeysModal:   NewRunnerKeysModal(),
 		idleWatchersModal: NewIdleWatchersModal(),
 		capsAuditModal:    NewCapsAuditModal(),
 		rawModal:          NewRawConnectModal(),
@@ -1522,8 +1527,48 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 	case RunnerKeyResultMsg:
 		a.appendRunnerKeyResult(msg)
+		// A change made from the Runner keys screen: back to its list, read
+		// again, unless the server refused — then the form stays.
+		if a.runnerKeysModal.IsOpen() && a.client != nil && msg.Verb != "runner keys" && msg.Verb != "runner dial ls" {
+			if msg.OK {
+				a.runnerKeysModal.mode = rkList
+			} else if msg.Err == nil {
+				a.runnerKeysModal.formErr = strings.TrimSpace(msg.Text)
+			}
+			return a, tea.Batch(DoRunnerKeyViews(a.client), a.refreshSnapshot())
+		}
 		if msg.Refresh {
 			return a, a.refreshSnapshot()
+		}
+		return a, nil
+	case RunnerKeyViewsMsg:
+		if msg.Err != nil {
+			a.runnerKeysModal.loadErr = msg.Err
+			return a, nil
+		}
+		a.runnerKeysModal.SetViews(msg.Keys, msg.Dials)
+		return a, nil
+	case RunnerOfferMsg:
+		if msg.Kind == "kick" {
+			a.applyKickOffer(msg)
+			if msg.Offer.OK {
+				return a, a.refreshSnapshot()
+			}
+			return a, nil
+		}
+		if msg.Err != nil {
+			a.cmdresult.Append(ErrorStyle.Render("runner unenroll: " + msg.Err.Error()))
+			a.runnerKeysModal.ApplyOffer(cli.ForceOffer{})
+			return a, nil
+		}
+		if msg.Offer.OK {
+			a.cmdresult.Append(OKStyle.Render(strings.TrimSpace(msg.Offer.Text)))
+		} else {
+			a.cmdresult.Append(ErrorStyle.Render(strings.TrimSpace(msg.Offer.Text)))
+		}
+		a.runnerKeysModal.ApplyOffer(msg.Offer)
+		if !msg.Offer.NeedsForce && a.client != nil {
+			return a, tea.Batch(DoRunnerKeyViews(a.client), a.refreshSnapshot())
 		}
 		return a, nil
 
@@ -2304,6 +2349,9 @@ func (a *App) View() string {
 	if a.credRevokeID != "" {
 		footer = WarnStyle.Render(clipLine(credRevokePrompt(a.credRevokeID), 0, a.width))
 	}
+	if a.kickAsk != nil {
+		footer = WarnStyle.Render(clipLine(a.kickAsk.prompt, 0, a.width))
+	}
 	if a.x11RestartAsk != "" {
 		footer = WarnStyle.Render(clipLine(x11RestartPrompt(a.x11RestartAsk), 0, a.width))
 	}
@@ -2378,6 +2426,9 @@ func (a *App) View() string {
 	}
 	if a.actionsModal.IsOpen() {
 		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.actionsModal.View())
+	}
+	if a.runnerKeysModal.IsOpen() {
+		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.runnerKeysModal.View())
 	}
 	if a.idleWatchersModal.IsOpen() {
 		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.idleWatchersModal.View())

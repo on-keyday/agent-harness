@@ -47,6 +47,10 @@ type mainKeyMap struct {
 	// selected task.
 	Actions   string
 	RunAction string
+	// RunnerKeys opens the Runner keys screen. (Kicking the selected runner
+	// is x on the runners table: ScheduleDelete's letter, in a scope of its
+	// own, as the credentials table's revoke is.)
+	RunnerKeys string
 
 	Cancel                 string
 	ReGrant                string
@@ -98,6 +102,7 @@ var mainKeys = mainKeyMap{
 	Git:             "G",
 	Actions:         "M",
 	RunAction:       "!",
+	RunnerKeys:      "K",
 
 	Cancel:                 "c",
 	ReGrant:                "a",
@@ -197,6 +202,13 @@ type modalKeyMap struct {
 	ActionEdit    string
 	ActionDelete  string
 	ActionRefresh string
+	// The Runner keys screen's list: x unenroll / remove, n enroll, a add a
+	// dial record, o dial once, r reload.
+	RunnerKeysRemove   string
+	RunnerKeysEnroll   string
+	RunnerKeysDialAdd  string
+	RunnerKeysDialOnce string
+	RunnerKeysRefresh  string
 }
 
 var modalKeys = modalKeyMap{
@@ -287,12 +299,17 @@ var modalKeys = modalKeyMap{
 	// server's. enter because the row is the subject — "act on the
 	// highlighted row" — and `s` because the alternative subject has no row
 	// to point at.
-	ConnsReadRunner: "enter",
-	ConnsReadServer: "s",
-	ActionNew:       "n",
-	ActionEdit:      "e",
-	ActionDelete:    "x",
-	ActionRefresh:   "r",
+	ConnsReadRunner:    "enter",
+	ConnsReadServer:    "s",
+	ActionNew:          "n",
+	ActionEdit:         "e",
+	ActionDelete:       "x",
+	ActionRefresh:      "r",
+	RunnerKeysRemove:   "x",
+	RunnerKeysEnroll:   "n",
+	RunnerKeysDialAdd:  "a",
+	RunnerKeysDialOnce: "o",
+	RunnerKeysRefresh:  "r",
 }
 
 // keyScope is a bitmask of the panes a main-view binding applies to. These
@@ -398,6 +415,10 @@ var mainKeyBindings = []keyBinding{
 	{Keys: []string{mainKeys.ResumeAssignedContinue}, Scope: scopeCredentials, Do: (*App).onCredentialRekey,
 		Short: "r rekey", Long: "put `credential rekey <id> --ttl ` on the command line for the selected credential: complete the ttl (and --pubkey HEX to register a key made elsewhere); a generated secret is printed once in the results pane"},
 
+	// --- runners pane ---
+	{Keys: []string{mainKeys.ScheduleDelete}, Scope: scopeRunners, Do: (*App).onRunnerKick,
+		Short: "x kick", Long: "make the selected runner leave after a y/n (runner kick): it ends its tasks and exits; refused while it runs tasks until you confirm force"},
+
 	// --- runners + tasks + schedules + credentials ---
 	{Keys: []string{mainKeys.Detail}, Scope: scopeTables, Do: (*App).onDetail, Short: "d detail", Long: "detail popup for the selected runner / task / schedule / credential (in a task's, s lists its agents' transcripts; a schedule's shows its history and wait statistics; a credential's, its name, expiry and last use)"},
 
@@ -414,6 +435,8 @@ var mainKeyBindings = []keyBinding{
 	{Keys: []string{mainKeys.FinishedAll}, Scope: scopeGlobal, Do: (*App).onFinishedAll, Short: "H history", Long: "toggle the task list between the newest 100 finished tasks and every one (the last row says how many are not listed)"},
 	{Keys: []string{mainKeys.Order}, Scope: scopeGlobal, Do: (*App).onOrder, Short: "o order", Long: "cycle the flat task list's order: created → activity → live → state → repo (the last three grouped under headers; not in the tree view)"},
 	{Keys: []string{mainKeys.Forwards}, Scope: scopeGlobal, Do: (*App).onForwards, Short: "f forwards", Long: "port-forward list (t taps the selected row's traffic, r refreshes, x kills)"},
+	{Keys: []string{mainKeys.RunnerKeys}, Scope: scopeGlobal, Do: (*App).onRunnerKeys, Short: "K runner keys",
+		Long: "enrolled runner keys and the server's dial records: enroll (n), unenroll / remove (x), add a dial record (a), dial a listening runner once (o)"},
 	{Keys: []string{mainKeys.Actions}, Scope: scopeGlobal, Do: (*App).onActions, Short: "M actions", Long: "the server's actions: list, define (n), edit (e), delete (x)"},
 	{Keys: []string{mainKeys.Execs}, Scope: scopeGlobal, Do: (*App).onExecs, Short: "e execs", Long: "running-exec list (t taps the selected row's stdin/stdout/stderr, x kills)"},
 	{Keys: []string{mainKeys.IdleWatchers}, Scope: scopeGlobal, Do: (*App).onIdleWatchers, Short: "I watchers", Long: "armed await-idle watchers (x kills the selected row)"},

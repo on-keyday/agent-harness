@@ -119,6 +119,28 @@ func (a *App) onActions(msg tea.KeyMsg) (tea.Cmd, bool) {
 	return DoActionViews(a.client, "modal"), true
 }
 
+// `K` opens the Runner keys screen.
+func (a *App) onRunnerKeys(msg tea.KeyMsg) (tea.Cmd, bool) {
+	if a.client == nil {
+		a.cmdresult.Append(WarnStyle.Render("runner keys: not connected"))
+		return nil, true
+	}
+	a.runnerKeysModal.SetSize(a.width, a.height)
+	a.runnerKeysModal.Open(a.tasks.Rows(), a.runners.rowRunners)
+	return DoRunnerKeyViews(a.client), true
+}
+
+// `x` on the runners table asks to kick the selected runner.
+func (a *App) onRunnerKick(msg tea.KeyMsg) (tea.Cmd, bool) {
+	r := a.runners.SelectedRunner()
+	if r == nil {
+		a.cmdresult.Append(WarnStyle.Render("no runner selected"))
+		return nil, true
+	}
+	a.askKick(*r)
+	return nil, true
+}
+
 // `!` on the tasks table runs an action against the selected task.
 func (a *App) onRunAction(msg tea.KeyMsg) (tea.Cmd, bool) {
 	id := a.tasks.SelectedID()

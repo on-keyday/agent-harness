@@ -673,12 +673,12 @@ func TestTaskEventsApplyTheScheduleBinding(t *testing.T) {
 func TestMainKeysDoNotCollideForSchedules(t *testing.T) {
 	// n and x: distinct from every other main key (TestMainKeysAreUnique), and
 	// in the schedules pane each is dispatched by its schedule row alone. x
-	// has a second row, in the credentials scope only (revoke):
-	// TestSameKeyRowsHaveDisjointScopes keeps the two apart.
+	// has two more rows, in the credentials scope (revoke) and the runners
+	// scope (kick): TestSameKeyRowsHaveDisjointScopes keeps them apart.
 	for _, k := range []string{mainKeys.ScheduleRunNow, mainKeys.ScheduleDelete} {
 		for _, b := range mainKeyBindings {
 			for _, bk := range b.Keys {
-				if bk == k && b.Scope != scopeSchedules && b.Scope != scopeCredentials {
+				if bk == k && b.Scope != scopeSchedules && b.Scope != scopeCredentials && b.Scope != scopeRunners {
 					t.Errorf("key %q also bound with scope %v", k, b.Scope)
 				}
 			}
