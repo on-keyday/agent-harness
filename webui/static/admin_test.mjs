@@ -83,3 +83,30 @@ test("run values: a token Go refuses is refused before sending", () => {
   const missing = page.actionRunValueSpecs(a, { env: "prod" });
   assert.ok(missing.error.includes("ref"), missing.error);
 });
+
+const A = "a1".repeat(16), B = "b2".repeat(16), GONE = "dd".repeat(16);
+const VIEWS = [{ id: A, name: "deploy" }, { id: B, name: "build" }];
+
+test("condition checklist: the action names, the condition's ids checked, in its order", () => {
+  const m = page.conditionChecklistModel(VIEWS, `actions:${B},${A}`);
+  assert.equal(m.empty, false);
+  eq(m.rows.map((r) => [r.id, r.checked, r.deleted]), [[B, true, false], [A, true, false]]);
+  assert.ok(m.rows[0].label.includes("build") && m.rows[0].label.includes(B.slice(0, 8)));
+  assert.equal(page.conditionFromChecklist(m.rows), `actions:${B},${A}`);
+});
+
+test("condition checklist: a deleted action stays checked as deleted until unchecked", () => {
+  const m = page.conditionChecklistModel(VIEWS, `actions:${GONE}`);
+  const gone = m.rows.find((r) => r.id === GONE);
+  eq([gone.checked, gone.deleted, gone.label], [true, true, `deleted ${GONE.slice(0, 8)}`]);
+  assert.equal(page.conditionFromChecklist(m.rows), `actions:${GONE}`);
+  gone.checked = false;
+  assert.equal(page.conditionFromChecklist(m.rows), "");
+});
+
+test("condition checklist: no actions and no condition says so", () => {
+  eq(page.conditionChecklistModel([], ""), { empty: true, rows: [] });
+  assert.equal(page.conditionChecklistModel([], "").empty, true);
+  // unchecked rows only: no condition, not "actions:" with nothing after it
+  assert.equal(page.conditionFromChecklist(page.conditionChecklistModel(VIEWS, "").rows), "");
+});

@@ -1317,6 +1317,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // submit goes through the same funnel `action new` / `action edit` use
   // (cli.RunActionPut). Results go to the command output, as the verbs print
   // them; a refused submit keeps the form and what was typed.
+  let actionViewsCache = null;
   const actionsModal = document.getElementById("actions-modal");
   const actionsBody = document.getElementById("actions-modal-body");
   const actionsTitle = document.getElementById("actions-modal-title");
@@ -1342,6 +1343,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     const tok = actionsLatest.begin();
     try {
       const { views } = await window.harness.actionViews();
+      actionViewsCache = views;
       if (!actionsLatest.current(tok) || actionsView !== "list") return;
       if (!views.length) {
         actionsBody.replaceChildren(credentialNote("schedule-empty", "no actions — ＋ New defines one"));
@@ -1491,6 +1493,19 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       recheck();
     };
     render();
+  };
+  // actionViewsCache is the action list the grant-condition checklist reads
+  // (buildOverrideRows): null until loaded, refreshed by every Actions list
+  // load and by the checklist's ↻.
+  let actionViewsLoad = null;
+  const loadActionViewsCache = () => {
+    if (!actionViewsLoad) {
+      actionViewsLoad = window.harness.actionViews()
+        .then((r) => { actionViewsCache = r.views; })
+        .catch(() => { actionViewsCache = []; })
+        .finally(() => { actionViewsLoad = null; });
+    }
+    return actionViewsLoad;
   };
   const openActions = () => {
     if (!actionsModal.open) actionsModal.showModal();
@@ -5329,6 +5344,44 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       const condKind = conditionKindForCaps(rowCapNames(row));
       if (!condKind) {
         row.cond = "";
+      } else if (condKind === "actions") {
+        // Actions are picked by name: the ids are the server's, so a typed
+        // one could only be copied from `action ls` (item 34a).
+        const condBox = document.createElement("div");
+        condBox.className = "override-cond task-checklist";
+        condBox.appendChild(document.createTextNode("条件: 実行できる action (任意) "));
+        const reload = document.createElement("button");
+        reload.type = "button";
+        reload.className = "cap-quick";
+        reload.textContent = "↻";
+        reload.title = "action の一覧を読み直す";
+        reload.addEventListener("click", () => { actionViewsCache = null; buildOverrideRows(which, containerId, onChange); });
+        condBox.appendChild(reload);
+        if (actionViewsCache === null) {
+          condBox.appendChild(document.createTextNode(" 読み込み中…"));
+          loadActionViewsCache().then(() => buildOverrideRows(which, containerId, onChange));
+        } else {
+          const m = conditionChecklistModel(actionViewsCache, row.cond || "");
+          if (m.empty) {
+            condBox.appendChild(document.createTextNode(" no actions — define one in ⚙ Actions"));
+          }
+          for (const r of m.rows) {
+            const lab = document.createElement("label");
+            const cb = document.createElement("input");
+            cb.type = "checkbox";
+            cb.checked = r.checked;
+            cb.addEventListener("change", () => {
+              r.checked = cb.checked;
+              row.cond = conditionFromChecklist(m.rows);
+              onChange();
+            });
+            lab.appendChild(cb);
+            lab.appendChild(document.createTextNode(" " + r.label));
+            if (r.deleted) lab.title = "この action は削除済み: 外すと条件から消える";
+            condBox.appendChild(lab);
+          }
+        }
+        box.appendChild(condBox);
       } else {
         const condLabel = document.createElement("label");
         condLabel.className = "override-cond";
@@ -5336,10 +5389,8 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
         const condInput = document.createElement("input");
         condInput.type = "text";
         condInput.value = row.cond || "";
-        condInput.placeholder = condKind === "ports" ? "ports:8000-8100,22" : "actions:<32 hex>";
-        condInput.title = condKind === "ports"
-          ? "この絞り込みの forward が使える port (forward_local は接続先、forward_remote は待受)"
-          : "この絞り込みの exec_run が実行できる action の id";
+        condInput.placeholder = "ports:8000-8100,22";
+        condInput.title = "この絞り込みの forward が使える port (forward_local は接続先、forward_remote は待受)";
         // input, not change + rebuild: rebuilding on every key would take the
         // focus away mid-word.
         condInput.addEventListener("input", () => {

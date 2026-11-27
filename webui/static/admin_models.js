@@ -85,3 +85,31 @@ function actionRunValueSpecs(action, values) {
   }
   return { specs, error: "" };
 }
+
+// conditionChecklistModel is an exec_run row's condition as a checklist of
+// actions: the condition's ids first, checked, in its order (so serializing an
+// untouched checklist returns the condition unchanged), then the other actions
+// unchecked. An id the list no longer has is a deleted action: shown as such
+// and kept checked until unchecked, so opening a dialog never drops it. cond
+// is the row's --grant-condition spelling after the '=' ("actions:<id>,…").
+function conditionChecklistModel(views, cond) {
+  const ids = (cond || "").startsWith("actions:")
+    ? cond.slice("actions:".length).split(",").map((s) => s.trim()).filter(Boolean)
+    : [];
+  const byId = new Map((views || []).map((v) => [v.id, v]));
+  const label = (v) => `${v.name} (${v.id.slice(0, 8)})`;
+  const rows = ids.map((id) => (byId.has(id)
+    ? { id, label: label(byId.get(id)), checked: true, deleted: false }
+    : { id, label: `deleted ${id.slice(0, 8)}`, checked: true, deleted: true }));
+  for (const v of views || []) {
+    if (!ids.includes(v.id)) rows.push({ id: v.id, label: label(v), checked: false, deleted: false });
+  }
+  return { empty: rows.length === 0, rows };
+}
+
+// conditionFromChecklist is the checked rows in --grant-condition's spelling,
+// or "" — no condition — when none is checked.
+function conditionFromChecklist(rows) {
+  const ids = rows.filter((r) => r.checked).map((r) => r.id);
+  return ids.length ? `actions:${ids.join(",")}` : "";
+}
