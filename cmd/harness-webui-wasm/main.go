@@ -95,115 +95,121 @@ func main() {
 	rootCtx = ctx
 
 	js.Global().Set("harness", js.ValueOf(map[string]any{
-		"connect":            js.FuncOf(harnessConnect),
-		"list":               js.FuncOf(harnessList),
-		"restore":            js.FuncOf(harnessRestore),
-		"snapshot":           js.FuncOf(harnessSnapshot),
-		"overview":           js.FuncOf(harnessOverview),
-		"gridSet":            js.FuncOf(harnessGridSet),
-		"previewStart":       js.FuncOf(harnessPreviewStart),
-		"streamStart":        js.FuncOf(harnessStreamStart),
-		"streamStop":         js.FuncOf(harnessStreamStop),
-		"streamPaneStart":    js.FuncOf(harnessStreamPaneStart),
-		"streamPaneStop":     js.FuncOf(harnessStreamPaneStop),
-		"streamTurn":         js.FuncOf(harnessStreamTurn),
-		"streamApprove":      js.FuncOf(harnessStreamApprove),
-		"streamAnswer":       js.FuncOf(harnessStreamAnswer),
-		"questionSummary":    js.FuncOf(harnessQuestionSummary),
-		"questionComplete":   js.FuncOf(harnessQuestionComplete),
-		"streamInterrupt":    js.FuncOf(harnessStreamInterrupt),
-		"streamFinish":       js.FuncOf(harnessStreamFinish),
-		"previewStop":        js.FuncOf(harnessPreviewStop),
-		"reconnectNow":       js.FuncOf(harnessReconnectNow),
-		"setPageVisible":     js.FuncOf(harnessSetPageVisible),
-		"probeConnection":    js.FuncOf(harnessProbeConnection),
-		"previewInput":       js.FuncOf(harnessPreviewInput),
-		"cancel":             js.FuncOf(harnessCancel),
-		"watch":              js.FuncOf(harnessWatch),
-		"prune":              js.FuncOf(harnessPrune),
-		"startInteractive":   js.FuncOf(harnessStartInteractive),
-		"sessionMode":        js.FuncOf(harnessSessionMode),
-		"recordList":         js.FuncOf(harnessRecordList),
-		"recordGet":          js.FuncOf(harnessRecordGet),
-		"recordDelete":       js.FuncOf(harnessRecordDelete),
-		"recordKeep":         js.FuncOf(harnessRecordKeep),
-		"recordSwitch":       js.FuncOf(harnessRecordSwitch),
-		"transcriptSessions": js.FuncOf(harnessTranscriptSessions),
-		"transcriptFiles":    js.FuncOf(harnessTranscriptFiles),
-		"transcriptGet":      js.FuncOf(harnessTranscriptGet),
-		"scheduleCreate":     js.FuncOf(harnessScheduleCreate),
-		"scheduleEdit":       js.FuncOf(harnessScheduleEdit),
-		"scheduleDelete":     js.FuncOf(harnessScheduleDelete),
-		"scheduleRun":        js.FuncOf(harnessScheduleRun),
-		"scheduleList":       js.FuncOf(harnessScheduleList),
-		"scheduleShow":       js.FuncOf(harnessScheduleShow),
-		"credentialNew":      js.FuncOf(harnessCredentialNew),
-		"credentialRekey":    js.FuncOf(harnessCredentialRekey),
-		"credentialList":     js.FuncOf(harnessCredentialList),
-		"credentialRevoke":   js.FuncOf(harnessCredentialRevoke),
-		"taskRename":         js.FuncOf(harnessTaskRename),
-		"sendInteractive":    js.FuncOf(harnessSendInteractive),
-		"resizeInteractive":  js.FuncOf(harnessResizeInteractive),
-		"detachInteractive":  js.FuncOf(harnessDetachInteractive),
-		"attachSession":      js.FuncOf(harnessAttachSession),
-		"onConnectionChange": js.FuncOf(harnessOnConnectionChange),
-		"fileLs":             js.FuncOf(harnessFileLs),
-		"fileDelete":         js.FuncOf(harnessFileDelete),
-		"fileMkdir":          js.FuncOf(harnessFileMkdir),
-		"filePushBytes":      js.FuncOf(harnessFilePushBytes),
-		"filePullBytes":      js.FuncOf(harnessFilePullBytes),
-		"filePullBytesRange": js.FuncOf(harnessFilePullBytesRange),
-		"filePullDirBytes":   js.FuncOf(harnessFilePullDirBytes),
-		"fileEditLoad":       js.FuncOf(harnessFileEditLoad),
-		"fileEditCommit":     js.FuncOf(harnessFileEditCommit),
-		"fileEditEncode":     js.FuncOf(harnessFileEditEncode),
-		"gitQuery":           js.FuncOf(harnessGitQuery),
-		"execRun":            js.FuncOf(harnessExecRun),
-		"execRunList":        js.FuncOf(harnessExecRunList),
-		"execRunKill":        js.FuncOf(harnessExecRunKill),
-		"awaitIdleList":      js.FuncOf(harnessAwaitIdleList),
-		"awaitIdleKill":      js.FuncOf(harnessAwaitIdleKill),
-		"execArgvText":       js.FuncOf(harnessExecArgvText),
-		"serverDialRunner":   js.FuncOf(harnessServerDialRunner),
-		"runnerEnroll":       js.FuncOf(harnessRunnerEnroll),
-		"runnerKeys":         js.FuncOf(harnessRunnerKeys),
-		"actionPut":          js.FuncOf(harnessActionPut),
-		"actionRemove":       js.FuncOf(harnessActionRemove),
-		"actionList":         js.FuncOf(harnessActionList),
-		"runnerUnenroll":     js.FuncOf(harnessRunnerUnenroll),
-		"runnerDialAdd":      js.FuncOf(harnessRunnerDialAdd),
-		"runnerDialList":     js.FuncOf(harnessRunnerDialList),
-		"runnerDialRemove":   js.FuncOf(harnessRunnerDialRemove),
-		"runnerKick":         js.FuncOf(harnessRunnerKick),
-		"help":               js.FuncOf(harnessHelp),
-		"dispatch":           js.FuncOf(harnessDispatch),
-		"sendNotification":   js.FuncOf(harnessSendNotification),
-		"awaitIdle":          js.FuncOf(harnessAwaitIdle),
-		"awaitProgress":      js.FuncOf(harnessAwaitProgress),
-		"progressClear":      js.FuncOf(harnessProgressClear),
-		"watchNotifications": js.FuncOf(harnessWatchNotifications),
-		"capList":            js.FuncOf(harnessCapList),
-		"capsCatalog":        js.FuncOf(harnessCapsCatalog),
-		"capsAudit":          js.FuncOf(harnessCapsAudit),
-		"capsAuditText":      js.FuncOf(harnessCapsAuditText),
-		"capsReachText":      js.FuncOf(harnessCapsReachText),
-		"reachOf":            js.FuncOf(harnessReachOf),
-		"capsWhatIfText":     js.FuncOf(harnessCapsWhatIfText),
-		"whatIf":             js.FuncOf(harnessWhatIf),
-		"capsAuditOrder":     js.FuncOf(harnessCapsAuditOrder),
-		"orderTasks":         js.FuncOf(harnessOrderTasks),
-		"parseAuthority":     js.FuncOf(harnessParseAuthority),
-		"scopeForms":         js.FuncOf(harnessScopeForms),
-		"scopeSpec":          js.FuncOf(harnessScopeSpec),
-		"setCaps":            js.FuncOf(harnessSetCaps),
-		"setParent":          js.FuncOf(harnessSetParent),
-		"boardTopics":        js.FuncOf(harnessBoardTopics),
-		"boardRead":          js.FuncOf(harnessBoardRead),
-		"boardThread":        js.FuncOf(harnessBoardThread),
-		"boardPurge":         js.FuncOf(harnessBoardPurge),
-		"boardRetract":       js.FuncOf(harnessBoardRetract),
-		"boardContactsClear": js.FuncOf(harnessBoardContactsClear),
-		"boardMembership":    js.FuncOf(harnessBoardMembership),
+		"connect":             js.FuncOf(harnessConnect),
+		"list":                js.FuncOf(harnessList),
+		"restore":             js.FuncOf(harnessRestore),
+		"snapshot":            js.FuncOf(harnessSnapshot),
+		"overview":            js.FuncOf(harnessOverview),
+		"gridSet":             js.FuncOf(harnessGridSet),
+		"previewStart":        js.FuncOf(harnessPreviewStart),
+		"streamStart":         js.FuncOf(harnessStreamStart),
+		"streamStop":          js.FuncOf(harnessStreamStop),
+		"streamPaneStart":     js.FuncOf(harnessStreamPaneStart),
+		"streamPaneStop":      js.FuncOf(harnessStreamPaneStop),
+		"streamTurn":          js.FuncOf(harnessStreamTurn),
+		"streamApprove":       js.FuncOf(harnessStreamApprove),
+		"streamAnswer":        js.FuncOf(harnessStreamAnswer),
+		"questionSummary":     js.FuncOf(harnessQuestionSummary),
+		"questionComplete":    js.FuncOf(harnessQuestionComplete),
+		"streamInterrupt":     js.FuncOf(harnessStreamInterrupt),
+		"streamFinish":        js.FuncOf(harnessStreamFinish),
+		"previewStop":         js.FuncOf(harnessPreviewStop),
+		"reconnectNow":        js.FuncOf(harnessReconnectNow),
+		"setPageVisible":      js.FuncOf(harnessSetPageVisible),
+		"probeConnection":     js.FuncOf(harnessProbeConnection),
+		"previewInput":        js.FuncOf(harnessPreviewInput),
+		"cancel":              js.FuncOf(harnessCancel),
+		"watch":               js.FuncOf(harnessWatch),
+		"prune":               js.FuncOf(harnessPrune),
+		"startInteractive":    js.FuncOf(harnessStartInteractive),
+		"sessionMode":         js.FuncOf(harnessSessionMode),
+		"recordList":          js.FuncOf(harnessRecordList),
+		"recordGet":           js.FuncOf(harnessRecordGet),
+		"recordDelete":        js.FuncOf(harnessRecordDelete),
+		"recordKeep":          js.FuncOf(harnessRecordKeep),
+		"recordSwitch":        js.FuncOf(harnessRecordSwitch),
+		"transcriptSessions":  js.FuncOf(harnessTranscriptSessions),
+		"transcriptFiles":     js.FuncOf(harnessTranscriptFiles),
+		"transcriptGet":       js.FuncOf(harnessTranscriptGet),
+		"scheduleCreate":      js.FuncOf(harnessScheduleCreate),
+		"scheduleEdit":        js.FuncOf(harnessScheduleEdit),
+		"scheduleDelete":      js.FuncOf(harnessScheduleDelete),
+		"scheduleRun":         js.FuncOf(harnessScheduleRun),
+		"scheduleList":        js.FuncOf(harnessScheduleList),
+		"scheduleShow":        js.FuncOf(harnessScheduleShow),
+		"credentialNew":       js.FuncOf(harnessCredentialNew),
+		"credentialRekey":     js.FuncOf(harnessCredentialRekey),
+		"credentialList":      js.FuncOf(harnessCredentialList),
+		"credentialRevoke":    js.FuncOf(harnessCredentialRevoke),
+		"taskRename":          js.FuncOf(harnessTaskRename),
+		"sendInteractive":     js.FuncOf(harnessSendInteractive),
+		"resizeInteractive":   js.FuncOf(harnessResizeInteractive),
+		"detachInteractive":   js.FuncOf(harnessDetachInteractive),
+		"attachSession":       js.FuncOf(harnessAttachSession),
+		"onConnectionChange":  js.FuncOf(harnessOnConnectionChange),
+		"fileLs":              js.FuncOf(harnessFileLs),
+		"fileDelete":          js.FuncOf(harnessFileDelete),
+		"fileMkdir":           js.FuncOf(harnessFileMkdir),
+		"filePushBytes":       js.FuncOf(harnessFilePushBytes),
+		"filePullBytes":       js.FuncOf(harnessFilePullBytes),
+		"filePullBytesRange":  js.FuncOf(harnessFilePullBytesRange),
+		"filePullDirBytes":    js.FuncOf(harnessFilePullDirBytes),
+		"fileEditLoad":        js.FuncOf(harnessFileEditLoad),
+		"fileEditCommit":      js.FuncOf(harnessFileEditCommit),
+		"fileEditEncode":      js.FuncOf(harnessFileEditEncode),
+		"gitQuery":            js.FuncOf(harnessGitQuery),
+		"execRun":             js.FuncOf(harnessExecRun),
+		"execRunList":         js.FuncOf(harnessExecRunList),
+		"execRunKill":         js.FuncOf(harnessExecRunKill),
+		"awaitIdleList":       js.FuncOf(harnessAwaitIdleList),
+		"awaitIdleKill":       js.FuncOf(harnessAwaitIdleKill),
+		"execArgvText":        js.FuncOf(harnessExecArgvText),
+		"serverDialRunner":    js.FuncOf(harnessServerDialRunner),
+		"runnerEnroll":        js.FuncOf(harnessRunnerEnroll),
+		"runnerKeys":          js.FuncOf(harnessRunnerKeys),
+		"actionPut":           js.FuncOf(harnessActionPut),
+		"actionRemove":        js.FuncOf(harnessActionRemove),
+		"actionList":          js.FuncOf(harnessActionList),
+		"runnerUnenroll":      js.FuncOf(harnessRunnerUnenroll),
+		"runnerDialAdd":       js.FuncOf(harnessRunnerDialAdd),
+		"runnerDialList":      js.FuncOf(harnessRunnerDialList),
+		"runnerDialRemove":    js.FuncOf(harnessRunnerDialRemove),
+		"runnerKick":          js.FuncOf(harnessRunnerKick),
+		"actionViews":         js.FuncOf(harnessActionViews),
+		"actionPutForm":       js.FuncOf(harnessActionPutForm),
+		"runnerKeyViews":      js.FuncOf(harnessRunnerKeyViews),
+		"runnerDialViews":     js.FuncOf(harnessRunnerDialViews),
+		"runnerUnenrollOffer": js.FuncOf(harnessRunnerUnenrollOffer),
+		"runnerKickOffer":     js.FuncOf(harnessRunnerKickOffer),
+		"help":                js.FuncOf(harnessHelp),
+		"dispatch":            js.FuncOf(harnessDispatch),
+		"sendNotification":    js.FuncOf(harnessSendNotification),
+		"awaitIdle":           js.FuncOf(harnessAwaitIdle),
+		"awaitProgress":       js.FuncOf(harnessAwaitProgress),
+		"progressClear":       js.FuncOf(harnessProgressClear),
+		"watchNotifications":  js.FuncOf(harnessWatchNotifications),
+		"capList":             js.FuncOf(harnessCapList),
+		"capsCatalog":         js.FuncOf(harnessCapsCatalog),
+		"capsAudit":           js.FuncOf(harnessCapsAudit),
+		"capsAuditText":       js.FuncOf(harnessCapsAuditText),
+		"capsReachText":       js.FuncOf(harnessCapsReachText),
+		"reachOf":             js.FuncOf(harnessReachOf),
+		"capsWhatIfText":      js.FuncOf(harnessCapsWhatIfText),
+		"whatIf":              js.FuncOf(harnessWhatIf),
+		"capsAuditOrder":      js.FuncOf(harnessCapsAuditOrder),
+		"orderTasks":          js.FuncOf(harnessOrderTasks),
+		"parseAuthority":      js.FuncOf(harnessParseAuthority),
+		"scopeForms":          js.FuncOf(harnessScopeForms),
+		"scopeSpec":           js.FuncOf(harnessScopeSpec),
+		"setCaps":             js.FuncOf(harnessSetCaps),
+		"setParent":           js.FuncOf(harnessSetParent),
+		"boardTopics":         js.FuncOf(harnessBoardTopics),
+		"boardRead":           js.FuncOf(harnessBoardRead),
+		"boardThread":         js.FuncOf(harnessBoardThread),
+		"boardPurge":          js.FuncOf(harnessBoardPurge),
+		"boardRetract":        js.FuncOf(harnessBoardRetract),
+		"boardContactsClear":  js.FuncOf(harnessBoardContactsClear),
+		"boardMembership":     js.FuncOf(harnessBoardMembership),
 		"boardJoinable": js.FuncOf(func(this js.Value, args []js.Value) any {
 			return len(args) > 0 && agentboard.JoinableName(args[0].String())
 		}),
@@ -3426,6 +3432,114 @@ func harnessActionPut(this js.Value, args []js.Value) any {
 			Name: optString(in, "name"), Description: optString(in, "description"), DescriptionSet: optBool(in, "descriptionSet"),
 			Params: params, Template: jsStringArray(in.Get("template")),
 		})
+	})
+}
+
+// jsonPromise resolves with fn's value marshalled to JSON and parsed back in
+// JS, so the cli view structs cross the bridge as they are, field names from
+// their json tags.
+func jsonPromise(fn func(c *cli.Client) (any, error)) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve, reject := promiseArgs[0], promiseArgs[1]
+		go func() {
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			v, err := fn(c)
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			b, err := json.Marshal(v)
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			resolve.Invoke(js.Global().Get("JSON").Call("parse", string(b)))
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
+// harness.actionViews() -> Promise<{views: [ActionView], text}>; text is the
+// CLI's listing.
+func harnessActionViews(this js.Value, args []js.Value) any {
+	return jsonPromise(func(c *cli.Client) (any, error) {
+		list, err := cli.ActionListWith(rootCtx, c)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"views": cli.ActionViews(list), "text": cli.FormatActions(list)}, nil
+	})
+}
+
+// harness.actionPutForm(form) -> Promise<{text, ok}>: form is a cli.ActionForm
+// object; it is refused before sending by the server's own rule.
+func harnessActionPutForm(this js.Value, args []js.Value) any {
+	raw := ""
+	if len(args) > 0 && args[0].Type() == js.TypeObject {
+		raw = js.Global().Get("JSON").Call("stringify", args[0]).String()
+	}
+	return runnerKeyPromise(func(c *cli.Client) (string, bool, error) {
+		var f cli.ActionForm
+		if err := json.Unmarshal([]byte(raw), &f); err != nil {
+			return "", false, fmt.Errorf("actionPutForm: %w", err)
+		}
+		in, err := cli.ActionPutInputFromForm(f)
+		if err != nil {
+			return "", false, err
+		}
+		return c.RunActionPut(rootCtx, in)
+	})
+}
+
+// harness.runnerKeyViews() -> Promise<{views: [RunnerKeyView], text}>
+func harnessRunnerKeyViews(this js.Value, args []js.Value) any {
+	return jsonPromise(func(c *cli.Client) (any, error) {
+		rows, err := cli.RunnerKeysWith(rootCtx, c)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"views": cli.RunnerKeyViews(rows), "text": cli.FormatRunnerKeys(rows)}, nil
+	})
+}
+
+// harness.runnerDialViews() -> Promise<{views: [RunnerDialView], text}>
+func harnessRunnerDialViews(this js.Value, args []js.Value) any {
+	return jsonPromise(func(c *cli.Client) (any, error) {
+		rows, err := cli.RunnerDialListWith(rootCtx, c)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"views": cli.RunnerDialViews(rows), "text": cli.FormatRunnerDialList(rows)}, nil
+	})
+}
+
+// harness.runnerUnenrollOffer(prefix, force) -> Promise<ForceOffer>
+func harnessRunnerUnenrollOffer(this js.Value, args []js.Value) any {
+	prefix, force := jsArgString(args, 0), len(args) > 1 && args[1].Truthy()
+	return jsonPromise(func(c *cli.Client) (any, error) {
+		st, res, err := cli.RunnerUnenrollWith(rootCtx, c, prefix, force)
+		if err != nil {
+			return nil, err
+		}
+		return cli.UnenrollOffer(st, res), nil
+	})
+}
+
+// harness.runnerKickOffer(runnerIDPrefix, force) -> Promise<ForceOffer>
+func harnessRunnerKickOffer(this js.Value, args []js.Value) any {
+	prefix, force := jsArgString(args, 0), len(args) > 1 && args[1].Truthy()
+	return jsonPromise(func(c *cli.Client) (any, error) {
+		st, res, err := cli.RunnerKickWith(rootCtx, c, prefix, force)
+		if err != nil {
+			return nil, err
+		}
+		return cli.KickOffer(st, res), nil
 	})
 }
 
