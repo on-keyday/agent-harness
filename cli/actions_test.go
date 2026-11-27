@@ -65,7 +65,7 @@ func TestFormatActionsNeverElidesZero(t *testing.T) {
 	for _, want := range []string{
 		"a1000000000000000000000000000000 name=deploy rev=3 params=2",
 		"  run: ./deploy.sh --env {env} --ref {ref}",
-		"  param env: choice staging|prod",
+		`  param env: choice "staging" "prod"`,
 		"  param ref: token",
 		"b2000000000000000000000000000000 name=uptime rev=3 params=0",
 		"actions=2",
@@ -204,5 +204,34 @@ func TestListRowShowsActionOverlap(t *testing.T) {
 	}
 	if j := newTaskJSON(&protocol.TaskInfo{}, nil); j.ActionOverlap == nil || len(j.ActionOverlap) != 0 {
 		t.Fatalf("json action_overlap for none = %#v, want []", j.ActionOverlap)
+	}
+}
+
+// A choice may contain '|' (only ',' is refused), so the listing quotes each
+// choice instead of joining them with a separator a choice can hold.
+func TestFormatActionsQuotesChoices(t *testing.T) {
+	got := FormatActions([]protocol.ActionRecord{testAction(t, 1, "x", []string{"env=choice:a|b,c"}, "run", "{env}")})
+	if !strings.Contains(got, `  param env: choice "a|b" "c"`) {
+		t.Fatalf("choices must be quoted, space-separated:\n%s", got)
+	}
+}
+
+// A screen's form gives the template as elements, so a literal that looks
+// like a reference needs no escaping; words and elements together are refused.
+func TestBuildActionDefinitionTakesElements(t *testing.T) {
+	var l protocol.ActionLiteral
+	l.SetBytes([]byte("{x}"))
+	e := protocol.ActionElement{Kind: protocol.ActionElementKind_Literal}
+	e.SetLiteral(l)
+	def, err := buildActionDefinition(ActionPutInput{Elements: []protocol.ActionElement{e}}, "a", "", "new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(def.Template) != 1 || string(def.Template[0].Literal().Bytes) != "{x}" {
+		t.Fatalf("template %+v, want the literal {x}", def.Template)
+	}
+	_, err = buildActionDefinition(ActionPutInput{Elements: []protocol.ActionElement{e}, Template: []string{"run"}}, "a", "", "new")
+	if err == nil || !strings.Contains(err.Error(), "not both") {
+		t.Fatalf("words and elements together: %v", err)
 	}
 }

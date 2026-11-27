@@ -125,6 +125,9 @@ func Validate(def *protocol.ActionDefinition) error {
 				if err := checkLiteral(fmt.Sprintf("a choice of param %q", p.Name), c.Bytes, MaxChoiceLen); err != nil {
 					return err
 				}
+				if bytes.IndexByte(c.Bytes, ',') >= 0 {
+					return fmt.Errorf("param %q: choice %q contains ',', which --param cannot write", p.Name, c.Bytes)
+				}
 				if dup[string(c.Bytes)] {
 					return fmt.Errorf("param %q lists the choice %q twice", p.Name, c.Bytes)
 				}

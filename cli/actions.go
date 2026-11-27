@@ -211,9 +211,9 @@ func FormatActions(list []protocol.ActionRecord) string {
 			if ch := p.Choices(); ch != nil {
 				var cs []string
 				for _, c := range ch.Choices {
-					cs = append(cs, string(c.Bytes))
+					cs = append(cs, fmt.Sprintf("%q", c.Bytes))
 				}
-				fmt.Fprintf(&sb, "  param %s: choice %s\n", p.Name, strings.Join(cs, "|"))
+				fmt.Fprintf(&sb, "  param %s: choice %s\n", p.Name, strings.Join(cs, " "))
 			} else {
 				fmt.Fprintf(&sb, "  param %s: %s\n", p.Name, p.Type)
 			}
@@ -315,6 +315,10 @@ type ActionPutInput struct {
 	DescriptionSet bool
 	Params         []protocol.ActionParam
 	Template       []string // words, parsed with actiondef.ParseTemplate
+	// Elements is the template as a screen's form builds it, one element per
+	// row, so a literal needs no escaping. Used instead of Template; giving
+	// both is an error.
+	Elements []protocol.ActionElement
 }
 
 // RunActionPut is the one funnel the three surfaces put an action through:
@@ -342,22 +346,9 @@ func (c *Client) RunActionPut(ctx context.Context, in ActionPutInput) (string, b
 			desc = string(cur.Definition.Description)
 		}
 	}
-	var def protocol.ActionDefinition
-	if !def.SetName([]byte(name)) {
-		return "", false, fmt.Errorf("action %s: name too long", verb)
-	}
-	if desc != "" && !def.SetDescription([]byte(desc)) {
-		return "", false, fmt.Errorf("action %s: description too long", verb)
-	}
-	if !def.SetParams(in.Params) {
-		return "", false, fmt.Errorf("action %s: too many params", verb)
-	}
-	els, err := actiondef.ParseTemplate(in.Template, in.Params)
+	def, err := buildActionDefinition(in, name, desc, verb)
 	if err != nil {
-		return "", false, fmt.Errorf("action %s: %w", verb, err)
-	}
-	if !def.SetTemplate(els) {
-		return "", false, fmt.Errorf("action %s: the command has too many words", verb)
+		return "", false, err
 	}
 	r, err := ActionPutWith(ctx, c, id, expect, def)
 	if err != nil {
@@ -365,6 +356,36 @@ func (c *Client) RunActionPut(ctx context.Context, in ActionPutInput) (string, b
 	}
 	line, ok := FormatActionPut(r, verb, name)
 	return line, ok, nil
+}
+
+// buildActionDefinition is the definition RunActionPut sends: name and
+// description as resolved, the params, and the template from the words or,
+// from a screen, the elements.
+func buildActionDefinition(in ActionPutInput, name, desc, verb string) (protocol.ActionDefinition, error) {
+	var def protocol.ActionDefinition
+	if !def.SetName([]byte(name)) {
+		return def, fmt.Errorf("action %s: name too long", verb)
+	}
+	if desc != "" && !def.SetDescription([]byte(desc)) {
+		return def, fmt.Errorf("action %s: description too long", verb)
+	}
+	if !def.SetParams(in.Params) {
+		return def, fmt.Errorf("action %s: too many params", verb)
+	}
+	els := in.Elements
+	switch {
+	case els != nil && len(in.Template) != 0:
+		return def, fmt.Errorf("action %s: give the command as words or as elements, not both", verb)
+	case els == nil:
+		var err error
+		if els, err = actiondef.ParseTemplate(in.Template, in.Params); err != nil {
+			return def, fmt.Errorf("action %s: %w", verb, err)
+		}
+	}
+	if !def.SetTemplate(els) {
+		return def, fmt.Errorf("action %s: the command has too many words", verb)
+	}
+	return def, nil
 }
 
 // RunActionRemove resolves ref and deletes it; the line to show and whether

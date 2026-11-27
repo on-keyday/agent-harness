@@ -261,3 +261,15 @@ func TestParseTemplateRefusesUndeclaredReference(t *testing.T) {
 		t.Fatalf("non-param braces refused: %v", err)
 	}
 }
+
+// --param NAME=choice:A,B splits on ',', so a choice containing one could not
+// be restated by any command line: refused for every surface alike.
+func TestValidateRefusesCommaInChoice(t *testing.T) {
+	var d protocol.ActionDefinition
+	d.SetName([]byte("x"))
+	d.SetParams([]protocol.ActionParam{choiceParam("env", "staging", "a,b")})
+	d.SetTemplate([]protocol.ActionElement{litElem("run"), paramElem(0)})
+	if err := Validate(&d); err == nil || !strings.Contains(err.Error(), `"a,b"`) || !strings.Contains(err.Error(), "','") {
+		t.Fatalf("a choice containing ',' must be refused, naming it: %v", err)
+	}
+}
