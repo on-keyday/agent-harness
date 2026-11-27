@@ -2858,7 +2858,27 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       const li = document.createElement("li");
       const sz = e.isDir ? "" : String(e.size).padStart(10);
       const name = e.isDir ? `${e.name}/` : e.name;
-      li.textContent = `${sz}  ${name}`;
+      li.className = "file-entry";
+      const label = document.createElement("span");
+      label.className = "file-entry-name";
+      label.textContent = `${sz}  ${name}`;
+      li.appendChild(label);
+      // Git opens the Git tab on this task with the worktree diff narrowed to
+      // this path (a directory narrows to everything under it). Its clicks
+      // stop here: the row's own click selects or descends.
+      const gitBtn = document.createElement("button");
+      gitBtn.type = "button";
+      gitBtn.className = "file-git-btn";
+      gitBtn.textContent = "Git";
+      gitBtn.title = "Git タブでこの path の差分 (worktree vs HEAD) を開く";
+      gitBtn.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        const taskID = fileTaskSelect.value;
+        if (!taskID || !window.__openGitTabFor) return;
+        window.__openGitTabFor(taskID, "diff", { path: joinFsPath(filePickerCurDir, e.name) });
+      });
+      gitBtn.addEventListener("dblclick", (ev) => ev.stopPropagation());
+      li.appendChild(gitBtn);
       li.style.padding = "0.15em 0.5em";
       li.style.cursor = "pointer";
       if (e.isDir) li.style.color = "#06c";
@@ -10257,7 +10277,20 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
         const res = await gitQuery("diff", {
           baseRev: opts.baseRev, targetRev: opts.targetRev, target, path: opts.path, ...limits,
         });
-        renderGitText(res.text || "(no difference)", true);
+        if (res.text) {
+          renderGitText(res.text, true);
+        } else if (opts.path) {
+          // An empty answer for a narrowed diff names the path, or it reads
+          // as "the whole worktree is clean". An untracked file is in no
+          // diff at all, so the porcelain status for the path says why.
+          const st = await gitQuery("status", { path: opts.path });
+          const lines = (st.entries || []).map(e => `${e.xy} ${e.path}`);
+          renderGitText(lines.length
+            ? `(no diff for ${opts.path} — status:)\n${lines.join("\n")}`
+            : `(no difference in ${opts.path})`, false);
+        } else {
+          renderGitText("(no difference)", true);
+        }
       } catch (err) {
         gitSetError(err.message);
       }
