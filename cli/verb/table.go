@@ -541,10 +541,10 @@ var Verbs = []VerbSpec{
 			// A server-defined action instead of a command (grant conditions
 			// spec C8): what an ActionSet-conditioned exec_run may run.
 			{Name: "action", Type: FlagString, Default: "", Field: "Action",
-				Help:            "run this server-defined action (name or id, from `action ls`) instead of a command after --"},
+				Help: "run this server-defined action (name or id, from `action ls`) instead of a command after --"},
 			{Name: "value", Type: FlagString, Custom: repeatedValue, Field: "Values",
 				FieldType: "map[string]string", Convert: "ParseActionValues",
-				Help:            "a value for one of the action's params, NAME=VALUE, repeatable (each value is one whole argument)"},
+				Help: "a value for one of the action's params, NAME=VALUE, repeatable (each value is one whole argument)"},
 		},
 		// What it renames IS the shell, so it cannot rename an argv.
 		Requires: []Requirement{{Flags: []string{"sshd-parent"}, Needs: "shell"}},
@@ -909,10 +909,10 @@ var Verbs = []VerbSpec{
 
 	// --- server-defined actions (2026-11-26-grant-conditions-and-bound-enrollment-design.md, C8, C13) ---
 	{
-		Path: []string{"action", "new"},
+		Path:          []string{"action", "new"},
 		WebUIDispatch: WebUIDispatch{Fn: "actionPut"},
 		SurfaceNotes:  map[Surface][]string{WebUI: {"define a server-defined action (the command an ActionSet grant may run)"}, TUI: {"define a server-defined action (the command an ActionSet grant may run)"}},
-		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_ActionPut},
+		MCP:           &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_ActionPut},
 		NoModalSurface: "an administrative verb run a handful of times, like runner enroll: the command line is the way in",
 		Notes: []string{
 			"define a named command the server keeps; a grant can then name it with",
@@ -931,10 +931,10 @@ var Verbs = []VerbSpec{
 		},
 	},
 	{
-		Path: []string{"action", "edit"},
+		Path:          []string{"action", "edit"},
 		WebUIDispatch: WebUIDispatch{Fn: "actionPut"},
 		SurfaceNotes:  map[Surface][]string{WebUI: {"replace an action's definition; refused unless you could re-grant every holder"}, TUI: {"replace an action's definition; refused unless you could re-grant every holder"}},
-		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_ActionList, protocol.TaskControlKind_ActionPut},
+		MCP:           &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_ActionList, protocol.TaskControlKind_ActionPut},
 		NoModalSurface: "an administrative verb, like runner enroll: the command line is the way in",
 		Notes: []string{
 			"replace an action's definition: the params and the command are given whole, as on new;",
@@ -957,10 +957,10 @@ var Verbs = []VerbSpec{
 		Examples: []string{"action edit --revision 1 --param env=choice:staging,prod deploy -- ./deploy.sh --env {env}"},
 	},
 	{
-		Path: []string{"action", "rm"},
+		Path:          []string{"action", "rm"},
 		WebUIDispatch: WebUIDispatch{Fn: "actionRemove"},
 		SurfaceNotes:  map[Surface][]string{WebUI: {"delete a server-defined action"}, TUI: {"delete a server-defined action"}},
-		MCP:  &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_ActionList, protocol.TaskControlKind_ActionRemove},
+		MCP:           &MCPTool{SideEffect: MCPWrite}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_ActionList, protocol.TaskControlKind_ActionRemove},
 		NoModalSurface: "an administrative verb, like runner unenroll: the command line is the way in",
 		Notes: []string{
 			"delete an action, by name or id; a grant naming it then runs nothing",
@@ -972,10 +972,10 @@ var Verbs = []VerbSpec{
 		Examples:        []string{"action rm deploy"},
 	},
 	{
-		Path: []string{"action", "ls"},
+		Path:          []string{"action", "ls"},
 		WebUIDispatch: WebUIDispatch{Fn: "actionList"},
 		SurfaceNotes:  map[Surface][]string{WebUI: {"list the server's actions: full id, name, revision, command, params"}, TUI: {"list the server's actions: full id, name, revision, command, params"}},
-		MCP:  &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_ActionList},
+		MCP:           &MCPTool{SideEffect: MCPRead}, Sends: []protocol.TaskControlKind{protocol.TaskControlKind_ActionList},
 		NoModalSurface: "an administrative listing, like runner keys: the command line is the way in",
 		Notes: []string{
 			"list the server's actions: full id (the form --grant-condition takes), name, revision,",
