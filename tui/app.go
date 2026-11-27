@@ -299,6 +299,9 @@ type App struct {
 	// `scope` command sets and clears both together, so a spawn never carries
 	// a scope from one command and overrides from another.
 	sessionOverrides []protocol.ScopeOverride
+	// sessionGrantConditions are the bodies of sessionOverrides' conditioned
+	// overrides; they travel together (grant conditions C4, C6).
+	sessionGrantConditions []protocol.GrantCondition
 	// sessionDelegateCaps / sessionDelegateScope are the default delegation
 	// bound for spawns from this session (`caps set-defaults --delegate-*`).
 	// Zero is the server's default bound: the children delegate nothing.
@@ -376,7 +379,7 @@ func (a App) spawnAuthority(v verb.SpawnAction, caps protocol.Capability) Author
 // not name its own: the caps mask paired with the target scope.
 // Its presence bits are all false: on a resume it re-grants nothing.
 func (a *App) authority() Authority {
-	return Authority{Caps: a.sessionCaps, Scope: a.sessionScope, Overrides: a.sessionOverrides,
+	return Authority{Caps: a.sessionCaps, Scope: a.sessionScope, Overrides: a.sessionOverrides, GrantConditions: a.sessionGrantConditions,
 		DelegateCaps: a.sessionDelegateCaps, DelegateScope: a.sessionDelegateScope,
 		SpawnDepth: a.sessionSpawnDepth, MaxDescendants: a.sessionMaxDescendants}
 }
@@ -1497,6 +1500,10 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.actionsModal.SetViews(msg.Views, msg.Err)
 		case "run":
 			a.actionRunForm.SetViews(msg.Views, msg.Err)
+		case "picker":
+			if msg.Err == nil && a.authorityPicker.IsOpen() {
+				a.authorityPicker.SetActionViews(msg.Views)
+			}
 		}
 		return a, nil
 	case ActionFormResultMsg:

@@ -903,9 +903,15 @@ func (a *App) inAuthorityPicker(msg tea.KeyMsg) tea.Cmd {
 				a.authorityPicker.SetAllCaps(true)
 			case 'N':
 				a.authorityPicker.SetAllCaps(false)
-			case '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
-				// A spawn limit's value, typed on its row; a no-op elsewhere.
+			case '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '-', ',':
+				// A spawn limit's value, or an override's port list, typed
+				// on its row; a no-op elsewhere.
 				a.authorityPicker.TypeDigit(r)
+			case 'x':
+				// Drop the override the cursor is in; named on apply.
+				a.authorityPicker.RemoveOverride()
+			case 'o':
+				a.authorityPicker.AddOverride()
 			}
 		}
 		return nil
@@ -926,6 +932,14 @@ func (a *App) inAuthorityPicker(msg tea.KeyMsg) tea.Cmd {
 				TaskID: target, ParentID: parentHex, Swap: swap,
 			})
 		}
+		if p := a.authorityPicker.Problem(); p != "" {
+			// Stay open: what was typed is the operator's to fix.
+			a.cmdresult.Append(ErrorStyle.Render(p))
+			return nil
+		}
+		for _, r := range a.authorityPicker.Removed() {
+			a.cmdresult.Append(WarnStyle.Render("removed override " + r))
+		}
 		caps, spec, cascade, keep := a.authorityPicker.Result()
 		dcaps, dspec, dchanged := a.authorityPicker.Delegation()
 		dscope, err := cli.ParseScope(dspec)
@@ -934,9 +948,9 @@ func (a *App) inAuthorityPicker(msg tea.KeyMsg) tea.Cmd {
 			a.cmdresult.Append(ErrorStyle.Render("delegate-scope: " + err.Error()))
 			return nil
 		}
-		// Carried, not edited: the picker never clears the target's
-		// per-capability narrowings, because they travel with the scope
-		// under one presence bit and an empty list would erase them.
+		// Every override goes back, the untouched ones as they came: they
+		// travel with the scope under one presence bit and an empty list
+		// would erase them.
 		overrides := a.authorityPicker.Overrides()
 		grantConds := a.authorityPicker.GrantConditions()
 		depth, maxDesc, limitsChanged := a.authorityPicker.Limits()
@@ -946,7 +960,6 @@ func (a *App) inAuthorityPicker(msg tea.KeyMsg) tea.Cmd {
 			a.sessionCaps = caps
 			if spec == "" {
 				a.sessionScope = protocol.TaskScope{Base: protocol.ScopeBase_Subtree}
-				a.sessionOverrides = nil
 			} else {
 				sc, err := cli.ParseScope(spec)
 				if err != nil {
@@ -954,8 +967,10 @@ func (a *App) inAuthorityPicker(msg tea.KeyMsg) tea.Cmd {
 					return nil
 				}
 				a.sessionScope = sc
-				a.sessionOverrides = overrides
 			}
+			// The overrides (and their condition bodies) narrow whatever
+			// base the defaults have, the plain default included.
+			a.sessionOverrides, a.sessionGrantConditions = overrides, grantConds
 			a.sessionDelegateCaps, a.sessionDelegateScope = dcaps, dscope
 			a.sessionSpawnDepth, a.sessionMaxDescendants = depth, maxDesc
 			label := capsLabel(a.sessionCaps) + "  scope=" + cli.ScopeLabel(a.sessionScope)

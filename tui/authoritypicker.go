@@ -36,19 +36,20 @@ type AuthorityPickerModel struct {
 	deleg       pickerScope
 	delegOpened string
 
-	// overrides is CARRIED, not edited. The picker edits the base scope and
-	// the id set; per-capability narrowings are typed on the cmdline. It has
-	// to be kept because overrides travel with the scope under one presence
-	// bit — a re-grant that returned an empty list would silently erase the
-	// target's per-capability rules, which is the same defect the cascade had.
-	overrides []protocol.ScopeOverride
-	// grantConditions are carried with overrides, for the same reason: the
-	// overrides keep their conditioned markers, and a re-grant that sent a
-	// marker without its body would be refused, while one that dropped both
-	// would widen the grant (grant conditions C6, C7).
-	grantConditions []protocol.GrantCondition
-	cascade         bool
-	keepConns       bool
+	// ovs are the per-capability overrides, edited
+	// (authoritypicker_overrides.go): one untouched goes back exactly as it
+	// came, with its condition body, because overrides travel with the scope
+	// under one presence bit — a re-grant that dropped one would erase the
+	// target's rule, and a marker sent without its body is refused (grant
+	// conditions C6, C7). removed names the ones the operator removed.
+	ovs     []pickerOverride
+	removed []string
+	// actionViews is the action list the exec_run condition checklist shows;
+	// tasks is the snapshot the rows were built from, kept to rebuild them.
+	actionViews []cli.ActionView
+	tasks       []protocol.TaskInfo
+	cascade     bool
+	keepConns   bool
 
 	// The spawn limits, each a number or unbounded: typed digits set the
 	// value on its row, backspace removes one, space toggles unbounded / 0.
@@ -133,13 +134,24 @@ const (
 	rowSection    // a heading; never selectable
 	rowSpawnDepth
 	rowMaxDescendants
+	// An override's rows (authoritypicker_overrides.go); pickerRow.ov is its
+	// index.
+	rowOvHead
+	rowOvCap
+	rowOvBase
+	rowOvExcludeSelf
+	rowOvTask
+	rowOvAction
+	rowOvPorts
 )
 
 type pickerRow struct {
 	kind  pickerRowKind
 	label string
 	bit   protocol.Capability // rowCap
-	idHex string              // rowTask
+	idHex string              // rowTask, rowOvTask, rowOvAction (the action id)
+	// ov is the override an override row edits.
+	ov int
 	// deleg marks a row of the delegation section: it edits the bound, not
 	// the task's own authority.
 	deleg bool
@@ -160,8 +172,7 @@ func (m *AuthorityPickerModel) OpenRegrant(target protocol.TaskInfo, tasks []pro
 	m.reset(PickerModeRegrant, target.Capabilities, target.Scope)
 	m.setDeleg(target.DelegateCaps, target.DelegateScope)
 	m.setLimits(target.SpawnDepth, target.MaxDescendants)
-	m.overrides = target.Overrides
-	m.grantConditions = target.GrantConditions
+	m.setOverrides(target.Overrides, target.GrantConditions)
 	m.targetHex = FormatTaskID(target.Id)
 	m.buildRows(tasks)
 }
@@ -171,8 +182,15 @@ func (m *AuthorityPickerModel) OpenSession(defaults Authority, tasks []protocol.
 	m.reset(PickerModeSession, defaults.Caps, defaults.Scope)
 	m.setDeleg(defaults.DelegateCaps, defaults.DelegateScope)
 	m.setLimits(defaults.SpawnDepth, defaults.MaxDescendants)
-	m.overrides = defaults.Overrides
+	m.setOverrides(defaults.Overrides, defaults.GrantConditions)
 	m.buildRows(tasks)
+}
+
+func (m *AuthorityPickerModel) setOverrides(ovs []protocol.ScopeOverride, conds []protocol.GrantCondition) {
+	m.ovs, m.removed = nil, nil
+	for _, o := range ovs {
+		m.ovs = append(m.ovs, newPickerOverride(o, conds))
+	}
 }
 
 func (m *AuthorityPickerModel) setLimits(depth, max protocol.SpawnLimit) {
@@ -207,6 +225,9 @@ func (m *AuthorityPickerModel) limitAt() *protocol.SpawnLimit {
 // TypeDigit appends d to the cursor row's limit; an unbounded one starts at
 // 0. A no-op off a limit row, and past the largest value a limit carries.
 func (m *AuthorityPickerModel) TypeDigit(d rune) {
+	if m.typeOnPorts(d, false) {
+		return
+	}
 	l := m.limitAt()
 	if l == nil || d < '0' || d > '9' {
 		return
@@ -223,6 +244,9 @@ func (m *AuthorityPickerModel) TypeDigit(d rune) {
 
 // Backspace drops the cursor row's last digit; from 0 it goes to unbounded.
 func (m *AuthorityPickerModel) Backspace() {
+	if m.typeOnPorts(0, true) {
+		return
+	}
 	l := m.limitAt()
 	if l == nil || !l.Limited() {
 		return
@@ -298,16 +322,17 @@ func (m *AuthorityPickerModel) reset(mode AuthorityPickerMode, caps protocol.Cap
 	m.pickerScope = newPickerScope(caps, scope)
 	m.deleg = newPickerScope(0, protocol.TaskScope{})
 	m.delegOpened = ""
-	m.overrides = nil
-	m.grantConditions = nil
+	m.ovs, m.removed = nil, nil
 	m.cascade = false
 	m.keepConns = false
 	m.spawnDepth, m.maxDescendants, m.limitsOpened = authority.Unbounded(), authority.Unbounded(), ""
 }
 
 func (m *AuthorityPickerModel) buildRows(tasks []protocol.TaskInfo) {
+	m.tasks = tasks
 	m.rows = m.rows[:0]
 	m.appendSection(tasks, false)
+	m.appendOverrides()
 	// The bound is edited with the same controls, so it reads the same way:
 	// a cap set, a base, exclude-self, a visibility rank, and the two id sets.
 	m.rows = append(m.rows, pickerRow{kind: rowSection,
@@ -402,6 +427,12 @@ func (m *AuthorityPickerModel) rowDisabled(r pickerRow) bool {
 	if r.kind == rowSection {
 		return true
 	}
+	if r.kind == rowOvCap {
+		return m.claimedElsewhere(r.ov)&r.bit != 0
+	}
+	if isOverrideRow(r.kind) {
+		return false
+	}
 	s := m.section(r)
 	return r.kind == rowTask &&
 		s.base == protocol.ScopeBase_Global &&
@@ -451,6 +482,10 @@ func (m *AuthorityPickerModel) Toggle() {
 		return
 	}
 	r := m.rows[m.cursor]
+	if isOverrideRow(r.kind) {
+		m.toggleOverride(r)
+		return
+	}
 	s := m.section(r)
 	switch r.kind {
 	case rowCap:
@@ -499,13 +534,33 @@ func (m *AuthorityPickerModel) Toggle() {
 // string. Re-grant specs are always explicit (a re-grant apply sends both
 // fields); session mode returns "" for base-subtree-no-ids, the spawn
 // default. Selected ids are ignored under base == global.
-// Overrides returns the per-capability narrowings the picker is carrying
-// unchanged, so the caller can send them back with the scope rather than
-// clearing them.
-func (m *AuthorityPickerModel) Overrides() []protocol.ScopeOverride { return m.overrides }
+// Overrides returns the per-capability narrowings: each untouched one as it
+// came, each edited one from its controls; an override left with no bits is
+// dropped. The caller sends them back with the scope.
+func (m *AuthorityPickerModel) Overrides() []protocol.ScopeOverride {
+	var out []protocol.ScopeOverride
+	for i := range m.ovs {
+		if m.ovs[i].caps != 0 {
+			out = append(out, m.ovs[i].wire())
+		}
+	}
+	return out
+}
 
-// GrantConditions are the carried overrides' grant conditions.
-func (m *AuthorityPickerModel) GrantConditions() []protocol.GrantCondition { return m.grantConditions }
+// GrantConditions are the overrides' condition bodies, each beside the
+// override it belongs to (Problem reports one that does not parse).
+func (m *AuthorityPickerModel) GrantConditions() []protocol.GrantCondition {
+	var out []protocol.GrantCondition
+	for i := range m.ovs {
+		if m.ovs[i].caps == 0 {
+			continue
+		}
+		if c, err := m.ovs[i].condition(); err == nil && c != nil {
+			out = append(out, *c)
+		}
+	}
+	return out
+}
 
 // Delegation returns the delegation bound's selection: its caps, its scope in
 // the grammar (always explicit — the bound has no "not named" form here), and
@@ -653,6 +708,17 @@ func (m *AuthorityPickerModel) View() string {
 	b.WriteString(fit(title) + "\n")
 	for i := start; i < end; i++ {
 		r := m.rows[i]
+		if isOverrideRow(r.kind) || (r.kind == rowSection && r.ov == -1) {
+			line := fit(m.overrideLine(r))
+			switch {
+			case i == m.cursor:
+				line = pickerCursorStyle.Render(line)
+			case m.rowDisabled(r):
+				line = pickerDisabledStyle.Render(line)
+			}
+			b.WriteString(line + "\n")
+			continue
+		}
 		line := "[ ] "
 		if m.mode == PickerModeParent {
 			// Single-choice: the cursor IS the selection, so checkboxes would
@@ -740,7 +806,7 @@ func (m *AuthorityPickerModel) View() string {
 		spec = "(default subtree)"
 	}
 	_, dspec, _ := m.Delegation()
-	b.WriteString(fit("space toggle · v see-only · A/N all/none caps · enter apply · esc cancel · scope=" + spec +
+	b.WriteString(fit("space toggle · v see-only · A/N all/none caps · o/x add/drop override · enter apply · esc cancel · scope=" + spec +
 		" delegate=" + cli.CapsLabel(m.deleg.caps) + " delegate-scope=" + dspec))
 	return pickerBorderStyle.Render(b.String())
 }

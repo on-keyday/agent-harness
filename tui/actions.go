@@ -525,6 +525,9 @@ func (a *App) onReGrant(msg tea.KeyMsg) (tea.Cmd, bool) {
 	}
 	a.authorityPicker.SetSize(a.width, a.height)
 	a.authorityPicker.OpenRegrant(*t, a.tasks.Rows())
+	if a.client != nil {
+		return DoActionViews(a.client, "picker"), true
+	}
 	return nil, true
 }
 

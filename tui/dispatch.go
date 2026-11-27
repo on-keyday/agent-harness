@@ -1062,6 +1062,9 @@ func (h tuiVerbs) CapsSetDefaults(v verb.SetDefaultsAction) tea.Cmd {
 		v.SpawnDepth == nil && v.MaxDescendants == nil {
 		a.authorityPicker.SetSize(a.width, a.height)
 		a.authorityPicker.OpenSession(a.authority(), a.tasks.Rows())
+		if a.client != nil {
+			return DoActionViews(a.client, "picker")
+		}
 		return nil
 	}
 	if v.SpawnDepth != nil {
