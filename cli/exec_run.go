@@ -460,6 +460,8 @@ func execRunStatusError(taskID string, st protocol.ExecRunStatus) error {
 		return errors.New("exec: the server could not read the command")
 	case protocol.ExecRunStatus_NoSuchAction:
 		return errors.New("exec: no such action (deleted, or never defined; `action ls` lists them)")
+	case protocol.ExecRunStatus_BadActionValues:
+		return errors.New("exec: the server refused the action's values: it was edited after this command read it (`action ls` shows its current params)")
 	case protocol.ExecRunStatus_OutsideCondition:
 		return fmt.Errorf("exec: task %q is in your exec_run reach, but your grant condition does not admit this; an ActionSet grant runs only the actions it names (`exec <task> --action NAME`)", taskID)
 	default:

@@ -409,7 +409,8 @@ func ParseTemplate(words []string, params []protocol.ActionParam) ([]protocol.Ac
   three `noTarget`.
 - `server/exec_run.go` `openExecRun`: when `action_present`, look the action up
   (missing → `no_such_action`; `not_found` reads as "no such task" to every
-  client — changed while planning), `actiondef.Resolve`, gate with
+  client — changed while planning), `actiondef.Resolve` (values that do not
+  fit → `bad_action_values`), gate with
   `authorizeObject(cid, exec_run, task, action id)`, force the C17 flags, and
   continue with the resolved argv; record id, revision and name on the
   `execRun`. A raw argv against an `ActionSet`-conditioned `exec_run` fails the
@@ -465,7 +466,11 @@ and `bad_binding` on `RunnerKeyStatus`,
 server does not hold; an object outside the grant condition on a target in
 reach — neither is `not_found`, which names the task); and — added while
 implementing — `internal_error` on `ActionStatus` (the action store could not
-be written), and `action_overlap :Capability` on `TaskInfo` and
+be written), `bad_action_values` on `ExecRunStatus` (values that no longer fit
+the action's params: an edit landed between the client's read and the run,
+since the client checks values against the definition it read; added after
+the final review — `bad_body` named it as a body the server could not read),
+and `action_overlap :Capability` on `TaskInfo` and
 `WhoAmIResponse`: the § Surfaces overlap warning, computed by the server,
 which holds the task tree a client listing one row (`whoami`) does not. The
 WAL gains condition bodies; the key store gains `bound_tasks`; the action store

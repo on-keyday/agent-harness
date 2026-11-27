@@ -50,7 +50,8 @@ func (h *TaskHandler) handleOpenExecRun(conn ConnHandle, req *protocol.ExecRunRe
 //
 //   - An action: it must exist (no_such_action), the caller's exec_run
 //     condition must admit its id (outside_condition), and its values must
-//     fit its params; the argv is resolved here, on the server (C8).
+//     fit its params (bad_action_values); the argv is resolved here, on the
+//     server (C8).
 //   - A raw argv: it passes only through an unconditioned exec_run — inScope
 //     reaches nothing through a conditioned bit, so an ActionSet holder is
 //     refused outside_condition.
@@ -82,7 +83,7 @@ func (h *TaskHandler) execGate(cid objproto.ConnectionID, targetHex string, body
 	argv, err := actiondef.Resolve(&rec.Definition, inv.Values)
 	if err != nil {
 		slog.Info("exec_run: action values refused", "action", string(rec.Definition.Name), "err", err)
-		return nil, nil, protocol.ExecRunStatus_BadBody
+		return nil, nil, protocol.ExecRunStatus_BadActionValues
 	}
 	return argv, &execAction{id: inv.Id.Id, revision: rec.Revision, name: string(rec.Definition.Name)}, protocol.ExecRunStatus_Ok
 }

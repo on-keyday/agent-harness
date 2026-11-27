@@ -222,7 +222,8 @@ func TestCapabilityAllIncludesActionAdmin(t *testing.T) {
 
 func TestExecRunStatusActionValues(t *testing.T) {
 	// Appended after bad_body, so no existing ordinal moves.
-	if ExecRunStatus_NoSuchAction != ExecRunStatus_BadBody+1 || ExecRunStatus_OutsideCondition != ExecRunStatus_BadBody+2 {
-		t.Fatalf("statuses: %d %d after bad_body %d", ExecRunStatus_NoSuchAction, ExecRunStatus_OutsideCondition, ExecRunStatus_BadBody)
+	if ExecRunStatus_NoSuchAction != ExecRunStatus_BadBody+1 || ExecRunStatus_OutsideCondition != ExecRunStatus_BadBody+2 ||
+		ExecRunStatus_BadActionValues != ExecRunStatus_BadBody+3 {
+		t.Fatalf("statuses: %d %d %d after bad_body %d", ExecRunStatus_NoSuchAction, ExecRunStatus_OutsideCondition, ExecRunStatus_BadActionValues, ExecRunStatus_BadBody)
 	}
 }

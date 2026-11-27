@@ -110,6 +110,10 @@ func TestExecRunStatusErrorNewStatuses(t *testing.T) {
 	if err := execRunStatusError("t", protocol.ExecRunStatus_OutsideCondition); err == nil || !strings.Contains(err.Error(), "condition") {
 		t.Errorf("outside_condition: %v", err)
 	}
+	if err := execRunStatusError("t", protocol.ExecRunStatus_BadActionValues); err == nil || !strings.Contains(err.Error(), "edited") ||
+		strings.Contains(err.Error(), "could not read") {
+		t.Errorf("bad_action_values: %v", err)
+	}
 }
 
 func TestExecRunInfoLinesShowAction(t *testing.T) {
@@ -173,7 +177,7 @@ func TestExecRunRefusesActionWithArgvOrShell(t *testing.T) {
 		argv []string
 		opts ExecRunOpts
 	}{
-		"argv beside an action": {[]string{"echo"}, ExecRunOpts{Action: inv}},
+		"argv beside an action":  {[]string{"echo"}, ExecRunOpts{Action: inv}},
 		"shell beside an action": {nil, ExecRunOpts{Action: inv, ShellLine: true}},
 		"pty beside an action":   {nil, ExecRunOpts{Action: inv, Pty: true}},
 	} {

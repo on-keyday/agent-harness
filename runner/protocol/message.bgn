@@ -6326,6 +6326,11 @@ enum ExecRunStatus:
     # not admit this object: an action outside its ActionSet, or a raw argv
     # under an ActionSet-conditioned exec_run (grant conditions spec C7).
     outside_condition
+    # The action exists and is admitted, but the values do not fit its current
+    # params (a choice it no longer offers, a token it refuses, the wrong
+    # number). The client checks values against the definition it read, so
+    # this is an edit that landed between that read and the run. Appended.
+    bad_action_values
 
 format ExecRunResponse:
     status :ExecRunStatus

@@ -302,3 +302,18 @@ func TestConditionedExecRunIncludesNoSharedTranscripts(t *testing.T) {
 		t.Fatalf("include_shared: conditioned %v, unconditioned %v; want false, true", sent[0].IncludeShared(), sent[1].IncludeShared())
 	}
 }
+
+// A value the action no longer accepts, because an edit landed between the
+// client's read and the run, is named as such rather than as a body the
+// server could not read.
+func TestValueRefusedAfterEditIsBadActionValues(t *testing.T) {
+	e := newExecActEnv(t)
+	a := e.define(t, "deploy", []string{"env=choice:staging,prod"}, "deploy", "{env}")
+	e.grantOnly(t, a)
+	if _, err := e.h.Actions.Edit(a, 1, actDef(t, "deploy", []string{"env=choice:prod"}, "deploy", "{env}"), "operator", time.Now(), nil); err != nil {
+		t.Fatal(err)
+	}
+	wantStatus(t, "dropped choice", e.exec(t, nil, protocol.ExecRunRequest{}, invoke(a, "staging")), protocol.ExecRunStatus_BadActionValues)
+	wantStatus(t, "wrong arity", e.exec(t, nil, protocol.ExecRunRequest{}, invoke(a)), protocol.ExecRunStatus_BadActionValues)
+	wantStatus(t, "control: a value it accepts", e.exec(t, nil, protocol.ExecRunRequest{}, invoke(a, "prod")), protocol.ExecRunStatus_Ok)
+}
